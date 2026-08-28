@@ -1,0 +1,24 @@
+#ifndef _TUSB_CONFIG_H_
+#define _TUSB_CONFIG_H_
+
+// TinyUSB-konfiguration för myrtos. Normalt sätts CFG_TUSB_MCU av TinyUSB:s
+// egen BSP, men vi använder inte den -- kärnan äger avbrottsvägen själv.
+// RP2350 använder samma port som RP2040.
+#define CFG_TUSB_MCU            OPT_MCU_RP2040
+#define CFG_TUSB_OS             OPT_OS_NONE
+#define CFG_TUSB_MEM_ALIGN      __attribute__((aligned(4)))
+
+#define CFG_TUD_ENABLED         1
+#define CFG_TUD_MAX_SPEED       OPT_MODE_FULL_SPEED
+#define CFG_TUD_ENDPOINT0_SIZE  64
+
+#define CFG_TUD_CDC             1
+#define CFG_TUD_MSC             0
+#define CFG_TUD_HID             0
+#define CFG_TUD_MIDI            0
+#define CFG_TUD_VENDOR          0
+
+#define CFG_TUD_CDC_RX_BUFSIZE  256
+#define CFG_TUD_CDC_TX_BUFSIZE  256
+
+#endif

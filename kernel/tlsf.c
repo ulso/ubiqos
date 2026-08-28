@@ -1,0 +1,196 @@
+#include "tlsf.h"
+
+// Blockhuvud. size är nyttolastens storlek; bit 0 markerar fritt.
+// prev_phys_block pekar på grannen närmast lägre adress, vilket är det som
+// gör sammanslagning bakåt möjlig.
+typedef struct block_header_t {
+    struct block_header_t* prev_phys_block;
+    size_t size;
+    struct block_header_t* next_free;
+    struct block_header_t* prev_free;
+} block_header_t;
+
+typedef struct {
+    block_header_t block_null;
+    uint32_t fl_bitmap;
+    uint32_t sl_bitmap[FL_INDEX_MAX];
+    block_header_t* blocks[FL_INDEX_MAX][SL_INDEX_COUNT];
+    uintptr_t pool_start;
+    uintptr_t pool_end;
+} tlsf_ctrl_t;
+
+#define MIN_PAYLOAD      (2 * sizeof(void*))
+#define BLOCK_FREE_BIT   1U
+#define BLOCK_SIZE(b)    ((b)->size & ~(size_t)BLOCK_FREE_BIT)
+#define BLOCK_IS_FREE(b) (((b)->size & BLOCK_FREE_BIT) != 0)
+
+static inline int tlsf_fls(uint32_t word) {
+    if (!word) return -1;
+    return 31 - __builtin_clz(word);
+}
+
+static void tlsf_mapping(size_t size, int* fl, int* sl) {
+    int f = tlsf_fls((uint32_t)size);
+    if (f < 5) {
+        *fl = 0;
+        *sl = (int)(size & (SL_INDEX_COUNT - 1));
+    } else {
+        *fl = f;
+        *sl = (int)((size >> (f - 5)) & (SL_INDEX_COUNT - 1));
+    }
+    if (*fl >= FL_INDEX_MAX) *fl = FL_INDEX_MAX - 1;
+}
+
+// Grannen närmast högre adress, eller NULL om blocket är sist i poolen.
+static block_header_t* next_phys(tlsf_ctrl_t* ctrl, block_header_t* block) {
+    uintptr_t next = (uintptr_t)block + sizeof(block_header_t) + BLOCK_SIZE(block);
+    if (next >= ctrl->pool_end) return 0;
+    return (block_header_t*)next;
+}
+
+static void tlsf_insert(tlsf_ctrl_t* ctrl, block_header_t* block) {
+    int fl, sl;
+    tlsf_mapping(BLOCK_SIZE(block), &fl, &sl);
+
+    block->size |= BLOCK_FREE_BIT;
+    block->next_free = ctrl->blocks[fl][sl];
+    block->prev_free = &ctrl->block_null;
+    if (ctrl->blocks[fl][sl] != &ctrl->block_null) {
+        ctrl->blocks[fl][sl]->prev_free = block;
+    }
+    ctrl->blocks[fl][sl] = block;
+    ctrl->fl_bitmap |= (1U << fl);
+    ctrl->sl_bitmap[fl] |= (1U << sl);
+}
+
+// Plocka ut ett bestämt block ur sin fria lista, oavsett var i den det sitter.
+// Sammanslagning kräver just det: grannen som ska ätas upp ligger sällan först.
+static void tlsf_remove(tlsf_ctrl_t* ctrl, block_header_t* block) {
+    int fl, sl;
+    tlsf_mapping(BLOCK_SIZE(block), &fl, &sl);
+
+    if (block->prev_free != &ctrl->block_null) {
+        block->prev_free->next_free = block->next_free;
+    } else if (ctrl->blocks[fl][sl] == block) {
+        ctrl->blocks[fl][sl] = block->next_free;
+        if (ctrl->blocks[fl][sl] == &ctrl->block_null) {
+            ctrl->sl_bitmap[fl] &= ~(1U << sl);
+            if (!ctrl->sl_bitmap[fl]) ctrl->fl_bitmap &= ~(1U << fl);
+        }
+    }
+    if (block->next_free != &ctrl->block_null) {
+        block->next_free->prev_free = block->prev_free;
+    }
+    block->size &= ~(size_t)BLOCK_FREE_BIT;
+}
+
+tlsf_pool_t myrtos_tlsf_create(void* mem, size_t bytes) {
+    if (bytes < sizeof(tlsf_ctrl_t) + sizeof(block_header_t) + MIN_PAYLOAD) return NULL;
+
+    tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)mem;
+    ctrl->fl_bitmap = 0;
+    ctrl->block_null.next_free = &ctrl->block_null;
+    ctrl->block_null.prev_free = &ctrl->block_null;
+    ctrl->block_null.size = 0;
+    for (int i = 0; i < FL_INDEX_MAX; ++i) {
+        ctrl->sl_bitmap[i] = 0;
+        for (int j = 0; j < SL_INDEX_COUNT; ++j) ctrl->blocks[i][j] = &ctrl->block_null;
+    }
+
+    uintptr_t start = ((uintptr_t)mem + sizeof(tlsf_ctrl_t) + 3) & ~(uintptr_t)3;
+    ctrl->pool_start = start;
+    ctrl->pool_end = (uintptr_t)mem + bytes;
+
+    block_header_t* first = (block_header_t*)start;
+    first->prev_phys_block = 0;
+    first->size = (ctrl->pool_end - start) - sizeof(block_header_t);
+    tlsf_insert(ctrl, first);
+    return (tlsf_pool_t)ctrl;
+}
+
+void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
+    tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
+    if (!ctrl || !size) return NULL;
+
+    size = (size + 3) & ~(size_t)3;
+    if (size < MIN_PAYLOAD) size = MIN_PAYLOAD;
+
+    int fl, sl;
+    tlsf_mapping(size, &fl, &sl);
+
+    block_header_t* block = 0;
+    for (int f = fl; f < FL_INDEX_MAX && !block; ++f) {
+        uint32_t sl_map = ctrl->sl_bitmap[f];
+        if (f == fl) sl_map &= (sl >= 31) ? 0u : (~0U << (sl + 1));
+        while (sl_map) {
+            int s = __builtin_ctz(sl_map);
+            block_header_t* cand = ctrl->blocks[f][s];
+            if (cand != &ctrl->block_null && BLOCK_SIZE(cand) >= size) {
+                tlsf_remove(ctrl, cand);
+                block = cand;
+                break;
+            }
+            sl_map &= ~(1U << s);
+        }
+    }
+    if (!block) return NULL;
+
+    size_t remain = BLOCK_SIZE(block) - size;
+    if (remain >= sizeof(block_header_t) + MIN_PAYLOAD) {
+        block_header_t* rest =
+            (block_header_t*)((uintptr_t)block + sizeof(block_header_t) + size);
+        rest->prev_phys_block = block;
+        rest->size = remain - sizeof(block_header_t);
+        block->size = size;
+        block_header_t* after = next_phys(ctrl, rest);
+        if (after) after->prev_phys_block = rest;
+        tlsf_insert(ctrl, rest);
+    }
+
+    block->size &= ~(size_t)BLOCK_FREE_BIT;
+    return (void*)((uintptr_t)block + sizeof(block_header_t));
+}
+
+void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
+    tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
+    if (!ctrl || !ptr) return;
+
+    block_header_t* block =
+        (block_header_t*)((uintptr_t)ptr - sizeof(block_header_t));
+
+    // Slå ihop framåt: grannen närmast högre adress plockas ur sin lista och
+    // dess utrymme, inklusive dess huvud, blir en del av det här blocket.
+    block_header_t* next = next_phys(ctrl, block);
+    if (next && BLOCK_IS_FREE(next)) {
+        tlsf_remove(ctrl, next);
+        block->size = BLOCK_SIZE(block) + sizeof(block_header_t) + BLOCK_SIZE(next);
+    }
+
+    // Slå ihop bakåt: då är det grannen som växer, och blocket försvinner.
+    block_header_t* prev = block->prev_phys_block;
+    if (prev && BLOCK_IS_FREE(prev)) {
+        tlsf_remove(ctrl, prev);
+        prev->size = BLOCK_SIZE(prev) + sizeof(block_header_t) + BLOCK_SIZE(block);
+        block = prev;
+    }
+
+    block_header_t* after = next_phys(ctrl, block);
+    if (after) after->prev_phys_block = block;
+
+    tlsf_insert(ctrl, block);
+}
+
+// Största sammanhängande fria block. Finns för att kunna visa att
+// sammanslagningen verkligen sker: utan den krymper det här talet för varje
+// cykel av allokering och frigöring.
+size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
+    tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
+    size_t best = 0;
+    for (uintptr_t p = ctrl->pool_start; p < ctrl->pool_end; ) {
+        block_header_t* b = (block_header_t*)p;
+        if (BLOCK_IS_FREE(b) && BLOCK_SIZE(b) > best) best = BLOCK_SIZE(b);
+        p += sizeof(block_header_t) + BLOCK_SIZE(b);
+        if (BLOCK_SIZE(b) == 0) break;
+    }
+    return best;
+}

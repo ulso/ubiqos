@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "Myrtos-RISCV",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/build/**"
+            ],
+            "defines": [
+                "PICO_BOARD=\"adafruit_fruit_jam\"",
+                "PICO_PLATFORM=\"rp2350-riscv\"",
+                "ARCH_RISCV=1"
+            ],
+            "compilerPath": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin/riscv32-unknown-elf-gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "macos-gcc-arm64"
+        }
+    ],
+    "version": 4
+}

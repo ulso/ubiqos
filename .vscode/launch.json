@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Myrtos (J-Link, RISC-V)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/os_kernel.elf",
+            "servertype": "jlink",
+            "gdbPath": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin/riscv32-unknown-elf-gdb",
+            // RP2350_RV32_0 väljer Hazard3-kärna 0. J-Link har fyra RP2350-enheter:
+            // _M33_0, _M33_1, _RV32_0, _RV32_1, och byter läge efter enhetsnamnet.
+            "device": "RP2350_RV32_0",
+            "interface": "swd",
+            // Inget -connectunderreset. Anslutningen gör reset-och-halt, och det
+            // fungerar bara så länge chippet startar i RISC-V: boot-ROM:et läser
+            // PICOBIN_IMAGE_TYPE_EXE_CPU ur flash-imagen och växlar arkitektur
+            // först då. Därav copy_to_ram i CMakeLists -- med no_flash finns
+            // ingen image att växla på, chippet startar i ARM, och servern faller
+            // på "Timeout while waiting for core to halt after reset".
+            "serverArgs": [
+                "-speed", "4000"
+            ],
+            "runToEntryPoint": "myrtos_kernel_main",
+            "showDevDebugOutput": "none"
+        }
+    ]
+}

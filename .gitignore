@@ -1,0 +1,8 @@
+build
+!.vscode/*
+
+.DS_Store
+
+# Sparade webbsidor som referensmaterial -- flera megabyte binärt per fil,
+# och de går inte att ta bort ur historiken i efterhand.
+docs/*.webarchive
