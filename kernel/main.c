@@ -186,7 +186,6 @@ void myrtos_kernel_main(void) {
     extern void myrtos_scheduler_init(void);
     extern int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const char *args);
     extern void myrtos_timer_init(uint32_t);
-    extern const uint8_t myrtos_embedded_shell_module[];
 
     myrtos_scheduler_init();
     myrtos_io_init();
@@ -214,14 +213,6 @@ void myrtos_kernel_main(void) {
         }
     } else {
         myrtos_print("SD: unavailable.\n");
-    }
-
-    if (!myrtos_moddir_count()) {
-        myrtos_print("No modules found; registering the one built into the kernel.\n");
-        // Den ligger i flash och kopieras inte -- resident, precis som OS-9:s
-        // ROM-moduler, som kördes där de låg.
-        myrtos_moddir_add_resident(
-            (const myrtos_module_header_t*)myrtos_embedded_shell_module, "SHELL   MOD");
     }
 
     // Beskrivarna först: enheterna måste finnas innan någon process försöker

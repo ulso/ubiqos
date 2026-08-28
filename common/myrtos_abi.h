@@ -83,10 +83,6 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_EXEC      9u   // a0 = modulnamn, a1 = argumentsträng -> a0 = pid
 #define SYS_ARGS     10u   // a0 = buffert, a1 = längd -> a0 = kopierade tecken
 
-// Så lång kommandorad en process kan bära. OS-9 la den i dataområdet; här bor
-// den i processtabellen, vilket slipper frågan om vem som äger minnet.
-#define MYRTOS_ARGS_MAX 64
-
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
 

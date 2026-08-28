@@ -30,19 +30,6 @@ add_executable(os_kernel
     kernel/usbdev.c
     kernel/usb_descriptors.c
     kernel/scheduler.S
-    ${CMAKE_CURRENT_BINARY_DIR}/shell_module_blob.c
-)
-
-# Modulen bakas in i kärnbilden tills den kan laddas från SD. Regeln körs efter
-# shell_app, som är det som producerar shell.mod.
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/shell_module_blob.c
-    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_blob.py
-            ${CMAKE_CURRENT_BINARY_DIR}/shell.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/shell_module_blob.c
-            myrtos_embedded_shell_module
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell.mod ${CMAKE_CURRENT_SOURCE_DIR}/make_blob.py
-    COMMENT "Bakar in shell.mod i kärnbilden..."
 )
 
 # Körningen sker i RAM, men imagen ligger i flash och kopieras dit vid boot.
@@ -146,7 +133,6 @@ function(myrtos_add_data_module name source)
         COMMENT "Bygger databmodulen ${name}.mod")
 endfunction()
 
-myrtos_add_module(shell modules/shell/shell.c)
 myrtos_add_module(counter modules/counter/counter.c)
 myrtos_add_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
@@ -158,8 +144,7 @@ myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
 
 add_custom_target(modules ALL
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shell.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cxxdemo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/lsmod.mod
             ${CMAKE_CURRENT_BINARY_DIR}/free.mod
