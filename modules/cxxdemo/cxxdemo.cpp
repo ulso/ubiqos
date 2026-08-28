@@ -3,9 +3,9 @@ extern "C" {
 #include "../../common/myrtos_abi.h"
 }
 
-// Klass utan virtuella funktioner: medlemsfunktioner är vanliga funktioner med
-// ett dolt this-argument, och inlinas dessutom här. Ingen vtable, inga
-// statiska konstruktorer.
+// A class with no virtual functions: member functions are ordinary functions
+// with a hidden this argument, and are inlined here besides. No vtable, no
+// static constructors.
 class Terminal {
 public:
     explicit Terminal(const char *device) : path_(myrtos_open(device)) {}
@@ -16,11 +16,11 @@ private:
     int32_t path_;
 };
 
-// extern "C" krävs: bygget slår upp module_main med nm, och C++ skulle annars
-// mangla namnet till _Z11module_mainv.
-// Statisk polymorfi med CRTP: basklassen känner den härledda typen genom
-// mallparametern, så anropet binds vid kompilering. Ingen vtable, alltså inga
-// funktionspekare i statiska data.
+// extern "C" is required: the build looks module_main up with nm, and C++ would
+// otherwise mangle the name to _Z11module_mainv.
+// Static polymorphism with CRTP: the base class knows the derived type through
+// the template parameter, so the call binds at compile time. No vtable, hence no
+// function pointers in static data.
 template <typename Derived>
 struct Writer {
     void emit(const Terminal &t) const {
@@ -36,14 +36,14 @@ struct Loud : Writer<Loud> {
     void emit_impl(const Terminal &t) const { t.write("[LOUD] STATIC DISPATCH\n"); }
 };
 
-// Behövs körtidsval ändå: bygg tabellen i processens eget minne i stället för
-// som statisk initierare. Adresserna beräknas då vid körning och följer med
-// modulen, i stället för att länkaren skriver in dem.
+// If a runtime choice is needed anyway: build the table in the process's own
+// memory rather than as a static initialiser. The addresses are then computed at
+// runtime and travel with the module, instead of the linker writing them in.
 using Emitter = void (*)(const Terminal &);
 
 extern "C" {
-// used: funktionerna refereras bara från assembler, som kompilatorn inte ser,
-// och skulle annars optimeras bort som oanvända.
+// used: the functions are referenced only from assembly, which the compiler
+// cannot see, and would otherwise be optimised away as unused.
 __attribute__((used)) static const char *say_first(void)  { return "[reltab 0] shared, in .rodata\n"; }
 __attribute__((used)) static const char *say_second(void) { return "[reltab 1] shared, in .rodata\n"; }
 }
@@ -62,11 +62,11 @@ extern "C" void module_main(void) {
     plain.emit(term);
     loud.emit(term);
 
-    // Den delade varianten: tabellen ligger const i .rodata och bär avstånd
-    // i stället för adresser, så alla processer använder samma kopia.
+    // The shared variant: the table sits const in .rodata and carries offsets
+    // rather than addresses, so every process uses the same copy.
     term.write(MYRTOS_RELTAB_CALL(emitters, 1, const char *(*)(void))());
 
-    // Och den stackbyggda, som fungerar men ger varje process en egen kopia.
+    // And the stack-built one, which works but gives each process its own copy.
     Emitter table[2] = {
         [](const Terminal &t) { t.write("[table 0] built at runtime\n"); },
         [](const Terminal &t) { t.write("[table 1] built at runtime\n"); },

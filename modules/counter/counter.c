@@ -1,9 +1,9 @@
 #include <stdint.h>
 #include "../../common/myrtos_abi.h"
 
-// Systemanropen och deras nummer kommer från det gemensamma ABI:t. Modulen
-// definierar dem inte längre själv, så en ändring i kärnan ger byggfel i
-// stället för ett obegripligt fel vid körning.
+// The system calls and their numbers come from the shared ABI. The module no
+// longer defines them itself, so a change in the kernel gives a build error
+// rather than an incomprehensible failure at runtime.
 
 void module_main(void) {
     int32_t path = myrtos_open("term");
@@ -13,9 +13,9 @@ void module_main(void) {
 
     for (int i = 0; i < 6; i++) {
         char line[] = "[counter] tick N of 6\n";
-        line[15] = (char)('1' + i);   // 'N' sitter på 15, inte 18
+        line[15] = (char)('1' + i);   // 'N' sits at 15, not 18
         myrtos_write_str(path, line);
-        // Bränn tid så att kvantumet löper ut mitt i räkningen.
+        // Burn time so the quantum expires in the middle of the count.
         for (volatile int d = 0; d < 300000; d++) { }
     }
 

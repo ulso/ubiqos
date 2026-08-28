@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Kontrollerar att en modul verkligen är positionsoberoende och delbar.
+"""Check that a module really is position independent and shareable.
 
-Två egenskaper avgör om en modul kan laddas på en okänd adress och delas
-mellan processer, och ingen av dem syns i källkoden:
+Two properties decide whether a module can be loaded at an unknown address and
+shared between processes, and neither shows in the source:
 
-  1. Inga absoluta adresser i allokerade sektioner. PC-relativa hopp och
-     strängar följer med när modulen flyttas; en funktionspekare i en tabell
-     gör det inte -- den är en absolut adress som länkaren skrev in. I C är det
-     en `static const struct { void (*fn)(void); }`, i Rust varje `dyn Trait`.
+  1. No absolute addresses in allocated sections. PC-relative jumps and strings
+     travel with the module when it moves; a function pointer in a table does
+     not -- it is an absolute address the linker wrote in. In C that is a
+     `static const struct { void (*fn)(void); }`, in Rust every `dyn Trait`.
 
-  2. Inga skrivbara sektioner. Finns .data eller .bss i modulbilden skriver två
-     processer som delar koden i samma variabler.
+  2. No writable sections. If .data or .bss are present in the module image,
+     two processes sharing the code write to the same variables.
 
-Relokeringar i felsökningssektionerna räknas inte: de följer aldrig med när
-objcopy plockar ut den råa binären.
+Relocations in the debug sections do not count: they never travel along when
+objcopy extracts the raw binary.
 """
 import subprocess, sys, re
 
 readelf, obj_files, elf = sys.argv[1], sys.argv[2:-1], sys.argv[-1]
 
-# PC-relativa och rent lokala typer. Allt annat i en allokerad sektion är en
+# PC-relative and purely local types. Anything else in an allocated section is a
 # absolut adress.
 POSITION_INDEPENDENT = {
     "R_RISCV_PCREL_HI20", "R_RISCV_PCREL_LO12_I", "R_RISCV_PCREL_LO12_S",
@@ -44,13 +44,13 @@ for obj in obj_files:
         m = re.search(r"(R_RISCV_\w+)", line)
         if not m or not section:
             continue
-        # Felsökningsinformation laddas aldrig.
+# Debug information is never loaded.
         if section.startswith(".rela.debug") or section.startswith(".rela.eh_frame"):
             continue
         kind = m.group(1)
         if kind not in POSITION_INDEPENDENT:
-            # C++ lägger vtabellen i en egen sektion vars namn bär det manglade
-            # klassnamnet. Avmanglat blir felet begripligt utan ABI-kunskap.
+# C++ puts the vtable in a section of its own whose name carries the mangled
+# class name. Demangled, the error is understandable without ABI knowledge.
             hint = section
             m2 = re.search(r"(_Z\S+)", section)
             if m2:
@@ -68,7 +68,7 @@ for line in out.splitlines():
             problems.append(f"{elf}: skrivbar sektion {m.group(1)} finns")
 
 if problems:
-    print("MODULEN ÄR INTE POSITIONSOBEROENDE:", file=sys.stderr)
+    print("MODULE IS NOT POSITION INDEPENDENT:", file=sys.stderr)
     seen = set()
     for p in problems:
         if p in seen: continue

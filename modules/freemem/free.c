@@ -1,8 +1,8 @@
 #include "../../common/myrtos_abi.h"
 
-// mfree -- största sammanhängande fria block, och hur många processer som
-// lever. Det största blocket är det tal som betyder något i ett realtidssystem:
-// fragmentering syns där, inte i summan.
+// free -- the largest contiguous free block, and how many processes are alive.
+// The largest block is the number that matters in a real-time system:
+// fragmentation shows there, not in the total.
 void module_main(void) {
     int32_t t = myrtos_console();
     if (t < 0) { myrtos_exit(); return; }
@@ -20,5 +20,5 @@ void module_main(void) {
     myrtos_line_str(&line, "\n");
     myrtos_line_flush(t, &line);
 
-    // Vägen stängs inte: den ärvdes och tillhör den som startade oss.
+    // The path is not closed: it was inherited and belongs to whoever started us.
 }

@@ -1,7 +1,7 @@
 #include "../../common/myrtos_abi.h"
 
-// myrtos-skalet. OS-9:s shell gjorde i grunden detta: läs ett namn, slå upp
-// modulen, starta den. All komplexitet ligger i kärnan; skalet är en loop.
+// The myrtos shell. OS-9's shell did essentially this: read a name, look the
+// module up, start it. All the complexity is in the kernel; the shell is a loop.
 
 static void prompt(int32_t c) {
     myrtos_write_str(c, "\r\nmyrtos> ");
@@ -16,8 +16,8 @@ static void help(int32_t c) {
         "  echo   print its arguments\r\n");
 }
 
-// Dela raden vid första blanksteget: allt före är modulnamnet, allt efter är
-// kommandoraden som processen får med sig.
+// Split the line at the first space: everything before is the module name,
+// everything after is the command line the process is given.
 static int32_t exec_line(char *line) {
     char *args = line;
     while (*args && *args != ' ') args++;
@@ -32,7 +32,7 @@ static bool line_is(const char *line, const char *word) {
 }
 
 void module_main(void) {
-    // Kärnan har redan gett oss 0, 1 och 2. Skalet öppnar ingenting.
+    // The kernel has already given us 0, 1 and 2. The shell opens nothing.
     const int32_t c = MYRTOS_STDOUT;
 
     myrtos_write_str(c, "\r\nmyrtos shell ready. Type 'help'.\r\n");
@@ -43,7 +43,7 @@ void module_main(void) {
 
     for (;;) {
         uint8_t ch;
-        if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;   // inget just nu
+        if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;   // nothing right now
 
         if (ch == '\r' || ch == '\n') {
             line[len] = 0;

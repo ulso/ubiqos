@@ -1,7 +1,7 @@
 #include "../../common/myrtos_abi.h"
 
-// Enhetsbeskrivare för USB-konsolen. Ingen konfigurationssvans: identiteten
-// ligger i USB-deskriptorerna, inte här.
+// Device descriptor for the USB console. No configuration tail: the identity
+// lives in the USB descriptors, not here.
 __attribute__((section(".rodata.descriptor"), used))
 const myrtos_descriptor_t usb_descriptor = {
     .device_name   = "usb",

@@ -1,5 +1,5 @@
-// Systemanropslagret. I OS-9 gick allt genom SWI2; här är det ecall, och
-// trap-vektorn i scheduler.S är vägen in.
+// The system call layer. In OS-9 everything went through SWI2; here it is
+// ecall, and the trap vector in scheduler.S is the way in.
 
 #include <stdint.h>
 #include "../common/modules.h"
@@ -16,7 +16,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *m, const char *args)
 uint32_t myrtos_process_get_args(char *buf, uint32_t len);
 extern tlsf_pool_t myrtos_mem_pool;
 
-// Systemanropsnumren kommer från common/myrtos_abi.h, som modulerna delar.
+// The system call numbers come from common/myrtos_abi.h, shared with modules.
 
 #define MCAUSE_INTERRUPT_BIT    0x80000000u
 #define MCAUSE_CODE_MASK        0x7fffffffu
@@ -29,8 +29,8 @@ volatile uint32_t myrtos_trap_count = 0;
 volatile uint32_t myrtos_last_mcause = 0;
 volatile uint32_t myrtos_last_mepc = 0;
 
-// Returvärdet är den stackpekare som ska återupptas. Samma in som ut betyder
-// att vi fortsätter i samma process; en annan är en kontextväxling.
+// The return value is the stack pointer to resume. Same in as out means we
+// continue in the same process; a different one is a context switch.
 uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     uint32_t sp = (uint32_t)(uintptr_t)frame;
 
@@ -41,18 +41,18 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     if (frame->mcause & MCAUSE_INTERRUPT_BIT) {
         if ((frame->mcause & MCAUSE_CODE_MASK) == MCAUSE_MACHINE_TIMER) {
             myrtos_ticks++;
-            // Avbrottet ligger kvar tills mtimecmp flyttas framåt. Utan det
-            // här återkommer det omedelbart och maskinen gör inget annat.
+// The interrupt stays pending until mtimecmp moves forward. Without
+// this it recurs immediately and the machine does nothing else.
             myrtos_timer_rearm();
-            // Tidsdelningen: varje tick får nästa körbara process ta vid.
+// Time slicing: on every tick the next runnable process takes over.
             return myrtos_switch(sp);
         }
         return sp;
     }
 
     if ((frame->mcause & MCAUSE_CODE_MASK) == MCAUSE_ECALL_M) {
-        // mepc pekar på själva ecall-instruktionen. Utan det här steget
-        // återvänder mret till samma instruktion och maskinen loopar.
+// mepc points at the ecall instruction itself. Without this step
+// mret returns to the same instruction and the machine loops.
         frame->mepc += 4;
 
         switch (frame->a7) {
@@ -80,15 +80,15 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                                                  myrtos_current_pid());
             break;
         case SYS_EXEC: {
-            // OS-9:s F$Link och F$Fork i ett: slå upp modulen, räkna upp
-            // länken, och skapa en process av den. Koden delas -- bara
-            // dataområdet är nytt.
+// OS-9's F$Link and F$Fork in one: look the module up, bump
+// its link count, and make a process of it. The code is shared --
+// only the data area is new.
             const char *want = (const char*)(uintptr_t)frame->a0;
             const char *stored = myrtos_moddir_match(want);
             if (!stored) { frame->a0 = (uint32_t)-1; break; }
             const myrtos_module_header_t *m = myrtos_moddir_link(stored);
-            // Argumenten skickas vid skapandet: de kopieras in i processens
-            // eget minne innan ramen byggs, så a0 kan peka förbi dem.
+// The arguments are passed at creation: they are copied into the
+// process's own memory before the frame is built, so a0 can point past them.
             int32_t pid = m ? myrtos_process_create(m, (const char*)(uintptr_t)frame->a1) : -1;
             if (pid >= 0) myrtos_io_inherit(myrtos_current_pid(), pid);
             frame->a0 = (uint32_t)pid;
@@ -114,7 +114,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
             break;
         case SYS_EXIT:
-            // Processen ska inte återupptas, så vi växlar bort direkt.
+// The process is not to be resumed, so we switch away at once.
             myrtos_process_exit();
             return myrtos_switch(sp);
         default:

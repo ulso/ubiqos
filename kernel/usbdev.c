@@ -4,15 +4,15 @@
 void myrtos_print(const char *s);
 
 void myrtos_usb_init(void) {
-    // TinyUSB:s RP2040-port registrerar sig själv för USBCTRL_IRQ genom SDK:ns
-    // irq_add_shared_handler. Det fungerar först sedan vi slutade ta över
-    // mtvec: SDK:ns externa dispatch är den som slår upp i den tabellen.
+    // TinyUSB's RP2040 port registers itself for USBCTRL_IRQ through the SDK's
+    // irq_add_shared_handler. That only works now that we stopped taking over
+    // mtvec: the SDK's external dispatch is what looks up in that table.
     tud_init(0);
     myrtos_print("USB device started, CDC console on the USB port\n");
 }
 
-// TinyUSB gör sitt arbete här, inte i avbrottet. Kärnans tomgångsprocess
-// anropar den, vilket räcker: allt tidskritiskt sker i avbrottshanteraren.
+// TinyUSB does its work here, not in the interrupt. The kernel's idle loop
+// calls it, which suffices: everything time critical happens in the handler.
 void myrtos_usb_task(void) {
     tud_task();
 }
@@ -22,16 +22,16 @@ bool myrtos_usb_ready(void) {
 }
 
 int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
-    // Ingen grind på tud_cdc_connected(): den speglar DTR, och en värd som
-    // öppnar porten utan att sätta DTR fick då sina data tysta kastade.
-    // TinyUSB buffrar och kastar själv när ingen lyssnar.
+    // No gate on tud_cdc_connected(): it mirrors DTR, and a host that opened
+    // the port without asserting DTR then had its data silently dropped.
+    // TinyUSB buffers, and discards on its own when nobody is listening.
     if (!tud_mounted()) return -1;
 
     uint32_t written = 0;
     while (written < len) {
-        // Samma översättning som UART-drivrutinen gör: en ensam radmatning
-        // föregås av vagnretur. Utan den trappar utskriften åt höger, och
-        // verktygen skulle behöva skriva \r\n överallt.
+        // The same translation the UART driver does: a lone line feed is
+        // preceded by a carriage return. Without it the output staircases to
+        // the right, and every utility would have to write \r\n itself.
         if (buf[written] == '\n') {
             char cr = '\r';
             if (!tud_cdc_write(&cr, 1)) { tud_cdc_write_flush(); tud_task(); continue; }
@@ -39,7 +39,7 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
         uint32_t n = tud_cdc_write(buf + written, 1);
         written += n;
         if (!n) {
-            // FIFO:n är full: låt stacken tömma den innan vi fortsätter.
+            // The FIFO is full: let the stack drain it before we go on.
             tud_cdc_write_flush();
             tud_task();
             if (!tud_mounted()) break;

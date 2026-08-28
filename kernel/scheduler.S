@@ -1,19 +1,20 @@
-// Trap-vektor för myrtos på RISC-V (Hazard3, machine mode).
+// Trap vector for myrtos on RISC-V (Hazard3, machine mode).
 //
-// Vi äger INTE mtvec. Pico SDK:ns crt0 lägger dit en vektortabell vars poster
-// är svaga symboler, avsedda att ersättas -- och vi ersätter två av dem:
-// undantagsvektorn och maskintimern. Externa avbrott lämnas åt SDK:n, som
-// redan avkodar MEINEXT och dispatchar genom sin mjuka vektortabell. Det är
-// den tabellen TinyUSB registrerar sig i med irq_add_shared_handler.
+// We do NOT own mtvec. The Pico SDK's crt0 installs a vector table whose
+// entries are weak symbols, meant to be replaced -- and we replace two of
+// them: the exception vector and the machine timer. External interrupts are
+// left to the SDK, which already decodes MEINEXT and dispatches through its
+// soft vector table. That table is where TinyUSB registers itself, with
+// irq_add_shared_handler.
 //
-// Att i stället ta över mtvec fungerade för vår egen timer men gjorde SDK:ns
-// avbrottsregistrering omöjlig, och TinyUSB assertade i dcd_init.
+// Taking over mtvec instead worked for our own timer but made the SDK's
+// interrupt registration impossible, and TinyUSB asserted in dcd_init.
 //
-// Hela registerfilen sparas på den avbrutna processens egen stack. Ramen ÄR
-// det sparade sammanhanget: hanteraren får dess adress och svarar med den
-// stackpekare som ska återupptas. Svarar den med en annan har vi bytt process,
-// och återställningen nedan plockar upp den processens registervärden i
-// stället. Det är hela kontextväxlingen.
+// The whole register file is saved on the interrupted process's own stack.
+// The frame IS the saved context: the handler is given its address
+// and answers with the stack pointer to resume. If it answers with a different
+// one we have switched process, and the restore below picks up that process's
+// register values instead. That is the entire context switch.
 
 .section .text
 .global myrtos_trap_vector
@@ -23,7 +24,7 @@
 
 #define FRAME_SIZE 144
 
-// Samma kropp för båda: mcause avgör vad som hänt, och det avkodas ändå i
+// Same body for both: mcause says what happened, and it is decoded in
 // hanteraren.
 isr_riscv_machine_exception:
 isr_riscv_machine_timer:
@@ -70,8 +71,8 @@ myrtos_trap_vector:
 
     mv      a0, sp
     call    myrtos_trap_handler
-    // Returvärdet är den stack som ska återupptas. Samma pekare betyder att vi
-    // fortsätter i samma process; en annan betyder att nästa process tar vid.
+// The return value is the stack to resume. The same pointer means we continue
+// in the same process; a different one means the next process takes over.
     mv      sp, a0
 
     lw      t0, 120(sp)

@@ -1,5 +1,4 @@
 #pragma once
-// Modulhuvudet bor numera i det gemensamma ABI:t, tillsammans med
-// systemanropen. Den här filen finns kvar för att inte tvinga fram en ändring
-// i varje kärnfil.
+// The module header now lives in the shared ABI, together with the system
+// calls. This file remains so that every kernel source need not be changed.
 #include "myrtos_abi.h"

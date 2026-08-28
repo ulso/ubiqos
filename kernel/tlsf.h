@@ -4,15 +4,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Vi använder en klassisk 32-bitars TLSF-struktur anpassad för inbäddade system.
-// SL_INDEX_COUNT_LOG2 = 5 betyder att varje förstagradsblock (Power of 2) 
-// delas upp i 32 stycken mindre, linjära underblock för minimal fragmentering.
+// A classic 32-bit TLSF structure adapted for embedded systems.
+// SL_INDEX_COUNT_LOG2 = 5 means each first-level block (a power of two) is
+// split into 32 smaller, linear sub-blocks to minimise fragmentation.
 #define FL_INDEX_MAX    32
 #define SL_INDEX_COUNT  32
 
 typedef void* tlsf_pool_t;
 
-// Funktionsdeklarationer för Myrtos minnespool
+// Function declarations for the myrtos memory pool
 tlsf_pool_t myrtos_tlsf_create(void* mem, size_t bytes);
 void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size);
 void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr);

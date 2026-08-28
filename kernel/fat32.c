@@ -4,8 +4,8 @@
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
-static uint32_t fat_start_lba;      // första FAT-tabellen
-static uint32_t data_start_lba;     // första dataklustret (kluster 2)
+static uint32_t fat_start_lba;      // the first FAT
+static uint32_t data_start_lba;     // the first data cluster (cluster 2)
 static uint32_t sectors_per_cluster;
 static uint32_t root_cluster;
 static bool     mounted;
@@ -29,11 +29,11 @@ bool myrtos_fat_mount(void) {
         return false;
     }
 
-    // Sektor noll är antingen en partitionstabell eller volymens egen
-    // startsektor. Hopp-instruktionen i början skiljer dem åt.
+    // Sector zero is either a partition table or the volume's own boot
+    // sector. The jump instruction at the start tells them apart.
     uint32_t vbr_lba = 0;
     if (!(sector[0] == 0xeb || sector[0] == 0xe9)) {
-        // Partitionstabell: första posten börjar på 446, LBA på +8.
+        // Partition table: the first entry starts at 446, the LBA at +8.
         vbr_lba = rd32(&sector[446 + 8]);
         if (!vbr_lba) { myrtos_print("FAT: no partition found\n"); return false; }
         if (!myrtos_sd_read_block(vbr_lba, sector)) return false;
@@ -65,15 +65,15 @@ static uint32_t cluster_to_lba(uint32_t cluster) {
     return data_start_lba + (cluster - 2) * sectors_per_cluster;
 }
 
-// Nästa kluster i kedjan, eller >= 0x0ffffff8 när filen är slut.
+// The next cluster in the chain, or >= 0x0ffffff8 when the file ends.
 static uint32_t fat_next_cluster(uint32_t cluster) {
     uint32_t offset = cluster * 4;
     if (!myrtos_sd_read_block(fat_start_lba + offset / 512, sector)) return 0x0fffffff;
     return rd32(&sector[offset % 512]) & 0x0fffffff;
 }
 
-// Jämför ett katalognamn, som ligger som elva tecken utan punkt och
-// högerfyllt med blanksteg: "SHELL   MOD".
+// Compare a directory name, which is stored as eleven characters with no dot,
+// right-padded with spaces: "SH      MOD".
 static bool name_matches(const uint8_t *entry, const char *name_83) {
     for (int i = 0; i < 11; i++) {
         if (entry[i] != (uint8_t)name_83[i]) return false;
@@ -91,9 +91,9 @@ int32_t myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len
         for (uint32_t s = 0; s < sectors_per_cluster && !file_cluster; s++) {
             if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return -1;
             for (int e = 0; e < 512; e += 32) {
-                if (sector[e] == 0x00) return -1;      // slut på katalogen
+                if (sector[e] == 0x00) return -1;      // end of the directory
                 if (sector[e] == 0xe5) continue;       // raderad post
-                if (sector[e + 11] == 0x0f) continue;  // långnamnsfragment
+                if (sector[e + 11] == 0x0f) continue;  // long-name fragment
                 if (name_matches(&sector[e], name_83)) {
                     file_cluster = ((uint32_t)rd16(&sector[e + 20]) << 16) | rd16(&sector[e + 26]);
                     file_size = rd32(&sector[e + 28]);
@@ -130,14 +130,14 @@ bool myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
             if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
             for (int e = 0; e < 512; e += 32) {
-                if (sector[e] == 0x00) return false;      // slut på katalogen
+                if (sector[e] == 0x00) return false;      // end of the directory
                 if (sector[e] == 0xe5) continue;          // raderad
-                if (sector[e + 11] == 0x0f) continue;     // långnamnsfragment
+                if (sector[e + 11] == 0x0f) continue;     // long-name fragment
                 if (sector[e + 11] & 0x18) continue;      // katalog eller volymnamn
-                // macOS lägger AppleDouble-filer bredvid varje fil (._NAMN),
-                // vars korta namn också slutar på MOD. De är märkta dolda, och
-                // ska inte ens läsas. CRC-kontrollen fångar dem annars, men då
-                // har vi redan läst 4 kB från kortet i onödan.
+                // macOS puts AppleDouble files next to every file (._NAME),
+                // whose short names also end in MOD. They are marked hidden and
+                // should not even be read. The CRC check catches them otherwise,
+                // but by then we have read 4 kB off the card for nothing.
                 if (sector[e + 11] & 0x02) continue;      // dold
                 if (sector[e + 8] != (uint8_t)ext_3[0] ||
                     sector[e + 9] != (uint8_t)ext_3[1] ||

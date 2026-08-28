@@ -1,9 +1,9 @@
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
 
-// TinyUSB-konfiguration för myrtos. Normalt sätts CFG_TUSB_MCU av TinyUSB:s
-// egen BSP, men vi använder inte den -- kärnan äger avbrottsvägen själv.
-// RP2350 använder samma port som RP2040.
+// TinyUSB configuration for myrtos. CFG_TUSB_MCU is normally set by TinyUSB's
+// own BSP, but we do not use it -- the kernel sets up USB itself.
+// The RP2350 uses the same port as the RP2040.
 #define CFG_TUSB_MCU            OPT_MCU_RP2040
 #define CFG_TUSB_OS             OPT_OS_NONE
 #define CFG_TUSB_MEM_ALIGN      __attribute__((aligned(4)))

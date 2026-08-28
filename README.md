@@ -1,29 +1,29 @@
 # myrtos
 
-Ett litet realtidsoperativsystem för RISC-V, i OS-9:s anda: **positionsoberoende
-kod** och ett **modulsystem** där kod delas mellan processer i stället för att
-laddas om en gång per process.
+A small real-time operating system for RISC-V, in the spirit of OS-9:
+**position-independent code** and a **module system** where code is shared
+between processes rather than loaded once per process.
 
-Målet är Hazard3-kärnan i RP2350 på ett **Adafruit Fruit Jam**. RP2350 har två
-ARM Cortex-M33 *och* två RISC-V-kärnor; boot-ROM:et läser
-`PICOBIN_IMAGE_TYPE_EXE_CPU` ur flashavbilden och växlar till RISC-V först om
-avbilden säger det. Därför byggs allt med `PICO_PLATFORM=rp2350-riscv`, och
-därför måste systemet ligga i flash — en ren RAM-avbild ger boot-ROM:et inget
-att växla på.
+The target is the Hazard3 core in the RP2350 on an **Adafruit Fruit Jam**. The
+RP2350 has two ARM Cortex-M33 cores *and* two RISC-V cores; the boot ROM reads
+`PICOBIN_IMAGE_TYPE_EXE_CPU` from the flash image and switches to RISC-V only if
+the image says so. That is why everything is built with
+`PICO_PLATFORM=rp2350-riscv`, and why the system has to live in flash — a
+RAM-only image gives the boot ROM nothing to switch on.
 
-## Vad som finns
+## What exists
 
-- Förebyggande växling på maskintimern, 1 ms kvantum, upp till 8 processer
-- TLSF-heap på 320 kB, med splittring och sammanslagning av block
-- Moduler laddade från FAT32 på SD-kortet, eller funna residenta i flash
-- Moduldirektorium med länkräkning — en modul som redan är inne delas
-- I/O-hanterare med enhetsbeskrivare; konsol på både UART och USB CDC
-- Vägnummer per process som ärvs vid `exec`: 0 stdin, 1 stdout, 2 stderr
-- Ett skal, `sh`, som startar moduler med argument och `argc`/`argv`
+- Pre-emptive scheduling on the machine timer, 1 ms quantum, up to 8 processes
+- A 320 kB TLSF heap that splits and coalesces blocks
+- Modules loaded from FAT32 on the SD card, or found resident in flash
+- A module directory with link counts — a module already in memory is shared
+- An I/O manager with device descriptors; console on both UART and USB CDC
+- Per-process path numbers inherited across `exec`: 0 stdin, 1 stdout, 2 stderr
+- A shell, `sh`, that runs modules with arguments and `argc`/`argv`
 
-## Bygga
+## Building
 
-Kräver Pico SDK 2.2.0 och RISC-V-verktygskedjan som följer med den.
+Requires the Pico SDK 2.2.0 and the RISC-V toolchain that ships with it.
 
 ```bash
 export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.2.0
@@ -31,53 +31,56 @@ export PATH=$HOME/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin:$PATH
 cmake -S . -B build -G Ninja && ninja -C build
 ```
 
-Det ger `build/os_kernel.uf2` och en `.mod`-fil per modul.
+This produces `build/os_kernel.uf2` and one `.mod` file per module.
 
-## Flasha
+## Flashing
 
-Håll **BOOTSEL** nedtryckt och tryck **RESET**, sedan:
+Hold **BOOTSEL**, press **RESET**, then:
 
 ```bash
 picotool load -x build/os_kernel.uf2
 ```
 
-**J-Link kommer inte in.** En Segger J-Link Ultra+ kan halta kärnan och läsa och
-skriva RAM, men vägrar programmera flashet (`Failed to read back RAMCode`).
-Orsaken är inte utredd. BOOTSEL och `picotool` fungerar och är vägen som används.
+**The J-Link cannot get in.** A Segger J-Link Ultra+ can halt the core and read
+and write RAM, but refuses to program flash (`Failed to read back RAMCode`). The
+cause has not been established. BOOTSEL and `picotool` work, and that is the
+route in use.
 
-## Modulsystemet
+## The module system
 
-En modul är en fil med ett huvud, ingen ELF och ingen laddare som relokerar. Den
-körs där den ligger — från flash utan att kopieras, eller från en kopia i heapen
-när den kom från kortet. Huvudet ligger i [`common/myrtos_abi.h`](common/myrtos_abi.h)
-och säger bland annat hur mycket RAM processen behöver: dataområdet växer nedifrån
-och stacken från toppen, i samma block.
+A module is a file with a header — no ELF, and no loader that relocates it. It
+runs where it lies: straight out of flash without being copied, or from a copy
+on the heap when it came from the card. The header is defined in
+[`common/myrtos_abi.h`](common/myrtos_abi.h) and states, among other things, how
+much RAM the process needs: the data area grows from the bottom and the stack
+from the top of the same block.
 
-Att flera processer kan dela samma kod är hela poängen, och det bygger på att
-koden inte innehåller några absoluta adresser.
+Several processes sharing one copy of the code is the whole point, and it rests
+on the code containing no absolute addresses.
 
-### Positionsoberoende utan GOT
+### Position independence without a GOT
 
-Modulerna byggs med `-fno-pic -mcmodel=medany`, **inte** `-fPIC`. Det är
-kontraintuitivt: `-fPIC` skapar en GOT, och GOT-posterna fylls med adresser som
-gäller där modulen länkades. En modul som laddas någon annanstans läser då fel.
-`medany` ger i stället `auipc`-baserad adressering, PC-relativ på riktigt.
+Modules are built with `-fno-pic -mcmodel=medany`, **not** `-fPIC`. This is
+counter-intuitive: `-fPIC` creates a GOT, and the GOT entries are filled with
+addresses valid where the module was linked. A module loaded anywhere else then
+reads the wrong ones. `medany` instead gives `auipc`-based addressing, which is
+genuinely PC-relative.
 
-Kravet kontrolleras vid bygget. [`check_module.py`](check_module.py) läser
-relokeringarna ur objektfilerna med `readelf -W` och sågar modulen om någon
-allokerad sektion innehåller en absolut referens som `R_RISCV_32`. Utan den
-kontrollen visar sig felet först som en krasch efter laddning, på en adress som
-inte säger något.
+The requirement is checked at build time. [`check_module.py`](check_module.py)
+reads the relocations out of the object files with `readelf -W` and rejects the
+module if any allocated section contains an absolute reference such as
+`R_RISCV_32`. Without that check the fault first appears as a crash after
+loading, at an address that tells you nothing.
 
-### Bygga en egen modul
+### Writing a module
 
-Lägg källkoden under `modules/` och registrera den i `CMakeLists.txt`:
+Put the source under `modules/` and register it in `CMakeLists.txt`:
 
 ```cmake
-myrtos_add_module(mitt modules/mitt/mitt.c)
+myrtos_add_module(mine modules/mine/mine.c)
 ```
 
-Modulen börjar i `module_main`, som får kommandoraden:
+A module starts at `module_main`, which receives the command line:
 
 ```c
 #include "../../common/myrtos_abi.h"
@@ -91,20 +94,22 @@ void module_main(int argc, char **argv) {
 }
 ```
 
-`argv[0]` är modulens eget namn ur huvudet. Kärnan kopierar kommandoraden till
-botten av processens minnesområde, delar den där med citattecken hanterade, och
-bygger argv-vektorn efter strängen — ingen extra allokering, inget att frigöra.
+`argv[0]` is the module's own name from its header. The kernel copies the
+command line to the bottom of the process's own memory area, splits it there
+with quoting handled, and builds the argv vector after the string — no extra
+allocation, and nothing to free.
 
-## Få in moduler i systemet
+## Getting modules into the system
 
-**Från SD-kort.** Kopiera `.mod`-filerna till kortets rot. Filsystemsstödet är
-FAT32 och läsbart bara; kärnan söker filer med ändelsen `MOD` och registrerar
-dem vid uppstart. Skriv `sh.mod` som `SH.MOD` — 8.3-namn.
+**From the SD card.** Copy the `.mod` files to the root of the card. The
+filesystem support is FAT32 and read-only; the kernel looks for files with the
+extension `MOD` and registers them at startup. Note the 8.3 names — `sh.mod`
+goes on the card as `SH.MOD`.
 
-**Residenta i flash.** Slå ihop modulerna till en avbild och lägg den i
-modulregionen, `0x10100000`–`0x11000000`. Där finns ingen katalog: kärnan söker
-efter synkordet, precis som OS-9 gjorde med ROM — modulen *är* sin egen
-katalogpost.
+**Resident in flash.** Concatenate the modules into an image and place it in the
+module region, `0x10100000`–`0x11000000`. There is no directory there: the
+kernel searches for the sync word, exactly as OS-9 did with ROM — the module
+*is* its own directory entry.
 
 ```bash
 python3 make_flash_image.py build/modules.bin \
@@ -113,51 +118,51 @@ python3 make_flash_image.py build/modules.bin \
 picotool load -t bin -o 0x10100000 build/modules.bin
 ```
 
-Flashen söks igenom före kortet. En modul med samma namn på kortet hamnar
-bredvid, och den som registrerades först vinner uppslagningen.
+Flash is searched before the card. A module of the same name on the card is
+registered alongside it, and whichever was registered first wins the lookup.
 
-## Enheter
+## Devices
 
-En enhet läggs till genom att släppa en beskrivare i systemet, inte genom att
-bygga om kärnan. Beskrivaren är en datamodul — ingen kod, ingen startpunkt — som
-säger vad enheten heter, vilken drivrutin som hanterar den, och bär en svans som
-bara den drivrutinen förstår. Vill man byta UART eller baudrate ändrar man
-beskrivaren.
+A device is added by dropping a descriptor into the system, not by rebuilding
+the kernel. The descriptor is a data module — no code, no entry point — stating
+what the device is called, which driver handles it, and carrying a tail that
+only that driver understands. To change UART or baud rate you change the
+descriptor.
 
-| Beskrivare | Enhet  | Drivrutin     |
+| Descriptor | Device | Driver        |
 |------------|--------|---------------|
 | `termdesc` | `term` | `UART    MOD` |
 | `usbdesc`  | `usb`  | `USBCDC  MOD` |
 
-Saknas beskrivare helt registrerar kärnan en inbyggd UART-konsol, så systemet
-aldrig blir stumt.
+If no descriptors are found at all, the kernel registers a built-in UART
+console, so the system never goes mute.
 
-## Uppstart
+## Startup
 
-1. Schemaläggare, I/O-hanterare och moduldirektorium initieras
-2. Flashen söks igenom efter residenta moduler
-3. SD-kortet monteras och `.MOD`-filer registreras
-4. Datamoduler tolkas som enhetsbeskrivare och enheterna skapas
-5. Finns `sh` startas bara det, med 0/1/2 öppnade mot `usb`, annars `term`
-6. Saknas skal startas allt som finns, så systemet ändå visar livstecken
-7. Timern startas och förebyggande växling börjar
+1. Scheduler, I/O manager and module directory are initialised
+2. Flash is scanned for resident modules
+3. The SD card is mounted and `.MOD` files are registered
+4. Data modules are read as device descriptors and the devices are created
+5. If `sh` exists only that is started, with 0/1/2 opened on `usb`, else `term`
+6. With no shell, everything found is started, so the system still shows signs of life
+7. The timer starts and pre-emption begins
 
-## Konsolen
+## The console
 
-Kortet dyker upp som en USB-serieport. Anslut med
+The board appears as a USB serial port:
 
 ```bash
 screen /dev/cu.usbmodem0000011 115200
 ```
 
-Enhetsnamnet varierar mellan kort; `ls /dev/cu.usbmodem*` visar vilket.
+The device name differs between boards; `ls /dev/cu.usbmodem*` shows which.
 
-UART-konsolen finns parallellt på **GP44** (märkt A4 på listen) i 115200 baud,
-men bara som utmatning — beskrivaren sätter `rx_pin` till `0xffffffff`, så den
-tar inte emot tecken. Kärnans uppstartsutskrifter går att följa där, medan
-skalet bara går att styra över USB.
+A UART console runs in parallel on **GP44** (marked A4 on the header) at 115200
+baud, but output only — the descriptor sets `rx_pin` to `0xffffffff`, so it
+accepts no input. Kernel startup messages can be followed there, but the shell
+can only be driven over USB.
 
-## Skalet
+## The shell
 
 ```
 myrtos> help
@@ -168,41 +173,41 @@ Type a module name to run it. Built in:
   echo   print its arguments
 ```
 
-`help` är det enda skalet gör själv. Allt annat är moduler som slås upp i
-directoriet och startas — `lsmod`, `free`, `echo`, `counter`, `cxxdemo`,
-`usbecho`. Skalet öppnar ingenting; det ärvde 0, 1 och 2 av kärnan, och allt det
-startar ärver dem i sin tur, så ett verktyg varken öppnar eller känner till
-någon enhet.
+`help` is the only thing the shell does itself. Everything else is a module
+looked up in the directory and started — `lsmod`, `free`, `echo`, `counter`,
+`cxxdemo`, `usbecho`. The shell opens nothing; it inherited 0, 1 and 2 from the
+kernel, and everything it starts inherits them in turn, so a utility neither
+opens nor knows about any device.
 
-## Systemanrop
+## System calls
 
-`a7` bär numret, `a0`–`a2` argumenten, `a0` kommer tillbaka med resultatet.
-Inlinefunktioner för alla finns i ABI-huvudet.
+`a7` carries the number, `a0`–`a2` the arguments, `a0` comes back with the
+result. Inline wrappers for all of them are in the ABI header.
 
-| Nr | Namn | Argument |
-|----|------|----------|
+| No | Name | Arguments |
+|----|------|-----------|
 | 0 | `SYS_NULL` | — |
-| 1 | `SYS_IO_PUTC` | tecken |
+| 1 | `SYS_IO_PUTC` | character |
 | 2 | `SYS_EXIT` | — |
-| 3 | `SYS_OPEN` | enhetsnamn → vägnummer |
-| 4 | `SYS_WRITE` | väg, buffert, längd |
-| 5 | `SYS_CLOSE` | väg |
-| 6 | `SYS_MODDIR` | index, buffert → länkar |
-| 7 | `SYS_MEMINFO` | vad → värde |
-| 8 | `SYS_READ` | väg, buffert, längd → lästa |
-| 9 | `SYS_EXEC` | modulnamn, argument → pid |
-| 10 | `SYS_ARGS` | buffert, längd → kopierade tecken |
+| 3 | `SYS_OPEN` | device name → path number |
+| 4 | `SYS_WRITE` | path, buffer, length |
+| 5 | `SYS_CLOSE` | path |
+| 6 | `SYS_MODDIR` | index, buffer → link count |
+| 7 | `SYS_MEMINFO` | what → value |
+| 8 | `SYS_READ` | path, buffer, length → bytes read |
+| 9 | `SYS_EXEC` | module name, arguments → pid |
+| 10 | `SYS_ARGS` | buffer, length → characters copied |
 
-Trap-vektorn hänger på SDK:ns svaga vektorsymboler i stället för att äga `mtvec`
-själv. Det var inte det första försöket: att ta `mtvec` fungerade tills TinyUSB
-skulle initieras och hårdassade i `irq_add_shared_handler`. Att haka i i stället
-för att slåss tog bort mer kod än det lade till.
+The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
+itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
+initialised and hard-asserted in `irq_add_shared_handler`. Hooking in rather
+than fighting removed more code than it added.
 
-## Vad som inte finns
+## What is missing
 
-- **Ingen skrivning till filsystemet.** FAT32-stödet är läsbart bara, så
-  `rm`, `cp` och `mkdir` går inte att skriva än.
-- **Ingen mekanism att sova.** En process som väntar på indata pollar, och
-  tomgång bränner kvanta. Blockerande läsning är nästa riktiga steg.
-- **Inget skydd.** Ingen MPU, inget användarläge — en modul kan skriva var som
-  helst. Positionsoberoendet är en förutsättning för delning, inte en spärr.
+- **No writing to the filesystem.** FAT32 support is read-only, so `rm`, `cp`
+  and `mkdir` cannot be written yet.
+- **No way to sleep.** A process waiting for input polls, and the idle case
+  burns quanta. A blocking read is the next real step.
+- **No protection.** No MPU, no user mode — a module can write anywhere.
+  Position independence is what makes sharing possible, not a guard rail.

@@ -1,8 +1,8 @@
 # ====================================================================================
-# Sätt rätt utvecklingskort för din hårdvara
+# Select the development board for your hardware
 set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Board type")
 
-# Tvinga hela Pico SDK att bygga för RP2350 i RISC-V läge!
+# Force the whole Pico SDK to build for the RP2350 in RISC-V mode
 set(PICO_PLATFORM rp2350-riscv CACHE STRING "Pico platform")
 
 cmake_minimum_required(VERSION 3.16)
@@ -15,7 +15,7 @@ project(myrtos C CXX ASM)
 pico_sdk_init()
 
 # ============================================================================
-# 1. BYGG OPERATIVSYSTEMETS KÄRNA (myrtos)
+# 1. BUILD THE OPERATING SYSTEM KERNEL (myrtos)
 # ============================================================================
 add_executable(os_kernel 
     kernel/main.c 
@@ -32,34 +32,35 @@ add_executable(os_kernel
     kernel/scheduler.S
 )
 
-# Körningen sker i RAM, men imagen ligger i flash och kopieras dit vid boot.
-# Det är avsiktligt: boot-ROM:et läser PICOBIN_IMAGE_TYPE_EXE_CPU ur imagen och
-# växlar till RISC-V först då. Med no_flash finns ingen image att växla på, så
-# chippet startar i ARM och felsökarens reset-och-halt hittar ingen RISC-V-kärna.
+# Execution happens in RAM, but the image lives in flash and is copied there at
+# boot. That is deliberate: the boot ROM reads PICOBIN_IMAGE_TYPE_EXE_CPU from
+# the image and only then switches to RISC-V. With no_flash there is no image to
+# switch on, so the chip starts in ARM and the debugger's reset-and-halt finds
+# no RISC-V core.
 pico_set_binary_type(os_kernel copy_to_ram)
 
-# Länka med standardbibliotek för Pico och aktivera PSRAM-stöd
-# pico_standard_link ger bara länkskript och länkflaggor. Startkoden crt0,
-# som definierar _entry_point och anropar main, kommer med pico_runtime.
-# hardware_uart och hardware_gpio för diagnostikporten.
+# Link against the Pico standard libraries and enable PSRAM support.
+# pico_standard_link provides only linker scripts and link flags. The startup
+# code crt0, which defines _entry_point and calls main, comes with pico_runtime.
+# hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
     tinyusb_device)
 
-# TinyUSB letar tusb_config.h i inkluderingsvägen.
+# TinyUSB looks for tusb_config.h on the include path.
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel)
 
-# Aktivera extra varningar och optimering för RTOS
+# Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)
 
-# Skapa uf2-fil m.m. för laddning till Fruit Jam
+# Produce the uf2 file and friends for loading onto the Fruit Jam
 pico_add_extra_outputs(os_kernel)
 
 # ============================================================================
 # MODULBYGGE
 # ============================================================================
-# .mod-filen är en riktig OUTPUT och inte ett POST_BUILD-steg. Skillnaden är
-# att den byggs om även när make_module.py ändras, inte bara när modulens
-# källkod gör det.
+# The .mod file is a real OUTPUT rather than a POST_BUILD step. The difference
+# is that it is rebuilt when make_module.py changes too, not only when the
+# module's source does.
 function(myrtos_add_module name source)
     add_executable(${name}_app ${source})
     target_compile_options(${name}_app PRIVATE
@@ -67,17 +68,17 @@ function(myrtos_add_module name source)
         $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics>)
     target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv)
 
-    # Positionsoberoendet kontrolleras innan modulen paketeras. En absolut
-    # adress i en allokerad sektion -- en statisk funktionspekare, en vtable,
-    # en pekare till en statisk variabel -- gör att modulen inte kan laddas på
-    # en okänd adress, och det syns inte i källkoden.
+# Position independence is checked before the module is packaged. An absolute
+# address in an allocated section -- a static function pointer, a vtable, a
+# pointer to a static variable -- means the module cannot be loaded at an
+# unknown address, and that does not show in the source.
     add_custom_command(TARGET ${name}_app POST_BUILD
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
                 ${CMAKE_READELF}
                 $<TARGET_OBJECTS:${name}_app>
                 $<TARGET_FILE:${name}_app>
         COMMAND_EXPAND_LISTS
-        COMMENT "Kontrollerar att ${name} är positionsoberoende")
+        COMMENT "Checking that ${name} is position independent")
 
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
@@ -85,7 +86,7 @@ function(myrtos_add_module name source)
                 $<TARGET_FILE:${name}_app>
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
         DEPENDS ${name}_app
-        COMMENT "Extraherar rå positionsoberoende maskinkod ur ${name}")
+        COMMENT "Extracting raw position-independent machine code from ${name}")
 
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
@@ -101,7 +102,7 @@ function(myrtos_add_module name source)
         COMMENT "Bygger modulen ${name}.mod")
 endfunction()
 
-# En datamodul har ingen startpunkt: den ÄR sina byte.
+# A data module has no entry point: it IS its bytes.
 function(myrtos_add_data_module name source)
     add_executable(${name}_app ${source})
     target_compile_options(${name}_app PRIVATE
@@ -114,7 +115,7 @@ function(myrtos_add_data_module name source)
                 $<TARGET_OBJECTS:${name}_app>
                 $<TARGET_FILE:${name}_app>
         COMMAND_EXPAND_LISTS
-        COMMENT "Kontrollerar att ${name} är positionsoberoende")
+        COMMENT "Checking that ${name} is position independent")
 
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin

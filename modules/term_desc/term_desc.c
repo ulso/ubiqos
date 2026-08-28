@@ -1,10 +1,10 @@
 #include "../../common/myrtos_abi.h"
 
-// Enhetsbeskrivare för terminalen. Ingen kod -- modulen är bara de här byten.
+// Device descriptor for the terminal. No code -- the module is just these bytes.
 //
-// I dag är motsvarande uppgifter hårdkodade i kernel/io.c och kernel/main.c:
-// enhetsnamnet "term", UART0, GP44, 115200. Som beskrivare på kortet blir de
-// utbytbara utan att kärnan byggs om.
+// The same facts are still hardcoded in kernel/io.c and kernel/main.c as a
+// fallback: the device name "term", UART0, GP44, 115200. As a descriptor on the
+// card they become replaceable without rebuilding the kernel.
 
 typedef struct {
     myrtos_descriptor_t desc;
@@ -23,8 +23,8 @@ const term_descriptor_t term_descriptor = {
     },
     .uart = {
         .uart_base = 0x40070000u,   // UART0
-        .tx_pin    = 44,            // GP44, märkt A4 på listen
-        .rx_pin    = 0xffffffffu,   // ingen mottagning än
+        .tx_pin    = 44,            // GP44, marked A4 on the header
+        .rx_pin    = 0xffffffffu,   // no receive yet
         .baud_rate = 115200,
     },
 };

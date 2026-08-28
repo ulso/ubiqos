@@ -1,8 +1,8 @@
 #include "tlsf.h"
 
-// Blockhuvud. size är nyttolastens storlek; bit 0 markerar fritt.
-// prev_phys_block pekar på grannen närmast lägre adress, vilket är det som
-// gör sammanslagning bakåt möjlig.
+// Block header. size is the payload size; bit 0 marks it free.
+// prev_phys_block points at the neighbour at the next lower address, which is
+// what makes coalescing backwards possible.
 typedef struct block_header_t {
     struct block_header_t* prev_phys_block;
     size_t size;
@@ -41,7 +41,7 @@ static void tlsf_mapping(size_t size, int* fl, int* sl) {
     if (*fl >= FL_INDEX_MAX) *fl = FL_INDEX_MAX - 1;
 }
 
-// Grannen närmast högre adress, eller NULL om blocket är sist i poolen.
+// The neighbour at the next higher address, or NULL if the block is last.
 static block_header_t* next_phys(tlsf_ctrl_t* ctrl, block_header_t* block) {
     uintptr_t next = (uintptr_t)block + sizeof(block_header_t) + BLOCK_SIZE(block);
     if (next >= ctrl->pool_end) return 0;
@@ -63,8 +63,8 @@ static void tlsf_insert(tlsf_ctrl_t* ctrl, block_header_t* block) {
     ctrl->sl_bitmap[fl] |= (1U << sl);
 }
 
-// Plocka ut ett bestämt block ur sin fria lista, oavsett var i den det sitter.
-// Sammanslagning kräver just det: grannen som ska ätas upp ligger sällan först.
+// Pull a specific block out of its free list, wherever in it it sits.
+// Coalescing needs exactly that: the neighbour to be eaten is rarely first.
 static void tlsf_remove(tlsf_ctrl_t* ctrl, block_header_t* block) {
     int fl, sl;
     tlsf_mapping(BLOCK_SIZE(block), &fl, &sl);
@@ -158,15 +158,15 @@ void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
     block_header_t* block =
         (block_header_t*)((uintptr_t)ptr - sizeof(block_header_t));
 
-    // Slå ihop framåt: grannen närmast högre adress plockas ur sin lista och
-    // dess utrymme, inklusive dess huvud, blir en del av det här blocket.
+// Coalesce forwards: the neighbour at the next higher address is pulled from
+// its list and its space, its header included, becomes part of this block.
     block_header_t* next = next_phys(ctrl, block);
     if (next && BLOCK_IS_FREE(next)) {
         tlsf_remove(ctrl, next);
         block->size = BLOCK_SIZE(block) + sizeof(block_header_t) + BLOCK_SIZE(next);
     }
 
-    // Slå ihop bakåt: då är det grannen som växer, och blocket försvinner.
+// Coalesce backwards: then it is the neighbour that grows, and the block goes.
     block_header_t* prev = block->prev_phys_block;
     if (prev && BLOCK_IS_FREE(prev)) {
         tlsf_remove(ctrl, prev);
@@ -180,9 +180,9 @@ void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
     tlsf_insert(ctrl, block);
 }
 
-// Största sammanhängande fria block. Finns för att kunna visa att
-// sammanslagningen verkligen sker: utan den krymper det här talet för varje
-// cykel av allokering och frigöring.
+// The largest contiguous free block. It exists to show that coalescing really
+// happens: without it this number shrinks with every cycle of allocation and
+// freeing.
 size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     size_t best = 0;

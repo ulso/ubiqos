@@ -3,15 +3,16 @@
 
 #include <stdint.h>
 
-// Modulregionen i flash. Kärnbilden slutar strax efter 24 kB; en megabyte in
-// ger den gott om luft att växa. Resten -- närmare 15 MB -- är moduler.
+// The module region in flash. The kernel image ends just past 24 kB; starting a
+// megabyte in leaves it ample room to grow. The rest -- close to 15 MB -- is
+// modules.
 #define MYRTOS_FLASH_MODULE_BASE 0x10100000u
 #define MYRTOS_FLASH_END         0x11000000u
 
-// Sök igenom flashregionen efter modulhuvuden och registrera det som hittas
-// som residenta moduler. De körs där de ligger och kopieras aldrig -- exakt
-// vad OS-9 gjorde med ROM-moduler, och skälet till att ett modulsystem inte
-// behöver något filsystem för att hitta kod.
+// Scan the flash region for module headers and register what is found as
+// resident modules. They run where they lie and are never copied -- exactly
+// what OS-9 did with ROM modules, and the reason a module system needs no
+// filesystem to find code.
 uint32_t myrtos_flash_scan(void);
 
 #endif

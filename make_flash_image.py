@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Slår ihop .mod-filer till en avbild som skrivs till modulregionen i flash.
+"""Concatenate .mod files into an image written to the module region in flash.
 
-Modulerna läggs efter varandra, fyrbytejusterade. Kärnan hittar dem genom att
-söka efter synkordet -- ingen katalog, inget filsystem. Det är samma sak som
-OS-9 gjorde med ROM: modulen ÄR sin egen katalogpost.
+The modules are laid out one after another, four-byte aligned. The kernel finds
+them by searching for the sync word -- no directory, no filesystem. That is what
+OS-9 did with ROM: the module IS its own directory entry.
 """
 import sys
 

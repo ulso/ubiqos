@@ -1,8 +1,8 @@
 #include "../../common/myrtos_abi.h"
 
-// Skriver till USB-konsolen i stället för den seriella. Samma anrop, samma
-// modul-format -- enda skillnaden är vilken enhet som öppnas, och den avgörs
-// av en beskrivare.
+// Writes to the USB console rather than the serial one. The same calls, the
+// same module format -- the only difference is which device is opened, and that
+// is decided by a descriptor.
 void module_main(void) {
     int32_t u = myrtos_open("usb");
     if (u < 0) { myrtos_exit(); return; }

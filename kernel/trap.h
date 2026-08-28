@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-// Måste stämma exakt med sparordningen i myrtos_trap_vector (scheduler.S).
-// FRAME_SIZE där är 144, alltså 33 ord plus utfyllnad till 16-byte-justering.
+// Must match the save order in myrtos_trap_vector (scheduler.S) exactly.
+// FRAME_SIZE there is 144, i.e. 33 words plus padding to 16-byte alignment.
 typedef struct {
     uint32_t ra, gp, tp;
     uint32_t t0, t1, t2;
@@ -16,7 +16,7 @@ typedef struct {
     uint32_t _pad[3];
 } myrtos_frame_t;
 
-_Static_assert(sizeof(myrtos_frame_t) == 144, "ramen måste matcha FRAME_SIZE");
+_Static_assert(sizeof(myrtos_frame_t) == 144, "the frame must match FRAME_SIZE");
 
 uint32_t myrtos_switch(uint32_t current_sp);
 void myrtos_process_exit(void);

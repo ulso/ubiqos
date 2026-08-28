@@ -5,37 +5,37 @@
 #include <stdbool.h>
 #include "../common/modules.h"
 
-// Modulkatalogen, i OS-9:s mening. En modul finns i minnet i EN kopia hur många
-// processer som än kör den; varje process har bara sitt eget dataområde.
-// Länkräknaren avgör när kopian får försvinna, precis som F$Link och F$UnLink.
+// The module directory, in the OS-9 sense. A module exists in memory as ONE
+// copy however many processes run it; each process has only its own data area.
+// The link count decides when the copy may go, exactly as F$Link and F$UnLink.
 //
-// Att det går bygger på att modulen inte har några skrivbara data: bygget
-// kontrollerar att .data och .bss är tomma, så koden kan delas utan att två
-// processer trampar på varandra.
+// This rests on the module having no writable data: the build checks that .data
+// and .bss are empty, so the code can be shared without two processes treading
+// on each other.
 
 #define MYRTOS_MAX_MODULES 8
 
 typedef struct {
     const myrtos_module_header_t *header;
-    uint32_t links;             // hur många processer som kör den
-    void    *owned;             // heapminne att lämna tillbaka, NULL om resident
+    uint32_t links;             // how many processes are running it
+    void    *owned;             // heap memory to give back, NULL if resident
     char     name[12];
 } myrtos_module_entry_t;
 
 void  myrtos_moddir_init(void);
 
-// Registrera en modul som redan ligger läsbart i minnet -- i flash, eller i en
-// buffert som inte ska frigöras. Ingen kopiering sker.
+// Register a module already readable in memory -- in flash, or in a buffer that
+// will not be freed. No copying takes place.
 bool  myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char *name);
 
-// Kopiera in en modul i heapen en gång och registrera den.
+// Copy a module onto the heap once and register it.
 bool  myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name);
 
-// Slå upp och räkna upp länken. Returnerar NULL om modulen inte finns.
+// Look up and bump the link count. Returns NULL if the module does not exist.
 const myrtos_module_header_t *myrtos_moddir_link(const char *name);
 
-// Slå upp på ett användarskrivet namn: skiftlägesokänsligt, utan utfyllnad
-// och utan ändelse. "mdir", "MDIR" och "Mdir" hittar alla samma modul.
+// Look up by a user-typed name: case-insensitive, without padding and without
+// extension. "lsmod", "LSMOD" and "Lsmod" all find the same module.
 const char *myrtos_moddir_match(const char *user_name);
 void  myrtos_moddir_unlink(const myrtos_module_header_t *header);
 

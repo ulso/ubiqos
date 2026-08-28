@@ -7,10 +7,10 @@ void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 void myrtos_print_hex(uint32_t v);
 
-// --- DRIVRUTIN: seriell terminal ------------------------------------------
-// Drivrutinen bor ännu i kärnan, men den är inte längre hårdkodad mot en viss
-// UART: beskrivaren säger vilken, på vilken pinne och i vilken takt. Nästa steg
-// är att lyfta ut den som en egen modul på kortet.
+// --- DRIVER: serial terminal ----------------------------------------------
+// The driver still lives in the kernel, but it is no longer hardcoded to one
+// UART: the descriptor says which, on which pin and at what rate. The next step
+// is to lift it out as a module of its own on the card.
 
 static uart_inst_t *term_uart;
 static uint32_t term_tx_pin;
@@ -26,7 +26,7 @@ static int32_t term_configure(const void *config, uint32_t size) {
     gpio_set_function(term_tx_pin, UART_FUNCSEL_NUM(term_uart, term_tx_pin));
 
     myrtos_print("  uart driver: base 0x");
-    myrtos_print_hex(c->uart_base);      // print_u32 är decimal; hex behövs här
+    myrtos_print_hex(c->uart_base);      // print_u32 is decimal; hex is wanted here
     myrtos_print(", tx GP");
     myrtos_print_u32(c->tx_pin);
     myrtos_print(", ");
@@ -39,8 +39,8 @@ static int32_t term_open(void) { return term_uart ? 0 : -1; }
 static int32_t term_close(void) { return 0; }
 
 static int32_t term_write(const uint8_t *buf, uint32_t len) {
-    // Anropas ur trap-hanteraren, alltså med avbrott avstängda. Hela
-    // skrivningen blir därför odelbar utan något lås.
+    // Called from the trap handler, hence with interrupts off. The whole
+    // write is therefore atomic without any lock.
     for (uint32_t i = 0; i < len; i++) {
         if (buf[i] == '\n') uart_putc_raw(term_uart, '\r');
         uart_putc_raw(term_uart, (char)buf[i]);
@@ -48,8 +48,8 @@ static int32_t term_write(const uint8_t *buf, uint32_t len) {
     return (int32_t)len;
 }
 
-// UART-mottagning: rx_pin sätts inte av beskrivaren än, så det finns inget att
-// läsa. Funktionen finns för att gränssnittet ska vara komplett.
+// UART receive: the descriptor does not set rx_pin yet, so there is nothing to
+// read. The function exists to keep the interface complete.
 static int32_t term_read(uint8_t *buf, uint32_t len) {
     (void)buf; (void)len;
     return 0;
@@ -61,9 +61,9 @@ static const myrtos_driver_t driver_uart = {
     .open = term_open, .write = term_write, .read = term_read, .close = term_close
 };
 
-// --- DRIVRUTIN: USB CDC ---------------------------------------------------
-// Ingen konfiguration behövs: identiteten sitter i USB-deskriptorerna, inte i
-// enhetsbeskrivaren. Svansen får därför vara tom.
+// --- DRIVER: USB CDC ------------------------------------------------------
+// No configuration is needed: the identity sits in the USB descriptors, not in
+// the device descriptor. The tail may therefore be empty.
 
 static int32_t usb_configure(const void *config, uint32_t size) {
     (void)config; (void)size;
@@ -74,8 +74,8 @@ static int32_t usb_open(void) { return 0; }
 static int32_t usb_close(void) { return 0; }
 
 static int32_t usb_write(const uint8_t *buf, uint32_t len) {
-    // Ingen ansluten värd är inte ett fel: skrivningen kastas, precis som mot
-    // en terminal ingen tittar på.
+    // No attached host is not an error: the write is dropped, exactly as it
+    // would be to a terminal nobody is watching.
     int32_t n = myrtos_usb_write(buf, len);
     return n < 0 ? (int32_t)len : n;
 }
@@ -93,14 +93,14 @@ static const myrtos_driver_t driver_usb = {
 static const myrtos_driver_t *drivers[MYRTOS_MAX_DRIVERS];
 static uint32_t driver_count;
 
-// --- ENHETER OCH VÄGAR ----------------------------------------------------
+// --- DEVICES AND PATHS ----------------------------------------------------
 typedef struct {
     char name[12];
     const myrtos_driver_t *driver;
 } myrtos_device_t;
 
-// Vägnummer är PROCESSLOKALA, som i OS-9. Att de var globala gjorde att ett
-// barn inte kunde ärva förälderns väg 0 -- numret var upptaget av någon annan.
+// Path numbers are PER-PROCESS, as in OS-9. Being global meant a child could
+// not inherit its parent's path 0 -- the number was taken by someone else.
 #define MYRTOS_MAX_PROCS 8
 
 typedef struct {
@@ -148,8 +148,8 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
         return false;
     }
 
-    // Konfigurationssvansen ligger direkt efter beskrivaren och tolkas bara av
-    // drivrutinen; I/O-hanteraren vidarebefordrar den orörd.
+    // The configuration tail sits right after the descriptor and is read only
+    // by the driver; the I/O manager passes it on untouched.
     const uint8_t *base = (const uint8_t*)desc;
     if (drv->configure && desc->config_size) {
         if (drv->configure(base + desc->config_offset, desc->config_size) != 0) return false;
@@ -193,8 +193,8 @@ int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path) {
     return -1;
 }
 
-// En process kan bara nå sina egna vägar: tabellen är indexerad på pid, så
-// numret säger ingenting om någon annans.
+// A process can only reach its own paths: the table is indexed by pid, so the
+// number says nothing about anyone else's.
 static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
     if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
@@ -202,9 +202,9 @@ static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
     return &paths[owner_pid][path];
 }
 
-// Ett barn ärver förälderns vägar med SAMMA nummer. Det är så ett verktyg kan
-// skriva till väg 0 utan att veta vilken enhet skalet valde -- och därför
-// mdir hamnar på USB när skalet gör det.
+// A child inherits its parent's paths under the SAME numbers. That is how a
+// utility can write to path 1 without knowing which device the shell chose --
+// and why a utility's output lands on USB when the shell is there.
 void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
     if (parent_pid < 0 || parent_pid >= MYRTOS_MAX_PROCS) return;
     if (child_pid < 0 || child_pid >= MYRTOS_MAX_PROCS) return;

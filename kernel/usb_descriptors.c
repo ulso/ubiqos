@@ -1,10 +1,10 @@
 #include "tusb.h"
 
-// USB-deskriptorer för myrtos. En enda CDC-ACM-funktion: en seriell port över
-// USB, som ska kunna ersätta FTDI-sladden på GP44.
+// USB descriptors for myrtos. A single CDC-ACM function: a serial port over
+// USB, meant to replace the FTDI cable on GP44.
 //
-// VID 0xcafe är TinyUSB:s exempelidentitet och duger för eget bruk. Ska något
-// distribueras behövs ett riktigt VID/PID-par.
+// VID 0xcafe is TinyUSB's example identity and is fine for private use.
+// Anything distributed needs a real VID/PID pair.
 
 #define USB_VID 0xcafe
 #define USB_PID 0x4001
@@ -13,8 +13,8 @@ static const tusb_desc_device_t desc_device = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
     .bcdUSB             = 0x0200,
-    // Miscellaneous / Common class med IAD: krävs för att Windows ska binda
-    // en sammansatt CDC-enhet utan egen .inf-fil.
+    // Miscellaneous / Common class with IAD: required for Windows to bind a
+    // composite CDC device without an .inf file of its own.
     .bDeviceClass       = TUSB_CLASS_MISC,
     .bDeviceSubClass    = MISC_SUBCLASS_COMMON,
     .bDeviceProtocol    = MISC_PROTOCOL_IAD,
@@ -55,7 +55,7 @@ static const char *string_desc_arr[] = {
     "myrtos",                        // 1: tillverkare
     "myrtos console",                // 2: produkt
     "000001",                        // 3: serienummer
-    "myrtos CDC",                    // 4: CDC-gränssnittet
+    "myrtos CDC",                    // 4: the CDC interface
 };
 
 static uint16_t desc_str[32];
@@ -75,7 +75,7 @@ const uint16_t *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         for (uint8_t i = 0; i < chr_count; i++) desc_str[1 + i] = str[i];
     }
 
-    // Första ordet är längd och typ.
+    // The first word is length and type.
     desc_str[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * chr_count + 2));
     return desc_str;
 }

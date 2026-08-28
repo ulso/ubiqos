@@ -2,16 +2,16 @@
 import sys
 import struct
 
-# Vi använder ditt tänkta synk-ord eller behåller 0x0509000B för RISC-V hårdvaruskydd.
+# Use the intended sync word, or keep 0x0509000B for RISC-V hardware protection.
 # Let's use 0x0509000B since it actively prevents CPU execution crashes via Custom-0!
 MYRTOS_SYNC = 0x0509000B
 
 def find_entry_offset(elf_path, nm_tool, symbol):
-    """Var modulens startpunkt ligger i den råa binären.
+    """Where the module's entry point sits in the raw binary.
 
-    objcopy -O binary skriver från den lägsta laddade adressen, så offseten är
-    symbolens adress minus den lägsta. Att anta noll gick fel: länkaren la
-    myrtos_syscall först, och kärnan anropade den i stället för module_main.
+    objcopy -O binary writes from the lowest loaded address, so the offset is the
+    symbol's address minus that lowest one. Assuming zero went wrong: the linker
+    put myrtos_syscall first, and the kernel called it instead of module_main.
     """
     import subprocess
     out = subprocess.run([nm_tool, "-n", elf_path], capture_output=True, text=True).stdout
@@ -33,13 +33,13 @@ def create_module(input_bin_path, output_mod_path, module_name,
     with open(input_bin_path, "rb") as f:
         code_bytes = f.read()
 
-    # En datamodul -- en enhetsbeskrivare, en tabell, ett teckensnitt -- har
-    # ingen startpunkt. exec_offset blir noll och kärnan startar den inte.
+# A data module -- a device descriptor, a table, a font -- has no entry
+# point. exec_offset becomes zero and the kernel does not start it.
     entry_in_code = 0
     if module_type != "data" and elf_path and nm_tool:
         entry_in_code = find_entry_offset(elf_path, nm_tool, entry_symbol)
 
-    # 4-byte alignment på koden
+# 4-byte alignment on the code
     if len(code_bytes) % 4 != 0:
         code_bytes += b'\x00' * (4 - (len(code_bytes) % 4))
 
@@ -47,33 +47,33 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if len(name_bytes) % 4 != 0:
         name_bytes += b'\x00' * (4 - (len(name_bytes) % 4))
 
-    # Huvudet är 28 byte: 3 x uint32, 2 x uint16, 3 x uint32 -- samma som
-    # myrtos_module_header_t i common/modules.h. Det stod 32 här, vilket sköt
-    # exec_offset och name_offset fyra byte fel in i koden.
+# The header is 28 bytes: 3 x uint32, 2 x uint16, 3 x uint32 -- the same as
+# myrtos_module_header_t in common/modules.h. It said 32 here, which pushed
+# exec_offset and name_offset four bytes wrong into the code.
     header_size = 28
     exec_offset = 0 if module_type == "data" else header_size + entry_in_code
     name_offset = header_size + len(code_bytes)
     module_size = header_size + len(code_bytes) + len(name_bytes)
 
-    # Standardvärden för dina unika fält
+# Defaults for the myrtos-specific fields
     MYRTOS_TYPE_PROGRAM = 1
     MYRTOS_TYPE_DATA    = 3
     kind = MYRTOS_TYPE_DATA if module_type == "data" else MYRTOS_TYPE_PROGRAM
-    type_lang = (kind << 8) | 1  # hög byte: typ, låg byte: språk (C)
-    # Hög byte: attribut (re-entrant). Låg byte: ABI-version, som kärnan
-    # jämför med sin egen och avvisar vid skillnad -- annars körs en modul
-    # byggd mot ett gammalt gränssnitt tills den havererar på något obegripligt.
+    type_lang = (kind << 8) | 1  # high byte: type, low byte: language (C)
+# High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
+# compares against its own and rejects on a mismatch -- otherwise a module
+# built against an old interface runs until it fails somewhere obscure.
     MYRTOS_ABI_VERSION = 1
     attr_rev  = (1 << 8) | MYRTOS_ABI_VERSION
-    # Totalt RAM: dataområde nedtill och processens stack från toppen. En
-    # trap-ram är 128 byte, så 4 kB ger gott om djup för anropskedjor.
+# Total RAM: data area at the bottom and the process stack from the top. One
+# trap frame is 128 bytes, so 4 kB leaves ample depth for call chains.
     mem_size = 4096
 
-    # Checksumman går över huvudets sex första 32-bitarsord SOM DE LIGGER I
-    # MINNET, och lagras i det sjunde. Två fel bodde här: fältet type_lang
-    # ligger före attr_rev i en little-endian-struct, alltså
-    # (attr_rev << 16) | type_lang och inte tvärtom; och kärnan summerade sju
-    # ord, vilket räknade in själva crc-fältet i sin egen summa.
+# The checksum covers the first six 32-bit words of the header AS THEY LIE IN
+# MEMORY, and is stored in the seventh. Two bugs lived here: the field type_lang
+# precedes attr_rev in a little-endian struct, hence
+# (attr_rev << 16) | type_lang and not the other way round; and the kernel summed
+# seven words, which counted the crc field itself into its own sum.
     fields = [
         MYRTOS_SYNC, module_size, name_offset,
         (attr_rev << 16) | type_lang,
@@ -96,8 +96,8 @@ def create_module(input_bin_path, output_mod_path, module_name,
     print(f"🎉 Myrtos-modul '{module_name}' skapad (32-bytes header matchad)!")
 
 if __name__ == "__main__":
-    # --data som flagga i stället för ett positionellt argument: CMake släpper
-    # tomma positionella argument, så en datamodul byggdes som program.
+# --data as a flag rather than a positional argument: CMake drops empty
+# positional arguments, so a data module was built as a program.
     argv = sys.argv[1:]
     module_type = "data" if "--data" in argv else "program"
     argv = [a for a in argv if a != "--data"]

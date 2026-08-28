@@ -3,90 +3,90 @@
 
 #include <stdint.h>
 
-// Gränssnittet mellan kärnan och modulerna. Allt som båda sidor måste vara
-// överens om bor här och ingen annanstans -- modulformatet, systemanropens
-// nummer och anropskonventionen.
+// The interface between the kernel and the modules. Everything both sides must
+// agree on lives here and nowhere else -- the module format, the system call
+// numbers and the calling convention.
 //
-// Numren låg tidigare i kärnan OCH i varje modul, skrivna för hand på tre
-// ställen. En ändring i kärnan gav då inget byggfel utan ett "unknown system
-// call" vid körning, vilket är precis den sortens tyst drift ett ABI finns för
-// att förhindra.
+// The numbers used to live in the kernel AND in every module, written out by
+// hand in three places. A change in the kernel then produced no build error but
+// an "unknown system call" at runtime, which is exactly the kind of silent
+// drift an ABI exists to prevent.
 //
-// När det här slutar röra sig är den här filen vad ett myrtos-SDK består av:
-// modulutveckling behöver den, inte kärnans källkod.
+// Once this stops moving, this file is what a myrtos SDK consists of: module
+// development needs it, not the kernel sources.
 
-// --- FORMATVERSION --------------------------------------------------------
-// Ligger i huvudets attr_rev, låga byten. Kärnan avvisar moduler byggda mot en
-// annan version i stället för att köra dem och haverera på något obegripligt.
+// --- FORMAT VERSION -------------------------------------------------------
+// Lives in the low byte of attr_rev. The kernel rejects modules built against
+// another version rather than running them and failing somewhere obscure.
 #define MYRTOS_ABI_VERSION 1
 
-// --- MODULHUVUD -----------------------------------------------------------
+// --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE 0x0509000B
 
-// Typ, i type_lang:s höga byte.
+// Type, in the high byte of type_lang.
 #define MYRTOS_TYPE_PROGRAM 1
 #define MYRTOS_TYPE_DRIVER  2
-#define MYRTOS_TYPE_DATA    3   // ingen kod, ingen startpunkt
+#define MYRTOS_TYPE_DATA    3   // no code, no entry point
 
-// --- ENHETSBESKRIVARE -----------------------------------------------------
-// En datamodul som beskriver en enhet, i OS-9:s mening. Den säger vad enheten
-// heter, vilken drivrutinsmodul som hanterar den, och bär en svans som bara
-// den drivrutinen förstår.
+// --- DEVICE DESCRIPTORS ---------------------------------------------------
+// A data module describing a device, in the OS-9 sense. It states what the
+// device is called, which driver module handles it, and carries a tail that
+// only that driver understands.
 //
-// Poängen är att en enhet ska kunna läggas till genom att släppa en fil på
-// kortet, inte genom att bygga om kärnan. Vill man byta UART eller baudrate
-// ändrar man beskrivaren.
+// The point is that a device can be added by dropping a file on the card
+// rather than rebuilding the kernel. To change UART or baud rate you change
+// the descriptor.
 
-#define MYRTOS_CLASS_CHAR   1   // teckenström: terminal, seriell port
-#define MYRTOS_CLASS_BLOCK  2   // blockorienterad: SD, disk
+#define MYRTOS_CLASS_CHAR   1   // character stream: terminal, serial port
+#define MYRTOS_CLASS_BLOCK  2   // block oriented: SD, disk
 
 typedef struct __attribute__((packed, aligned(4))) {
-    char     device_name[12];   // det en process öppnar: "term"
-    char     driver_name[12];   // modulen som hanterar den: "UART    MOD"
+    char     device_name[12];   // what a process opens: "term"
+    char     driver_name[12];   // the module handling it: "UART    MOD"
     uint16_t device_class;      // MYRTOS_CLASS_*
     uint16_t reserved;
-    uint32_t config_offset;     // från beskrivarens början till svansen
-    uint32_t config_size;       // svansens storlek, noll om ingen
+    uint32_t config_offset;     // from the start of the descriptor to the tail
+    uint32_t config_size;       // size of the tail, zero if none
 } myrtos_descriptor_t;
 
-// Svansen för UART-drivrutinen. Layouten är drivrutinens ensak; I/O-hanteraren
-// vidarebefordrar den utan att tolka den.
+// The tail for the UART driver. Its layout is the driver's business alone; the
+// I/O manager passes it on without interpreting it.
 typedef struct __attribute__((packed, aligned(4))) {
-    uint32_t uart_base;         // 0x40070000 för UART0 på RP2350
+    uint32_t uart_base;         // 0x40070000 for UART0 on the RP2350
     uint32_t tx_pin;
-    uint32_t rx_pin;            // 0xffffffff om enkelriktad
+    uint32_t rx_pin;            // 0xffffffff if send-only
     uint32_t baud_rate;
 } myrtos_uart_config_t;
 
 typedef struct __attribute__((packed, aligned(4))) {
     uint32_t sync_code;      // MYRTOS_SYNC_CODE
-    uint32_t module_size;    // hela modulen, huvudet inräknat
-    uint32_t name_offset;    // till namnsträngen
-    uint16_t type_lang;      // typ (program, drivrutin) och språk
-    uint16_t attr_rev;       // attribut och ABI-version
-    uint32_t exec_offset;    // till startpunkten
-    uint32_t mem_size;       // RAM per process: data nedtill, stack från toppen
-    uint32_t header_crc;     // komplementet av summan av de sex första orden
+    uint32_t module_size;    // the whole module, header included
+    uint32_t name_offset;    // to the name string
+    uint16_t type_lang;      // type (program, driver) and language
+    uint16_t attr_rev;       // attributes and ABI version
+    uint32_t exec_offset;    // to the entry point
+    uint32_t mem_size;       // RAM per process: data at the bottom, stack from the top
+    uint32_t header_crc;     // complement of the sum of the first six words
 } myrtos_module_header_t;
 
-// --- SYSTEMANROP ----------------------------------------------------------
-// a7 bär numret, a0-a2 argumenten, a0 kommer tillbaka med resultatet.
-#define SYS_NULL      0u   // gör ingenting; finns för att prova trap-vägen
-#define SYS_IO_PUTC   1u   // a0 = tecken
-#define SYS_EXIT      2u   // avslutar processen, återvänder aldrig
-#define SYS_OPEN      3u   // a0 = enhetsnamn        -> a0 = vägnummer
-#define SYS_WRITE     4u   // a0 = väg, a1 = buffert, a2 = längd
-#define SYS_CLOSE     5u   // a0 = väg
-#define SYS_MODDIR    6u   // a0 = index, a1 = buffert(12) -> a0 = länkar, -1 = slut
-#define SYS_MEMINFO   7u   // a0 = 0 största fria block, 1 processer -> a0 = värde
-#define SYS_READ      8u   // a0 = väg, a1 = buf, a2 = längd -> a0 = lästa, 0 = inget
-#define SYS_EXEC      9u   // a0 = modulnamn, a1 = argumentsträng -> a0 = pid
-#define SYS_ARGS     10u   // a0 = buffert, a1 = längd -> a0 = kopierade tecken
+// --- SYSTEM CALLS ---------------------------------------------------------
+// a7 carries the number, a0-a2 the arguments, a0 comes back with the result.
+#define SYS_NULL      0u   // does nothing; exists to exercise the trap path
+#define SYS_IO_PUTC   1u   // a0 = character
+#define SYS_EXIT      2u   // ends the process, never returns
+#define SYS_OPEN      3u   // a0 = device name       -> a0 = path number
+#define SYS_WRITE     4u   // a0 = path, a1 = buffer, a2 = length
+#define SYS_CLOSE     5u   // a0 = path
+#define SYS_MODDIR    6u   // a0 = index, a1 = buffer(12) -> a0 = links, -1 = end
+#define SYS_MEMINFO   7u   // a0 = 0 largest free block, 1 processes -> a0 = value
+#define SYS_READ      8u   // a0 = path, a1 = buf, a2 = length -> a0 = read, 0 = nothing
+#define SYS_EXEC      9u   // a0 = module name, a1 = argument string -> a0 = pid
+#define SYS_ARGS     10u   // a0 = buffer, a1 = length -> a0 = characters copied
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
 
-// Anropet självt. Det är identiskt i varje modul, så det hör hemma här.
+// The call itself. It is identical in every module, so it belongs here.
 static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c) {
     register uint32_t r_id __asm__("a7") = id;
     register uint32_t r_a0 __asm__("a0") = a;
@@ -110,18 +110,18 @@ static inline int32_t myrtos_write(int32_t path, const void *buf, uint32_t len) 
     return myrtos_syscall(SYS_WRITE, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
 }
 
-// Läsningen blockerar inte: noll betyder att ingenting fanns just nu. Kärnan
-// har ännu inget sätt att sova en process på en enhet, så den som väntar på
-// inmatning får fråga igen -- schemaläggaren tar ändå tillbaka tiden.
-// Standardvägarna, samma konvention som OS-9 och Unix. Kärnan sätter upp dem
-// åt den första processen och alla barn ärver dem, så ett verktyg varken
-// öppnar eller stänger något: det läser väg 0 och skriver väg 1.
+// Reads do not block: zero means nothing was there just now. The kernel has no
+// way yet to sleep a process on a device, so whoever waits for input must ask
+// again -- the scheduler reclaims the time regardless.
+// The standard paths, the same convention as OS-9 and Unix. The kernel sets
+// them up for the first process and every child inherits them, so a utility
+// neither opens nor closes anything: it reads path 0 and writes path 1.
 #define MYRTOS_STDIN  0
 #define MYRTOS_STDOUT 1
 #define MYRTOS_STDERR 2
 
-// Ärvd utmatning om den finns, annars en egen konsol. Reserven behövs bara för
-// en modul som startas utan förälder.
+// Inherited output if there is any, otherwise a console of our own. The
+// fallback is only needed for a module started without a parent.
 static inline int32_t myrtos_console(void) {
     if (myrtos_write(MYRTOS_STDOUT, "", 0) >= 0) return MYRTOS_STDOUT;
     int32_t p = myrtos_open("usb");
@@ -133,21 +133,22 @@ static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len) {
     return myrtos_syscall(SYS_READ, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
 }
 
-// Starta en modul vid namn, med en kommandorad. OS-9:s F$Link följt av F$Fork.
+// Start a module by name, with a command line. OS-9's F$Link then F$Fork.
 static inline int32_t myrtos_exec(const char *module_name, const char *args) {
     return myrtos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
                           (uint32_t)(uintptr_t)args, 0);
 }
 
-// En modul startas som main: argc i a0, argv i a1, och argv[0] är modulens
-// eget namn. Kärnan bygger vektorn i processens minne innan den startas.
+// A module starts like main: argc in a0, argv in a1, and argv[0] is the
+// module's own name. The kernel builds the vector in the process's memory
+// before starting it.
 //
 //     void module_main(int argc, char **argv) { ... }
 //
-// En modul som inte bryr sig deklarerar module_main(void) som förut.
+// A module that does not care declares module_main(void) as before.
 
-// Hämta den obearbetade kommandoraden. Finns kvar för den som hellre vill
-// tolka den själv än gå genom argv.
+// Fetch the raw command line. Kept for anyone who would rather parse it
+// themselves than go through argv.
 static inline int32_t myrtos_args(char *buf, uint32_t len) {
     return myrtos_syscall(SYS_ARGS, (uint32_t)(uintptr_t)buf, len, 0);
 }
@@ -160,24 +161,25 @@ static inline void myrtos_exit(void) {
     myrtos_syscall(SYS_EXIT, 0, 0, 0);
 }
 
-// Bekvämlighet: skriv en nollterminerad sträng i ETT anrop. Att skicka hela
-// strängen och inte ett tecken i taget är det som gör utskriften odelbar mot
-// andra processer.
-// --- FUNKTIONSTABELLER I FLYTTBAR KOD -------------------------------------
-// En vanlig tabell av funktionspekare bär absoluta adresser som länkaren
-// skrivit in, och bryter positionsoberoendet. Lagrar man i stället AVSTÅNDET
-// från tabellen till funktionen, och adderar tabellens adress vid körning, blir
-// tabellen flyttbar -- och kan ligga const i .rodata, alltså delad mellan
-// processer. En tabell byggd på stacken vid körning fungerar också, men då får
-// varje process sin egen kopia.
+// Convenience: write a NUL-terminated string in ONE call. Sending the whole
+// string rather than a character at a time is what makes the output atomic
+// against other processes.
+// --- FUNCTION TABLES IN RELOCATABLE CODE ----------------------------------
+// An ordinary table of function pointers carries absolute addresses written in
+// by the linker, and breaks position independence. Store the DISTANCE from the
+// table to the function instead, and add the table's address at runtime, and
+// the table becomes relocatable -- and can sit const in .rodata, hence shared
+// between processes. A table built on the stack at runtime works too, but then
+// every process gets its own copy.
 //
-// Differensen måste räknas ut av assemblern: C avvisar den som initierare,
-// eftersom skillnaden mellan två adresser inte är en konstant i språkets
-// mening. Resultatet blir ADD32/SUB32-relokeringar, som är länkningskonstanter
-// utan absolut adress.
+// The difference has to be computed by the assembler: C rejects it as an
+// initialiser, because the difference between two addresses is not a constant
+// in the language's sense. The result is ADD32/SUB32 relocations, which are
+// link-time constants carrying no absolute address.
 //
-// Funktionerna måste bära __attribute__((used)): de refereras bara från
-// assembler, som kompilatorn inte ser, och optimeras annars bort som oanvända.
+// The functions must carry __attribute__((used)): they are referenced only
+// from assembly, which the compiler cannot see, and are otherwise optimised
+// away as unused.
 //
 //     __attribute__((used)) static void do_read(int a) { ... }
 //     MYRTOS_RELTAB_BEGIN(ops);
@@ -195,17 +197,17 @@ static inline void myrtos_exit(void) {
 #define MYRTOS_RELTAB_ENTRY(name, fn)                              \
     __asm__(".word " #fn " - " #name)
 
-// .popsection är inte valfri: utan den ligger sektionsbytet kvar och all kod
-// som följer hamnar i tabellens sektion i stället för i .text.
+// .popsection is not optional: without it the section switch stays in effect
+// and all following code lands in the table's section instead of .text.
 #define MYRTOS_RELTAB_END()  __asm__(".popsection")
 
 #define MYRTOS_RELTAB_CALL(name, index, type)                      \
     ((type)((intptr_t)(name) + (name)[index]))
 
-// En skrivning är odelbar, men en RAD är det bara om den skrivs i ett anrop.
-// Bygger ett verktyg sin rad av flera skrivningar hinner andra processer
-// emellan, och utskriften blir oläslig så fort mer än en process talar. Därför
-// den här: samla raden, skicka den en gång.
+// A write is atomic, but a LINE only is if it goes out in one call. If a
+// utility builds its line from several writes, other processes get in between,
+// and the output is unreadable as soon as more than one process speaks. Hence
+// this: gather the line, send it once.
 typedef struct {
     char buf[96];
     uint32_t len;
@@ -230,8 +232,8 @@ static inline void myrtos_line_u32(myrtos_line_t *l, uint32_t v) {
     myrtos_line_str(l, &tmp[i]);
 }
 
-// Verktyg behöver skriva tal, och en modul har ingen printf. Tio rader här
-// sparar dem i varje utility.
+// Utilities need to print numbers, and a module has no printf. Ten lines here
+// saves them in every utility.
 static inline int32_t myrtos_write_u32(int32_t path, uint32_t v) {
     char buf[11];
     int i = 10;

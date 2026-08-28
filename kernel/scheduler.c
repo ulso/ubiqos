@@ -8,7 +8,7 @@
 #include "moddir.h"
 
 #define MAX_PROCESSES 8
-#define KERNEL_PID    0     // Kärnan är själv en process, alltid körbar.
+#define KERNEL_PID    0     // The kernel is itself a process, always runnable.
 
 typedef enum {
     PROC_STATE_FREE,
@@ -20,20 +20,20 @@ typedef struct {
     uint32_t pid;
     proc_state_t state;
     uintptr_t entry_point;
-    const myrtos_module_header_t *module;   // delad kod, en kopia för alla
-    void* mem_base;           // Dataområdets botten, privat per process
-    uint32_t mem_size;        // Data + stack, som modulhuvudet begärde
-    uint32_t saved_sp;        // Trap-ramen, alltså hela sammanhanget
-    const char *args;         // pekar in i processens EGET minne, inte hit
+    const myrtos_module_header_t *module;   // shared code, one copy for all
+    void* mem_base;           // bottom of the data area, private per process
+    uint32_t mem_size;        // data + stack, as the module header asked for
+    uint32_t saved_sp;        // the trap frame, hence the entire context
+    const char *args;         // points into the process's OWN memory, not here
 } pcb_t;
 
 static pcb_t process_table[MAX_PROCESSES];
 static int32_t current_pid = KERNEL_PID;
 
-// Kärnans globalpekare och trådpekare. crt0 sätter gp till __global_pointer$,
-// och kärnans C-kod adresserar sina små globaler relativt den. En ny process
-// måste ärva dem: annars återställer trap-vektorn processens nollade gp när
-// den trappar in i kärnan, och hanteraren skriver vilt i minnet.
+// The kernel's global and thread pointers. crt0 sets gp to __global_pointer$,
+// and the kernel's own C code addresses its small globals relative to it. A new
+// process must inherit them: otherwise the trap vector restores the process's
+// zeroed gp when it traps into the kernel, and the handler writes at random.
 static uint32_t kernel_gp, kernel_tp;
 
 extern tlsf_pool_t myrtos_mem_pool;
@@ -43,9 +43,9 @@ void myrtos_print_hex(uint32_t v);
 
 #define SYS_EXIT 2u
 
-// Dit en process returnerar när dess module_main är klar. Den kan inte
-// returnera till kärnan -- den har ingen sådan anropskedja -- så den ber om
-// att bli avslutad i stället.
+// Where a process returns when its module_main is done. It cannot return to
+// the kernel -- it has no such call chain -- so it asks to be terminated
+// instead.
 static void myrtos_process_return(void) {
     register uint32_t id __asm__("a7") = SYS_EXIT;
     __asm__ volatile("ecall" : : "r"(id) : "memory");
@@ -58,8 +58,8 @@ void myrtos_scheduler_init(void) {
         process_table[i].state = PROC_STATE_FREE;
         process_table[i].mem_base = NULL;
     }
-    // Kärnan är pid 0. Dess sammanhang fylls i vid första trappen, eftersom
-    // den redan kör på sin egen stack.
+    // The kernel is pid 0. Its context is filled in at the first trap, since
+    // it is already running on its own stack.
     process_table[KERNEL_PID].state = PROC_STATE_RUNNING;
     current_pid = KERNEL_PID;
     __asm__ volatile("mv %0, gp" : "=r"(kernel_gp));
@@ -70,7 +70,7 @@ void myrtos_scheduler_init(void) {
 int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
                               const char *args) {
     int32_t slot = -1;
-    for (int i = 1; i < MAX_PROCESSES; i++) {      // 0 är kärnan
+    for (int i = 1; i < MAX_PROCESSES; i++) {      // 0 is the kernel
         if (process_table[i].state == PROC_STATE_FREE) { slot = i; break; }
     }
     if (slot < 0) {
@@ -78,7 +78,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         return -1;
     }
 
-    // Ett sammanhängande område: data nedtill, stack uppifrån och nedåt.
+    // One contiguous area: data at the bottom, stack downwards from the top.
     uint32_t bytes = module_ptr->mem_size;
     void *mem = myrtos_tlsf_malloc(myrtos_mem_pool, bytes);
     if (!mem) {
@@ -86,13 +86,14 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         return -1;
     }
 
-    // Kommandoraden längst ned i processens eget område, följd av en argv-
-    // vektor. Båda frigörs med resten när processen dör, så varken egen
-    // allokering eller egen frigöring behövs -- och enda gränsen är mem_size.
+    // The command line at the bottom of the process's own area, followed by an
+    // argv vector. Both are released with the rest when the process dies, so
+    // neither a separate allocation nor a separate free is needed -- and the
+    // only limit is mem_size.
     //
-    // Ordningen är Unix ordning: strängen delas på plats med nolltecken, och
-    // pekarna läggs efter den. Modulen får argc i a0 och argv i a1, alltså
-    // exakt vad main(int, char**) förväntar sig.
+    // The layout is the Unix one: the string is split in place with NULs, and
+    // the pointers are placed after it. The module gets argc in a0 and argv in
+    // a1, which is exactly what main(int, char**) expects.
     char *dst = (char*)mem;
     uint32_t n = 0;
     if (args) while (args[n] && n < bytes / 2) { dst[n] = args[n]; n++; }
@@ -101,14 +102,14 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     char **argv = (char**)(((uintptr_t)mem + n + 1 + 3) & ~(uintptr_t)3);
     int argc = 0;
 
-    // argv[0] är modulens eget namn, som i alla system sedan Unix.
+    // argv[0] is the module's own name, as in every system since Unix.
     argv[argc++] = (char*)((uintptr_t)module_ptr + module_ptr->name_offset);
 
-    // Delningen förstår citattecken: ett citerat stycke är ETT argument, och
-    // citattecknen själva försvinner. Eftersom bara tecken tas bort, aldrig
-    // läggs till, kan resultatet komprimeras i samma buffert -- skrivpekaren
-    // ligger alltid bakom läspekaren.
-    char *p = dst;      // läser
+    // The split understands quotes: a quoted run is ONE argument, and the
+    // quote characters themselves disappear. Since characters are only ever
+    // removed, never added, the result can be compacted into the same buffer --
+    // the write pointer always stays behind the read pointer.
+    char *p = dst;      // reads
     char *w = dst;      // skriver
     while (*p && argc < 16) {
         while (*p == ' ') p++;
@@ -118,31 +119,31 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
             if (*p == '"' || *p == '\'') {
                 char quote = *p++;
                 while (*p && *p != quote) *w++ = *p++;
-                if (*p) p++;          // hoppa över avslutande citattecken
+                if (*p) p++;          // skip the closing quote
             } else {
                 *w++ = *p++;
             }
         }
-        // Avgränsaren måste konsumeras INNAN ordet termineras. Utan citattecken
-        // går pekarna i takt, och nolltecknet skulle annars skriva över just
-        // det blanksteg som läspekaren står på -- delaren såg då strängslut och
-        // tappade allt efter första ordet.
+        // The delimiter must be consumed BEFORE the word is terminated. With
+        // no quotes the pointers move in step, and the NUL would otherwise
+        // land on the very space the read pointer is on -- the splitter then
+        // saw end of string and dropped everything after the first word.
         while (*p == ' ') p++;
         *w++ = 0;
     }
     argv[argc] = 0;
 
     uintptr_t data_base = ((uintptr_t)&argv[argc + 1] + 3) & ~(uintptr_t)3;
-    (void)data_base;   // reserverat åt modulens eget dataområde
+    (void)data_base;   // reserved for the module's own data area
 
     uintptr_t stack_top = ((uintptr_t)mem + bytes) & ~(uintptr_t)15;
     myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
     for (uint32_t i = 0; i < sizeof(myrtos_frame_t) / 4; i++) {
         ((uint32_t*)frame)[i] = 0;
     }
-    // När schemaläggaren väljer processen återställer vektorn de här värdena
-    // och mret hoppar till mepc. Det är så en process startar: som om den
-    // just blivit avbruten precis före sin första instruktion.
+    // When the scheduler picks the process, the vector restores these values
+    // and mret jumps to mepc. That is how a process starts: as though it had
+    // just been interrupted immediately before its first instruction.
     frame->mepc = (uint32_t)((uintptr_t)module_ptr + module_ptr->exec_offset);
     frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
     frame->a0   = (uint32_t)argc;             // main(int argc, ...)
@@ -158,8 +159,8 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].args = (const char*)mem;
     process_table[slot].state = PROC_STATE_READY;
 
-    // Adresserna är hela poängen: kör två processer samma modul ska koden
-    // ligga på samma ställe och dataområdena på olika.
+    // The addresses are the whole point: if two processes run the same module,
+    // the code should be at the same place and the data areas at different ones.
     myrtos_print("  pid ");
     myrtos_print_u32(slot);
     myrtos_print(": code at 0x");
@@ -170,8 +171,8 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     return slot;
 }
 
-// Anropas ur trap-hanteraren. Sparar den avbrutna processens stack och
-// returnerar den som ska tas vid -- rundgång över allt som är körbart.
+// Called from the trap handler. Saves the interrupted process's stack and
+// returns the one to take over -- round robin over everything runnable.
 uint32_t myrtos_switch(uint32_t current_sp) {
     process_table[current_pid].saved_sp = current_sp;
     if (process_table[current_pid].state == PROC_STATE_RUNNING) {
@@ -207,9 +208,9 @@ uint32_t myrtos_process_count(void) {
     return n;
 }
 
-// En process har bett om att få dö. Minnet lämnas tillbaka och platsen frigörs.
+// A process has asked to die. Its memory goes back and its slot is freed.
 void myrtos_process_exit(void) {
-    if (current_pid == KERNEL_PID) return;      // kärnan avslutas inte
+    if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
     myrtos_print("Process ");
     myrtos_print_u32(current_pid);
     myrtos_print(" exited.\n");
@@ -220,10 +221,10 @@ void myrtos_process_exit(void) {
     process_table[current_pid].mem_base = NULL;
 }
 
-// --- MASKINTIMERN ---------------------------------------------------------
-// Hazard3 har en standardiserad RISC-V-maskintimer i SIO. mtime räknar från
-// tick-generatorn som runtime_init sätter till en puls per mikrosekund, och
-// ett avbrott utlöses när mtime når mtimecmp.
+// --- THE MACHINE TIMER ----------------------------------------------------
+// Hazard3 has a standard RISC-V machine timer in SIO. mtime counts from the
+// tick generator that runtime_init sets to one pulse per microsecond, and an
+// interrupt fires when mtime reaches mtimecmp.
 
 #define SIO_BASE_ADDR   0xd0000000u
 #define MTIME_CTRL      (*(volatile uint32_t*)(SIO_BASE_ADDR + 0x1a4))

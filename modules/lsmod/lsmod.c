@@ -1,10 +1,11 @@
 #include "../../common/myrtos_abi.h"
 
-// mdir -- listar modulkatalogen. OS-9 hade samma verktyg med samma namn, och
-// av samma skäl: modulerna är systemets verkliga innehållsförteckning.
+// lsmod -- lists the module directory. OS-9 had the same tool under the name
+// mdir, and for the same reason: the modules are the system's real table of
+// contents.
 //
-// Varje rad byggs färdig innan den skickas. En skrivning är odelbar, men en
-// rad som består av flera skrivningar hinner brytas av andra processer.
+// Each line is built complete before it is sent. A write is atomic, but a line
+// made of several writes can be broken up by other processes.
 void module_main(void) {
     int32_t t = myrtos_console();
     if (t < 0) { myrtos_exit(); return; }
@@ -26,5 +27,5 @@ void module_main(void) {
         myrtos_line_str(&line, "\n");
         myrtos_line_flush(t, &line);
     }
-    // Vägen stängs inte: den ärvdes och tillhör den som startade oss.
+    // The path is not closed: it was inherited and belongs to whoever started us.
 }

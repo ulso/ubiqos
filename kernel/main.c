@@ -14,11 +14,11 @@
 // --- MYRTOS KONSTANTER ---
 #define MYRTOS_SYNC_CODE 0x0509000B
 
-// --- HÅRDVARU-MAPPNING OCH UTSKRIFTSFUNKTIONER ---
-// Fruit Jam, RP2350B. SDK:ns PICO_DEFAULT_UART för det här kortet är UART1 på
-// GP8/GP9, men de går till ESP32-C6:an ombord och inte till någon stiftlist.
-// Diagnostik läggs därför på UART0 TX / GP44, samma val som gjorts i
-// pico-io-fruit-jam, så samma sladd fungerar.
+// --- HARDWARE MAPPING AND PRINT HELPERS ---
+// Fruit Jam, RP2350B. The SDK's PICO_DEFAULT_UART for this board is UART1 on
+// GP8/GP9, but those go to the on-board ESP32-C6 rather than to any header.
+// Diagnostics therefore go on UART0 TX / GP44, the same choice made in
+// pico-io-fruit-jam, so the same cable works.
 #define MYRTOS_UART        uart0
 #define MYRTOS_UART_TX_PIN 44
 #define MYRTOS_UART_BAUD   115200
@@ -32,9 +32,10 @@ void myrtos_putc(char c) {
     uart_putc_raw(MYRTOS_UART, c);
 }
 
-// Kärnan skriver inte inifrån en trap, så här är avbrotten påslagna och en
-// tidsdelning kan slå till mitt i strängen. Samma odelbarhet som modulernas
-// skrivningar får gratis måste kärnan alltså ta själv, med en kritisk sektion.
+// The kernel does not print from inside a trap, so interrupts are on here and a
+// time slice can land in the middle of the string. The atomicity that module
+// writes get for free the kernel must therefore take itself, with a critical
+// section.
 void myrtos_print(const char *s) {
     uint32_t mstatus;
     __asm__ volatile("csrrc %0, mstatus, %1" : "=r"(mstatus) : "r"(1u << 3));
@@ -66,27 +67,28 @@ void myrtos_print_u32(uint32_t v) {
     myrtos_print(&buf[i]);
 }
 
-// --- MINNESHANTERING (TLSF) ---
-// Kärnans heap ligger i SRAM, inte i PSRAM, och det är avsiktligt: modulkod
-// exekverar härifrån, och PSRAM sitter på QSPI bakom XIP-cachen med variabel
-// latens. RP2350B har 512 kB huvud-RAM, så 320 kB åt heapen lämnar gott om
-// utrymme åt kod, stackar och kärnans egna data.
+// --- MEMORY MANAGEMENT (TLSF) ---
+// The kernel heap lives in SRAM, not PSRAM, and that is deliberate: module code
+// executes from here, and PSRAM sits on QSPI behind the XIP cache with variable
+// latency. The RP2350B has 512 kB of main RAM, so 320 kB for the heap leaves
+// ample room for code, stacks and the kernel's own data.
 //
-// När PSRAM väl är uppsatt på QMI:s andra chip select hör den hemma som en
-// ANDRA pool för bulkdata -- inte som ersättning för den här.
+// Once PSRAM is set up on the QMI's second chip select it belongs as a SECOND
+// pool for bulk data -- not as a replacement for this one.
 #define MYRTOS_HEAP_SIZE (320 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
-// Uppdatera valideringen så den stegar igenom dina 32 bytes (8 st 32-bitars ord)
+// Validate the header before anything in it is trusted.
 bool verify_myrtos_header(myrtos_module_header_t *header) {
     if (header->sync_code != MYRTOS_SYNC_CODE) {
         return false;
     }
 
-    // Synkordet stämmer, så det ÄR en modul. Är versionen fel är den byggd mot
-    // ett annat gränssnitt, och det förtjänar ett eget besked -- annars ser det
-    // ut som en trasig checksumma, vilket leder felsökningen åt fel håll.
+    // The sync word matches, so this IS a module. If the version is wrong it was
+    // built against another interface, and that deserves its own message --
+    // otherwise it looks like a broken checksum, which sends debugging the wrong
+    // way.
     uint8_t abi = (uint8_t)(header->attr_rev & 0xff);
     if (abi != MYRTOS_ABI_VERSION) {
         myrtos_print("  module built for ABI version ");
@@ -99,9 +101,9 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
 
     uint32_t *raw_ptr = (uint32_t*)header;
     uint32_t checksum = 0;
-    // Huvudet är 28 byte, alltså sju ord, och det sjunde ÄR crc-fältet.
-    // Summan går därför över de sex första -- att ta sju räknade in crc:n i
-    // sin egen kontrollsumma och kunde aldrig stämma.
+    // The header is 28 bytes, hence seven words, and the seventh IS the crc
+    // field. The sum therefore covers the first six -- taking seven counted the
+    // crc into its own checksum and could never match.
     for (int i = 0; i < 6; i++) {
         checksum += raw_ptr[i];
     }
@@ -127,15 +129,15 @@ void myrtos_kernel_main(void) {
         myrtos_print("❌ Error: Memory engine failed to initialize.\n");
     }
 
-    // 2. Aktivera avbrottsvektorn för systemanrop (från scheduler.S)
+    // 2. Enable the trap vector for system calls (from scheduler.S)
     extern void myrtos_trap_vector(void);
-    // mtvec rörs inte: SDK:ns crt0 har redan satt den till sin vektortabell,
-    // och våra hanterare har ersatt de svaga posterna vid länkningen. Tog vi
-    // över den fungerade vår timer, men SDK:ns avbrottsregistrering slutade
-    // fungera och TinyUSB assertade i dcd_init.
-    // Bevisa att frigjort minne verkligen slås ihop igen. Blocken frigörs i en
-    // ordning som kräver både framåt- och bakåtsammanslagning: mitten först,
-    // så att den får två upptagna grannar, sedan den första och sist den sista.
+    // mtvec is left alone: the SDK's crt0 has already pointed it at its vector
+    // table, and our handlers replaced the weak entries at link time. Taking it
+    // over made our timer work, but the SDK's interrupt registration stopped
+    // working and TinyUSB asserted in dcd_init.
+    // Prove that freed memory really is coalesced again. The blocks are freed in
+    // an order that requires both forward and backward coalescing: the middle
+    // first, so it has two busy neighbours, then the first and last the last.
     {
         size_t before = myrtos_tlsf_largest_free(myrtos_mem_pool);
         void *a = myrtos_tlsf_malloc(myrtos_mem_pool, 8192);
@@ -155,15 +157,15 @@ void myrtos_kernel_main(void) {
 
     myrtos_print("Trap handlers installed in the SDK vector table.\n");
 
-    // Avbrott måste vara påslagna globalt innan USB startar; enskilda källor
-    // slås på av den som behöver dem. Timern gör det annars först senare.
+    // Interrupts must be enabled globally before USB starts; individual sources
+    // are enabled by whoever needs them. The timer would otherwise do it later.
     __asm__ volatile("csrs mstatus, %0" : : "r"(1u << 3));
 
     myrtos_usb_init();
 
-    // Bevisa trap-vägen innan något förlitar sig på den. Kommer vi tillbaka
-    // hit har vektorn sparat, hanteraren kört, mepc stegats förbi ecall och
-    // mret återvänt -- hela kedjan i ett anrop.
+    // Prove the trap path before anything relies on it. If we get back here the
+    // vector has saved, the handler has run, mepc has stepped past the ecall and
+    // mret has returned -- the whole chain in one call.
     extern volatile uint32_t myrtos_trap_count;
     extern volatile uint32_t myrtos_last_mcause;
     uint32_t before = myrtos_trap_count;
@@ -175,14 +177,16 @@ void myrtos_kernel_main(void) {
         myrtos_print("Trap vector self-test FAILED.\n");
     }
 
-    // 3. Hitta modulen. Under QEMU la -device loader den på 0x80500000; på
-    //    hårdvaran finns ingen sådan, så modulen följer med i flash tills den
-    //    kan läsas från SD. Kärnan ser bara en pekare till ett modulhuvud, så
-    //    bytet av källa senare rör ingenting nedanför den här raden.
-    // --- MODULKATALOG OCH PROCESSER ----------------------------------------
-    // Modulerna registreras en gång var. En process skapas sedan genom att
-    // LÄNKA modulen, inte kopiera den: koden delas, bara dataområdet är privat.
-    // Det är OS-9:s F$Link, och skälet till att systemet fick plats i 64 kB.
+    // 3. Find the module. Under QEMU, -device loader put it at 0x80500000; on
+    //    hardware there is no such thing, so the module rides along in flash
+    //    until it can be read from SD. The kernel only ever sees a pointer to a
+    //    module header, so changing the source later touches nothing below this
+    //    line.
+    // --- MODULE DIRECTORY AND PROCESSES ------------------------------------
+    // The modules are registered once each. A process is then created by
+    // LINKING the module rather than copying it: the code is shared, only the
+    // data area is private. That is OS-9's F$Link, and the reason the system
+    // fitted in 64 kB.
     extern void myrtos_scheduler_init(void);
     extern int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const char *args);
     extern void myrtos_timer_init(uint32_t);
@@ -191,9 +195,9 @@ void myrtos_kernel_main(void) {
     myrtos_io_init();
     myrtos_moddir_init();
 
-    // Flashen först: residenta moduler körs där de ligger och kostar inget
-    // heapminne. Kortet får komplettera, och en modul med samma namn där
-    // hamnar bredvid -- den som registrerades först vinner uppslagningen.
+    // Flash first: resident modules run where they lie and cost no heap. The
+    // card may add to them, and a module of the same name there is registered
+    // alongside -- whichever was registered first wins the lookup.
     myrtos_flash_scan();
 
     static uint8_t staging[32 * 1024];
@@ -215,8 +219,8 @@ void myrtos_kernel_main(void) {
         myrtos_print("SD: unavailable.\n");
     }
 
-    // Beskrivarna först: enheterna måste finnas innan någon process försöker
-    // öppna dem. En datamodul har ingen startpunkt och startas inte.
+    // Descriptors first: the devices must exist before any process tries to
+    // open them. A data module has no entry point and is not started.
     for (uint32_t i = 0; i < myrtos_moddir_count(); i++) {
         const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
         if ((e->header->type_lang >> 8) != MYRTOS_TYPE_DATA) continue;
@@ -227,10 +231,10 @@ void myrtos_kernel_main(void) {
             (const myrtos_descriptor_t*)((const uint8_t*)e->header + sizeof(myrtos_module_header_t)));
     }
 
-    // Utan beskrivare finns inga enheter, och då kan ingen modul skriva något.
-    // Kärnan faller tillbaka på den enhet den redan använder för sin egen
-    // diagnostik, så systemet aldrig blir stumt bara för att kortet saknar en
-    // beskrivare.
+    // With no descriptors there are no devices, and then no module can print
+    // anything. The kernel falls back on the device it already uses for its own
+    // diagnostics, so the system never goes mute merely because the card is
+    // missing a descriptor.
     if (!myrtos_io_device_count()) {
         myrtos_print("No descriptors found; registering the built-in console.\n");
         static const struct {
@@ -247,16 +251,16 @@ void myrtos_kernel_main(void) {
         myrtos_io_add_descriptor(&fallback.desc);
     }
 
-    // Finns ett skal startas bara det, och det startar resten på begäran.
-    // Att starta allt vid uppstart var en demonstration, inte ett system.
+    // If there is a shell only that is started, and it starts the rest on
+    // demand. Starting everything at boot was a demonstration, not a system.
     uint32_t started = 0;
     const char *shell = myrtos_moddir_match("sh");
     if (shell) {
         const myrtos_module_header_t *m = myrtos_moddir_link(shell);
         int32_t pid = m ? myrtos_process_create(m, "") : -1;
         if (pid >= 0) {
-            // Ge skalet sina standardvägar. Allt det startar ärver dem, så
-            // ett verktyg varken öppnar eller känner till någon enhet.
+            // Give the shell its standard paths. Everything it starts
+            // inherits them, so a utility neither opens nor knows any device.
             const char *console = "usb";
             if (myrtos_io_open_as(console, pid, MYRTOS_STDIN) < 0) {
                 console = "term";
@@ -271,7 +275,7 @@ void myrtos_kernel_main(void) {
         }
     }
 
-    // Utan skal startas allt som finns, så systemet ändå visar livstecken.
+    // With no shell, start everything there is, so the system still shows life.
     for (uint32_t i = 0; !started && i < myrtos_moddir_count(); i++) {
         const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
         if ((e->header->type_lang >> 8) == MYRTOS_TYPE_DATA) continue;
@@ -300,13 +304,13 @@ void myrtos_kernel_main(void) {
             myrtos_print_u32(myrtos_ticks);
             myrtos_print("\n");
         }
-        // TinyUSB gör sitt arbete här. wfi vore fel: enheten skulle bara
-        // servas när något annat råkar väcka kärnan.
+        // TinyUSB does its work here. wfi would be wrong: the device would
+        // only be serviced when something else happened to wake the kernel.
         myrtos_usb_task();
     }
 }
 
-// Pico SDK:s crt0 anropar main när klockor och runtime är uppsatta.
+// The Pico SDK's crt0 calls main once clocks and runtime are set up.
 int main(void) {
     myrtos_uart_init();
     myrtos_kernel_main();

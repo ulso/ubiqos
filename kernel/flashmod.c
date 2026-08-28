@@ -6,8 +6,9 @@ void myrtos_print_u32(uint32_t v);
 void myrtos_print_hex(uint32_t v);
 bool verify_myrtos_header(myrtos_module_header_t *header);
 
-// Namnet ligger i modulen, men moddir vill ha elva tecken i 8.3-form. En
-// modul i flash har inget filnamn, så namnet härleds ur modulens egen sträng.
+// The name lives in the module, but moddir wants eleven characters in 8.3
+// form. A module in flash has no filename, so the name is derived from the
+// module's own string.
 static void name_from_module(const myrtos_module_header_t *m, char *out) {
     const char *src = (const char*)m + m->name_offset;
     int i = 0;
@@ -27,13 +28,13 @@ uint32_t myrtos_flash_scan(void) {
     while (p + sizeof(myrtos_module_header_t) < MYRTOS_FLASH_END) {
         myrtos_module_header_t *m = (myrtos_module_header_t*)p;
 
-        // Oskriven flash läser 0xFFFFFFFF, så synkordet sållar bort tomrum
-        // billigt innan checksumman räknas.
+// Unwritten flash reads as 0xFFFFFFFF, so the sync word sifts out empty
+// space cheaply before the checksum is computed.
         if (m->sync_code != MYRTOS_SYNC_CODE) {
             p += 4;
             continue;
         }
-        // Storleken måste vara rimlig innan den används till något.
+// The size has to be plausible before it is used for anything.
         if (!m->module_size || p + m->module_size > MYRTOS_FLASH_END) {
             p += 4;
             continue;
@@ -56,7 +57,7 @@ uint32_t myrtos_flash_scan(void) {
             found++;
         }
 
-        // Hoppa förbi hela modulen; nästa kan börja direkt efter, fyrbytejusterat.
+// Skip past the whole module; the next may start right after, 4-byte aligned.
         p += (m->module_size + 3u) & ~3u;
     }
 

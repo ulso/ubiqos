@@ -66,8 +66,8 @@ const char *myrtos_moddir_match(const char *user_name) {
         const char *stored = modules[i].name;
         int k = 0;
         while (k < 8 && user_name[k] && lower(stored[k]) == lower(user_name[k])) k++;
-        // Träff när användarens namn tagit slut och resten av modulnamnet är
-        // utfyllnad.
+        // A match when the user's name has run out and the rest of the module
+        // name is padding.
         if (user_name[k]) continue;
         bool rest_blank = true;
         for (int j = k; j < 8; j++) if (stored[j] != ' ') rest_blank = false;
@@ -89,8 +89,8 @@ void myrtos_moddir_unlink(const myrtos_module_header_t *header) {
     for (uint32_t i = 0; i < module_count; i++) {
         if (modules[i].header != header) continue;
         if (modules[i].links) modules[i].links--;
-        // Kopian ligger kvar även vid noll länkar. OS-9 gjorde detsamma tills
-        // minnet behövdes: nästa start av samma verktyg blir då omedelbar.
+// The copy stays even at zero links. OS-9 did the same until the memory was
+// needed: the next start of the same utility is then immediate.
         return;
     }
 }
