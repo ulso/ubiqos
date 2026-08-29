@@ -150,6 +150,62 @@ void module_main(void) {
 `myrtos_free` refuses a pointer this process was not given, so one module cannot
 release another's memory, or the kernel's.
 
+## Several source files, and where state goes
+
+A module can be split across files -- pass the extra sources to
+`myrtos_add_module` after the first. What does not survive the split is the
+usual C way of keeping something private to a file:
+
+```c
+static int counter;             // rejected, and not because it is static
+```
+
+`static` does two things: it hides the name and it gives static storage. It is
+the storage that is refused, so making the variable global does not help --
+`int counter;` lands in `.bss` just the same, and is exported besides. **A
+module cannot have file-scope mutable state at all.** One copy of the code is
+shared by every process running it, so the variable would be shared too.
+
+`static const` is unaffected. It goes to `.rodata`, is shared deliberately, and
+still hides the name.
+
+For state that must be per process, use the data area. This is a pimpl, and it
+behaves like one:
+
+```c
+// state.h -- private to the module, not exported
+typedef struct { uint32_t counter; char label[16]; } state_t;
+static inline state_t *state(void) { return (state_t *)myrtos_data_area(0); }
+```
+
+```c
+// counter.c -- another file, handed nothing, reaching the same state
+#include "state.h"
+void bump(uint32_t times) { for (uint32_t i = 0; i < times; i++) state()->counter++; }
+```
+
+Where a pimpl reaches its `Impl` through `this`, this reaches the data area
+through the process. Nothing has to be threaded from one function to the next,
+which is the whole ergonomic point; without it you are left passing a handle
+into every call.
+
+`modules/pimpl/` is this, built from two files. Two instances running at once
+keep separate counters.
+
+The data area sits inside the block `mem_size` asked for, after the command
+line and its argv vector. `myrtos_data_area(&size)` reports what is there --
+but the stack grows down into the same span, so that is what exists, not what
+is safe. A module that wants a lot should ask for a larger `mem_size` rather
+than assume.
+
+## Names are eight characters
+
+The module directory holds names in the 8.3 form a FAT card gives them, so a
+module name longer than eight characters cannot work. It used to be cut short
+silently: the module built, loaded and registered, and then could not be run,
+because no name anyone could type would ever match it. The build refuses it
+now, and says what the name would have become.
+
 ## The other rule
 
 A module may not have writable data. `.data`, `.bss`, `.sdata` and `.sbss` must

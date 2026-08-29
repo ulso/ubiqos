@@ -238,6 +238,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 21 | `SYS_ALLOC` | bytes → pointer |
 | 22 | `SYS_FREE` | pointer → 0, or -1 if not ours |
 | 23 | `SYS_REALLOC` | pointer, bytes → pointer |
+| 24 | `SYS_DATAAREA` | &size or 0 → this process's data area |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was

@@ -95,6 +95,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_ALLOC    21u   // a0 = bytes -> a0 = pointer, 0 on failure
 #define SYS_FREE     22u   // a0 = pointer -> a0 = 0, -1 if not ours
 #define SYS_REALLOC  23u   // a0 = pointer, a1 = bytes -> a0 = pointer
+#define SYS_DATAAREA 24u   // a0 = &size or 0 -> a0 = base of this process's area
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -321,6 +322,23 @@ static inline int32_t myrtos_free(void *ptr) {
 static inline void *myrtos_realloc(void *ptr, uint32_t size) {
     return (void*)(uintptr_t)myrtos_syscall(SYS_REALLOC,
                                             (uint32_t)(uintptr_t)ptr, size, 0);
+}
+
+// This process's own data area, inside the block the module header asked for.
+// It is what a module uses instead of a static variable: the code is one shared
+// copy, so a static would be shared too, but this is per process.
+//
+// It is reached rather than passed, which is the point. Every source file in a
+// module can call this and get the same state without threading a pointer
+// through every function -- the same relation a pimpl has to `this`, where the
+// process is the object.
+//
+// The stack grows down into the same span, so size_out says what exists, not
+// what is safe to use. A module that wants a lot should ask for a larger
+// mem_size rather than assume.
+static inline void *myrtos_data_area(uint32_t *size_out) {
+    return (void*)(uintptr_t)myrtos_syscall(SYS_DATAAREA,
+                                            (uint32_t)(uintptr_t)size_out, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

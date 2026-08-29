@@ -62,8 +62,12 @@ pico_add_extra_outputs(os_kernel)
 # The .mod file is a real OUTPUT rather than a POST_BUILD step. The difference
 # is that it is rebuilt when make_module.py changes too, not only when the
 # module's source does.
+# Extra sources may follow the first: a module can be split across files like
+# any other program. What it may not do is keep state in a file-scope variable,
+# static or not -- one copy of the code is shared by every process running it,
+# so the variable would be shared too. See docs/writing-modules.md.
 function(myrtos_add_module name source)
-    add_executable(${name}_app ${source})
+    add_executable(${name}_app ${source} ${ARGN})
     target_compile_options(${name}_app PRIVATE
         -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
         $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics>)
@@ -153,6 +157,7 @@ myrtos_add_module(spin modules/spin/spin.c)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
 myrtos_add_module(memtest modules/memtest/memtest.c)
+myrtos_add_module(pimpl modules/pimpl/pimpl.c modules/pimpl/counter.c)
 myrtos_add_module(bootsel modules/bootsel/bootsel.c)
 myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
@@ -176,6 +181,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/nice.mod
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod
             ${CMAKE_CURRENT_BINARY_DIR}/bootsel.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod)

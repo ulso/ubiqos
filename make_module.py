@@ -43,6 +43,15 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if len(code_bytes) % 4 != 0:
         code_bytes += b'\x00' * (4 - (len(code_bytes) % 4))
 
+    # Eight characters, because the module directory holds names in the 8.3 form
+    # a FAT card gives them. A longer name was silently cut short: the module
+    # built, loaded and registered, and then could not be run because no name
+    # the user could type would ever match it.
+    if len(module_name) > 8:
+        sys.exit(f"module name '{module_name}' is longer than 8 characters; "
+                 f"the module directory stores 8.3 names and would cut it to "
+                 f"'{module_name[:8]}'")
+
     name_bytes = module_name.encode('utf-8') + b'\x00'
     if len(name_bytes) % 4 != 0:
         name_bytes += b'\x00' * (4 - (len(name_bytes) % 4))
@@ -81,7 +90,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
     ]
     header_crc = (~sum(fields)) & 0xFFFFFFFF
 
-    # Packa enligt din struct: sync, size, name, type_lang, attr_rev, exec, data, crc
+    # Pack the header: sync, size, name, type_lang, attr_rev, exec, mem, crc
     # Formatering: '<IIIHHIII' -> 3xUInt32, 2xUInt16, 3xUInt32
     header_bytes = struct.pack('<IIIHHIII', 
         MYRTOS_SYNC, module_size, name_offset,

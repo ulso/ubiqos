@@ -28,7 +28,9 @@ typedef struct {
     proc_state_t state;
     uintptr_t entry_point;
     const myrtos_module_header_t *module;   // shared code, one copy for all
-    void* mem_base;           // bottom of the data area, private per process
+    void* mem_base;           // bottom of the allocation, private per process
+    void* data_base;          // where the module's own state may start
+    uint32_t data_size;       // how far it reaches before the stack comes down
     uint32_t mem_size;        // data + stack, as the module header asked for
     uint32_t saved_sp;        // the trap frame, hence the entire context
     const char *args;         // points into the process's OWN memory, not here
@@ -188,6 +190,8 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].entry_point = frame->mepc;
     process_table[slot].module   = NULL;      // nothing to unlink when it ends
     process_table[slot].mem_base = mem;
+    process_table[slot].data_base = NULL;     // a kernel thread keeps its state
+    process_table[slot].data_size = 0;        // in the kernel's own variables
     process_table[slot].mem_size = stack_bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].args     = NULL;
@@ -265,8 +269,12 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     }
     argv[argc] = 0;
 
+    // What is left after the command line and its vector belongs to the module.
+    // A module cannot keep state in a static -- two processes sharing the code
+    // would share the variable -- so this is where per-process state goes, and
+    // myrtos_data_area is how a module finds it without threading a pointer
+    // through every call.
     uintptr_t data_base = ((uintptr_t)&argv[argc + 1] + 3) & ~(uintptr_t)3;
-    (void)data_base;   // reserved for the module's own data area
 
     uintptr_t stack_top = ((uintptr_t)mem + bytes) & ~(uintptr_t)15;
     myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
@@ -286,6 +294,12 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].entry_point = frame->mepc;
     process_table[slot].module = module_ptr;
     process_table[slot].mem_base = mem;
+    // The stack comes down into the same span, so this is what is available
+    // rather than what is safe. A module that wants a lot asks for a bigger
+    // mem_size; nothing here can tell how deep its calls will go.
+    process_table[slot].data_base = (void*)data_base;
+    process_table[slot].data_size = (uint32_t)(stack_top - sizeof(myrtos_frame_t)
+                                               - data_base);
     process_table[slot].mem_size = bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].args = (const char*)mem;
@@ -522,6 +536,13 @@ int32_t myrtos_mem_hand_over(void *ptr, int32_t to_pid) {
     if (!alloc_unlink(current_pid, h)) return -1;
     alloc_link(to_pid, h);
     return 0;
+}
+
+// Where this process may keep state that a static variable cannot hold. Named
+// apart from the ABI's inline wrapper, which the kernel also has in scope.
+void *myrtos_process_data_area(uint32_t *size_out) {
+    if (size_out) *size_out = process_table[current_pid].data_size;
+    return process_table[current_pid].data_base;
 }
 
 // Block the running process. It is not made ready again here -- something else
