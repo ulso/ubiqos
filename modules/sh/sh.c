@@ -27,7 +27,12 @@ static int32_t exec_line(char *line) {
     char *args = line;
     while (*args && *args != ' ') args++;
     if (*args) { *args = 0; args++; while (*args == ' ') args++; }
-    return myrtos_exec(line, args);
+
+    int32_t pid = myrtos_exec(line, args);
+    // Wait for it before prompting again. Without this the prompt raced the
+    // command's own output, and two commands in a row interleaved their lines.
+    if (pid >= 0) myrtos_wait(pid);
+    return pid;
 }
 
 static bool line_is(const char *line, const char *word) {

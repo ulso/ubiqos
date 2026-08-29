@@ -24,6 +24,11 @@ typedef struct {
     int32_t (*open)(void);
     int32_t (*write)(const uint8_t *buf, uint32_t len);
     int32_t (*read)(uint8_t *buf, uint32_t len);   // 0 = nothing right now
+    // Whether a read would return anything. A driver without this is never
+    // waited on: reads from it keep returning 0, as they did before blocking
+    // existed. That is what keeps the send-only UART from parking a shell
+    // forever on input that cannot arrive.
+    int32_t (*readable)(void);
     int32_t (*close)(void);
 } myrtos_driver_t;
 
@@ -40,6 +45,10 @@ int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_p
 int32_t myrtos_io_close(int32_t path, int32_t owner_pid);
 void    myrtos_io_close_all(int32_t owner_pid);
 void    myrtos_io_inherit(int32_t parent_pid, int32_t child_pid);
+
+// Whether a read on this path would return something. False also for a device
+// whose driver cannot answer, so that such a path is never blocked on.
+bool     myrtos_io_readable(int32_t path, int32_t owner_pid);
 
 // Open on a SPECIFIC path number. The kernel uses it to give the first process
 // its 0, 1 and 2; ordinary opens take the first free slot.

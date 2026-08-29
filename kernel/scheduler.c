@@ -10,10 +10,15 @@
 #define MAX_PROCESSES 8
 #define KERNEL_PID    0     // The kernel is itself a process, always runnable.
 
+// A process that is waiting is not runnable. Until this existed, waiting meant
+// asking again as fast as the scheduler would let you, which spends the whole
+// machine on a process that has nothing to do.
 typedef enum {
     PROC_STATE_FREE,
     PROC_STATE_READY,
-    PROC_STATE_RUNNING
+    PROC_STATE_RUNNING,
+    PROC_STATE_WAIT_READ,       // waiting for a device to have something
+    PROC_STATE_WAIT_CHILD       // waiting for another process to exit
 } proc_state_t;
 
 typedef struct {
@@ -25,6 +30,8 @@ typedef struct {
     uint32_t mem_size;        // data + stack, as the module header asked for
     uint32_t saved_sp;        // the trap frame, hence the entire context
     const char *args;         // points into the process's OWN memory, not here
+    int32_t  wait_path;       // WAIT_READ: the path being waited on
+    int32_t  wait_pid;        // WAIT_CHILD: the process being waited for
 } pcb_t;
 
 static pcb_t process_table[MAX_PROCESSES];
@@ -179,7 +186,9 @@ uint32_t myrtos_switch(uint32_t current_sp) {
         process_table[current_pid].state = PROC_STATE_READY;
     }
 
-    int32_t next = current_pid;
+    // The kernel is the fallback, not the current process: if the current one
+    // has just blocked, resuming it is exactly what must not happen.
+    int32_t next = KERNEL_PID;
     for (int i = 1; i <= MAX_PROCESSES; i++) {
         int32_t cand = (current_pid + i) % MAX_PROCESSES;
         if (process_table[cand].state == PROC_STATE_READY) { next = cand; break; }
@@ -209,6 +218,35 @@ uint32_t myrtos_process_count(void) {
 }
 
 // A process has asked to die. Its memory goes back and its slot is freed.
+// Block the running process. It is not made ready again here -- something else
+// has to notice that what it waits for has happened.
+void myrtos_block_on_read(int32_t path) {
+    process_table[current_pid].state = PROC_STATE_WAIT_READ;
+    process_table[current_pid].wait_path = path;
+}
+
+// Wait for a process to exit. False means there is nothing to wait for, either
+// because the pid is out of range or because it has already finished -- the
+// caller then carries on rather than blocking forever.
+bool myrtos_block_on_child(int32_t pid) {
+    if (pid <= 0 || pid >= MAX_PROCESSES) return false;
+    if (process_table[pid].state == PROC_STATE_FREE) return false;
+    process_table[current_pid].state = PROC_STATE_WAIT_CHILD;
+    process_table[current_pid].wait_pid = pid;
+    return true;
+}
+
+// Called from the timer tick. A device driver knows whether it has anything
+// waiting; asking it once per millisecond costs the kernel a few comparisons and
+// costs the blocked process nothing at all.
+void myrtos_wake_readers(void) {
+    for (int i = 1; i < MAX_PROCESSES; i++) {
+        if (process_table[i].state != PROC_STATE_WAIT_READ) continue;
+        if (!myrtos_io_readable(process_table[i].wait_path, i)) continue;
+        process_table[i].state = PROC_STATE_READY;
+    }
+}
+
 void myrtos_process_exit(void) {
     if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
     myrtos_print("Process ");
@@ -219,6 +257,14 @@ void myrtos_process_exit(void) {
     myrtos_tlsf_free(myrtos_mem_pool, process_table[current_pid].mem_base);
     process_table[current_pid].state = PROC_STATE_FREE;
     process_table[current_pid].mem_base = NULL;
+
+    // Whoever was waiting for this one can run again. Exact, unlike the read
+    // wake-up: the event is this line, and nothing has to be polled to see it.
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_table[i].state != PROC_STATE_WAIT_CHILD) continue;
+        if (process_table[i].wait_pid != current_pid) continue;
+        process_table[i].state = PROC_STATE_READY;
+    }
 }
 
 // --- THE MACHINE TIMER ----------------------------------------------------

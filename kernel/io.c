@@ -84,10 +84,15 @@ static int32_t usb_read(uint8_t *buf, uint32_t len) {
     return myrtos_usb_read(buf, len);
 }
 
+static int32_t usb_readable(void) {
+    return (int32_t)myrtos_usb_available();
+}
+
 static const myrtos_driver_t driver_usb = {
     .module_name = "USBCDC  MOD",
     .configure = usb_configure,
-    .open = usb_open, .write = usb_write, .read = usb_read, .close = usb_close
+    .open = usb_open, .write = usb_write, .read = usb_read, .close = usb_close,
+    .readable = usb_readable
 };
 
 static const myrtos_driver_t *drivers[MYRTOS_MAX_DRIVERS];
@@ -217,6 +222,12 @@ int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t 
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     return p->device->driver->write(buf, len);
+}
+
+bool myrtos_io_readable(int32_t path, int32_t owner_pid) {
+    myrtos_path_t *p = path_of(path, owner_pid);
+    if (!p || !p->device->driver->readable) return false;
+    return p->device->driver->readable() > 0;
 }
 
 int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_pid) {

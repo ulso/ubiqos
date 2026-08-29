@@ -2,6 +2,7 @@
 // ecall, and the trap vector in scheduler.S is the way in.
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "../common/modules.h"
 #include "trap.h"
 #include "io.h"
@@ -15,6 +16,9 @@ int32_t myrtos_current_pid(void);
 uint32_t myrtos_process_count(void);
 int32_t myrtos_process_create(const myrtos_module_header_t *m, const char *args);
 uint32_t myrtos_process_get_args(char *buf, uint32_t len);
+void myrtos_block_on_read(int32_t path);
+bool myrtos_block_on_child(int32_t pid);
+void myrtos_wake_readers(void);
 extern tlsf_pool_t myrtos_mem_pool;
 
 // The system call numbers come from common/myrtos_abi.h, shared with modules.
@@ -42,6 +46,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     if (frame->mcause & MCAUSE_INTERRUPT_BIT) {
         if ((frame->mcause & MCAUSE_CODE_MASK) == MCAUSE_MACHINE_TIMER) {
             myrtos_ticks++;
+            // A blocked reader is woken here rather than by the driver: TinyUSB
+            // delivers into its own buffers, and asking once per tick is both
+            // simpler and enough at keyboard speed.
+            myrtos_wake_readers();
 // The interrupt stays pending until mtimecmp moves forward. Without
 // this it recurs immediately and the machine does nothing else.
             myrtos_timer_rearm();
@@ -74,12 +82,22 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                                                   frame->a2,
                                                   myrtos_current_pid());
             break;
-        case SYS_READ:
-            frame->a0 = (uint32_t)myrtos_io_read((int32_t)frame->a0,
-                                                 (uint8_t*)(uintptr_t)frame->a1,
-                                                 frame->a2,
-                                                 myrtos_current_pid());
+        case SYS_READ: {
+            int32_t path = (int32_t)frame->a0;
+            int32_t n = myrtos_io_read(path, (uint8_t*)(uintptr_t)frame->a1,
+                                       frame->a2, myrtos_current_pid());
+            if (n == 0 && myrtos_current_pid() != 0) {
+                // Nothing there. Step mepc back onto the ecall and block: when
+                // the process runs again it re-executes the call with its
+                // arguments still in place, so nothing has to be remembered
+                // about a half-finished read.
+                frame->mepc -= 4;
+                myrtos_block_on_read(path);
+                return myrtos_switch(sp);
+            }
+            frame->a0 = (uint32_t)n;
             break;
+        }
         case SYS_EXEC: {
 // OS-9's F$Link and F$Fork in one: look the module up, bump
 // its link count, and make a process of it. The code is shared --
@@ -143,6 +161,13 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = (frame->a0 == MYRTOS_MEM_PROCESSES)
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
+            break;
+        case SYS_WAIT:
+            if (myrtos_block_on_child((int32_t)frame->a0)) {
+                frame->a0 = 0;
+                return myrtos_switch(sp);
+            }
+            frame->a0 = 0;      // already gone; nothing to wait for
             break;
         case SYS_EXIT:
 // The process is not to be resumed, so we switch away at once.

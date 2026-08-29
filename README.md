@@ -20,6 +20,7 @@ RAM-only image gives the boot ROM nothing to switch on.
 - An I/O manager with device descriptors; console on both UART and USB CDC
 - Per-process path numbers inherited across `exec`: 0 stdin, 1 stdout, 2 stderr
 - A shell, `sh`, that runs modules with arguments and `argc`/`argv`
+- Blocking reads and `wait`, so waiting costs nothing
 
 ## Building
 
@@ -208,17 +209,38 @@ result. Inline wrappers for all of them are in the ABI header.
 | 10 | `SYS_ARGS` | buffer, length → characters copied |
 | 11 | `SYS_FSDIR` | index, name buffer, &size → attributes |
 | 12 | `SYS_FSREAD` | &request → bytes read |
+| 13 | `SYS_FSWRITE` | &request → bytes written |
+| 14 | `SYS_FSREMOVE` | name → 0 or -1 |
+| 15 | `SYS_WAIT` | pid; returns when it has exited |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
 initialised and hard-asserted in `irq_add_shared_handler`. Hooking in rather
 than fighting removed more code than it added.
 
+## Waiting
+
+A process that waits is taken off the run queue. Two things can be waited for,
+and they are woken differently.
+
+A **read** with nothing to return steps `mepc` back onto the `ecall` and blocks.
+When the process runs again it re-executes the call with its arguments still in
+place, so the kernel remembers nothing about a half-finished read. The wake-up
+is a check once per timer tick, against a `readable` the driver provides. A
+driver that cannot answer is never waited on -- the send-only UART would
+otherwise park a shell on input that cannot arrive.
+
+**Waiting for a process** is exact: the wake-up is a line in the exit path, and
+nothing is polled to notice it. The shell uses it, which is why a command's
+output appears before the next prompt.
+
+Neither existed at first, and the cost was visible: `fill big.txt 100000` took
+26.6 seconds while the shell polled for input beside it, and 20.5 seconds once
+the shell was asleep.
+
 ## What is missing
 
 - **No writing to the filesystem.** FAT32 support is read-only, so `rm`, `cp`
   and `mkdir` cannot be written yet.
-- **No way to sleep.** A process waiting for input polls, and the idle case
-  burns quanta. A blocking read is the next real step.
 - **No protection.** No MPU, no user mode — a module can write anywhere.
   Position independence is what makes sharing possible, not a guard rail.

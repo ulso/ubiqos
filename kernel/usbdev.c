@@ -49,6 +49,10 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
     return (int32_t)written;
 }
 
+uint32_t myrtos_usb_available(void) {
+    return tud_cdc_connected() || tud_mounted() ? tud_cdc_available() : 0;
+}
+
 int32_t myrtos_usb_read(uint8_t *buf, uint32_t len) {
     if (!tud_mounted() || !tud_cdc_available()) return 0;
     return (int32_t)tud_cdc_read(buf, len);

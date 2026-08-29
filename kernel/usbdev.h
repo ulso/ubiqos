@@ -17,5 +17,6 @@ void myrtos_usb_task(void);      // must run regularly; the kernel idle loop doe
 bool myrtos_usb_ready(void);
 int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len);
 int32_t myrtos_usb_read(uint8_t *buf, uint32_t len);
+uint32_t myrtos_usb_available(void);   // bytes waiting, without consuming them
 
 #endif

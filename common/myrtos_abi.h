@@ -86,6 +86,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FSREAD   12u   // a0 = &myrtos_fs_io_t -> a0 = bytes read, 0 = eof
 #define SYS_FSWRITE  13u   // a0 = &myrtos_fs_io_t -> a0 = bytes written
 #define SYS_FSREMOVE 14u   // a0 = name -> a0 = 0 ok, -1 failed
+#define SYS_WAIT     15u   // a0 = pid; returns when that process has exited
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -114,9 +115,11 @@ static inline int32_t myrtos_write(int32_t path, const void *buf, uint32_t len) 
     return myrtos_syscall(SYS_WRITE, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
 }
 
-// Reads do not block: zero means nothing was there just now. The kernel has no
-// way yet to sleep a process on a device, so whoever waits for input must ask
-// again -- the scheduler reclaims the time regardless.
+// Reads block. A process waiting for input is taken off the run queue until the
+// device has something, so waiting costs nothing rather than costing every
+// quantum the scheduler will give it. Zero still comes back from a device that
+// cannot say whether it has anything -- the send-only UART, for instance --
+// because blocking on one of those would never end.
 // The standard paths, the same convention as OS-9 and Unix. The kernel sets
 // them up for the first process and every child inherits them, so a utility
 // neither opens nor closes anything: it reads path 0 and writes path 1.
@@ -199,6 +202,12 @@ static inline int32_t myrtos_fs_write(const char *name, uint32_t offset,
 // Delete a file. Returns 0, or -1 if it is missing or is a directory.
 static inline int32_t myrtos_fs_remove(const char *name) {
     return myrtos_syscall(SYS_FSREMOVE, (uint32_t)(uintptr_t)name, 0, 0);
+}
+
+// Wait for a process to exit. Returns at once if it already has, so there is no
+// race between starting something and waiting for it.
+static inline int32_t myrtos_wait(int32_t pid) {
+    return myrtos_syscall(SYS_WAIT, (uint32_t)pid, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {
