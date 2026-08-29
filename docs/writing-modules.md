@@ -328,8 +328,20 @@ parameter, the call binds at compile time, and no vtable exists.
 
 **No global instances.** A constructor at file scope leaves a pointer in
 `.init_array`, which is the same sort of table, and the object itself in
-`.sbss`. The class must also not need a constructor to have run: the data area
+`.sbss`. The class must also not need a constructor to have run: the block
 arrives zeroed, and nothing calls one.
+
+**A `static` data member is the easy one to miss.** It looks like part of the
+class, so like per-instance state, but it is shared storage -- for every
+instance, and therefore for every process. `static __thread` fixes it as it
+fixes any other static.
+
+Nesting itself costs nothing. A nested class is a matter of naming, with no
+runtime representation of its own, so the same two rules apply to it and nothing
+more. Measured: nested as a member, nested with its own instance, a local class
+inside a function, and three levels of nesting with CRTP are all clean. Only the
+nested class with a virtual function and the one with a plain `static` member
+fail, and they fail for the reasons above rather than for being nested.
 
 ## Names are eight characters
 
