@@ -87,6 +87,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FSWRITE  13u   // a0 = &myrtos_fs_io_t -> a0 = bytes written
 #define SYS_FSREMOVE 14u   // a0 = name -> a0 = 0 ok, -1 failed
 #define SYS_WAIT     15u   // a0 = pid; returns when that process has exited
+#define SYS_SLEEP    16u   // a0 = milliseconds; returns when they have passed
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -208,6 +209,12 @@ static inline int32_t myrtos_fs_remove(const char *name) {
 // race between starting something and waiting for it.
 static inline int32_t myrtos_wait(int32_t pid) {
     return myrtos_syscall(SYS_WAIT, (uint32_t)pid, 0, 0);
+}
+
+// Sleep for a length of time. The tick is a millisecond, so that is the unit.
+// Zero yields: the process stays runnable but lets the next one go first.
+static inline int32_t myrtos_sleep(uint32_t ms) {
+    return myrtos_syscall(SYS_SLEEP, ms, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

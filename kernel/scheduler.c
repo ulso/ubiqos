@@ -18,7 +18,8 @@ typedef enum {
     PROC_STATE_READY,
     PROC_STATE_RUNNING,
     PROC_STATE_WAIT_READ,       // waiting for a device to have something
-    PROC_STATE_WAIT_CHILD       // waiting for another process to exit
+    PROC_STATE_WAIT_CHILD,      // waiting for another process to exit
+    PROC_STATE_SLEEPING         // waiting for a length of time
 } proc_state_t;
 
 typedef struct {
@@ -32,10 +33,23 @@ typedef struct {
     const char *args;         // points into the process's OWN memory, not here
     int32_t  wait_path;       // WAIT_READ: the path being waited on
     int32_t  wait_pid;        // WAIT_CHILD: the process being waited for
+    int32_t  sleep_delta;     // SLEEPING: ticks after the process ahead of it
+    int32_t  sleep_next;      // SLEEPING: next in the delta list, -1 at the end
 } pcb_t;
 
 static pcb_t process_table[MAX_PROCESSES];
 static int32_t current_pid = KERNEL_PID;
+
+// --- THE SLEEP LIST -------------------------------------------------------
+// A delta list, as in Comer's XINU. Each sleeper stores not when it wakes but
+// how many ticks after the one ahead of it, so the timer decrements exactly one
+// number per tick no matter how many processes are asleep. Storing absolute
+// wake times instead would mean comparing every sleeper against the clock on
+// every tick, and would need an answer for what happens when the clock wraps.
+//
+// The cost moves to insertion, which walks the list summing deltas -- but a
+// process sleeps once and is ticked many times, so that is the right way round.
+static int32_t sleep_head = -1;
 
 // The kernel's global and thread pointers. crt0 sets gp to __global_pointer$,
 // and the kernel's own C code addresses its small globals relative to it. A new
@@ -64,7 +78,9 @@ void myrtos_scheduler_init(void) {
         process_table[i].pid = i;
         process_table[i].state = PROC_STATE_FREE;
         process_table[i].mem_base = NULL;
+        process_table[i].sleep_next = -1;
     }
+    sleep_head = -1;
     // The kernel is pid 0. Its context is filled in at the first trap, since
     // it is already running on its own stack.
     process_table[KERNEL_PID].state = PROC_STATE_RUNNING;
@@ -164,6 +180,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].mem_size = bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].args = (const char*)mem;
+    process_table[slot].sleep_next = -1;
     process_table[slot].state = PROC_STATE_READY;
 
     // The addresses are the whole point: if two processes run the same module,
@@ -218,6 +235,60 @@ uint32_t myrtos_process_count(void) {
 }
 
 // A process has asked to die. Its memory goes back and its slot is freed.
+// Insert into the delta list. `remaining` is what is left of the requested time
+// after subtracting everyone this process will wake up behind; that difference
+// is the delta stored, and the process it lands in front of has its own delta
+// reduced by the same amount so the chain still adds up.
+static void sleep_insert(int32_t pid, uint32_t ticks) {
+    int32_t prev = -1, cur = sleep_head;
+    uint32_t remaining = ticks;
+
+    while (cur >= 0 && (uint32_t)process_table[cur].sleep_delta <= remaining) {
+        remaining -= (uint32_t)process_table[cur].sleep_delta;
+        prev = cur;
+        cur = process_table[cur].sleep_next;
+    }
+
+    process_table[pid].sleep_delta = (int32_t)remaining;
+    process_table[pid].sleep_next = cur;
+    if (prev < 0) sleep_head = pid;
+    else process_table[prev].sleep_next = pid;
+    if (cur >= 0) process_table[cur].sleep_delta -= (int32_t)remaining;
+}
+
+// Taking one out has to give its delta to the one behind it, or everything
+// after it wakes early. A process that dies while asleep goes through here.
+static void sleep_remove(int32_t pid) {
+    int32_t prev = -1, cur = sleep_head;
+    while (cur >= 0 && cur != pid) { prev = cur; cur = process_table[cur].sleep_next; }
+    if (cur < 0) return;
+
+    int32_t next = process_table[cur].sleep_next;
+    if (next >= 0) process_table[next].sleep_delta += process_table[cur].sleep_delta;
+    if (prev < 0) sleep_head = next;
+    else process_table[prev].sleep_next = next;
+    process_table[cur].sleep_next = -1;
+}
+
+void myrtos_sleep_begin(uint32_t ticks) {
+    process_table[current_pid].state = PROC_STATE_SLEEPING;
+    sleep_insert(current_pid, ticks);
+}
+
+// One decrement per tick, however many are asleep. Several can come due at
+// once: a zero delta means "at the same moment as the one ahead of me".
+void myrtos_sleep_tick(void) {
+    if (sleep_head < 0) return;
+    if (process_table[sleep_head].sleep_delta > 0) process_table[sleep_head].sleep_delta--;
+
+    while (sleep_head >= 0 && process_table[sleep_head].sleep_delta == 0) {
+        int32_t pid = sleep_head;
+        sleep_head = process_table[pid].sleep_next;
+        process_table[pid].sleep_next = -1;
+        process_table[pid].state = PROC_STATE_READY;
+    }
+}
+
 // Block the running process. It is not made ready again here -- something else
 // has to notice that what it waits for has happened.
 void myrtos_block_on_read(int32_t path) {
@@ -249,6 +320,7 @@ void myrtos_wake_readers(void) {
 
 void myrtos_process_exit(void) {
     if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
+    sleep_remove(current_pid);                  // harmless if it was not asleep
     myrtos_print("Process ");
     myrtos_print_u32(current_pid);
     myrtos_print(" exited.\n");

@@ -19,6 +19,8 @@ uint32_t myrtos_process_get_args(char *buf, uint32_t len);
 void myrtos_block_on_read(int32_t path);
 bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
+void myrtos_sleep_begin(uint32_t ticks);
+void myrtos_sleep_tick(void);
 extern tlsf_pool_t myrtos_mem_pool;
 
 // The system call numbers come from common/myrtos_abi.h, shared with modules.
@@ -50,6 +52,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             // delivers into its own buffers, and asking once per tick is both
             // simpler and enough at keyboard speed.
             myrtos_wake_readers();
+            myrtos_sleep_tick();
 // The interrupt stays pending until mtimecmp moves forward. Without
 // this it recurs immediately and the machine does nothing else.
             myrtos_timer_rearm();
@@ -162,6 +165,14 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
             break;
+        case SYS_SLEEP: {
+            uint32_t ms = frame->a0;                // read before a0 is the result
+            frame->a0 = 0;
+            if (myrtos_current_pid() == 0) break;   // the kernel does not sleep
+            if (ms == 0) return myrtos_switch(sp);  // zero is a yield
+            myrtos_sleep_begin(ms);
+            return myrtos_switch(sp);
+        }
         case SYS_WAIT:
             if (myrtos_block_on_child((int32_t)frame->a0)) {
                 frame->a0 = 0;

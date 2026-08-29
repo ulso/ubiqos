@@ -181,6 +181,12 @@ Type a module name to run it. Built in:
   echo   print its arguments
   ls     list the SD card
   cat    show a file
+  cp     copy a file
+  rm     delete a file
+  write  write text to a file
+  sleep  wait, in milliseconds
+
+A trailing & runs a command without waiting for it.
 ```
 
 `help` is the only thing the shell does itself. Everything else is a module
@@ -212,6 +218,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 13 | `SYS_FSWRITE` | &request → bytes written |
 | 14 | `SYS_FSREMOVE` | name → 0 or -1 |
 | 15 | `SYS_WAIT` | pid; returns when it has exited |
+| 16 | `SYS_SLEEP` | milliseconds; returns when they have passed |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
@@ -233,6 +240,14 @@ otherwise park a shell on input that cannot arrive.
 **Waiting for a process** is exact: the wake-up is a line in the exit path, and
 nothing is polled to notice it. The shell uses it, which is why a command's
 output appears before the next prompt.
+
+**Sleeping for a length of time** uses a delta list, as in Comer's XINU. Each
+sleeper stores not when it wakes but how many ticks after the one ahead of it,
+so the timer decrements exactly one number per tick however many are asleep.
+Absolute wake times would mean comparing every sleeper against the clock on
+every tick, and would need an answer for what happens when the clock wraps. The
+cost moves to insertion, which walks the list summing deltas -- a process sleeps
+once and is ticked many times, so that is the right way round.
 
 Neither existed at first, and the cost was visible: `fill big.txt 100000` took
 26.6 seconds while the shell polled for input beside it, and 20.5 seconds once

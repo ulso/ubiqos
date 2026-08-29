@@ -18,7 +18,9 @@ static void help(int32_t c) {
         "  cat    show a file\r\n"
         "  cp     copy a file\r\n"
         "  rm     delete a file\r\n"
-        "  write  write text to a file\r\n");
+        "  write  write text to a file\r\n"
+        "  sleep  wait, in milliseconds\r\n"
+        "\r\nA trailing & runs a command without waiting for it.\r\n");
 }
 
 // Split the line at the first space: everything before is the module name,
@@ -28,10 +30,23 @@ static int32_t exec_line(char *line) {
     while (*args && *args != ' ') args++;
     if (*args) { *args = 0; args++; while (*args == ' ') args++; }
 
+    // A trailing & means do not wait. Without it there is no way to have two
+    // processes running at once from the keyboard, and no way to see that the
+    // sleep list orders more than one sleeper.
+    bool background = false;
+    char *end = args;
+    while (*end) end++;
+    while (end > args && end[-1] == ' ') end--;
+    if (end > args && end[-1] == '&') {
+        background = true;
+        end[-1] = 0;
+        while (end > args && end[-1] == ' ') { end--; *end = 0; }
+    }
+
     int32_t pid = myrtos_exec(line, args);
     // Wait for it before prompting again. Without this the prompt raced the
     // command's own output, and two commands in a row interleaved their lines.
-    if (pid >= 0) myrtos_wait(pid);
+    if (pid >= 0 && !background) myrtos_wait(pid);
     return pid;
 }
 
