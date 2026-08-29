@@ -102,10 +102,10 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
 
     uint32_t *raw_ptr = (uint32_t*)header;
     uint32_t checksum = 0;
-    // The header is 40 bytes, hence ten words, and the tenth IS the crc field.
-    // The sum therefore covers the first nine -- taking ten would count the crc
-    // into its own checksum and could never match.
-    for (int i = 0; i < 9; i++) {
+    // The header is 44 bytes, hence eleven words, and the eleventh IS the crc
+    // field. The sum therefore covers the first ten -- taking eleven would count
+    // the crc into its own checksum and could never match.
+    for (int i = 0; i < 10; i++) {
         checksum += raw_ptr[i];
     }
     checksum = ~checksum;

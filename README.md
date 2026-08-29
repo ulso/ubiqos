@@ -17,7 +17,8 @@ RAM-only image gives the boot ROM nothing to switch on.
 - A 320 kB TLSF heap that splits and coalesces blocks, which modules can ask
   from; the kernel records the owner, so death returns what death takes
 - Modules loaded from FAT32 on the SD card, or found resident in flash
-- A module directory with link counts — a module already in memory is shared
+- A module directory with link counts and revisions — a name exists once, and
+  the highest revision of it wins
 - An I/O manager with device descriptors; console on both UART and USB CDC
 - Per-process path numbers inherited across `exec`: 0 stdin, 1 stdout, 2 stderr
 - A shell, `sh`, that runs modules with arguments and `argc`/`argv`
@@ -220,7 +221,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 3 | `SYS_OPEN` | device name → path number |
 | 4 | `SYS_WRITE` | path, buffer, length |
 | 5 | `SYS_CLOSE` | path |
-| 6 | `SYS_MODDIR` | index, buffer → link count |
+| 6 | `SYS_MODDIR` | index, &info → 0, or -1 past the end |
 | 7 | `SYS_MEMINFO` | what → value |
 | 8 | `SYS_READ` | path, buffer, length → bytes read |
 | 9 | `SYS_EXEC` | module name, arguments → pid |

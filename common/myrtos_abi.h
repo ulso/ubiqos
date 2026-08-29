@@ -18,10 +18,10 @@
 // --- FORMAT VERSION -------------------------------------------------------
 // Lives in the low byte of attr_rev. The kernel rejects modules built against
 // another version rather than running them and failing somewhere obscure.
-// Version 2 added the three tls_ fields, which is a change of the header's
-// size and of what the checksum covers. A version 1 module in a version 2
-// kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION 2
+// Version 2 added the three tls_ fields; version 3 added the revision. Both
+// changed the header's size and what the checksum covers, so an older module in
+// a newer kernel is refused rather than misread.
+#define MYRTOS_ABI_VERSION 3
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE 0x0509000B
@@ -79,7 +79,14 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t tls_init;       // bytes to copy: the .tdata part
     uint32_t tls_total;      // bytes to reserve: .tdata plus .tbss
 
-    uint32_t header_crc;     // complement of the sum of the first nine words
+    // The module's own revision, as OS-9 had it. The directory keeps the
+    // highest of a given name and refuses the rest, which is how a system was
+    // patched: a newer module in the spare EPROM socket won over the one
+    // soldered down, without anything else changing.
+    uint16_t revision;
+    uint16_t reserved;
+
+    uint32_t header_crc;     // complement of the sum of the first ten words
 } myrtos_module_header_t;
 
 // --- SYSTEM CALLS ---------------------------------------------------------
@@ -90,7 +97,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_OPEN      3u   // a0 = device name       -> a0 = path number
 #define SYS_WRITE     4u   // a0 = path, a1 = buffer, a2 = length
 #define SYS_CLOSE     5u   // a0 = path
-#define SYS_MODDIR    6u   // a0 = index, a1 = buffer(12) -> a0 = links, -1 = end
+#define SYS_MODDIR    6u   // a0 = index, a1 = &myrtos_modinfo_t -> a0 = 0, -1 = end
 #define SYS_MEMINFO   7u   // a0 = 0 largest free block, 1 processes -> a0 = value
 #define SYS_READ      8u   // a0 = path, a1 = buf, a2 = length -> a0 = read, 0 = nothing
 #define SYS_EXEC      9u   // a0 = module name, a1 = argument string -> a0 = pid
@@ -449,8 +456,17 @@ static inline int32_t myrtos_write_u32(int32_t path, uint32_t v) {
     return myrtos_write(path, &buf[i], (uint32_t)(10 - i));
 }
 
-static inline int32_t myrtos_moddir_get(uint32_t index, char *name_out) {
-    return myrtos_syscall(SYS_MODDIR, index, (uint32_t)(uintptr_t)name_out, 0);
+// One entry of the module directory. The revision is what decides which copy of
+// a name the system keeps, so it belongs in any listing of them.
+typedef struct {
+    char     name[12];
+    uint32_t links;        // processes running it right now
+    uint32_t revision;     // the highest of this name won
+    uint32_t size;         // the whole module, header included
+} myrtos_modinfo_t;
+
+static inline int32_t myrtos_moddir_get(uint32_t index, myrtos_modinfo_t *out) {
+    return myrtos_syscall(SYS_MODDIR, index, (uint32_t)(uintptr_t)out, 0);
 }
 
 static inline int32_t myrtos_meminfo(uint32_t what) {

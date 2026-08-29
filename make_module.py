@@ -70,6 +70,7 @@ def tls_layout(elf_path, nm_tool):
 
 def create_module(input_bin_path, output_mod_path, module_name,
                   elf_path=None, nm_tool=None, entry_symbol="module_main",
+                  revision=1,
                   module_type="program"):
     with open(input_bin_path, "rb") as f:
         code_bytes = f.read()
@@ -102,7 +103,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # The header is 40 bytes: ten 32-bit words, with type_lang and attr_rev sharing
 # one. It must match myrtos_module_header_t exactly; when this said 28 and the
 # struct said 32, exec_offset and name_offset landed four bytes into the code.
-    header_size = 40
+    header_size = 44
     exec_offset = 0 if module_type == "data" else header_size + entry_in_code
 
     # The module is header, code, then the name. The thread-local image needs no
@@ -120,7 +121,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 2
+    MYRTOS_ABI_VERSION = 3
     attr_rev  = (1 << 8) | MYRTOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
 # trap frame is 128 bytes, so 4 kB leaves ample depth for call chains.
@@ -134,14 +135,16 @@ def create_module(input_bin_path, output_mod_path, module_name,
         MYRTOS_SYNC, module_size, name_offset,
         (attr_rev << 16) | type_lang,
         exec_offset, mem_size,
-        tls_offset, tls_init, tls_total
+        tls_offset, tls_init, tls_total,
+        (0 << 16) | revision
     ]
     header_crc = (~sum(fields)) & 0xFFFFFFFF
 
-    header_bytes = struct.pack('<IIIHHIIIIII',
+    header_bytes = struct.pack('<IIIHHIIIIIHHI',
         MYRTOS_SYNC, module_size, name_offset,
         type_lang, attr_rev, exec_offset, mem_size,
-        tls_offset, tls_init, tls_total, header_crc
+        tls_offset, tls_init, tls_total,
+        revision, 0, header_crc
     )
     assert len(header_bytes) == header_size, "header is not %d bytes" % header_size
 
@@ -150,7 +153,8 @@ def create_module(input_bin_path, output_mod_path, module_name,
         f.write(code_bytes)
         f.write(name_bytes)
 
-    print(f"🎉 Myrtos-modul '{module_name}' skapad (32-bytes header matchad)!")
+    print(f"  module '{module_name}' revision {revision}, "
+          f"{module_size} bytes, {tls_total} thread-local")
 
 if __name__ == "__main__":
 # --data as a flag rather than a positional argument: CMake drops empty
@@ -158,4 +162,14 @@ if __name__ == "__main__":
     argv = sys.argv[1:]
     module_type = "data" if "--data" in argv else "program"
     argv = [a for a in argv if a != "--data"]
-    create_module(*argv, module_type=module_type)
+
+    # --rev sets the module revision. The directory keeps the highest of a given
+    # name, so a patched module replaces the one already there by carrying a
+    # larger number and nothing else.
+    revision = 1
+    if "--rev" in argv:
+        i = argv.index("--rev")
+        revision = int(argv[i + 1])
+        del argv[i:i + 2]
+
+    create_module(*argv, module_type=module_type, revision=revision)

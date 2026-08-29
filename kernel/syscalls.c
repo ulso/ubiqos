@@ -173,9 +173,12 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         case SYS_MODDIR: {
             const myrtos_module_entry_t *e = myrtos_moddir_entry(frame->a0);
             if (!e) { frame->a0 = (uint32_t)-1; break; }
-            char *out = (char*)(uintptr_t)frame->a1;
-            for (int i = 0; i < 12; i++) out[i] = e->name[i];
-            frame->a0 = e->links;
+            myrtos_modinfo_t *out = (myrtos_modinfo_t*)(uintptr_t)frame->a1;
+            for (int i = 0; i < 12; i++) out->name[i] = e->name[i];
+            out->links = e->links;
+            out->revision = e->header->revision;
+            out->size = e->header->module_size;
+            frame->a0 = 0;
             break;
         }
         case SYS_MEMINFO:

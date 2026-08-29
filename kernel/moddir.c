@@ -23,6 +23,59 @@ void myrtos_moddir_init(void) {
     module_count = 0;
 }
 
+// A name may exist once. Which copy wins is the revision, as in OS-9: the
+// highest is kept and the rest refused. That is how a system was patched there
+// -- a newer module in the spare EPROM socket beat the one soldered down, with
+// nothing else in the machine changed.
+//
+// Until this existed, two modules of the same name both got entries with their
+// own link counts, and which one ran depended on the order they were found in.
+static myrtos_module_entry_t *entry_named(const char *name) {
+    for (uint32_t i = 0; i < module_count; i++) {
+        bool same = true;
+        for (int j = 0; j < 11; j++) if (modules[i].name[j] != name[j]) same = false;
+        if (same) return &modules[i];
+    }
+    return 0;
+}
+
+// True when the newcomer should be registered. An entry that is beaten is
+// released here if nothing is using it; if it is in use it stays, because a
+// process is running that code right now.
+static bool supersedes(const myrtos_module_header_t *fresh, const char *name) {
+    myrtos_module_entry_t *old = entry_named(name);
+    if (!old) return true;
+
+    if (fresh->revision <= old->header->revision) {
+        myrtos_print("  ");
+        myrtos_print(name);
+        myrtos_print(": revision ");
+        myrtos_print_u32(fresh->revision);
+        myrtos_print(" does not beat ");
+        myrtos_print_u32(old->header->revision);
+        myrtos_print(", ignored\n");
+        return false;
+    }
+    if (old->links) {
+        myrtos_print("  ");
+        myrtos_print(name);
+        myrtos_print(": newer revision found but the old one is in use\n");
+        return false;
+    }
+
+    myrtos_print("  ");
+    myrtos_print(name);
+    myrtos_print(": revision ");
+    myrtos_print_u32(fresh->revision);
+    myrtos_print(" replaces ");
+    myrtos_print_u32(old->header->revision);
+    myrtos_print("\n");
+
+    if (old->owned) myrtos_tlsf_free(myrtos_mem_pool, old->owned);
+    *old = modules[--module_count];       // close the gap
+    return true;
+}
+
 static myrtos_module_entry_t *alloc_entry(void) {
     if (module_count >= MYRTOS_MAX_MODULES) {
         myrtos_print("  module directory full\n");
@@ -33,6 +86,7 @@ static myrtos_module_entry_t *alloc_entry(void) {
 
 bool myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char *name) {
     if (!verify_myrtos_header((myrtos_module_header_t*)header)) return false;
+    if (!supersedes(header, name)) return false;
     myrtos_module_entry_t *e = alloc_entry();
     if (!e) return false;
     e->header = header;
@@ -44,6 +98,7 @@ bool myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char
 
 bool myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name) {
     if (!verify_myrtos_header((myrtos_module_header_t*)src)) return false;
+    if (!supersedes((const myrtos_module_header_t*)src, name)) return false;
 
     void *space = myrtos_tlsf_malloc(myrtos_mem_pool, len);
     if (!space) { myrtos_print("  no heap for module\n"); return false; }
