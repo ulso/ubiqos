@@ -5,6 +5,7 @@
 #include "../common/modules.h"
 #include "trap.h"
 #include "io.h"
+#include "fat32.h"
 #include "moddir.h"
 #include "tlsf.h"
 
@@ -97,6 +98,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         case SYS_ARGS:
             frame->a0 = myrtos_process_get_args((char*)(uintptr_t)frame->a0, frame->a1);
             break;
+        case SYS_FSDIR:
+            frame->a0 = (uint32_t)myrtos_fat_stat_nth(frame->a0,
+                                                      (char*)(uintptr_t)frame->a1,
+                                                      (uint32_t*)(uintptr_t)frame->a2);
+            break;
+        case SYS_FSREAD: {
+            // The name arrives as the user typed it; padding it into 8.3 form is
+            // the filesystem's job, not every utility's.
+            const myrtos_fs_read_t *r = (const myrtos_fs_read_t*)(uintptr_t)frame->a0;
+            char name_83[12];
+            if (!myrtos_fat_name_to_83(r->name, name_83)) { frame->a0 = (uint32_t)-1; break; }
+            frame->a0 = (uint32_t)myrtos_fat_read_at(name_83, r->offset, r->buf, r->len);
+            break;
+        }
         case SYS_CLOSE:
             frame->a0 = (uint32_t)myrtos_io_close((int32_t)frame->a0, myrtos_current_pid());
             break;

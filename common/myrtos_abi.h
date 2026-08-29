@@ -82,6 +82,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_READ      8u   // a0 = path, a1 = buf, a2 = length -> a0 = read, 0 = nothing
 #define SYS_EXEC      9u   // a0 = module name, a1 = argument string -> a0 = pid
 #define SYS_ARGS     10u   // a0 = buffer, a1 = length -> a0 = characters copied
+#define SYS_FSDIR    11u   // a0 = index, a1 = name(12), a2 = &size -> a0 = attr, -1 = end
+#define SYS_FSREAD   12u   // a0 = &myrtos_fs_read_t -> a0 = bytes read, 0 = eof
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -151,6 +153,35 @@ static inline int32_t myrtos_exec(const char *module_name, const char *args) {
 // themselves than go through argv.
 static inline int32_t myrtos_args(char *buf, uint32_t len) {
     return myrtos_syscall(SYS_ARGS, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
+// --- FILESYSTEM -----------------------------------------------------------
+// Read-only for now: the card can be listed and read, not written. Names are
+// given as a person types them ("readme.txt"); the kernel pads them into the
+// 8.3 form the directory stores.
+
+#define MYRTOS_ATTR_DIRECTORY 0x10
+
+// Enumerate the root directory. index starts at zero; -1 means no more.
+static inline int32_t myrtos_fs_dir(uint32_t index, char *name_out, uint32_t *size_out) {
+    return myrtos_syscall(SYS_FSDIR, index, (uint32_t)(uintptr_t)name_out,
+                          (uint32_t)(uintptr_t)size_out);
+}
+
+// Four arguments do not fit in a0-a2, so the request travels as a struct. That
+// also leaves room to grow without disturbing the calling convention.
+typedef struct {
+    const char *name;
+    uint32_t    offset;
+    uint8_t    *buf;
+    uint32_t    len;
+} myrtos_fs_read_t;
+
+// Read a slice of a file. Returns bytes read, 0 at end of file, -1 if missing.
+static inline int32_t myrtos_fs_read(const char *name, uint32_t offset,
+                                     void *buf, uint32_t len) {
+    myrtos_fs_read_t r = { name, offset, (uint8_t*)buf, len };
+    return myrtos_syscall(SYS_FSREAD, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {
