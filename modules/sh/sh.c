@@ -13,7 +13,9 @@ static void help(int32_t c) {
         "  help   this text\r\n"
         "  lsmod  list modules\r\n"
         "  free   memory and processes\r\n"
-        "  echo   print its arguments\r\n");
+        "  echo   print its arguments\r\n"
+        "  ls     list the SD card\r\n"
+        "  cat    show a file\r\n");
 }
 
 // Split the line at the first space: everything before is the module name,

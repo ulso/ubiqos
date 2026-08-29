@@ -113,10 +113,13 @@ kernel searches for the sync word, exactly as OS-9 did with ROM — the module
 
 ```bash
 python3 make_flash_image.py build/modules.bin \
-        build/sh.mod build/echo.mod build/lsmod.mod \
-        build/free.mod build/termdesc.mod build/usbdesc.mod
-picotool load -t bin -o 0x10100000 build/modules.bin
+        build/sh.mod build/ls.mod build/cat.mod build/echo.mod \
+        build/lsmod.mod build/free.mod build/termdesc.mod build/usbdesc.mod
+picotool load build/modules.bin -t bin -o 0x10100000
 ```
+
+The filename comes before `-t` and `-o`; picotool rejects them the other way
+round.
 
 Flash is searched before the card. A module of the same name on the card is
 registered alongside it, and whichever was registered first wins the lookup.
@@ -171,6 +174,8 @@ Type a module name to run it. Built in:
   lsmod  list modules
   free   memory and processes
   echo   print its arguments
+  ls     list the SD card
+  cat    show a file
 ```
 
 `help` is the only thing the shell does itself. Everything else is a module
@@ -197,6 +202,8 @@ result. Inline wrappers for all of them are in the ABI header.
 | 8 | `SYS_READ` | path, buffer, length → bytes read |
 | 9 | `SYS_EXEC` | module name, arguments → pid |
 | 10 | `SYS_ARGS` | buffer, length → characters copied |
+| 11 | `SYS_FSDIR` | index, name buffer, &size → attributes |
+| 12 | `SYS_FSREAD` | &request → bytes read |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
