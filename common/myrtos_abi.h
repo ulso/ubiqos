@@ -88,6 +88,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FSREMOVE 14u   // a0 = name -> a0 = 0 ok, -1 failed
 #define SYS_WAIT     15u   // a0 = pid; returns when that process has exited
 #define SYS_SLEEP    16u   // a0 = milliseconds; returns when they have passed
+#define SYS_SETPRIO  17u   // a0 = new priority -> a0 = the old one
+#define SYS_TICKS    18u   // -> a0 = milliseconds since the timer started
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -215,6 +217,24 @@ static inline int32_t myrtos_wait(int32_t pid) {
 // Zero yields: the process stays runnable but lets the next one go first.
 static inline int32_t myrtos_sleep(uint32_t ms) {
     return myrtos_syscall(SYS_SLEEP, ms, 0, 0);
+}
+
+// Thirty-two levels. 0 belongs to the idle process and cannot be taken; 16 is
+// what a process starts with. Strict priority: nothing below the highest ready
+// level runs at all, so a process that neither blocks nor sleeps starves
+// everything under it for as long as it holds the processor.
+#define MYRTOS_PRIO_MAX     31
+#define MYRTOS_PRIO_DEFAULT 16
+
+// Set this process's priority, returning the previous one.
+static inline int32_t myrtos_setprio(uint32_t prio) {
+    return myrtos_syscall(SYS_SETPRIO, prio, 0, 0);
+}
+
+// Milliseconds since the timer started. Wraps after 49 days; compare
+// differences rather than absolute values and the wrap takes care of itself.
+static inline uint32_t myrtos_ticks_now(void) {
+    return (uint32_t)myrtos_syscall(SYS_TICKS, 0, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

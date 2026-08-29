@@ -20,6 +20,7 @@ void myrtos_block_on_read(int32_t path);
 bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
 void myrtos_sleep_begin(uint32_t ticks);
+uint32_t myrtos_set_priority(uint32_t prio);
 void myrtos_sleep_tick(void);
 extern tlsf_pool_t myrtos_mem_pool;
 
@@ -164,6 +165,12 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = (frame->a0 == MYRTOS_MEM_PROCESSES)
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
+            break;
+        case SYS_TICKS:
+            frame->a0 = (uint32_t)myrtos_ticks;
+            break;
+        case SYS_SETPRIO:
+            frame->a0 = myrtos_set_priority(frame->a0);
             break;
         case SYS_SLEEP: {
             uint32_t ms = frame->a0;                // read before a0 is the result

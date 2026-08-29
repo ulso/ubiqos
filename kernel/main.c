@@ -253,6 +253,10 @@ void myrtos_kernel_main(void) {
 
     // If there is a shell only that is started, and it starts the rest on
     // demand. Starting everything at boot was a demonstration, not a system.
+    // Started before the shell, so the console is being serviced by the time
+    // anything can type at it.
+    myrtos_usb_start_task();
+
     uint32_t started = 0;
     const char *shell = myrtos_moddir_match("sh");
     if (shell) {
@@ -306,9 +310,10 @@ void myrtos_kernel_main(void) {
             myrtos_print_u32(myrtos_ticks);
             myrtos_print("\n");
         }
-        // TinyUSB does its work here. wfi would be wrong: the device would
-        // only be serviced when something else happened to wake the kernel.
-        myrtos_usb_task();
+        // USB is serviced by its own process now, not here. Doing it in the
+        // idle process meant that anything busy at a higher priority silenced
+        // the console in both directions -- received bytes reach TinyUSB's FIFO
+        // only when tud_task runs, so even input stopped.
     }
 }
 

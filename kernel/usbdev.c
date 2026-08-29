@@ -1,5 +1,6 @@
 #include "usbdev.h"
 #include "tusb.h"
+#include "../common/modules.h"   // myrtos_sleep, through the shared ABI
 
 void myrtos_print(const char *s);
 
@@ -47,6 +48,27 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
     }
     tud_cdc_write_flush();
     return (int32_t)written;
+}
+
+// USB is serviced by a process of its own, high enough that an application
+// cannot silence the console by being busy. One millisecond is far more often
+// than needed: CDC data has no deadline at all -- a late poll costs throughput,
+// since the host simply retries -- and the tightest real limit is the 50 ms USB
+// gives a device to answer a standard request with no data stage. Fifty times
+// the margin, for a sleep that costs nothing.
+static void usb_thread(void) {
+    for (;;) {
+        myrtos_usb_task();
+        myrtos_sleep(1);
+    }
+}
+
+void myrtos_usb_start_task(void) {
+    extern int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes,
+                                        uint32_t priority);
+    if (myrtos_kernel_thread(usb_thread, 4096, MYRTOS_PRIO_USB) < 0) {
+        myrtos_print("USB: could not start its service process\n");
+    }
 }
 
 uint32_t myrtos_usb_available(void) {

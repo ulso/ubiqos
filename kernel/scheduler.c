@@ -35,10 +35,50 @@ typedef struct {
     int32_t  wait_pid;        // WAIT_CHILD: the process being waited for
     int32_t  sleep_delta;     // SLEEPING: ticks after the process ahead of it
     int32_t  sleep_next;      // SLEEPING: next in the delta list, -1 at the end
+    uint32_t priority;        // 0 is the idle process, 31 the most urgent
+    int32_t  next_ready;      // READY: next in this priority's queue, -1 at the end
 } pcb_t;
 
 static pcb_t process_table[MAX_PROCESSES];
 static int32_t current_pid = KERNEL_PID;
+
+// --- THE READY QUEUES -----------------------------------------------------
+// One queue per priority, and a bitmap saying which of them are not empty.
+// Choosing what runs next is then finding the highest set bit, which on this
+// core is a single clz instruction -- the cost does not grow with the number of
+// runnable processes the way scanning the process table did.
+//
+// Round robin survives inside a level: a process that used up its quantum goes
+// to the back of its own queue, so equals share. Nothing shares across levels,
+// which is the point of a priority scheduler and also its sharp edge -- a busy
+// process starves everything below it for as long as it runs.
+#define MYRTOS_PRIO_LEVELS  32
+#define MYRTOS_PRIO_IDLE    0
+#define MYRTOS_PRIO_DEFAULT 16
+
+static int32_t  ready_head[MYRTOS_PRIO_LEVELS];
+static int32_t  ready_tail[MYRTOS_PRIO_LEVELS];
+static uint32_t ready_bitmap;
+
+static void ready_enqueue(int32_t pid) {
+    uint32_t p = process_table[pid].priority;
+    process_table[pid].next_ready = -1;
+    if (ready_head[p] < 0) ready_head[p] = pid;
+    else process_table[ready_tail[p]].next_ready = pid;
+    ready_tail[p] = pid;
+    ready_bitmap |= (1u << p);
+}
+
+// The highest priority with anyone in it. The idle process is always ready, so
+// bit 0 is set whenever nothing else is and the bitmap is never zero here.
+static int32_t ready_take_highest(void) {
+    uint32_t p = 31u - (uint32_t)__builtin_clz(ready_bitmap);
+    int32_t pid = ready_head[p];
+    ready_head[p] = process_table[pid].next_ready;
+    if (ready_head[p] < 0) ready_bitmap &= ~(1u << p);
+    process_table[pid].next_ready = -1;
+    return pid;
+}
 
 // --- THE SLEEP LIST -------------------------------------------------------
 // A delta list, as in Comer's XINU. Each sleeper stores not when it wakes but
@@ -79,15 +119,62 @@ void myrtos_scheduler_init(void) {
         process_table[i].state = PROC_STATE_FREE;
         process_table[i].mem_base = NULL;
         process_table[i].sleep_next = -1;
+        process_table[i].next_ready = -1;
+        process_table[i].priority = MYRTOS_PRIO_DEFAULT;
     }
     sleep_head = -1;
+    for (int p = 0; p < MYRTOS_PRIO_LEVELS; p++) { ready_head[p] = -1; ready_tail[p] = -1; }
+    ready_bitmap = 0;
     // The kernel is pid 0. Its context is filled in at the first trap, since
     // it is already running on its own stack.
+    // The idle process sits alone at the bottom. It never blocks, so once it is
+    // running or queued the bitmap is never empty and picking the next process
+    // needs no special case for "nobody is ready".
+    process_table[KERNEL_PID].priority = MYRTOS_PRIO_IDLE;
     process_table[KERNEL_PID].state = PROC_STATE_RUNNING;
     current_pid = KERNEL_PID;
     __asm__ volatile("mv %0, gp" : "=r"(kernel_gp));
     __asm__ volatile("mv %0, tp" : "=r"(kernel_tp));
     myrtos_print("Real-time process scheduler initialized.\n");
+}
+
+// A process that runs kernel code. It has no module and no arguments, only a
+// stack and an entry point, but is otherwise ordinary: scheduled by priority,
+// able to sleep, and preemptible.
+//
+// This exists because servicing USB from the idle process turned out to be
+// untenable once priorities arrived. TinyUSB's received data only reaches its
+// FIFO when tud_task runs, so anything busy above the idle process silenced the
+// console in both directions -- not merely its output.
+int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority) {
+    int32_t slot = -1;
+    for (int i = 1; i < MAX_PROCESSES; i++) {
+        if (process_table[i].state == PROC_STATE_FREE) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+
+    void *mem = myrtos_tlsf_malloc(myrtos_mem_pool, stack_bytes);
+    if (!mem) return -1;
+
+    uintptr_t stack_top = ((uintptr_t)mem + stack_bytes) & ~(uintptr_t)15;
+    myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
+    for (uint32_t i = 0; i < sizeof(myrtos_frame_t) / 4; i++) ((uint32_t*)frame)[i] = 0;
+    frame->mepc = (uint32_t)(uintptr_t)entry;
+    frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
+    frame->gp   = kernel_gp;
+    frame->tp   = kernel_tp;
+
+    process_table[slot].entry_point = frame->mepc;
+    process_table[slot].module   = NULL;      // nothing to unlink when it ends
+    process_table[slot].mem_base = mem;
+    process_table[slot].mem_size = stack_bytes;
+    process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
+    process_table[slot].args     = NULL;
+    process_table[slot].sleep_next = -1;
+    process_table[slot].priority = priority;
+    process_table[slot].state    = PROC_STATE_READY;
+    ready_enqueue(slot);
+    return slot;
 }
 
 int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
@@ -133,7 +220,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // removed, never added, the result can be compacted into the same buffer --
     // the write pointer always stays behind the read pointer.
     char *p = dst;      // reads
-    char *w = dst;      // skriver
+    char *w = dst;      // writes
     while (*p && argc < 16) {
         while (*p == ' ') p++;
         if (!*p) break;
@@ -181,7 +268,9 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].args = (const char*)mem;
     process_table[slot].sleep_next = -1;
+    process_table[slot].priority = MYRTOS_PRIO_DEFAULT;
     process_table[slot].state = PROC_STATE_READY;
+    ready_enqueue(slot);
 
     // The addresses are the whole point: if two processes run the same module,
     // the code should be at the same place and the data areas at different ones.
@@ -201,15 +290,14 @@ uint32_t myrtos_switch(uint32_t current_sp) {
     process_table[current_pid].saved_sp = current_sp;
     if (process_table[current_pid].state == PROC_STATE_RUNNING) {
         process_table[current_pid].state = PROC_STATE_READY;
+        ready_enqueue(current_pid);
     }
 
-    // The kernel is the fallback, not the current process: if the current one
-    // has just blocked, resuming it is exactly what must not happen.
-    int32_t next = KERNEL_PID;
-    for (int i = 1; i <= MAX_PROCESSES; i++) {
-        int32_t cand = (current_pid + i) % MAX_PROCESSES;
-        if (process_table[cand].state == PROC_STATE_READY) { next = cand; break; }
-    }
+    // A process that blocked is not put back: its state is no longer RUNNING, so
+    // it simply is not in any queue. That is why no special case is needed for
+    // "do not resume the process that just went to sleep" -- and why the idle
+    // process, which never blocks, is always there to fall back on.
+    int32_t next = ready_take_highest();
 
     current_pid = next;
     process_table[next].state = PROC_STATE_RUNNING;
@@ -270,6 +358,17 @@ static void sleep_remove(int32_t pid) {
     process_table[cur].sleep_next = -1;
 }
 
+// A process changes its own urgency. Returns what it was, so a utility can put
+// it back. Nothing is requeued: the caller is running, hence in no queue, and it
+// is enqueued at its new priority the next time it gives up the processor.
+uint32_t myrtos_set_priority(uint32_t prio) {
+    if (current_pid == KERNEL_PID) return MYRTOS_PRIO_IDLE;   // idle stays idle
+    if (prio >= MYRTOS_PRIO_LEVELS) prio = MYRTOS_PRIO_LEVELS - 1;
+    uint32_t was = process_table[current_pid].priority;
+    process_table[current_pid].priority = prio;
+    return was;
+}
+
 void myrtos_sleep_begin(uint32_t ticks) {
     process_table[current_pid].state = PROC_STATE_SLEEPING;
     sleep_insert(current_pid, ticks);
@@ -286,6 +385,7 @@ void myrtos_sleep_tick(void) {
         sleep_head = process_table[pid].sleep_next;
         process_table[pid].sleep_next = -1;
         process_table[pid].state = PROC_STATE_READY;
+        ready_enqueue(pid);
     }
 }
 
@@ -315,6 +415,7 @@ void myrtos_wake_readers(void) {
         if (process_table[i].state != PROC_STATE_WAIT_READ) continue;
         if (!myrtos_io_readable(process_table[i].wait_path, i)) continue;
         process_table[i].state = PROC_STATE_READY;
+        ready_enqueue(i);
     }
 }
 
@@ -325,7 +426,9 @@ void myrtos_process_exit(void) {
     myrtos_print_u32(current_pid);
     myrtos_print(" exited.\n");
     myrtos_io_close_all(current_pid);
-    myrtos_moddir_unlink(process_table[current_pid].module);
+    if (process_table[current_pid].module) {    // a kernel thread has none
+        myrtos_moddir_unlink(process_table[current_pid].module);
+    }
     myrtos_tlsf_free(myrtos_mem_pool, process_table[current_pid].mem_base);
     process_table[current_pid].state = PROC_STATE_FREE;
     process_table[current_pid].mem_base = NULL;
@@ -336,6 +439,7 @@ void myrtos_process_exit(void) {
         if (process_table[i].state != PROC_STATE_WAIT_CHILD) continue;
         if (process_table[i].wait_pid != current_pid) continue;
         process_table[i].state = PROC_STATE_READY;
+        ready_enqueue(i);
     }
 }
 

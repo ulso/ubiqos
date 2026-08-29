@@ -219,11 +219,36 @@ result. Inline wrappers for all of them are in the ABI header.
 | 14 | `SYS_FSREMOVE` | name → 0 or -1 |
 | 15 | `SYS_WAIT` | pid; returns when it has exited |
 | 16 | `SYS_SLEEP` | milliseconds; returns when they have passed |
+| 17 | `SYS_SETPRIO` | new priority → the old one |
+| 18 | `SYS_TICKS` | → milliseconds since the timer started |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
 initialised and hard-asserted in `irq_add_shared_handler`. Hooking in rather
 than fighting removed more code than it added.
+
+## Scheduling
+
+Thirty-two priority levels, a ready queue for each, and a bitmap of which
+queues are not empty. Choosing what runs next is finding the highest set bit,
+which on this core is a single `clz` instruction, so the cost does not grow
+with the number of runnable processes.
+
+Round robin survives inside a level: a process that uses up its quantum goes to
+the back of its own queue. Nothing is shared across levels, which is the point
+of a priority scheduler and also its sharp edge -- a process that neither
+blocks nor sleeps starves everything below it for as long as it runs.
+
+The idle process sits alone at the bottom, and never blocks. That is why
+picking the next process needs no special case for "nobody is ready": the
+bitmap is never empty.
+
+**USB is serviced by a process of its own**, at priority 30. It was in the idle
+process until priorities arrived, at which point anything busy above it
+silenced the console in both directions -- received bytes reach TinyUSB's FIFO
+only when `tud_task` runs, so even input stopped. One millisecond is far more
+often than needed: CDC data has no deadline, and the tightest real limit is the
+50 ms USB allows for answering a standard request with no data stage.
 
 ## Waiting
 
