@@ -275,7 +275,9 @@ void myrtos_kernel_main(void) {
         }
     }
 
-    // With no shell, start everything there is, so the system still shows life.
+    // With no shell, start the first runnable module so the system still shows
+    // a sign of life. Only the first: !started ends the loop as soon as one
+    // takes, and a board with no shell is being diagnosed, not used.
     for (uint32_t i = 0; !started && i < myrtos_moddir_count(); i++) {
         const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
         if ((e->header->type_lang >> 8) == MYRTOS_TYPE_DATA) continue;
