@@ -25,23 +25,27 @@ uint32_t myrtos_flash_scan(void) {
     myrtos_print_hex(MYRTOS_FLASH_MODULE_BASE);
     myrtos_print("\n");
 
+    // The image is contiguous, so it ends at the first word that is not a
+    // module and the scan stops there rather than searching the whole region.
+    //
+    // Searching on was worse than slow. Loading an image smaller than the one
+    // before it leaves the old tail in flash, and picotool writes only as many
+    // bytes as the file has -- so the scan found the modules at the end of the
+    // previous image as well, and the directory listed echo, lsmod, free and
+    // both descriptors twice.
     while (p + sizeof(myrtos_module_header_t) < MYRTOS_FLASH_END) {
         myrtos_module_header_t *m = (myrtos_module_header_t*)p;
 
-// Unwritten flash reads as 0xFFFFFFFF, so the sync word sifts out empty
-// space cheaply before the checksum is computed.
-        if (m->sync_code != MYRTOS_SYNC_CODE) {
-            p += 4;
-            continue;
-        }
-// The size has to be plausible before it is used for anything.
+        // Unwritten flash reads as 0xFFFFFFFF, and make_flash_image.py writes a
+        // terminator, so either way this is where the image ends.
+        if (m->sync_code != MYRTOS_SYNC_CODE) break;
         if (!m->module_size || p + m->module_size > MYRTOS_FLASH_END) {
-            p += 4;
-            continue;
+            myrtos_print("  implausible module size, stopping\n");
+            break;
         }
         if (!verify_myrtos_header(m)) {
-            p += 4;
-            continue;
+            myrtos_print("  bad header, stopping\n");
+            break;
         }
 
         char name[12];

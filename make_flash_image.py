@@ -17,5 +17,10 @@ for m in mods:
     while len(blob) % 4:
         blob.append(0)
 
+# A terminator, so the kernel knows where the image ends. Without it a smaller
+# image loaded over a larger one leaves the old tail behind, and the scan reads
+# those modules too -- picotool writes only as many bytes as the file has.
+blob += b"\x00\x00\x00\x00"
+
 open(out, "wb").write(blob)
 print(f"  {out}: {len(mods)} moduler, {len(blob)} byte")
