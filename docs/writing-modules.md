@@ -269,8 +269,22 @@ sw   a5,0(a0)
 ret
 ```
 
-One load and one store against a runtime pointer. The entry point fetches the
-data area once and passes it down; nothing pays per access.
+One load and one store against a runtime pointer, and `this` costs nothing to
+obtain: the kernel leaves the data area in `tp` when it starts the process, so
+the entry point is
+
+```
+mv   a0,tp
+j    Pimpl::run
+```
+
+That is what the thread pointer is for. A process's data area *is* thread-local
+storage -- laid out by us rather than by the compiler, which is why `.tdata` and
+`.tbss` are empty and nothing else wants the register. It is also OS-9's U
+register, in the register RISC-V set aside for the purpose.
+
+Only asking for the *size* costs a system call, which `MYRTOS_MODULE` does once
+at entry to check the class fits.
 
 `modules/pimpl/` is exactly this, built from two files.
 

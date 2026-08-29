@@ -238,7 +238,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 21 | `SYS_ALLOC` | bytes → pointer |
 | 22 | `SYS_FREE` | pointer → 0, or -1 if not ours |
 | 23 | `SYS_REALLOC` | pointer, bytes → pointer |
-| 24 | `SYS_DATAAREA` | &size or 0 → this process's data area |
+| 24 | `SYS_DATAAREA` | &size → this process's data area and its size |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
@@ -256,6 +256,12 @@ Round robin survives inside a level: a process that uses up its quantum goes to
 the back of its own queue. Nothing is shared across levels, which is the point
 of a priority scheduler and also its sharp edge -- a process that neither
 blocks nor sleeps starves everything below it for as long as it runs.
+
+A process's data area arrives in `tp`, so a module reaches its own state with
+one instruction rather than a system call. The thread pointer is exactly the
+right register for it: the data area is thread-local storage with our layout
+instead of the compiler's, `.tdata` and `.tbss` are empty, and the trap frame
+already saved and restored `tp` per process.
 
 Priority is inherited across `exec`, as path numbers are, so `nice` needs no
 help from the kernel: it sets its own priority and starts the command, which

@@ -336,9 +336,19 @@ static inline void *myrtos_realloc(void *ptr, uint32_t size) {
 // The stack grows down into the same span, so size_out says what exists, not
 // what is safe to use. A module that wants a lot should ask for a larger
 // mem_size rather than assume.
+//
+// The base costs nothing: the kernel leaves it in tp when it starts the
+// process, which is what the thread pointer is for -- this is thread-local
+// storage, laid out by us instead of by the compiler. Only asking for the size
+// needs a system call.
 static inline void *myrtos_data_area(uint32_t *size_out) {
-    return (void*)(uintptr_t)myrtos_syscall(SYS_DATAAREA,
-                                            (uint32_t)(uintptr_t)size_out, 0, 0);
+    if (size_out) {
+        return (void*)(uintptr_t)myrtos_syscall(SYS_DATAAREA,
+                                                (uint32_t)(uintptr_t)size_out, 0, 0);
+    }
+    void *base;
+    __asm__("mv %0, tp" : "=r"(base));
+    return base;
 }
 
 static inline int32_t myrtos_close(int32_t path) {

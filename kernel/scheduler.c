@@ -185,7 +185,7 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     frame->mepc = (uint32_t)(uintptr_t)entry;
     frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
     frame->gp   = kernel_gp;
-    frame->tp   = kernel_tp;
+    frame->tp   = kernel_tp;      // a kernel thread has no data area to point at
 
     process_table[slot].entry_point = frame->mepc;
     process_table[slot].module   = NULL;      // nothing to unlink when it ends
@@ -289,7 +289,14 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     frame->a0   = (uint32_t)argc;             // main(int argc, ...)
     frame->a1   = (uint32_t)(uintptr_t)argv;  //          ..., char **argv)
     frame->gp   = kernel_gp;
-    frame->tp   = kernel_tp;
+
+    // The thread pointer carries the data area. That is what tp is for: this
+    // process's own storage, which is thread-local storage with our layout
+    // rather than the compiler's. Nothing else uses it -- .tdata and .tbss are
+    // both empty -- and the trap frame already saves and restores it per
+    // process, so a module reads its own state with one instruction instead of
+    // a system call. It is OS-9's U register, in the register meant for it.
+    frame->tp   = (uint32_t)data_base;
 
     process_table[slot].entry_point = frame->mepc;
     process_table[slot].module = module_ptr;
