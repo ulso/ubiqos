@@ -1,0 +1,11 @@
+; A state machine that does nothing useful and proves everything: it puts a
+; known value in the RX FIFO, over and over, until someone stops it. If the
+; kernel reads that value back, PIO ran -- loaded, configured and clocked from
+; the Hazard3 core.
+.program probe
+
+.wrap_target
+    set x, 21
+    mov isr, x
+    push block
+.wrap

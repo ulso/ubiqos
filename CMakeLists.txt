@@ -30,6 +30,7 @@ add_executable(os_kernel
     kernel/usbdev.c
     kernel/usb_descriptors.c
     kernel/scheduler.S
+    kernel/pio/pioprobe.c
 )
 
 # Execution happens in RAM, but the image lives in flash and is copied there at
@@ -39,12 +40,14 @@ add_executable(os_kernel
 # no RISC-V core.
 pico_set_binary_type(os_kernel copy_to_ram)
 
+pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.pio)
+
 # Link against the Pico standard libraries and enable PSRAM support.
 # pico_standard_link provides only linker scripts and link flags. The startup
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
-    pico_bootrom
+    pico_bootrom hardware_pio
     tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.

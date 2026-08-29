@@ -10,6 +10,8 @@
 #include "moddir.h"
 #include "flashmod.h"
 #include "pico/bootrom.h"
+
+void myrtos_pio_probe(void);
 #include "usbdev.h"
 
 // --- MYRTOS KONSTANTER ---
@@ -199,6 +201,8 @@ void myrtos_kernel_main(void) {
     // Flash first: resident modules run where they lie and cost no heap. The
     // card may add to them, and a module of the same name there is registered
     // alongside -- whichever was registered first wins the lookup.
+    myrtos_pio_probe();
+
     myrtos_flash_scan();
 
     static uint8_t staging[32 * 1024];
