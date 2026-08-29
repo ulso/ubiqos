@@ -322,6 +322,34 @@ uint32_t myrtos_process_get_args(char *buf, uint32_t len) {
     return i;
 }
 
+// Report one slot. The state numbers are the ABI's, not the enum's: the enum is
+// the kernel's business and free to change, and a module built against an older
+// header should not start naming the wrong states if it does.
+int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
+    if (slot >= MAX_PROCESSES) return -1;
+    const pcb_t *p = &process_table[slot];
+    if (p->state == PROC_STATE_FREE) return -1;
+
+    out->pid = p->pid;
+    out->priority = p->priority;
+    out->mem_size = p->mem_size;
+    switch (p->state) {
+        case PROC_STATE_READY:      out->state = MYRTOS_PS_READY; break;
+        case PROC_STATE_RUNNING:    out->state = MYRTOS_PS_RUNNING; break;
+        case PROC_STATE_WAIT_READ:  out->state = MYRTOS_PS_WAIT_READ; break;
+        case PROC_STATE_WAIT_CHILD: out->state = MYRTOS_PS_WAIT_CHILD; break;
+        case PROC_STATE_SLEEPING:   out->state = MYRTOS_PS_SLEEPING; break;
+        default:                    out->state = MYRTOS_PS_FREE; break;
+    }
+
+    const char *name = "(kernel)";      // a kernel thread has no module
+    if (p->module) name = (const char*)((uintptr_t)p->module + p->module->name_offset);
+    int i = 0;
+    while (i < 11 && name[i]) { out->name[i] = name[i]; i++; }
+    while (i < 12) out->name[i++] = 0;
+    return 0;
+}
+
 uint32_t myrtos_process_count(void) {
     uint32_t n = 0;
     for (int i = 0; i < MAX_PROCESSES; i++)

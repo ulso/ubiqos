@@ -12,6 +12,7 @@
 
 void myrtos_print(const char *s);
 void myrtos_putc(char c);
+void myrtos_print_u32(uint32_t v);
 int32_t myrtos_current_pid(void);
 uint32_t myrtos_process_count(void);
 int32_t myrtos_process_create(const myrtos_module_header_t *m, const char *args);
@@ -21,6 +22,8 @@ bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
 void myrtos_sleep_begin(uint32_t ticks);
 uint32_t myrtos_set_priority(uint32_t prio);
+int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out);
+void myrtos_reboot_bootsel(void);
 void myrtos_sleep_tick(void);
 extern tlsf_pool_t myrtos_mem_pool;
 
@@ -166,6 +169,13 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
             break;
+        case SYS_BOOTSEL:
+            myrtos_reboot_bootsel();    // does not return
+            break;
+        case SYS_PSINFO:
+            frame->a0 = (uint32_t)myrtos_process_info(frame->a0,
+                            (myrtos_psinfo_t*)(uintptr_t)frame->a1);
+            break;
         case SYS_TICKS:
             frame->a0 = (uint32_t)myrtos_ticks;
             break;
@@ -192,7 +202,12 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             myrtos_process_exit();
             return myrtos_switch(sp);
         default:
-            myrtos_print("*** MYRTOS: unknown system call ***\n");
+            // The number matters: without it the message says only that
+            // something is wrong, which cost an hour when a stale kernel met a
+            // module built against a newer one.
+            myrtos_print("*** MYRTOS: unknown system call ");
+            myrtos_print_u32(frame->a7);
+            myrtos_print(" ***\n");
             frame->a0 = (uint32_t)-1;
             break;
         }

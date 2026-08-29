@@ -46,6 +46,10 @@ Hold **BOOTSEL**, press **RESET**, then:
 picotool load -x build/os_kernel.uf2
 ```
 
+After the first time, the buttons are optional: `bootsel` at the shell hands the
+board back to the ROM loader from software. `reset_usb_boot` is reached through
+`rom_func_lookup`, which the SDK implements for RISC-V as well as Arm.
+
 **The J-Link cannot get in.** A Segger J-Link Ultra+ can halt the core and read
 and write RAM, but refuses to program flash (`Failed to read back RAMCode`). The
 cause has not been established. BOOTSEL and `picotool` work, and that is the
@@ -177,6 +181,7 @@ myrtos> help
 Type a module name to run it. Built in:
   help   this text
   lsmod  list modules
+  ps     list processes
   free   memory and processes
   echo   print its arguments
   ls     list the SD card
@@ -186,6 +191,7 @@ Type a module name to run it. Built in:
   write  write text to a file
   sleep  wait, in milliseconds
   nice   run a command at a priority
+  bootsel  reboot into the bootloader
 
 A trailing & runs a command without waiting for it.
 ```
@@ -222,6 +228,8 @@ result. Inline wrappers for all of them are in the ABI header.
 | 16 | `SYS_SLEEP` | milliseconds; returns when they have passed |
 | 17 | `SYS_SETPRIO` | new priority → the old one; zero asks without changing |
 | 18 | `SYS_TICKS` | → milliseconds since the timer started |
+| 19 | `SYS_PSINFO` | slot, &info → 0, or -1 for an empty slot |
+| 20 | `SYS_BOOTSEL` | reboots into the bootloader; never returns |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was

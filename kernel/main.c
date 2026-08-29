@@ -9,6 +9,7 @@
 #include "fat32.h"
 #include "moddir.h"
 #include "flashmod.h"
+#include "pico/bootrom.h"
 #include "usbdev.h"
 
 // --- MYRTOS KONSTANTER ---
@@ -315,6 +316,14 @@ void myrtos_kernel_main(void) {
         // the console in both directions -- received bytes reach TinyUSB's FIFO
         // only when tud_task runs, so even input stopped.
     }
+}
+
+// Hand the board back to the bootloader. The ROM function is reached through
+// rom_func_lookup, which the SDK implements for RISC-V as well as Arm, so this
+// works from the Hazard3 core -- the BOOTSEL button and this end up in the same
+// place.
+void myrtos_reboot_bootsel(void) {
+    reset_usb_boot(0, 0);
 }
 
 // The Pico SDK's crt0 calls main once clocks and runtime are set up.

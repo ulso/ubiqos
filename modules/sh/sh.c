@@ -12,6 +12,7 @@ static void help(int32_t c) {
         "\r\nType a module name to run it. Built in:\r\n"
         "  help   this text\r\n"
         "  lsmod  list modules\r\n"
+        "  ps     list processes\r\n"
         "  free   memory and processes\r\n"
         "  echo   print its arguments\r\n"
         "  ls     list the SD card\r\n"
@@ -21,6 +22,7 @@ static void help(int32_t c) {
         "  write  write text to a file\r\n"
         "  sleep  wait, in milliseconds\r\n"
         "  nice   run a command at a priority\r\n"
+        "  bootsel  reboot into the bootloader\r\n"
         "\r\nA trailing & runs a command without waiting for it.\r\n");
 }
 

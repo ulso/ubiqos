@@ -90,6 +90,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_SLEEP    16u   // a0 = milliseconds; returns when they have passed
 #define SYS_SETPRIO  17u   // a0 = new priority -> a0 = the old one
 #define SYS_TICKS    18u   // -> a0 = milliseconds since the timer started
+#define SYS_PSINFO   19u   // a0 = slot, a1 = &myrtos_psinfo_t -> a0 = 0, -1 empty
+#define SYS_BOOTSEL  20u   // reboots into the bootloader; never returns
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -241,6 +243,36 @@ static inline int32_t myrtos_getprio(void) {
 // differences rather than absolute values and the wrap takes care of itself.
 static inline uint32_t myrtos_ticks_now(void) {
     return (uint32_t)myrtos_syscall(SYS_TICKS, 0, 0, 0);
+}
+
+// What a process is doing. The states a reader cares about are the ones it can
+// be stuck in, so they are named rather than numbered in any output.
+#define MYRTOS_PS_FREE        0
+#define MYRTOS_PS_READY       1
+#define MYRTOS_PS_RUNNING     2
+#define MYRTOS_PS_WAIT_READ   3
+#define MYRTOS_PS_WAIT_CHILD  4
+#define MYRTOS_PS_SLEEPING    5
+
+typedef struct {
+    uint32_t pid;
+    uint32_t state;        // MYRTOS_PS_*
+    uint32_t priority;
+    uint32_t mem_size;     // data and stack together, as the header asked
+    char     name[12];     // the module's, or a kernel thread's stand-in
+} myrtos_psinfo_t;
+
+// Ask about one slot. Slots are not compacted, so walk from 0 to the limit and
+// skip the ones that answer -1 rather than stopping at the first.
+#define MYRTOS_PS_SLOTS 8
+static inline int32_t myrtos_psinfo(uint32_t slot, myrtos_psinfo_t *out) {
+    return myrtos_syscall(SYS_PSINFO, slot, (uint32_t)(uintptr_t)out, 0);
+}
+
+// Reboot into the bootloader, so new firmware can be loaded without reaching
+// for the board. Does not return.
+static inline void myrtos_bootsel(void) {
+    myrtos_syscall(SYS_BOOTSEL, 0, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

@@ -44,6 +44,7 @@ pico_set_binary_type(os_kernel copy_to_ram)
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
+    pico_bootrom
     tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.
@@ -150,6 +151,8 @@ myrtos_add_module(fill modules/fill/fill.c)
 myrtos_add_module(sleep modules/sleep/sleep.c)
 myrtos_add_module(spin modules/spin/spin.c)
 myrtos_add_module(nice modules/nice/nice.c)
+myrtos_add_module(ps modules/ps/ps.c)
+myrtos_add_module(bootsel modules/bootsel/bootsel.c)
 myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
 
@@ -170,5 +173,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/sleep.mod
             ${CMAKE_CURRENT_BINARY_DIR}/spin.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nice.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/bootsel.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod)
