@@ -110,7 +110,10 @@ typedef struct {
 
 // Path numbers are PER-PROCESS, as in OS-9. Being global meant a child could
 // not inherit its parent's path 0 -- the number was taken by someone else.
-#define MYRTOS_MAX_PROCS 8
+//
+// The table is indexed by pid, so it must be as tall as the scheduler's process
+// table. One definition, shared, rather than two numbers that have to agree.
+#define MYRTOS_MAX_PROCS MYRTOS_MAX_PROCESSES
 
 typedef struct {
     const myrtos_device_t *device;

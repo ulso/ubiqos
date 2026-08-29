@@ -274,9 +274,19 @@ typedef struct {
     char     name[12];     // the module's, or a kernel thread's stand-in
 } myrtos_psinfo_t;
 
+// How many processes can exist, kernel included. This lived in three places --
+// the scheduler's table, the I/O manager's path table, and here -- with nothing
+// keeping them equal. Raising only the scheduler's would have given high pids no
+// I/O at all: path_of would refuse every path number they asked for, and every
+// read and write would fail without saying why.
+//
+// The cost is 88 bytes of kernel table per process, so the limit is set by what
+// is useful rather than by what fits.
+#define MYRTOS_MAX_PROCESSES 32
+
 // Ask about one slot. Slots are not compacted, so walk from 0 to the limit and
 // skip the ones that answer -1 rather than stopping at the first.
-#define MYRTOS_PS_SLOTS 8
+#define MYRTOS_PS_SLOTS MYRTOS_MAX_PROCESSES
 static inline int32_t myrtos_psinfo(uint32_t slot, myrtos_psinfo_t *out) {
     return myrtos_syscall(SYS_PSINFO, slot, (uint32_t)(uintptr_t)out, 0);
 }

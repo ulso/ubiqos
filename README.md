@@ -13,7 +13,7 @@ RAM-only image gives the boot ROM nothing to switch on.
 
 ## What exists
 
-- Pre-emptive scheduling on the machine timer, 1 ms quantum, up to 8 processes
+- Pre-emptive scheduling on the machine timer, 1 ms quantum, up to 32 processes
 - A 320 kB TLSF heap that splits and coalesces blocks
 - Modules loaded from FAT32 on the SD card, or found resident in flash
 - A module directory with link counts — a module already in memory is shared

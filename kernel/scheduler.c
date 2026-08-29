@@ -7,7 +7,7 @@
 #include "io.h"
 #include "moddir.h"
 
-#define MAX_PROCESSES 8
+#define MAX_PROCESSES MYRTOS_MAX_PROCESSES
 #define KERNEL_PID    0     // The kernel is itself a process, always runnable.
 
 // A process that is waiting is not runnable. Until this existed, waiting meant
