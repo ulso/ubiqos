@@ -146,6 +146,7 @@ myrtos_add_module(cat modules/cat/cat.c)
 myrtos_add_module(rm modules/rm/rm.c)
 myrtos_add_module(cp modules/cp/cp.c)
 myrtos_add_module(write modules/write/write.c)
+myrtos_add_module(fill modules/fill/fill.c)
 myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
 
@@ -162,5 +163,6 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/rm.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cp.mod
             ${CMAKE_CURRENT_BINARY_DIR}/write.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/fill.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod)
