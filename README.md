@@ -75,6 +75,10 @@ addresses valid where the module was linked. A module loaded anywhere else then
 reads the wrong ones. `medany` instead gives `auipc`-based addressing, which is
 genuinely PC-relative.
 
+[`docs/writing-modules.md`](docs/writing-modules.md) covers what this rules out
+in practice, which is less obvious than it sounds -- a switch returning string
+literals breaks it, and so does the same code written as an if-chain.
+
 The requirement is checked at build time. [`check_module.py`](check_module.py)
 reads the relocations out of the object files with `readelf -W` and rejects the
 module if any allocated section contains an absolute reference such as

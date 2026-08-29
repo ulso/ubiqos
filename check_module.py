@@ -19,8 +19,8 @@ import subprocess, sys, re
 
 readelf, obj_files, elf = sys.argv[1], sys.argv[2:-1], sys.argv[-1]
 
-# PC-relative and purely local types. Anything else in an allocated section is a
-# absolut adress.
+# PC-relative and purely local types. Anything else in an allocated section is
+# an absolute address.
 POSITION_INDEPENDENT = {
     "R_RISCV_PCREL_HI20", "R_RISCV_PCREL_LO12_I", "R_RISCV_PCREL_LO12_S",
     "R_RISCV_BRANCH", "R_RISCV_JAL", "R_RISCV_RVC_BRANCH", "R_RISCV_RVC_JUMP",
@@ -58,14 +58,14 @@ for obj in obj_files:
                                      capture_output=True, text=True).stdout.strip()
                 if dem and dem != m2.group(1):
                     hint = f"{section}  ({dem})"
-            problems.append(f"{obj}: {kind} i {hint}")
+            problems.append(f"{obj}: {kind} in {hint}")
 
 out = subprocess.run([readelf, "-W", "-S", elf], capture_output=True, text=True).stdout
 for line in out.splitlines():
     m = re.search(r"\]\s+(\.\S+)\s+\S+\s+\S+\s+\S+\s+(\S+)", line)
     if m and m.group(1) in (".data", ".bss", ".sdata", ".sbss"):
         if m.group(2) != "000000":
-            problems.append(f"{elf}: skrivbar sektion {m.group(1)} finns")
+            problems.append(f"{elf}: writable section {m.group(1)} is present")
 
 if problems:
     print("MODULE IS NOT POSITION INDEPENDENT:", file=sys.stderr)
@@ -74,10 +74,15 @@ if problems:
         if p in seen: continue
         seen.add(p)
         print(f"  {p}", file=sys.stderr)
-    print("\nEn absolut adress i en allokerad sektion betyder oftast en statisk",
+    print("\nAn absolute address in an allocated section is usually a table of",
           file=sys.stderr)
-    print("funktionspekare, en vtable, eller en pekare till en statisk variabel.",
+    print("pointers -- a switch or if-chain returning string literals, a static",
           file=sys.stderr)
+    print("function pointer, or a C++ vtable. A writable section is a variable",
+          file=sys.stderr)
+    print("that two processes sharing this code would both write to.",
+          file=sys.stderr)
+    print("See docs/writing-modules.md.", file=sys.stderr)
     sys.exit(1)
 
-print(f"  {elf}: positionsoberoende och delbar")
+print(f"  {elf}: position independent and shareable")
