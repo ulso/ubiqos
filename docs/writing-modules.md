@@ -243,6 +243,63 @@ but the stack grows down into the same span, so that is what exists, not what
 is safe. A module that wants a lot should ask for a larger `mem_size` rather
 than assume.
 
+## In C++, the problem mostly goes away
+
+A member variable is addressed through `this`, which is a runtime pointer. That
+is the base-relative addressing the data area needs, and the compiler emits it
+without being asked -- it is OS-9's U register, arrived at from a different
+direction. Put every variable in a class, derive from `MyrtosModule`, and there
+is nothing left to remember:
+
+```cpp
+struct Pimpl : MyrtosModule<Pimpl> {
+    uint32_t counter;
+    void bump(uint32_t times);          // another file
+    void run(int argc, char **argv);
+};
+MYRTOS_MODULE(Pimpl)
+```
+
+`bump` in the second file compiles to this, with `this` in `a0`:
+
+```
+lw   a5,0(a0)
+add  a5,a5,a1
+sw   a5,0(a0)
+ret
+```
+
+One load and one store against a runtime pointer. The entry point fetches the
+data area once and passes it down; nothing pays per access.
+
+`modules/pimpl/` is exactly this, built from two files.
+
+### What C++ still gets wrong
+
+Measured the same way as the table above:
+
+| Construct | Absolute relocations | vtable |
+|---|---|---|
+| base class, instance on the stack | 0 | no |
+| placement new into the data area | 0 | no |
+| virtual call, type visible | 0 | no -- devirtualised |
+| virtual call, vtable forced | 3 | yes |
+| CRTP | 0 | no |
+| global instance with a constructor | 1 | `.init_array`, `.sbss` |
+
+**No virtual functions.** A vtable is a table of function pointers, so it holds
+absolute addresses. The two zero rows above are misleading: in one the compiler
+proved the dynamic type and devirtualised, in the other the vtable was emitted
+in a different object file -- which is still part of the module. Use CRTP where
+you want an interface: the base learns the derived type through the template
+parameter, the call binds at compile time, and no vtable exists.
+`modules/cxxdemo/` shows the pattern.
+
+**No global instances.** A constructor at file scope leaves a pointer in
+`.init_array`, which is the same sort of table, and the object itself in
+`.sbss`. The class must also not need a constructor to have run: the data area
+arrives zeroed, and nothing calls one.
+
 ## Names are eight characters
 
 The module directory holds names in the 8.3 form a FAT card gives them, so a
