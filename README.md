@@ -23,15 +23,19 @@ RAM-only image gives the boot ROM nothing to switch on.
 
 ## Building
 
-Requires the Pico SDK 2.2.0 and the RISC-V toolchain that ships with it.
+Requires the Pico SDK 2.3.0 and a RISC-V toolchain.
 
 ```bash
-export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.2.0
+export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.3.0
 export PATH=$HOME/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin:$PATH
 cmake -S . -B build -G Ninja && ninja -C build
 ```
 
 This produces `build/os_kernel.uf2` and one `.mod` file per module.
+
+The toolchain above is the one the SDK 2.2.0 installer left behind, and it
+works. SDK 2.3.0 prefers `gcc-riscv32-pico-elf`, which can target the core the
+board actually has with `-mcpu=hazard3-rp2350`; that is not in use yet.
 
 ## Flashing
 
