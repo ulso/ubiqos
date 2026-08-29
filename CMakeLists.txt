@@ -152,6 +152,7 @@ myrtos_add_module(sleep modules/sleep/sleep.c)
 myrtos_add_module(spin modules/spin/spin.c)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
+myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(bootsel modules/bootsel/bootsel.c)
 myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
@@ -174,6 +175,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/spin.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nice.mod
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/bootsel.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod)

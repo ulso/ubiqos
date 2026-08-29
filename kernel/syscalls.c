@@ -25,6 +25,9 @@ void myrtos_sleep_begin(uint32_t ticks);
 uint32_t myrtos_set_priority(uint32_t prio);
 int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out);
 void myrtos_reboot_bootsel(void);
+void *myrtos_mem_alloc(uint32_t size);
+int32_t myrtos_mem_free(void *ptr);
+void *myrtos_mem_realloc(void *ptr, uint32_t size);
 void myrtos_sleep_tick(void);
 extern tlsf_pool_t myrtos_mem_pool;
 
@@ -178,6 +181,16 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = (frame->a0 == MYRTOS_MEM_PROCESSES)
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
+            break;
+        case SYS_ALLOC:
+            frame->a0 = (uint32_t)(uintptr_t)myrtos_mem_alloc(frame->a0);
+            break;
+        case SYS_FREE:
+            frame->a0 = (uint32_t)myrtos_mem_free((void*)(uintptr_t)frame->a0);
+            break;
+        case SYS_REALLOC:
+            frame->a0 = (uint32_t)(uintptr_t)myrtos_mem_realloc(
+                            (void*)(uintptr_t)frame->a0, frame->a1);
             break;
         case SYS_BOOTSEL:
             myrtos_reboot_bootsel();    // does not return

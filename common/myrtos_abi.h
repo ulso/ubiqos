@@ -92,6 +92,9 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_TICKS    18u   // -> a0 = milliseconds since the timer started
 #define SYS_PSINFO   19u   // a0 = slot, a1 = &myrtos_psinfo_t -> a0 = 0, -1 empty
 #define SYS_BOOTSEL  20u   // reboots into the bootloader; never returns
+#define SYS_ALLOC    21u   // a0 = bytes -> a0 = pointer, 0 on failure
+#define SYS_FREE     22u   // a0 = pointer -> a0 = 0, -1 if not ours
+#define SYS_REALLOC  23u   // a0 = pointer, a1 = bytes -> a0 = pointer
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -295,6 +298,29 @@ static inline int32_t myrtos_psinfo(uint32_t slot, myrtos_psinfo_t *out) {
 // for the board. Does not return.
 static inline void myrtos_bootsel(void) {
     myrtos_syscall(SYS_BOOTSEL, 0, 0, 0);
+}
+
+// --- MEMORY ---------------------------------------------------------------
+// Memory beyond the block the module header asked for. The kernel remembers
+// which process each block belongs to, so nothing is lost when a process dies
+// -- including one that dies without tidying up.
+//
+// Where the pointer lives matters. A module may not have writable statics, so
+// `static void *buf;` is refused by the build. Keep it on the stack, or in the
+// data area the module header reserved.
+static inline void *myrtos_alloc(uint32_t size) {
+    return (void*)(uintptr_t)myrtos_syscall(SYS_ALLOC, size, 0, 0);
+}
+
+// Returns 0, or -1 for a pointer this process was not given.
+static inline int32_t myrtos_free(void *ptr) {
+    return myrtos_syscall(SYS_FREE, (uint32_t)(uintptr_t)ptr, 0, 0);
+}
+
+// NULL leaves the old block untouched, so the caller has not lost it.
+static inline void *myrtos_realloc(void *ptr, uint32_t size) {
+    return (void*)(uintptr_t)myrtos_syscall(SYS_REALLOC,
+                                            (uint32_t)(uintptr_t)ptr, size, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

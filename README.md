@@ -14,7 +14,8 @@ RAM-only image gives the boot ROM nothing to switch on.
 ## What exists
 
 - Pre-emptive scheduling on the machine timer, 1 ms quantum, up to 32 processes
-- A 320 kB TLSF heap that splits and coalesces blocks
+- A 320 kB TLSF heap that splits and coalesces blocks, which modules can ask
+  from; the kernel records the owner, so death returns what death takes
 - Modules loaded from FAT32 on the SD card, or found resident in flash
 - A module directory with link counts — a module already in memory is shared
 - An I/O manager with device descriptors; console on both UART and USB CDC
@@ -234,6 +235,9 @@ result. Inline wrappers for all of them are in the ABI header.
 | 18 | `SYS_TICKS` | → milliseconds since the timer started |
 | 19 | `SYS_PSINFO` | slot, &info → 0, or -1 for an empty slot |
 | 20 | `SYS_BOOTSEL` | reboots into the bootloader; never returns |
+| 21 | `SYS_ALLOC` | bytes → pointer |
+| 22 | `SYS_FREE` | pointer → 0, or -1 if not ours |
+| 23 | `SYS_REALLOC` | pointer, bytes → pointer |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was

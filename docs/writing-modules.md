@@ -122,6 +122,34 @@ all position independent and are what a clean module contains.
 Note the `-W`: without it `readelf` truncates the type names, and every
 relocation looks like something the checker does not recognise.
 
+## Memory, and where the pointer lives
+
+A module gets one block from the kernel: `mem_size` in its header, holding its
+data and its stack. `myrtos_alloc`, `myrtos_free` and `myrtos_realloc` ask for
+more. The kernel records which process each block belongs to, so a process that
+dies -- including one that dies without tidying up -- returns everything.
+
+The two rules meet here. A module may not have writable statics, so this is
+refused by the build:
+
+```c
+static void *buffer;            // .sbss -- rejected
+void module_main(void) { buffer = myrtos_alloc(1000); }
+```
+
+Keep the pointer on the stack, or in the data area the header reserved:
+
+```c
+void module_main(void) {
+    void *buffer = myrtos_alloc(1000);
+    /* ... */
+    myrtos_free(buffer);
+}
+```
+
+`myrtos_free` refuses a pointer this process was not given, so one module cannot
+release another's memory, or the kernel's.
+
 ## The other rule
 
 A module may not have writable data. `.data`, `.bss`, `.sdata` and `.sbss` must

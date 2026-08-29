@@ -38,7 +38,26 @@ typedef struct {
     int32_t  sleep_next;      // SLEEPING: next in the delta list, -1 at the end
     uint32_t priority;        // 0 is the idle process, 31 the most urgent
     int32_t  next_ready;      // READY: next in this priority's queue, -1 at the end
+    struct alloc_hdr *allocs; // everything this process has been given
 } pcb_t;
+
+// --- MEMORY HANDED TO PROCESSES -------------------------------------------
+// Every allocation carries a header naming its owner and linking it into that
+// process's list, so death returns everything rather than leaking it.
+//
+// The owner is a field rather than an implication because it will have to move.
+// Message passing in the manner of OSE hands a buffer to another process
+// without copying it: the sender loses its pointer and the receiver gains one.
+// That is an unlink, a relink and a store to this field -- but only if the
+// ownership was written down in the first place.
+typedef struct alloc_hdr {
+    struct alloc_hdr *next;   // next block owned by the same process
+    uint32_t owner;           // pid; moves when a block is handed on
+    uint32_t size;            // what the caller asked for
+    uint32_t magic;           // a free() of something else should not be silent
+} alloc_hdr_t;
+
+#define ALLOC_MAGIC 0x4d454d21u   // "MEM!"
 
 static pcb_t process_table[MAX_PROCESSES];
 static int32_t current_pid = KERNEL_PID;
@@ -121,6 +140,7 @@ void myrtos_scheduler_init(void) {
         process_table[i].mem_base = NULL;
         process_table[i].sleep_next = -1;
         process_table[i].next_ready = -1;
+        process_table[i].allocs = NULL;
         process_table[i].priority = MYRTOS_PRIO_DEFAULT;
     }
     sleep_head = -1;
@@ -172,6 +192,7 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].args     = NULL;
     process_table[slot].sleep_next = -1;
+    process_table[slot].allocs = NULL;
     process_table[slot].priority = priority;
     process_table[slot].state    = PROC_STATE_READY;
     ready_enqueue(slot);
@@ -274,6 +295,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // without the started program knowing anything about priorities. The
     // exception is the kernel, which creates the first process from the idle
     // level -- inheriting that would leave the shell below everything.
+    process_table[slot].allocs = NULL;
     process_table[slot].priority = (current_pid == KERNEL_PID)
                                  ? MYRTOS_PRIO_DEFAULT
                                  : process_table[current_pid].priority;
@@ -433,6 +455,75 @@ void myrtos_sleep_tick(void) {
     }
 }
 
+// --- ALLOCATION ON BEHALF OF A PROCESS ------------------------------------
+
+static void alloc_link(int32_t pid, alloc_hdr_t *h) {
+    h->owner = (uint32_t)pid;
+    h->next = process_table[pid].allocs;
+    process_table[pid].allocs = h;
+}
+
+static bool alloc_unlink(int32_t pid, alloc_hdr_t *h) {
+    alloc_hdr_t **pp = &process_table[pid].allocs;
+    while (*pp) {
+        if (*pp == h) { *pp = h->next; h->next = NULL; return true; }
+        pp = &(*pp)->next;
+    }
+    return false;
+}
+
+void *myrtos_mem_alloc(uint32_t size) {
+    if (!size || current_pid == KERNEL_PID) return NULL;
+    alloc_hdr_t *h = myrtos_tlsf_malloc(myrtos_mem_pool, size + sizeof(alloc_hdr_t));
+    if (!h) return NULL;
+    h->size = size;
+    h->magic = ALLOC_MAGIC;
+    alloc_link(current_pid, h);
+    return (void*)(h + 1);
+}
+
+// Refuses anything this process does not own. Without the check a module could
+// free the kernel's own module copies by passing any pointer it liked.
+int32_t myrtos_mem_free(void *ptr) {
+    if (!ptr) return 0;
+    alloc_hdr_t *h = ((alloc_hdr_t*)ptr) - 1;
+    if (h->magic != ALLOC_MAGIC) return -1;
+    if (h->owner != (uint32_t)current_pid) return -1;
+    if (!alloc_unlink(current_pid, h)) return -1;
+    h->magic = 0;
+    myrtos_tlsf_free(myrtos_mem_pool, h);
+    return 0;
+}
+
+// Grow or shrink. Allocate, copy, release: TLSF could sometimes extend a block
+// where the neighbour is free, but ours has no path for it and the shortcut is
+// worth nothing until something actually leans on realloc.
+void *myrtos_mem_realloc(void *ptr, uint32_t size) {
+    if (!ptr) return myrtos_mem_alloc(size);
+    alloc_hdr_t *h = ((alloc_hdr_t*)ptr) - 1;
+    if (h->magic != ALLOC_MAGIC || h->owner != (uint32_t)current_pid) return NULL;
+    if (!size) { myrtos_mem_free(ptr); return NULL; }
+
+    void *fresh = myrtos_mem_alloc(size);
+    if (!fresh) return NULL;                    // the old block is left intact
+    uint32_t keep = h->size < size ? h->size : size;
+    for (uint32_t i = 0; i < keep; i++) ((uint8_t*)fresh)[i] = ((uint8_t*)ptr)[i];
+    myrtos_mem_free(ptr);
+    return fresh;
+}
+
+// Hand a block to another process. Nothing calls this yet; it is the operation
+// message passing is built from, and the reason the owner is a field.
+int32_t myrtos_mem_hand_over(void *ptr, int32_t to_pid) {
+    if (!ptr || to_pid < 0 || to_pid >= MAX_PROCESSES) return -1;
+    if (process_table[to_pid].state == PROC_STATE_FREE) return -1;
+    alloc_hdr_t *h = ((alloc_hdr_t*)ptr) - 1;
+    if (h->magic != ALLOC_MAGIC || h->owner != (uint32_t)current_pid) return -1;
+    if (!alloc_unlink(current_pid, h)) return -1;
+    alloc_link(to_pid, h);
+    return 0;
+}
+
 // Block the running process. It is not made ready again here -- something else
 // has to notice that what it waits for has happened.
 void myrtos_block_on_read(int32_t path) {
@@ -483,6 +574,12 @@ void myrtos_process_exit(void) {
     if (process_table[current_pid].module) {    // a kernel thread has none
         myrtos_moddir_unlink(process_table[current_pid].module);
     }
+    // Everything this process was given goes back, whether it freed it or not.
+    alloc_hdr_t *h = process_table[current_pid].allocs;
+    while (h) { alloc_hdr_t *next = h->next; h->magic = 0;
+                myrtos_tlsf_free(myrtos_mem_pool, h); h = next; }
+    process_table[current_pid].allocs = NULL;
+
     myrtos_tlsf_free(myrtos_mem_pool, process_table[current_pid].mem_base);
     process_table[current_pid].state = PROC_STATE_FREE;
     process_table[current_pid].mem_base = NULL;
