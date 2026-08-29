@@ -192,6 +192,51 @@ into every call.
 `modules/pimpl/` is this, built from two files. Two instances running at once
 keep separate counters.
 
+Fetch the pointer once and keep it. `myrtos_data_area` is a system call, so
+`state()->counter++` inside a loop compiles to an `ecall` per iteration -- a
+full trap into the kernel and back to add one to an integer:
+
+```
+103d2:  li    a7,24
+103da:  ecall              <-- every time round
+103de:  lw    a5,0(a0)
+103e4:  sw    a5,0(a0)
+```
+
+A local `state_t *s = state();` outside the loop reduces that to one call --
+and to rather more than that. The compiler cannot know two calls return the
+same pointer, so the system call is also an optimisation barrier. With it
+hoisted, this loop disappears entirely:
+
+```
+103d6:  ecall              <-- once
+103dc:  lw    a5,0(a0)
+103de:  add   a5,a5,a4     <-- the whole loop, recognised
+103e0:  sw    a5,0(a0)
+```
+
+### Why this is manual
+
+A normal program addresses its globals PC-relative, because the linker puts
+`.text` and `.bss` in one image at a fixed distance apart. The compiler bakes
+that distance in.
+
+myrtos breaks exactly that assumption: the code may be in flash and the data
+area on the heap, at a distance decided at runtime and different for every
+process. So the distance the compiler computed points into the module image,
+not into anyone's data.
+
+Which is also why read-only data needs none of this. Strings and `const` tables
+*are* in the module image, at a fixed distance from the code, shared on purpose.
+PC-relative is exactly right for them. It is only writable per-process state
+that has to go through a base obtained at runtime.
+
+OS-9 made this automatic: the data area lived in the U register and the
+compiler addressed globals relative to it, so `static int counter;` simply
+worked and was private per process. RISC-V has `gp` for the same purpose, and
+the trap frame already saves and restores it per process. Making modules use it
+would remove both the system call and the struct.
+
 The data area sits inside the block `mem_size` asked for, after the command
 line and its argv vector. `myrtos_data_area(&size)` reports what is there --
 but the stack grows down into the same span, so that is what exists, not what
