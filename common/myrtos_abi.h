@@ -83,7 +83,9 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_EXEC      9u   // a0 = module name, a1 = argument string -> a0 = pid
 #define SYS_ARGS     10u   // a0 = buffer, a1 = length -> a0 = characters copied
 #define SYS_FSDIR    11u   // a0 = index, a1 = name(12), a2 = &size -> a0 = attr, -1 = end
-#define SYS_FSREAD   12u   // a0 = &myrtos_fs_read_t -> a0 = bytes read, 0 = eof
+#define SYS_FSREAD   12u   // a0 = &myrtos_fs_io_t -> a0 = bytes read, 0 = eof
+#define SYS_FSWRITE  13u   // a0 = &myrtos_fs_io_t -> a0 = bytes written
+#define SYS_FSREMOVE 14u   // a0 = name -> a0 = 0 ok, -1 failed
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -168,20 +170,35 @@ static inline int32_t myrtos_fs_dir(uint32_t index, char *name_out, uint32_t *si
                           (uint32_t)(uintptr_t)size_out);
 }
 
-// Four arguments do not fit in a0-a2, so the request travels as a struct. That
-// also leaves room to grow without disturbing the calling convention.
+// Four arguments do not fit in a0-a2, so the request travels as a struct. Reads
+// and writes take the same one -- they differ in direction, not in shape -- and
+// it leaves room to grow without disturbing the calling convention.
 typedef struct {
     const char *name;
     uint32_t    offset;
     uint8_t    *buf;
     uint32_t    len;
-} myrtos_fs_read_t;
+} myrtos_fs_io_t;
 
 // Read a slice of a file. Returns bytes read, 0 at end of file, -1 if missing.
 static inline int32_t myrtos_fs_read(const char *name, uint32_t offset,
                                      void *buf, uint32_t len) {
-    myrtos_fs_read_t r = { name, offset, (uint8_t*)buf, len };
+    myrtos_fs_io_t r = { name, offset, (uint8_t*)buf, len };
     return myrtos_syscall(SYS_FSREAD, (uint32_t)(uintptr_t)&r, 0, 0);
+}
+
+// Write a slice, creating and extending the file as needed. Returns bytes
+// written, or -1. There is no truncate: writing over a longer file leaves the
+// tail behind, so a utility that replaces a file removes it first.
+static inline int32_t myrtos_fs_write(const char *name, uint32_t offset,
+                                      const void *buf, uint32_t len) {
+    myrtos_fs_io_t r = { name, offset, (uint8_t*)(uintptr_t)buf, len };
+    return myrtos_syscall(SYS_FSWRITE, (uint32_t)(uintptr_t)&r, 0, 0);
+}
+
+// Delete a file. Returns 0, or -1 if it is missing or is a directory.
+static inline int32_t myrtos_fs_remove(const char *name) {
+    return myrtos_syscall(SYS_FSREMOVE, (uint32_t)(uintptr_t)name, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

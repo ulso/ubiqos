@@ -16,6 +16,7 @@ void myrtos_print_u32(uint32_t v);
 #define CMD0_GO_IDLE          0
 #define CMD8_SEND_IF_COND     8
 #define CMD17_READ_SINGLE    17
+#define CMD24_WRITE_SINGLE   24
 #define CMD55_APP            55
 #define CMD58_READ_OCR       58
 #define ACMD41_SEND_OP_COND  41
@@ -147,4 +148,38 @@ bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     cs_high();
     sd_xfer(0xff);
     return true;
+}
+
+bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
+    uint32_t addr = sd_block_addressed ? lba : lba * 512u;
+
+    cs_low();
+    if (sd_command(CMD24_WRITE_SINGLE, addr, 0xff) != 0) {
+        cs_high();
+        return false;
+    }
+
+    sd_xfer(0xff);          // one idle byte before the token, as the spec asks
+    sd_xfer(0xfe);          // start of a single block
+    for (int i = 0; i < 512; i++) sd_xfer(buf[i]);
+    sd_xfer(0xff);          // CRC, ignored in SPI mode but still clocked out
+    sd_xfer(0xff);
+
+    // The card answers with a data response token. Only the low five bits mean
+    // anything, and 0b00101 is the one that says it took the block.
+    uint8_t resp = 0xff;
+    for (int i = 0; i < 20000 && (resp & 0x11) != 0x01; i++) resp = sd_xfer(0xff);
+    if ((resp & 0x1f) != 0x05) { cs_high(); return false; }
+
+    // Then it holds MISO low for as long as the write takes. Returning before it
+    // lets go would put the next command into a card that is still busy.
+    for (int i = 0; i < 500000; i++) {
+        if (sd_xfer(0xff) != 0x00) {
+            cs_high();
+            sd_xfer(0xff);
+            return true;
+        }
+    }
+    cs_high();
+    return false;                       // still busy: treat as a failed write
 }

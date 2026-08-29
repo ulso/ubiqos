@@ -23,6 +23,13 @@ int32_t  myrtos_fat_read_at(const char *name_83, uint32_t offset, uint8_t *buf, 
 // attribute byte, or -1 when there are no more. name_out takes twelve bytes.
 int32_t  myrtos_fat_stat_nth(uint32_t index, char *name_out, uint32_t *size_out);
 
+// Write a slice of a file, creating and extending it as needed.
+int32_t  myrtos_fat_write_at(const char *name_83, uint32_t offset,
+                             const uint8_t *buf, uint32_t len);
+
+// Delete a file. Refuses directories, which need traversal that does not exist.
+bool     myrtos_fat_remove(const char *name_83);
+
 // "readme.txt" -> "README  TXT", the form the directory actually stores.
 bool     myrtos_fat_name_to_83(const char *user, char *out_11);
 

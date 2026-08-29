@@ -8,9 +8,17 @@ static uint32_t fat_start_lba;      // the first FAT
 static uint32_t data_start_lba;     // the first data cluster (cluster 2)
 static uint32_t sectors_per_cluster;
 static uint32_t root_cluster;
+static uint32_t num_fats;           // every copy must be kept in step
+static uint32_t sectors_per_fat;
+static uint32_t cluster_count;      // bounds the search for a free cluster
 static bool     mounted;
 
 static uint8_t sector[512];
+
+// The FAT gets a buffer of its own. Allocation walks the FAT while a directory
+// entry or a data sector is being held in `sector`, and one shared buffer would
+// have them overwrite each other.
+static uint8_t fatbuf[512];
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static uint32_t rd32(const uint8_t *p) {
@@ -42,8 +50,9 @@ bool myrtos_fat_mount(void) {
     uint32_t bytes_per_sector = rd16(&sector[11]);
     sectors_per_cluster       = sector[13];
     uint32_t reserved         = rd16(&sector[14]);
-    uint32_t num_fats         = sector[16];
-    uint32_t sectors_per_fat  = rd32(&sector[36]);
+    uint32_t total_sectors    = rd32(&sector[32]);
+    num_fats                  = sector[16];
+    sectors_per_fat           = rd32(&sector[36]);
     root_cluster              = rd32(&sector[44]);
 
     if (bytes_per_sector != 512 || !sectors_per_cluster || !sectors_per_fat) {
@@ -53,6 +62,8 @@ bool myrtos_fat_mount(void) {
 
     fat_start_lba  = vbr_lba + reserved;
     data_start_lba = fat_start_lba + num_fats * sectors_per_fat;
+    cluster_count  = (total_sectors - (reserved + num_fats * sectors_per_fat))
+                     / sectors_per_cluster;
     mounted = true;
 
     myrtos_print("FAT32 mounted, ");
@@ -244,3 +255,207 @@ bool myrtos_fat_name_to_83(const char *user, char *out_11) {
     }
     return i > 0;
 }
+
+// --- WRITING --------------------------------------------------------------
+// Everything below can destroy the volume if it is wrong, so it is deliberately
+// literal: no cached FAT sectors, no deferred writes, every change on the card
+// before the next step begins. Slow, and easy to reason about when a file comes
+// back wrong.
+
+static void wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void wr32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
+static uint32_t fat_get(uint32_t cluster) {
+    uint32_t offset = cluster * 4;
+    if (!myrtos_sd_read_block(fat_start_lba + offset / 512, fatbuf)) return 0x0fffffff;
+    return rd32(&fatbuf[offset % 512]) & 0x0fffffff;
+}
+
+// Write one FAT entry, in every copy of the FAT. Updating only the first leaves
+// the volume inconsistent, and whether that matters depends on which copy the
+// next reader trusts -- so it is not a corner to cut.
+static bool fat_put(uint32_t cluster, uint32_t value) {
+    uint32_t offset = cluster * 4;
+    uint32_t lba = fat_start_lba + offset / 512;
+    if (!myrtos_sd_read_block(lba, fatbuf)) return false;
+
+    // The top four bits are reserved and must be preserved, not overwritten.
+    uint32_t old = rd32(&fatbuf[offset % 512]);
+    wr32(&fatbuf[offset % 512], (old & 0xf0000000u) | (value & 0x0fffffffu));
+
+    for (uint32_t f = 0; f < num_fats; f++) {
+        if (!myrtos_sd_write_block(lba + f * sectors_per_fat, fatbuf)) return false;
+    }
+    return true;
+}
+
+// First free cluster, marked as end-of-chain so a second call cannot hand out
+// the same one. Returns 0 when the volume is full.
+static uint32_t fat_alloc(void) {
+    for (uint32_t c = 2; c < cluster_count + 2; c++) {
+        if (fat_get(c) != 0) continue;
+        if (!fat_put(c, 0x0ffffff8)) return 0;
+        return c;
+    }
+    return 0;
+}
+
+static void fat_free_chain(uint32_t cluster) {
+    while (cluster >= 2 && cluster < 0x0ffffff8) {
+        uint32_t next = fat_get(cluster);
+        if (!fat_put(cluster, 0)) return;
+        cluster = next;
+    }
+}
+
+// Locate a directory entry and say where on the card it lives, so the size and
+// starting cluster can be written back after the data is on disk.
+static bool dir_locate(const char *name_83, uint32_t *lba_out, uint32_t *off_out) {
+    uint32_t dir_cluster = root_cluster;
+    while (dir_cluster < 0x0ffffff8) {
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            uint32_t lba = cluster_to_lba(dir_cluster) + s;
+            if (!myrtos_sd_read_block(lba, sector)) return false;
+            for (int e = 0; e < 512; e += 32) {
+                if (sector[e] == 0x00) return false;
+                if (sector[e] == 0xe5) continue;
+                if (sector[e + 11] == 0x0f) continue;
+                if (name_matches(&sector[e], name_83)) {
+                    *lba_out = lba; *off_out = (uint32_t)e;
+                    return true;
+                }
+            }
+        }
+        dir_cluster = fat_next_cluster(dir_cluster);
+    }
+    return false;
+}
+
+// A free slot: a deleted entry, or the never-used one that ends the directory.
+// The root directory is a cluster chain like any other, so it can be extended
+// when it fills up.
+static bool dir_alloc_slot(uint32_t *lba_out, uint32_t *off_out) {
+    uint32_t dir_cluster = root_cluster, last = root_cluster;
+
+    while (dir_cluster < 0x0ffffff8) {
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            uint32_t lba = cluster_to_lba(dir_cluster) + s;
+            if (!myrtos_sd_read_block(lba, sector)) return false;
+            for (int e = 0; e < 512; e += 32) {
+                if (sector[e] != 0x00 && sector[e] != 0xe5) continue;
+                *lba_out = lba; *off_out = (uint32_t)e;
+                return true;
+            }
+        }
+        last = dir_cluster;
+        dir_cluster = fat_next_cluster(dir_cluster);
+    }
+
+    uint32_t fresh = fat_alloc();
+    if (!fresh || !fat_put(last, fresh)) return false;
+    for (int i = 0; i < 512; i++) sector[i] = 0;
+    for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+        if (!myrtos_sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
+    }
+    *lba_out = cluster_to_lba(fresh);
+    *off_out = 0;
+    return true;
+}
+
+bool myrtos_fat_remove(const char *name_83) {
+    if (!mounted) return false;
+
+    uint32_t lba, off;
+    if (!dir_locate(name_83, &lba, &off)) return false;
+    if (sector[off + 11] & 0x10) return false;          // a directory, not a file
+
+    uint32_t cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
+
+    // The entry goes first. If the power fails between the two, a directory that
+    // no longer names the file leaks clusters; the other order would leave a
+    // name pointing at clusters handed to somebody else.
+    sector[off] = 0xe5;
+    if (!myrtos_sd_write_block(lba, sector)) return false;
+
+    fat_free_chain(cluster);
+    return true;
+}
+
+// Write a slice of a file, creating it and extending it as needed. The mirror of
+// myrtos_fat_read_at, and for the same reason: a process has 4 kB for data and
+// stack, so a utility streams rather than holding a file in memory.
+int32_t myrtos_fat_write_at(const char *name_83, uint32_t offset,
+                            const uint8_t *buf, uint32_t len) {
+    if (!mounted || !len) return -1;
+
+    uint32_t lba, off, first_cluster, size;
+    if (dir_locate(name_83, &lba, &off)) {
+        if (sector[off + 11] & 0x10) return -1;         // a directory
+        first_cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
+        size = rd32(&sector[off + 28]);
+    } else {
+        if (!dir_alloc_slot(&lba, &off)) return -1;
+        for (int i = 0; i < 11; i++) sector[off + i] = (uint8_t)name_83[i];
+        for (int i = 11; i < 32; i++) sector[off + i] = 0;
+        first_cluster = 0;
+        size = 0;
+        if (!myrtos_sd_write_block(lba, sector)) return -1;
+    }
+
+    const uint32_t bytes_per_cluster = sectors_per_cluster * 512;
+
+    if (!first_cluster) {
+        first_cluster = fat_alloc();
+        if (!first_cluster) return -1;
+    }
+
+    // Walk to the cluster holding `offset`, growing the chain where it ends.
+    uint32_t cluster = first_cluster;
+    for (uint32_t skip = offset / bytes_per_cluster; skip; skip--) {
+        uint32_t next = fat_get(cluster);
+        if (next >= 0x0ffffff8) {
+            next = fat_alloc();
+            if (!next || !fat_put(cluster, next)) return -1;
+        }
+        cluster = next;
+    }
+
+    uint32_t pos = offset % bytes_per_cluster, written = 0;
+    while (written < len) {
+        for (uint32_t s = pos / 512; s < sectors_per_cluster && written < len; s++) {
+            uint32_t dlba = cluster_to_lba(cluster) + s;
+
+            // Read before write: a partial sector must keep the bytes around it.
+            if (!myrtos_sd_read_block(dlba, sector)) return -1;
+            for (uint32_t i = pos % 512; i < 512 && written < len; i++) {
+                sector[i] = buf[written++];
+            }
+            if (!myrtos_sd_write_block(dlba, sector)) return -1;
+            pos = 0;
+        }
+        pos = 0;
+        if (written < len) {
+            uint32_t next = fat_get(cluster);
+            if (next >= 0x0ffffff8) {
+                next = fat_alloc();
+                if (!next || !fat_put(cluster, next)) return -1;
+            }
+            cluster = next;
+        }
+    }
+
+    // The directory entry is written last, so a file only ever claims bytes that
+    // are already on the card.
+    if (!myrtos_sd_read_block(lba, sector)) return -1;
+    wr16(&sector[off + 20], (uint16_t)(first_cluster >> 16));
+    wr16(&sector[off + 26], (uint16_t)(first_cluster & 0xffff));
+    if (offset + len > size) wr32(&sector[off + 28], offset + len);
+    sector[off + 11] = 0x20;                             // archive, an ordinary file
+    if (!myrtos_sd_write_block(lba, sector)) return -1;
+
+    return (int32_t)len;
+}
+
