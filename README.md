@@ -179,18 +179,18 @@ can only be driven over USB.
 ```
 myrtos> help
 Type a module name to run it. Built in:
-  help   this text
-  lsmod  list modules
-  ps     list processes
-  free   memory and processes
-  echo   print its arguments
-  ls     list the SD card
-  cat    show a file
-  cp     copy a file
-  rm     delete a file
-  write  write text to a file
-  sleep  wait, in milliseconds
-  nice   run a command at a priority
+  help     this text
+  lsmod    list modules
+  ps       list processes
+  free     memory and processes
+  echo     print its arguments
+  ls       list the SD card
+  cat      show a file
+  cp       copy a file
+  rm       delete a file
+  write    write text to a file
+  sleep    wait, in milliseconds
+  nice     run a command at a priority
   bootsel  reboot into the bootloader
 
 A trailing & runs a command without waiting for it.

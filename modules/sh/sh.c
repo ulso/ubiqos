@@ -9,19 +9,21 @@ static void prompt(int32_t c) {
 
 static void help(int32_t c) {
     myrtos_write_str(c,
+        // The name column is nine wide because bootsel is seven characters and
+        // needs two after it. Everything lines up on the same column.
         "\r\nType a module name to run it. Built in:\r\n"
-        "  help   this text\r\n"
-        "  lsmod  list modules\r\n"
-        "  ps     list processes\r\n"
-        "  free   memory and processes\r\n"
-        "  echo   print its arguments\r\n"
-        "  ls     list the SD card\r\n"
-        "  cat    show a file\r\n"
-        "  cp     copy a file\r\n"
-        "  rm     delete a file\r\n"
-        "  write  write text to a file\r\n"
-        "  sleep  wait, in milliseconds\r\n"
-        "  nice   run a command at a priority\r\n"
+        "  help     this text\r\n"
+        "  lsmod    list modules\r\n"
+        "  ps       list processes\r\n"
+        "  free     memory and processes\r\n"
+        "  echo     print its arguments\r\n"
+        "  ls       list the SD card\r\n"
+        "  cat      show a file\r\n"
+        "  cp       copy a file\r\n"
+        "  rm       delete a file\r\n"
+        "  write    write text to a file\r\n"
+        "  sleep    wait, in milliseconds\r\n"
+        "  nice     run a command at a priority\r\n"
         "  bootsel  reboot into the bootloader\r\n"
         "\r\nA trailing & runs a command without waiting for it.\r\n");
 }
