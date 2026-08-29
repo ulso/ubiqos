@@ -23,5 +23,6 @@ bool myrtos_usb_ready(void);
 int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len);
 int32_t myrtos_usb_read(uint8_t *buf, uint32_t len);
 uint32_t myrtos_usb_available(void);   // bytes waiting, without consuming them
+uint32_t myrtos_usb_writable(void);    // room in the send buffer
 
 #endif

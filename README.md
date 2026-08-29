@@ -280,6 +280,14 @@ otherwise park a shell on input that cannot arrive.
 nothing is polled to notice it. The shell uses it, which is why a command's
 output appears before the next prompt.
 
+**Writing** blocks the same way when a device has no room. The USB console has
+a 256-byte send buffer, and a write larger than that used to be cut off: the
+driver called `tud_task` to drain it, from the trap handler, with interrupts
+off -- so the transfer that would have drained it could never complete. That
+was not merely truncation but a hang, and printing a long enough line stopped
+the system. A write now takes what fits and reports how much, the caller loops,
+and the kernel blocks it until there is room.
+
 **Sleeping for a length of time** uses a delta list, as in Comer's XINU. Each
 sleeper stores not when it wakes but how many ticks after the one ahead of it,
 so the timer decrements exactly one number per tick however many are asleep.

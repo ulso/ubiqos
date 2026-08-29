@@ -18,6 +18,7 @@ uint32_t myrtos_process_count(void);
 int32_t myrtos_process_create(const myrtos_module_header_t *m, const char *args);
 uint32_t myrtos_process_get_args(char *buf, uint32_t len);
 void myrtos_block_on_read(int32_t path);
+void myrtos_block_on_write(int32_t path);
 bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
 void myrtos_sleep_begin(uint32_t ticks);
@@ -83,12 +84,21 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = (uint32_t)myrtos_io_open((const char*)(uintptr_t)frame->a0,
                                                  myrtos_current_pid());
             break;
-        case SYS_WRITE:
-            frame->a0 = (uint32_t)myrtos_io_write((int32_t)frame->a0,
-                                                  (const uint8_t*)(uintptr_t)frame->a1,
-                                                  frame->a2,
-                                                  myrtos_current_pid());
+        case SYS_WRITE: {
+            int32_t wpath = (int32_t)frame->a0;
+            int32_t wn = myrtos_io_write(wpath, (const uint8_t*)(uintptr_t)frame->a1,
+                                         frame->a2, myrtos_current_pid());
+            if (wn == 0 && frame->a2 && myrtos_current_pid() != 0) {
+                // No room. Same shape as a blocking read: step back onto the
+                // ecall and wait, so the call is simply made again with its
+                // arguments intact once the device can take something.
+                frame->mepc -= 4;
+                myrtos_block_on_write(wpath);
+                return myrtos_switch(sp);
+            }
+            frame->a0 = (uint32_t)wn;
             break;
+        }
         case SYS_READ: {
             int32_t path = (int32_t)frame->a0;
             int32_t n = myrtos_io_read(path, (uint8_t*)(uintptr_t)frame->a1,

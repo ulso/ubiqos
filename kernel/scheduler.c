@@ -18,6 +18,7 @@ typedef enum {
     PROC_STATE_READY,
     PROC_STATE_RUNNING,
     PROC_STATE_WAIT_READ,       // waiting for a device to have something
+    PROC_STATE_WAIT_WRITE,      // waiting for room to write
     PROC_STATE_WAIT_CHILD,      // waiting for another process to exit
     PROC_STATE_SLEEPING         // waiting for a length of time
 } proc_state_t;
@@ -337,6 +338,7 @@ int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
         case PROC_STATE_READY:      out->state = MYRTOS_PS_READY; break;
         case PROC_STATE_RUNNING:    out->state = MYRTOS_PS_RUNNING; break;
         case PROC_STATE_WAIT_READ:  out->state = MYRTOS_PS_WAIT_READ; break;
+        case PROC_STATE_WAIT_WRITE: out->state = MYRTOS_PS_WAIT_WRITE; break;
         case PROC_STATE_WAIT_CHILD: out->state = MYRTOS_PS_WAIT_CHILD; break;
         case PROC_STATE_SLEEPING:   out->state = MYRTOS_PS_SLEEPING; break;
         default:                    out->state = MYRTOS_PS_FREE; break;
@@ -438,6 +440,11 @@ void myrtos_block_on_read(int32_t path) {
     process_table[current_pid].wait_path = path;
 }
 
+void myrtos_block_on_write(int32_t path) {
+    process_table[current_pid].state = PROC_STATE_WAIT_WRITE;
+    process_table[current_pid].wait_path = path;
+}
+
 // Wait for a process to exit. False means there is nothing to wait for, either
 // because the pid is out of range or because it has already finished -- the
 // caller then carries on rather than blocking forever.
@@ -454,8 +461,13 @@ bool myrtos_block_on_child(int32_t pid) {
 // costs the blocked process nothing at all.
 void myrtos_wake_readers(void) {
     for (int i = 1; i < MAX_PROCESSES; i++) {
-        if (process_table[i].state != PROC_STATE_WAIT_READ) continue;
-        if (!myrtos_io_readable(process_table[i].wait_path, i)) continue;
+        if (process_table[i].state == PROC_STATE_WAIT_READ) {
+            if (!myrtos_io_readable(process_table[i].wait_path, i)) continue;
+        } else if (process_table[i].state == PROC_STATE_WAIT_WRITE) {
+            if (!myrtos_io_writable(process_table[i].wait_path, i)) continue;
+        } else {
+            continue;
+        }
         process_table[i].state = PROC_STATE_READY;
         ready_enqueue(i);
     }

@@ -116,8 +116,19 @@ static inline int32_t myrtos_open(const char *device) {
     return myrtos_syscall(SYS_OPEN, (uint32_t)(uintptr_t)device, 0, 0);
 }
 
+// Writes take what the device can hold and report how much that was, as write
+// does everywhere. The kernel blocks rather than returning zero, so this loop
+// waits rather than spins.
 static inline int32_t myrtos_write(int32_t path, const void *buf, uint32_t len) {
-    return myrtos_syscall(SYS_WRITE, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
+    const uint8_t *p = (const uint8_t*)buf;
+    uint32_t done = 0;
+    while (done < len) {
+        int32_t n = myrtos_syscall(SYS_WRITE, (uint32_t)path,
+                                   (uint32_t)(uintptr_t)(p + done), len - done);
+        if (n < 0) return n;
+        done += (uint32_t)n;
+    }
+    return (int32_t)done;
 }
 
 // Reads block. A process waiting for input is taken off the run queue until the
@@ -251,6 +262,7 @@ static inline uint32_t myrtos_ticks_now(void) {
 #define MYRTOS_PS_READY       1
 #define MYRTOS_PS_RUNNING     2
 #define MYRTOS_PS_WAIT_READ   3
+#define MYRTOS_PS_WAIT_WRITE  6
 #define MYRTOS_PS_WAIT_CHILD  4
 #define MYRTOS_PS_SLEEPING    5
 

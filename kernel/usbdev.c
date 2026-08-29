@@ -28,25 +28,24 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
     // TinyUSB buffers, and discards on its own when nobody is listening.
     if (!tud_mounted()) return -1;
 
+    // Writes as much as fits and says how much that was. It used to call
+    // tud_task here when the buffer filled, which cannot work: this runs in the
+    // trap handler with interrupts off, so the transfer that would drain the
+    // buffer can never complete, and the USB process may be inside tud_task at
+    // the same moment. The text was simply cut off at 256 bytes.
     uint32_t written = 0;
     while (written < len) {
         // The same translation the UART driver does: a lone line feed is
         // preceded by a carriage return. Without it the output staircases to
-        // the right, and every utility would have to write \r\n itself.
-        if (buf[written] == '\n') {
-            char cr = '\r';
-            if (!tud_cdc_write(&cr, 1)) { tud_cdc_write_flush(); tud_task(); continue; }
-        }
-        uint32_t n = tud_cdc_write(buf + written, 1);
-        written += n;
-        if (!n) {
-            // The FIFO is full: let the stack drain it before we go on.
-            tud_cdc_write_flush();
-            tud_task();
-            if (!tud_mounted()) break;
-        }
+        // the right, and every utility would have to write \r\n itself. The
+        // pair goes in together or not at all, so a retry cannot repeat the CR.
+        uint32_t need = (buf[written] == '\n') ? 2u : 1u;
+        if (tud_cdc_write_available() < need) break;
+        if (need == 2) { char cr = '\r'; tud_cdc_write(&cr, 1); }
+        tud_cdc_write(buf + written, 1);
+        written++;
     }
-    tud_cdc_write_flush();
+    if (written) tud_cdc_write_flush();
     return (int32_t)written;
 }
 
@@ -69,6 +68,10 @@ void myrtos_usb_start_task(void) {
     if (myrtos_kernel_thread(usb_thread, 4096, MYRTOS_PRIO_USB) < 0) {
         myrtos_print("USB: could not start its service process\n");
     }
+}
+
+uint32_t myrtos_usb_writable(void) {
+    return tud_mounted() ? tud_cdc_write_available() : 0;
 }
 
 uint32_t myrtos_usb_available(void) {

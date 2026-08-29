@@ -29,6 +29,10 @@ typedef struct {
     // existed. That is what keeps the send-only UART from parking a shell
     // forever on input that cannot arrive.
     int32_t (*readable)(void);
+    // Room to write. Absent means always writable, which is right for a driver
+    // that cannot fill up -- the UART writes a byte at a time and blocks in
+    // hardware, so waiting on it would never end.
+    int32_t (*writable)(void);
     int32_t (*close)(void);
 } myrtos_driver_t;
 
@@ -49,6 +53,9 @@ void    myrtos_io_inherit(int32_t parent_pid, int32_t child_pid);
 // Whether a read on this path would return something. False also for a device
 // whose driver cannot answer, so that such a path is never blocked on.
 bool     myrtos_io_readable(int32_t path, int32_t owner_pid);
+
+// Whether a write would take anything. True for a driver that cannot say.
+bool     myrtos_io_writable(int32_t path, int32_t owner_pid);
 
 // Open on a SPECIFIC path number. The kernel uses it to give the first process
 // its 0, 1 and 2; ordinary opens take the first free slot.
