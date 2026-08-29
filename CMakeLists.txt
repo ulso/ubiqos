@@ -71,7 +71,10 @@ function(myrtos_add_module name source)
     target_compile_options(${name}_app PRIVATE
         -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
         $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics>)
-    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv)
+    # -N keeps the linker from page-aligning the writable sections. Without it
+    # .tdata landed a page beyond the code and objcopy padded the gap, which put
+    # four kilobytes of zeroes in every module that had a thread-local variable.
+    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-N)
 
 # Position independence is checked before the module is packaged. An absolute
 # address in an allocated section -- a static function pointer, a vtable, a

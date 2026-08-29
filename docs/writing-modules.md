@@ -153,24 +153,41 @@ release another's memory, or the kernel's.
 ## Several source files, and where state goes
 
 A module can be split across files -- pass the extra sources to
-`myrtos_add_module` after the first. What does not survive the split is the
-usual C way of keeping something private to a file:
+`myrtos_add_module` after the first. Add `__thread` to any variable that has to
+be per process:
 
 ```c
-static int counter;             // rejected, and not because it is static
+static int counter;             // rejected: one copy, shared by every process
+static __thread int counter;    // one per process, and it works across files
 ```
 
 `static` does two things: it hides the name and it gives static storage. It is
 the storage that is refused, so making the variable global does not help --
-`int counter;` lands in `.bss` just the same, and is exported besides. **A
-module cannot have file-scope mutable state at all.** One copy of the code is
-shared by every process running it, so the variable would be shared too.
+`int counter;` lands in `.bss` just the same, and is exported besides. One copy
+of the code is shared by every process running it, so the variable would be
+shared too.
 
-`static const` is unaffected. It goes to `.rodata`, is shared deliberately, and
-still hides the name.
+`__thread` changes where it lives, not how it is written. The linker gathers
+the thread-local variables from every source file into one block and gives each
+a fixed offset from `tp`, which the kernel points at the process's own area.
+Reaching one is a single instruction:
 
-For state that must be per process, use the data area. This is a pimpl, and it
-behaves like one:
+```
+lw   a4,0(tp)
+sw   a4,0(tp)
+```
+
+That is what OS-9's linker did with a module's data section, and what its U
+register held. The module header carries the block's size and where its initial
+values sit; the kernel copies those in and zeroes the rest for every process.
+
+`static const` needs none of this. It goes to `.rodata`, is shared deliberately,
+and still hides the name.
+
+Where the state is not a simple variable but a block of bytes you want to lay
+out yourself, `myrtos_data_area` hands out what is left after the thread-local
+block. That is a system call, so fetch it once. This is a pimpl, and it behaves
+like one:
 
 ```c
 // state.h -- private to the module, not exported

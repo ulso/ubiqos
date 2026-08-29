@@ -18,7 +18,10 @@
 // --- FORMAT VERSION -------------------------------------------------------
 // Lives in the low byte of attr_rev. The kernel rejects modules built against
 // another version rather than running them and failing somewhere obscure.
-#define MYRTOS_ABI_VERSION 1
+// Version 2 added the three tls_ fields, which is a change of the header's
+// size and of what the checksum covers. A version 1 module in a version 2
+// kernel is refused rather than misread.
+#define MYRTOS_ABI_VERSION 2
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE 0x0509000B
@@ -66,7 +69,17 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint16_t attr_rev;       // attributes and ABI version
     uint32_t exec_offset;    // to the entry point
     uint32_t mem_size;       // RAM per process: data at the bottom, stack from the top
-    uint32_t header_crc;     // complement of the sum of the first six words
+
+    // Thread-local storage: the module's own variables, one set per process.
+    // The linker gathers them from every source file into one block and gives
+    // each a fixed offset from tp, which is what OS-9's linker did with U. The
+    // kernel copies tls_init bytes of the image at tls_offset to the base of
+    // the process's area, zeroes up to tls_total, and points tp at it.
+    uint32_t tls_offset;     // to the initial image, zero if there is none
+    uint32_t tls_init;       // bytes to copy: the .tdata part
+    uint32_t tls_total;      // bytes to reserve: .tdata plus .tbss
+
+    uint32_t header_crc;     // complement of the sum of the first nine words
 } myrtos_module_header_t;
 
 // --- SYSTEM CALLS ---------------------------------------------------------
@@ -337,18 +350,13 @@ static inline void *myrtos_realloc(void *ptr, uint32_t size) {
 // what is safe to use. A module that wants a lot should ask for a larger
 // mem_size rather than assume.
 //
-// The base costs nothing: the kernel leaves it in tp when it starts the
-// process, which is what the thread pointer is for -- this is thread-local
-// storage, laid out by us instead of by the compiler. Only asking for the size
-// needs a system call.
+// This is the raw area, which begins after the thread-local block. For ordinary
+// variables reach for `static __thread` instead: the linker gives those fixed
+// offsets from tp, so they cost one instruction and no call at all. This is for
+// bytes you want to lay out yourself.
 static inline void *myrtos_data_area(uint32_t *size_out) {
-    if (size_out) {
-        return (void*)(uintptr_t)myrtos_syscall(SYS_DATAAREA,
-                                                (uint32_t)(uintptr_t)size_out, 0, 0);
-    }
-    void *base;
-    __asm__("mv %0, tp" : "=r"(base));
-    return base;
+    return (void*)(uintptr_t)myrtos_syscall(SYS_DATAAREA,
+                                            (uint32_t)(uintptr_t)size_out, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path) {

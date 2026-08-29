@@ -7,8 +7,14 @@
 // Two of these at once share one copy of the code and keep separate counters,
 // which is what a module may not use a static variable for.
 
+// An initialised thread-local, to exercise the other half of the mechanism:
+// this one has a value in the module image that the kernel copies per process,
+// rather than being zeroed like the instance itself.
+static __thread char tag[8] = "myrtos";
+
 void Pimpl::run(int argc, char **argv) {
     counter = 0;
+    tag[0] = (char)('A' + (myrtos_ticks_now() & 7));   // proves it is per process
 
     int n = 0;
     if (argc > 1) while (n < 15 && argv[1][n]) { label[n] = argv[1][n]; n++; }
@@ -27,6 +33,8 @@ void Pimpl::run(int argc, char **argv) {
     myrtos_line_str(&l, label);
     myrtos_line_str(&l, ": counter ");
     myrtos_line_u32(&l, counter);
+    myrtos_line_str(&l, ", tag ");
+    myrtos_line_str(&l, tag);
     myrtos_line_str(&l, ", area ");
     myrtos_line_u32(&l, room());
     myrtos_line_str(&l, " bytes\n");

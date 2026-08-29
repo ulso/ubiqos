@@ -22,6 +22,10 @@ readelf, obj_files, elf = sys.argv[1], sys.argv[2:-1], sys.argv[-1]
 # PC-relative and purely local types. Anything else in an allocated section is
 # an absolute address.
 POSITION_INDEPENDENT = {
+    # Thread-local accesses are offsets from tp, fixed at link time and carrying
+    # no absolute address. They are how a module keeps per-process variables.
+    "R_RISCV_TPREL_HI20", "R_RISCV_TPREL_LO12_I", "R_RISCV_TPREL_LO12_S",
+    "R_RISCV_TPREL_ADD", "R_RISCV_TLS_TPREL32",
     "R_RISCV_PCREL_HI20", "R_RISCV_PCREL_LO12_I", "R_RISCV_PCREL_LO12_S",
     "R_RISCV_BRANCH", "R_RISCV_JAL", "R_RISCV_RVC_BRANCH", "R_RISCV_RVC_JUMP",
     "R_RISCV_CALL", "R_RISCV_CALL_PLT", "R_RISCV_RELAX", "R_RISCV_ALIGN",
@@ -63,6 +67,9 @@ for obj in obj_files:
 out = subprocess.run([readelf, "-W", "-S", elf], capture_output=True, text=True).stdout
 for line in out.splitlines():
     m = re.search(r"\]\s+(\.\S+)\s+\S+\s+\S+\s+\S+\s+(\S+)", line)
+    # .tdata and .tbss are deliberately not in this list. They are writable, but
+    # one copy per process rather than one shared between them, which is exactly
+    # what a module needs. Everything else writable would be shared.
     if m and m.group(1) in (".data", ".bss", ".sdata", ".sbss"):
         if m.group(2) != "000000":
             problems.append(f"{elf}: writable section {m.group(1)} is present")

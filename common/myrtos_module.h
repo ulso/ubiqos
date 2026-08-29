@@ -29,15 +29,9 @@
 
 template <class Derived>
 struct MyrtosModule {
-    // The process's own data area, cast to the derived type. Fetch it once and
-    // keep it: this is a system call, so calling it in a loop costs a trap each
-    // time and stops the compiler optimising across it.
-    static Derived *state() {
-        return static_cast<Derived *>(myrtos_data_area(0));
-    }
-
-    // How much room the data area has. The stack grows down into the same span,
-    // so this is what exists rather than what is safe to fill.
+    // How much raw area exists after the thread-local block. The stack grows
+    // down into the same span, so this is what is there rather than what is safe
+    // to fill. Most modules never need it: put the variables in the class.
     static uint32_t room() {
         uint32_t n = 0;
         (void)myrtos_data_area(&n);
@@ -45,13 +39,14 @@ struct MyrtosModule {
     }
 };
 
-// Generates the entry point the loader looks for. The class must fit the data
-// area and must not need a constructor to have run -- the area arrives zeroed.
+// Generates the entry point the loader looks for, and the instance itself.
+//
+// The object is thread-local, so the linker places it in the module's TLS block
+// and the kernel gives every process its own zeroed copy. Reaching a member is
+// one instruction from tp -- no system call, and nothing to fetch or carry. The
+// class must not need a constructor to have run: the block arrives zeroed.
 #define MYRTOS_MODULE(Class)                                        \
+    static __thread Class myrtos_instance;                          \
     extern "C" void module_main(int argc, char **argv) {            \
-        if (Class::room() < sizeof(Class)) {                        \
-            myrtos_write_str(MYRTOS_STDERR, "module: data area too small\n"); \
-            return;                                                 \
-        }                                                           \
-        Class::state()->run(argc, argv);                            \
+        myrtos_instance.run(argc, argv);                            \
     }

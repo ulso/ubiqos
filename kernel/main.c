@@ -102,10 +102,10 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
 
     uint32_t *raw_ptr = (uint32_t*)header;
     uint32_t checksum = 0;
-    // The header is 28 bytes, hence seven words, and the seventh IS the crc
-    // field. The sum therefore covers the first six -- taking seven counted the
-    // crc into its own checksum and could never match.
-    for (int i = 0; i < 6; i++) {
+    // The header is 40 bytes, hence ten words, and the tenth IS the crc field.
+    // The sum therefore covers the first nine -- taking ten would count the crc
+    // into its own checksum and could never match.
+    for (int i = 0; i < 9; i++) {
         checksum += raw_ptr[i];
     }
     checksum = ~checksum;
@@ -113,7 +113,7 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
     return (header->header_crc == checksum);
 }
 
-// --- SYSTEMETS STARTPUNKT ---
+// --- THE SYSTEM'S ENTRY POINT ---
 void myrtos_kernel_main(void) {
     myrtos_print("\n========================================\n");
     myrtos_print("      MYRTOS KERNEL v0.1 STARTING       \n");
