@@ -226,9 +226,15 @@ static inline int32_t myrtos_sleep(uint32_t ms) {
 #define MYRTOS_PRIO_MAX     31
 #define MYRTOS_PRIO_DEFAULT 16
 
-// Set this process's priority, returning the previous one.
+// Set this process's priority, returning the previous one. Zero asks without
+// changing anything: it is the idle process's level and cannot be taken, so it
+// is free to mean something else.
 static inline int32_t myrtos_setprio(uint32_t prio) {
     return myrtos_syscall(SYS_SETPRIO, prio, 0, 0);
+}
+
+static inline int32_t myrtos_getprio(void) {
+    return myrtos_syscall(SYS_SETPRIO, 0, 0, 0);
 }
 
 // Milliseconds since the timer started. Wraps after 49 days; compare

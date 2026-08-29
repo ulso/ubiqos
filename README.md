@@ -185,6 +185,7 @@ Type a module name to run it. Built in:
   rm     delete a file
   write  write text to a file
   sleep  wait, in milliseconds
+  nice   run a command at a priority
 
 A trailing & runs a command without waiting for it.
 ```
@@ -219,7 +220,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 14 | `SYS_FSREMOVE` | name → 0 or -1 |
 | 15 | `SYS_WAIT` | pid; returns when it has exited |
 | 16 | `SYS_SLEEP` | milliseconds; returns when they have passed |
-| 17 | `SYS_SETPRIO` | new priority → the old one |
+| 17 | `SYS_SETPRIO` | new priority → the old one; zero asks without changing |
 | 18 | `SYS_TICKS` | → milliseconds since the timer started |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
@@ -238,6 +239,11 @@ Round robin survives inside a level: a process that uses up its quantum goes to
 the back of its own queue. Nothing is shared across levels, which is the point
 of a priority scheduler and also its sharp edge -- a process that neither
 blocks nor sleeps starves everything below it for as long as it runs.
+
+Priority is inherited across `exec`, as path numbers are, so `nice` needs no
+help from the kernel: it sets its own priority and starts the command, which
+knows nothing about any of it. The kernel creates the first process from the
+idle level, so that one case takes the default instead of inheriting.
 
 The idle process sits alone at the bottom, and never blocks. That is why
 picking the next process needs no special case for "nobody is ready": the

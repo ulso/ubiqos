@@ -17,13 +17,18 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
+    // With one argument it leaves its priority alone, which is what makes it
+    // useful for showing that a child inherits: if spin set its own, there
+    // would be no way to tell inheriting from overriding.
     uint32_t prio, ms;
-    if (argc != 3 || !parse_u32(argv[1], &prio) || !parse_u32(argv[2], &ms)) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: spin PRIORITY MILLISECONDS\n");
+    if (argc == 2 && parse_u32(argv[1], &ms)) {
+        prio = (uint32_t)myrtos_getprio();
+    } else if (argc == 3 && parse_u32(argv[1], &prio) && parse_u32(argv[2], &ms)) {
+        myrtos_setprio(prio);
+    } else {
+        myrtos_write_str(MYRTOS_STDERR, "usage: spin [PRIORITY] MILLISECONDS\n");
         return;
     }
-
-    myrtos_setprio(prio);
 
     uint32_t start = myrtos_ticks_now();
     uint32_t rounds = 0;

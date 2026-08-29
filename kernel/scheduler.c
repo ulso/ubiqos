@@ -268,7 +268,14 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].args = (const char*)mem;
     process_table[slot].sleep_next = -1;
-    process_table[slot].priority = MYRTOS_PRIO_DEFAULT;
+
+    // Priority is inherited, as paths are: that is what lets `nice` work
+    // without the started program knowing anything about priorities. The
+    // exception is the kernel, which creates the first process from the idle
+    // level -- inheriting that would leave the shell below everything.
+    process_table[slot].priority = (current_pid == KERNEL_PID)
+                                 ? MYRTOS_PRIO_DEFAULT
+                                 : process_table[current_pid].priority;
     process_table[slot].state = PROC_STATE_READY;
     ready_enqueue(slot);
 
@@ -363,8 +370,15 @@ static void sleep_remove(int32_t pid) {
 // is enqueued at its new priority the next time it gives up the processor.
 uint32_t myrtos_set_priority(uint32_t prio) {
     if (current_pid == KERNEL_PID) return MYRTOS_PRIO_IDLE;   // idle stays idle
-    if (prio >= MYRTOS_PRIO_LEVELS) prio = MYRTOS_PRIO_LEVELS - 1;
     uint32_t was = process_table[current_pid].priority;
+
+    // Zero belongs to the idle process and cannot be taken, which makes it a
+    // free sentinel for asking without changing. It also closes the hole where
+    // a process could demote itself to the idle level and compete with the loop
+    // that keeps USB alive.
+    if (prio == MYRTOS_PRIO_IDLE) return was;
+
+    if (prio >= MYRTOS_PRIO_LEVELS) prio = MYRTOS_PRIO_LEVELS - 1;
     process_table[current_pid].priority = prio;
     return was;
 }

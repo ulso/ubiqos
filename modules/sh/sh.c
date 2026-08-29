@@ -20,6 +20,7 @@ static void help(int32_t c) {
         "  rm     delete a file\r\n"
         "  write  write text to a file\r\n"
         "  sleep  wait, in milliseconds\r\n"
+        "  nice   run a command at a priority\r\n"
         "\r\nA trailing & runs a command without waiting for it.\r\n");
 }
 
