@@ -13,7 +13,12 @@
 // and .bss are empty, so the code can be shared without two processes treading
 // on each other.
 
-#define MYRTOS_MAX_MODULES 8
+// Eight was enough while the system had a shell and a couple of demos. Adding
+// ls, cat, cp and rm filled it, and the descriptors -- which are registered last
+// because they come last in the flash image -- were the ones turned away. The
+// console then had no USB device to open and the shell fell back to the
+// write-only UART, which looks exactly like a kernel that failed to boot.
+#define MYRTOS_MAX_MODULES 32
 
 typedef struct {
     const myrtos_module_header_t *header;
