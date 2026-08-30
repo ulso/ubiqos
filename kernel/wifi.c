@@ -42,6 +42,7 @@ void myrtos_print_u32(uint32_t v);
 #define SCAN_NETWORKS_CMD   0x27u
 #define START_SCAN_CMD      0x36u
 #define GET_IDX_RSSI_CMD    0x32u
+#define GET_CONN_STATUS_CMD 0x20u
 
 static uint8_t xfer(uint8_t v) {
     uint8_t r = 0;
@@ -58,13 +59,20 @@ static bool wait_ack(bool level, uint32_t ms) {
     return true;
 }
 
+// Ten milliseconds was a guess and too short. Only the very first command ever
+// worked, which is what a handshake that has not settled between transactions
+// looks like -- the second select gives up, the caller sees nothing, and the
+// reply it was waiting for is read as "no answer" rather than "not yet".
 static bool select_chip(void) {
-    if (!wait_ack(false, 10)) return false;      // not busy
+    if (!wait_ack(false, 100)) return false;     // not busy
     gpio_put(WIFI_CS, 0);
-    return wait_ack(true, 10);                   // selected and ready
+    return wait_ack(true, 100);                  // selected and ready
 }
 
-static void deselect_chip(void) { gpio_put(WIFI_CS, 1); }
+static void deselect_chip(void) {
+    gpio_put(WIFI_CS, 1);
+    busy_wait_us(100);                           // let the line settle
+}
 
 void myrtos_wifi_init(void) {
     spi_init(WIFI_SPI, 8 * 1000 * 1000);
@@ -178,6 +186,7 @@ extern void *myrtos_bulk_pool;
 static wifi_scan_t *scan;
 static uint32_t scan_count;
 static uint8_t  start_reply;
+static uint8_t  conn_status = 0xfe;
 
 static bool scan_room(void) {
     if (scan) return true;
@@ -246,6 +255,29 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
 
     if (index < 0) {
         scan_count = 0;
+
+        // Ask its connection status first. The Arduino example waits on this in
+        // a loop before it does anything else, and a question the reference
+        // implementation asks first is worth asking first: whatever it wakes up
+        // in the firmware, we want woken too.
+        if (simple_cmd(GET_CONN_STATUS_CMD) && select_chip()) {
+            uint8_t b = 0;
+            for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+            if (b == START_CMD) {
+                xfer(0xff);
+                uint32_t np = xfer(0xff);
+                for (uint32_t k = 0; k < np; k++) {
+                    uint32_t len = xfer(0xff);
+                    for (uint32_t j = 0; j < len; j++) {
+                        uint8_t v = xfer(0xff);
+                        if (k == 0 && j == 0) conn_status = v;
+                    }
+                }
+                xfer(0xff);
+            }
+            deselect_chip();
+        }
+        myrtos_sleep(50);
         if (!simple_cmd(START_SCAN_CMD)) return -1;
 
         // Read the acknowledgement properly rather than throwing bytes away: a
@@ -298,7 +330,9 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
             const char hex[] = "0123456789abcdef";
             out[0] = 's'; out[1] = 't'; out[2] = 'a'; out[3] = 'r'; out[4] = 't';
             out[5] = '='; out[6] = hex[(start_reply >> 4) & 15];
-            out[7] = hex[start_reply & 15]; out[8] = 0;
+            out[7] = hex[start_reply & 15];
+            out[8] = '/'; out[9] = hex[(conn_status >> 4) & 15];
+            out[10] = hex[conn_status & 15]; out[11] = 0;
         }
         return (int32_t)scan_count;
     }
