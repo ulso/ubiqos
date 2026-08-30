@@ -1,0 +1,143 @@
+--- /Users/ulf/.pico-sdk/sdk/2.2.0/lib/lwip/src/core/tcp.c	2026-04-04 19:39:12
++++ /private/tmp/claude-501/-Users-ulf-Documents-Projects-rust/6ab954b7-5966-4c63-be6e-9b808dfbbfb2/scratchpad/lwip2/tcp_patched.c	2026-08-30 18:14:26
+@@ -141,20 +141,39 @@
+ #define INITIAL_MSS TCP_MSS
+ #endif
+ 
+-static const char *const tcp_state_str[] = {
+-  "CLOSED",
+-  "LISTEN",
+-  "SYN_SENT",
+-  "SYN_RCVD",
+-  "ESTABLISHED",
+-  "FIN_WAIT_1",
+-  "FIN_WAIT_2",
+-  "CLOSE_WAIT",
+-  "CLOSING",
+-  "LAST_ACK",
+-  "TIME_WAIT"
+-};
++/* LOCAL: a table of pointers carries absolute addresses. The strings live in
++   the module image beside the table, so the DISTANCE to each is a link-time
++   constant and the table can be position independent. */
++#include "myrtos_reltab.h"
+ 
++__attribute__((used)) static const char tcp_st_0[] = "CLOSED";
++__attribute__((used)) static const char tcp_st_1[] = "LISTEN";
++__attribute__((used)) static const char tcp_st_2[] = "SYN_SENT";
++__attribute__((used)) static const char tcp_st_3[] = "SYN_RCVD";
++__attribute__((used)) static const char tcp_st_4[] = "ESTABLISHED";
++__attribute__((used)) static const char tcp_st_5[] = "FIN_WAIT_1";
++__attribute__((used)) static const char tcp_st_6[] = "FIN_WAIT_2";
++__attribute__((used)) static const char tcp_st_7[] = "CLOSE_WAIT";
++__attribute__((used)) static const char tcp_st_8[] = "CLOSING";
++__attribute__((used)) static const char tcp_st_9[] = "LAST_ACK";
++__attribute__((used)) static const char tcp_st_10[] = "TIME_WAIT";
++
++MYRTOS_RELTAB_BEGIN(tcp_state_str_rel);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_0);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_1);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_2);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_3);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_4);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_5);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_6);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_7);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_8);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_9);
++MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_10);
++MYRTOS_RELTAB_END();
++
++#define tcp_state_str(i) MYRTOS_RELTAB_CALL(tcp_state_str_rel, (i), const char *)
++
+ /* last local TCP port */
+ static u16_t tcp_port = TCP_LOCAL_PORT_RANGE_START;
+ 
+@@ -178,9 +197,21 @@
+ struct tcp_pcb *tcp_tw_pcbs;
+ 
+ /** An array with all (non-temporary) PCB lists, mainly used for smaller code size */
+-struct tcp_pcb **const tcp_pcb_lists[] = {&tcp_listen_pcbs.pcbs, &tcp_bound_pcbs,
+-         &tcp_active_pcbs, &tcp_tw_pcbs
+-};
++/* LOCAL: these point at WRITABLE globals, which in a myrtos module live in each
++   process's own data area -- so the distance from a shared .rodata table to them
++   is not the same for every process, and a relative table cannot express it. A
++   function instead: the compiler addresses each global the way it addresses any
++   other, and there is no table at all. */
++__attribute__((noinline, optimize("O0")))
++struct tcp_pcb **tcp_pcb_list(int i) {
++  /* An if-chain, and the optimiser told to leave it alone. Written as a switch
++     first, GCC gathered the three addresses into a lookup table in .rodata --
++     which is the very thing being avoided. Called rarely; the cost is nothing. */
++  if (i == 0) return &tcp_listen_pcbs.pcbs;
++  if (i == 1) return &tcp_bound_pcbs;
++  if (i == 2) return &tcp_active_pcbs;
++  return &tcp_tw_pcbs;
++}
+ 
+ u8_t tcp_active_pcbs_changed;
+ 
+@@ -273,7 +304,7 @@
+   LWIP_ASSERT("pcb != NULL", pcb != NULL);
+   LWIP_ASSERT("pcb->state == LISTEN", pcb->state == LISTEN);
+   for (i = 1; i < LWIP_ARRAYSIZE(tcp_pcb_lists); i++) {
+-    tcp_remove_listener(*tcp_pcb_lists[i], (struct tcp_pcb_listen *)pcb);
++    tcp_remove_listener(*tcp_pcb_list(i), (struct tcp_pcb_listen *)pcb);
+   }
+ #endif
+   LWIP_UNUSED_ARG(pcb);
+@@ -714,7 +745,7 @@
+   } else {
+     /* Check if the address already is in use (on all lists) */
+     for (i = 0; i < max_pcb_list; i++) {
+-      for (cpcb = *tcp_pcb_lists[i]; cpcb != NULL; cpcb = cpcb->next) {
++      for (cpcb = *tcp_pcb_list(i); cpcb != NULL; cpcb = cpcb->next) {
+         if (cpcb->local_port == port) {
+ #if SO_REUSE
+           /* Omit checking for the same port if both pcbs have REUSEADDR set.
+@@ -1025,7 +1056,7 @@
+   }
+   /* Check all PCB lists. */
+   for (i = 0; i < NUM_TCP_PCB_LISTS; i++) {
+-    for (pcb = *tcp_pcb_lists[i]; pcb != NULL; pcb = pcb->next) {
++    for (pcb = *tcp_pcb_list(i); pcb != NULL; pcb = pcb->next) {
+       if (pcb->local_port == tcp_port) {
+         n++;
+         if (n > (TCP_LOCAL_PORT_RANGE_END - TCP_LOCAL_PORT_RANGE_START)) {
+@@ -1131,7 +1162,7 @@
+       int i;
+       /* Don't check listen- and bound-PCBs, check active- and TIME-WAIT PCBs. */
+       for (i = 2; i < NUM_TCP_PCB_LISTS; i++) {
+-        for (cpcb = *tcp_pcb_lists[i]; cpcb != NULL; cpcb = cpcb->next) {
++        for (cpcb = *tcp_pcb_list(i); cpcb != NULL; cpcb = cpcb->next) {
+           if ((cpcb->local_port == pcb->local_port) &&
+               (cpcb->remote_port == port) &&
+               ip_addr_eq(&cpcb->local_ip, &pcb->local_ip) &&
+@@ -1774,7 +1805,7 @@
+   }
+   if (inactive != NULL) {
+     LWIP_DEBUGF(TCP_DEBUG, ("tcp_kill_closing: killing oldest %s PCB %p (%"S32_F")\n",
+-                            tcp_state_str[state], (void *)inactive, inactivity));
++                            tcp_state_str(state), (void *)inactive, inactivity));
+     /* Don't send a RST, since no data is lost. */
+     tcp_abandon(inactive, 0);
+   }
+@@ -2363,7 +2394,7 @@
+ const char *
+ tcp_debug_state_str(enum tcp_state s)
+ {
+-  return tcp_state_str[s];
++  return tcp_state_str(s);
+ }
+ 
+ err_t
+@@ -2450,7 +2481,7 @@
+ void
+ tcp_debug_print_state(enum tcp_state s)
+ {
+-  LWIP_DEBUGF(TCP_DEBUG, ("State: %s\n", tcp_state_str[s]));
++  LWIP_DEBUGF(TCP_DEBUG, ("State: %s\n", tcp_state_str(s)));
+ }
+ 
+ /**
