@@ -53,6 +53,11 @@ typedef struct {
     int32_t  msg_serving;     // the sender I am serving, -1 when none
     myrtos_msg_t msg;         // WAIT_REPLY: what this sender is offering
     myrtos_msg_t *msg_out;    // WAIT_RECV: where the message is to be delivered
+
+    // Where relative paths start. Kept as text rather than a cluster number so
+    // that it can be shown, and so a directory removed underneath a process
+    // fails at the next lookup instead of silently becoming somewhere else.
+    char cwd[64];
 } pcb_t;
 
 // --- MEMORY HANDED TO PROCESSES -------------------------------------------
@@ -219,6 +224,8 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].msg_next = process_table[slot].msg_head = -1;
     process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
     process_table[slot].msg_out = 0;
+    process_table[slot].cwd[0] = '/';
+    process_table[slot].cwd[1] = 0;
     process_table[slot].args     = NULL;
     process_table[slot].sleep_next = -1;
     process_table[slot].allocs = NULL;
@@ -349,6 +356,8 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].msg_next = process_table[slot].msg_head = -1;
     process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
     process_table[slot].msg_out = 0;
+    process_table[slot].cwd[0] = '/';
+    process_table[slot].cwd[1] = 0;
     process_table[slot].args = (const char*)mem;
     process_table[slot].sleep_next = -1;
 
@@ -770,6 +779,30 @@ static void msg_unlink_all(int32_t pid) {
             ready_enqueue(v);
         }
     }
+}
+
+// The current directory, and how a child comes to share its parent's.
+const char *myrtos_cwd_get(void) { return process_table[current_pid].cwd; }
+
+void myrtos_cwd_inherit(int32_t parent, int32_t child) {
+    if (parent < 0 || parent >= MAX_PROCESSES) return;
+    if (child  < 0 || child  >= MAX_PROCESSES) return;
+    uint32_t i = 0;
+    while (i < sizeof(process_table[0].cwd) - 1 && process_table[parent].cwd[i]) {
+        process_table[child].cwd[i] = process_table[parent].cwd[i];
+        i++;
+    }
+    process_table[child].cwd[i] = 0;
+}
+
+bool myrtos_cwd_set(const char *abs) {
+    char *dst = process_table[current_pid].cwd;
+    uint32_t max = sizeof(process_table[0].cwd);
+    uint32_t i = 0;
+    while (abs[i] && i < max - 1) { dst[i] = abs[i]; i++; }
+    if (abs[i]) return false;                   // would not fit; leave it alone
+    dst[i] = 0;
+    return true;
 }
 
 void myrtos_process_exit(void) {

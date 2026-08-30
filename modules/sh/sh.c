@@ -3,8 +3,33 @@
 // The myrtos shell. OS-9's shell did essentially this: read a name, look the
 // module up, start it. All the complexity is in the kernel; the shell is a loop.
 
+// The prompt says where we are, because with directories there is now somewhere
+// to be. The root shows as a bare "/" rather than nothing at all.
 static void prompt(int32_t c) {
-    myrtos_write_str(c, "\r\nmyrtos> ");
+    char cwd[64];
+    myrtos_getcwd(cwd, sizeof(cwd));
+    myrtos_write_str(c, "\r\nmyrtos:");
+    myrtos_write_str(c, cwd[0] ? cwd : "/");
+    myrtos_write_str(c, "> ");
+}
+
+// cd is built in and has to be. A module changing its own current directory
+// changes nothing for the shell that started it -- the child gets a copy at
+// exec and takes it to the grave.
+static void change_dir(int32_t c, const char *line) {
+    const char *arg = line;
+    while (*arg && *arg != ' ') arg++;
+    while (*arg == ' ') arg++;
+    if (!*arg) arg = "/";
+
+    if (myrtos_chdir(arg) == 0) return;
+
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, "cd: no such directory: ");
+    myrtos_line_str(&l, arg);
+    myrtos_line_str(&l, "\r\n");
+    myrtos_line_flush(c, &l);
 }
 
 static void help(int32_t c) {
@@ -62,6 +87,11 @@ static bool line_is(const char *line, const char *word) {
     return !line[i] && !word[i];
 }
 
+static bool line_starts(const char *line, const char *word) {
+    while (*word) { if (*line != *word) return false; line++; word++; }
+    return true;
+}
+
 void module_main(void) {
     // The kernel has already given us 0, 1 and 2. The shell opens nothing.
     const int32_t c = MYRTOS_STDOUT;
@@ -82,11 +112,13 @@ void module_main(void) {
                 myrtos_write_str(c, "\r\n");
                 if (line_is(line, "help")) {
                     help(c);
+                } else if (line_is(line, "cd") || line_starts(line, "cd ")) {
+                    change_dir(c, line);
                 } else if (exec_line(line) < 0) {
                     myrtos_line_t l;
                     myrtos_line_reset(&l);
                     myrtos_line_str(&l, "no such module: ");
-                    myrtos_line_str(&l, line);   // exec_line nollterminerade namnet
+                    myrtos_line_str(&l, line);   // exec_line NUL-terminated the name
                     myrtos_line_str(&l, "\r\n");
                     myrtos_line_flush(c, &l);
                 }
@@ -97,7 +129,7 @@ void module_main(void) {
             if (len) { len--; myrtos_write_str(c, "\b \b"); }
         } else if (ch >= ' ' && len < sizeof(line) - 1) {
             line[len++] = (char)ch;
-            myrtos_write(c, &ch, 1);   // eka tecknet
+            myrtos_write(c, &ch, 1);   // echo it
         }
     }
 }

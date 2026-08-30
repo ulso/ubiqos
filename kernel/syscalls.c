@@ -22,6 +22,54 @@ bool    myrtos_msg_send(int32_t dest, const myrtos_msg_t *m);
 int32_t myrtos_msg_receive(myrtos_msg_t *out);
 int32_t myrtos_msg_reply(int32_t status);
 int32_t myrtos_find_pid(const char *name);
+const char *myrtos_cwd_get(void);
+void    myrtos_cwd_inherit(int32_t parent, int32_t child);
+bool    myrtos_cwd_set(const char *abs);
+
+// Build an absolute, tidied path from one as it was typed. A relative path
+// starts at the calling process's current directory, and "." and ".." are
+// folded away here so that what the shell displays and what the filesystem
+// walks are the same thing. The filesystem itself only ever sees absolute
+// paths, and so needs to know nothing about processes.
+static void make_abs(const char *in, char *out, uint32_t out_len) {
+    char buf[128];
+    uint32_t n = 0;
+
+    if (!in) in = "";
+    if (in[0] != '/') {
+        const char *cwd = myrtos_cwd_get();
+        while (cwd[n] && n < sizeof(buf) - 2) { buf[n] = cwd[n]; n++; }
+        if (n == 0 || buf[n - 1] != '/') buf[n++] = '/';
+    } else {
+        buf[n++] = '/';
+    }
+
+    uint32_t i = 0;
+    while (in[i] && n < sizeof(buf) - 2) {
+        if (in[i] == '/') { i++; continue; }
+
+        char comp[16];
+        uint32_t c = 0;
+        while (in[i] && in[i] != '/' && c < sizeof(comp) - 1) comp[c++] = in[i++];
+        comp[c] = 0;
+        while (in[i] && in[i] != '/') i++;          // a longer component is cut
+
+        if (comp[0] == '.' && comp[1] == 0) continue;
+        if (comp[0] == '.' && comp[1] == '.' && comp[2] == 0) {
+            if (n > 1) { n--; while (n > 1 && buf[n - 1] != '/') n--; }
+            continue;
+        }
+        for (uint32_t k = 0; k < c && n < sizeof(buf) - 2; k++) buf[n++] = comp[k];
+        buf[n++] = '/';
+    }
+
+    if (n > 1 && buf[n - 1] == '/') n--;             // no trailing slash but at the root
+    buf[n] = 0;
+
+    uint32_t k = 0;
+    while (buf[k] && k < out_len - 1) { out[k] = buf[k]; k++; }
+    out[k] = 0;
+}
 void myrtos_block_on_write(int32_t path);
 bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
@@ -160,7 +208,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
 // The arguments are passed at creation: they are copied into the
 // process's own memory before the frame is built, so a0 can point past them.
             int32_t pid = m ? myrtos_process_create(m, (const char*)(uintptr_t)frame->a1) : -1;
-            if (pid >= 0) myrtos_io_inherit(myrtos_current_pid(), pid);
+            if (pid >= 0) {
+                  myrtos_io_inherit(myrtos_current_pid(), pid);
+                  myrtos_cwd_inherit(myrtos_current_pid(), pid);
+              }
             frame->a0 = (uint32_t)pid;
             break;
         }
@@ -169,24 +220,54 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         case SYS_FSDIR: {
             const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)(uintptr_t)frame->a0;
-            frame->a0 = (uint32_t)myrtos_fat_stat_nth(d->path, d->index, d->name, d->size);
+            char abs[128];
+              make_abs(d->path, abs, sizeof(abs));
+              frame->a0 = (uint32_t)myrtos_fat_stat_nth(abs, d->index, d->name, d->size);
+            break;
+        }
+        case SYS_CHDIR: {
+            char abs[128];
+            make_abs((const char*)(uintptr_t)frame->a0, abs, sizeof(abs));
+            // The directory has to exist, and listing its first entry is the
+            // cheapest way to ask. An empty directory still has "." in it, so a
+            // real directory always answers.
+            char nm[12]; uint32_t sz = 0;
+            bool ok = (abs[1] == 0) || (myrtos_fat_stat_nth(abs, 0, nm, &sz) >= 0);
+            frame->a0 = (ok && myrtos_cwd_set(abs)) ? 0u : (uint32_t)-1;
+            break;
+        }
+        case SYS_GETCWD: {
+            char *out = (char*)(uintptr_t)frame->a0;
+            const char *cwd = myrtos_cwd_get();
+            uint32_t i = 0;
+            while (cwd[i] && i + 1 < frame->a1) { out[i] = cwd[i]; i++; }
+            out[i] = 0;
+            frame->a0 = i;
             break;
         }
         case SYS_MKDIR:
-            frame->a0 = myrtos_fat_mkdir((const char*)(uintptr_t)frame->a0) ? 0u : (uint32_t)-1;
+            char abs[128];
+              make_abs((const char*)(uintptr_t)frame->a0, abs, sizeof(abs));
+              frame->a0 = myrtos_fat_mkdir(abs) ? 0u : (uint32_t)-1;
             break;
         case SYS_FSREAD: {
             const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)(uintptr_t)frame->a0;
-            frame->a0 = (uint32_t)myrtos_fat_read_at(r->name, r->offset, r->buf, r->len);
+            char abs[128];
+              make_abs(r->name, abs, sizeof(abs));
+              frame->a0 = (uint32_t)myrtos_fat_read_at(abs, r->offset, r->buf, r->len);
             break;
         }
         case SYS_FSWRITE: {
             const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)(uintptr_t)frame->a0;
-            frame->a0 = (uint32_t)myrtos_fat_write_at(r->name, r->offset, r->buf, r->len);
+            char abs[128];
+              make_abs(r->name, abs, sizeof(abs));
+              frame->a0 = (uint32_t)myrtos_fat_write_at(abs, r->offset, r->buf, r->len);
             break;
         }
         case SYS_FSREMOVE: {
-            frame->a0 = myrtos_fat_remove((const char*)(uintptr_t)frame->a0) ? 0u : (uint32_t)-1;
+            char abs[128];
+              make_abs((const char*)(uintptr_t)frame->a0, abs, sizeof(abs));
+              frame->a0 = myrtos_fat_remove(abs) ? 0u : (uint32_t)-1;
             break;
         }
         case SYS_CLOSE:

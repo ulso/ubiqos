@@ -128,6 +128,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_REPLY    28u   // a0 = status -> a0 = 0, -1 if nobody is being served
 #define SYS_PIDOF    29u   // a0 = module name -> a0 = pid, -1 if not running
 #define SYS_MKDIR    30u   // a0 = path -> a0 = 0 ok, -1 failed
+#define SYS_CHDIR    31u   // a0 = path -> a0 = 0 ok, -1 no such directory
+#define SYS_GETCWD   32u   // a0 = buf, a1 = length -> a0 = characters copied
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -290,6 +292,17 @@ static inline int32_t myrtos_fs_dir_at(const char *path, uint32_t index,
 // The root, for callers that have no path to give.
 static inline int32_t myrtos_fs_dir(uint32_t index, char *name_out, uint32_t *size_out) {
     return myrtos_fs_dir_at("", index, name_out, size_out);
+}
+
+// Change the calling process's current directory. Children inherit it; a
+// process changing its own does not affect the one that started it, which is
+// why cd has to be built into the shell rather than be a module.
+static inline int32_t myrtos_chdir(const char *path) {
+    return myrtos_syscall(SYS_CHDIR, (uint32_t)(uintptr_t)path, 0, 0);
+}
+
+static inline int32_t myrtos_getcwd(char *buf, uint32_t len) {
+    return myrtos_syscall(SYS_GETCWD, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
 static inline int32_t myrtos_mkdir(const char *path) {
