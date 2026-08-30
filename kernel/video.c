@@ -1,3 +1,4 @@
+#include "tlsf.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
@@ -76,7 +77,11 @@ static uint32_t vactive_line[] = {
 // kernel owns, and it should not be able to fail at an awkward moment. In SRAM
 // for now, where its timing is never the question -- PSRAM once the picture is
 // steady.
-uint8_t myrtos_framebuf[H_ACTIVE * V_ACTIVE] __attribute__((aligned(4)));
+// The framebuffer lives in PSRAM. It is 300 kB, which is most of SRAM, and the
+// kernel is a copy_to_ram image so nothing else needs the QMI at run time --
+// the display gets the interface to itself. Allocated at init rather than
+// declared, because the pool is only known once PSRAM has been sized.
+uint8_t *myrtos_framebuf;
 
 // --- HOW THE FRAME IS PLAYED ----------------------------------------------
 // Two channels, and no interrupt at all.
@@ -194,6 +199,14 @@ void myrtos_video_init(void) {
         hstx_ctrl_hw->bit[bit + 1] = sel;                             // P
     }
     for (int i = 12; i <= 19; ++i) gpio_set_function(i, 0);
+
+    extern tlsf_pool_t myrtos_bulk_pool;
+    myrtos_framebuf = myrtos_bulk_pool
+        ? myrtos_tlsf_malloc(myrtos_bulk_pool, H_ACTIVE * V_ACTIVE) : 0;
+    if (!myrtos_framebuf) {
+        myrtos_print("Video: no PSRAM for the framebuffer, display disabled\n");
+        return;
+    }
 
     build_frame_list();
 
