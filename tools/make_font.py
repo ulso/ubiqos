@@ -1,68 +1,83 @@
 #!/usr/bin/env python3
-"""Rasterise a monospace outline font into the kernel's 8x16 bitmap table.
+"""Convert Terminus 8x16 into the kernel's font table.
 
-The table is baked into the kernel image, so it inherits the typeface's licence
-and the typeface must be one that may be redistributed. JuliaMono is SIL OFL 1.1;
-its licence travels with us in docs/fonts/OFL-JuliaMono.txt.
+Terminus is a bitmap font: every glyph was drawn by hand on this exact grid.
+That is why it looks right at eight pixels wide and the outline fonts did not --
+rasterising a curve into an 8x16 cell forces the rasteriser to guess where the
+stems land, and it guesses differently for every letter.
 
-Beware fonts installed by Creative Cloud: the Source Code Pro on this machine
-carries Adobe's proprietary notice in its name table even though the project's
-own GitHub release is OFL. Check name ID 13 before trusting a font, which is what
---check prints.
+The table is baked into the kernel image and so inherits the typeface's licence.
+Terminus is SIL OFL 1.1; the licence and the source .bdf travel with us in
+third_party/terminus. Beware fonts installed by a font manager: the Source Code
+Pro on this machine carries Adobe's proprietary notice in its name table even
+though the upstream project releases it under the OFL.
+
+  python3 tools/make_font.py            regenerate kernel/font8x16.c
+  python3 tools/make_font.py --preview  print a few glyphs as text
 """
 import sys
-from PIL import Image, ImageDraw, ImageFont
 
-FONT      = "JuliaMono-Regular.ttf"
-SIZE      = 13
-THRESHOLD = 130
-BASELINE  = 13
-OUT       = "kernel/font8x16.c"
+BDF   = "third_party/terminus/ter-u16n.bdf"
+OUT   = "kernel/font8x16.c"
+FIRST, LAST = 32, 126
+CELL_W, CELL_H = 8, 16
 
 
-def licence_of(path):
-    from fontTools.ttLib import TTFont
-    names = {r.nameID: r.toUnicode() for r in TTFont(path).name.names if r.platformID == 3}
-    return names.get(0, "?"), names.get(13, "?"), names.get(14, "?")
+def read_bdf(path):
+    """Return {codepoint: (bbx, [hex rows])} and the font bounding box."""
+    lines = open(path, encoding="latin-1").read().splitlines()
+    fbb, glyphs, i = None, {}, 0
+    while i < len(lines):
+        if lines[i].startswith("FONTBOUNDINGBOX"):
+            fbb = [int(v) for v in lines[i].split()[1:]]
+        elif lines[i].startswith("STARTCHAR"):
+            enc = bbx = None
+            bits = []
+            while not lines[i].startswith("ENDCHAR"):
+                if lines[i].startswith("ENCODING"):
+                    enc = int(lines[i].split()[1])
+                elif lines[i].startswith("BBX"):
+                    bbx = [int(v) for v in lines[i].split()[1:]]
+                elif lines[i].startswith("BITMAP"):
+                    j = i + 1
+                    while not lines[j].startswith("ENDCHAR"):
+                        bits.append(lines[j].strip())
+                        j += 1
+                    i = j - 1
+                i += 1
+            if enc is not None:
+                glyphs[enc] = (bbx, bits)
+        i += 1
+    return fbb, glyphs
 
 
-def render(font, cp):
-    img = Image.new("L", (8, 16), 0)
-    ImageDraw.Draw(img).text((0, BASELINE), chr(cp), font=font, fill=255, anchor="ls")
-    return [sum(0x80 >> x for x in range(8) if img.getpixel((x, y)) > THRESHOLD)
-            for y in range(16)]
-
-
-def main():
-    font = ImageFont.truetype(FONT, SIZE)
-    if "--check" in sys.argv:
-        for field in licence_of(font.path):
-            print(field)
-        return
-    if "--preview" in sys.argv:
-        for ch in "AmgW1#@":
-            print(ch)
-            for row in render(font, ord(ch)):
-                print("  " + "".join("#" if row & (0x80 >> i) else "." for i in range(8)))
-        return
-
-    glyphs = [render(font, cp) for cp in range(32, 127)]
-    with open(OUT, "w") as f:
-        f.write(HEADER)
-        for cp, rows in zip(range(32, 127), glyphs):
-            f.write("    {%s},  // %d\n" % (",".join("0x%02x" % b for b in rows), cp))
-        f.write("};\n")
-    print("wrote %s, %d glyphs" % (OUT, len(glyphs)))
+def to_cell(fbb, glyphs, cp):
+    """Place one glyph into the 8x16 cell, honouring its bounding-box offsets."""
+    rows = [0] * CELL_H
+    if cp not in glyphs:
+        return rows
+    (w, h, xoff, yoff), bits = glyphs[cp]
+    _, fh, fx, fy = fbb
+    top = fh - (yoff - fy) - h
+    for k, hexrow in enumerate(bits):
+        v = int(hexrow, 16)
+        v >>= max(0, len(hexrow) * 4 - w)      # right-align the glyph's own bits
+        v <<= max(0, CELL_W - w - xoff + fx)   # then place it in the cell
+        y = top + k
+        if 0 <= y < CELL_H:
+            rows[y] = v & 0xFF
+    return rows
 
 
 HEADER = '''// An 8x16 fixed-width font covering ASCII 32..126, one byte per scanline with
 // the most significant bit leftmost, sixteen bytes per glyph.
 //
-// Rasterised from JuliaMono Regular at 13 px. The table is baked into the kernel
-// image and so inherits the typeface's licence:
+// Terminus, a bitmap font drawn by hand on this exact grid. The table is baked
+// into the kernel image and so inherits the typeface's licence:
 //
-//   Copyright (c) 2020 - 2023, cormullion, with Reserved Font Name JuliaMono.
-//   SIL Open Font License 1.1 -- see docs/fonts/OFL-JuliaMono.txt
+//   Copyright (C) 2020 Dimitar Toshkov Zhekov,
+//   with Reserved Font Name "Terminus Font".
+//   SIL Open Font License 1.1 -- see third_party/terminus/OFL.txt
 //
 // This file is generated by tools/make_font.py. Edit the generator, not the
 // table.
@@ -70,5 +85,23 @@ HEADER = '''// An 8x16 fixed-width font covering ASCII 32..126, one byte per sca
 
 const uint8_t myrtos_font8x16[95][16] = {
 '''
+
+
+def main():
+    fbb, glyphs = read_bdf(BDF)
+    cells = [(cp, to_cell(fbb, glyphs, cp)) for cp in range(FIRST, LAST + 1)]
+    if "--preview" in sys.argv:
+        for ch in "AmgW1#@":
+            print(ch)
+            for row in to_cell(fbb, glyphs, ord(ch)):
+                print("  " + "".join("#" if row & (0x80 >> i) else "." for i in range(8)))
+        return
+    with open(OUT, "w") as f:
+        f.write(HEADER)
+        for cp, rows in cells:
+            f.write("    {%s},  // %d\n" % (",".join("0x%02x" % b for b in rows), cp))
+        f.write("};\n")
+    print("wrote %s, %d glyphs from %s" % (OUT, len(cells), BDF))
+
 
 main()
