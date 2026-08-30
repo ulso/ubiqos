@@ -123,6 +123,30 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_REALLOC  23u   // a0 = pointer, a1 = bytes -> a0 = pointer
 #define SYS_DATAAREA 24u   // a0 = &size or 0 -> a0 = base of this process's area
 #define SYS_ALLOCBULK 25u  // a0 = bytes -> a0 = pointer, from PSRAM if there is any
+#define SYS_SEND     26u   // a0 = pid, a1 = &myrtos_msg_t -> a0 = the reply status
+#define SYS_RECEIVE  27u   // a0 = &myrtos_msg_t out -> a0 = sender pid
+#define SYS_REPLY    28u   // a0 = status -> a0 = 0, -1 if nobody is being served
+#define SYS_PIDOF    29u   // a0 = module name -> a0 = pid, -1 if not running
+
+// --- MESSAGES -------------------------------------------------------------
+// A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
+// receiver has replied, which is what makes the pointer safe: the buffer cannot
+// move or be rewritten while its owner is stopped. Nothing is copied and nothing
+// is allocated -- there is one address space, so a pointer means the same thing
+// everywhere, and the queue of waiting senders is a list through the process
+// table like the ready queues and the sleep list already are.
+//
+// A queue can therefore never be longer than there are processes, which is why
+// there is no filter on receive: the usual argument against selective receive is
+// the cost of scanning an unbounded mailbox, and this one is bounded at thirty
+// two. Receive takes whatever comes and the receiver dispatches on type.
+typedef struct {
+    uint32_t type;         // what this is; the receiver switches on it
+    uint32_t len;          // how much data points at
+    void    *data;         // the sender's own memory, valid until the reply
+} myrtos_msg_t;
+
+#define MYRTOS_MSG_WRITE  1u   // data = characters, len = how many
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -187,6 +211,30 @@ static inline int32_t myrtos_console(void) {
     int32_t p = myrtos_open("usb");
     if (p < 0) p = myrtos_open("term");
     return p;
+}
+
+// Send and block until the receiver replies. The return value is the reply's
+// status, so a failed write comes back as a negative number just as it would
+// from a system call.
+static inline int32_t myrtos_send(int32_t pid, const myrtos_msg_t *m) {
+    return myrtos_syscall(SYS_SEND, (uint32_t)pid, (uint32_t)(uintptr_t)m, 0);
+}
+
+// Wait for a message. Returns the sender's pid; the message is copied out.
+static inline int32_t myrtos_receive(myrtos_msg_t *out) {
+    return myrtos_syscall(SYS_RECEIVE, (uint32_t)(uintptr_t)out, 0, 0);
+}
+
+// Release the sender that is being served. Until this is called its buffer must
+// not be touched -- that is the whole guarantee.
+static inline int32_t myrtos_reply(int32_t status) {
+    return myrtos_syscall(SYS_REPLY, (uint32_t)status, 0, 0);
+}
+
+// Find a running process by its module name. A client has to be able to name the
+// service it wants without anyone having written a pid down.
+static inline int32_t myrtos_pidof(const char *module_name) {
+    return myrtos_syscall(SYS_PIDOF, (uint32_t)(uintptr_t)module_name, 0, 0);
 }
 
 static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len) {
@@ -300,6 +348,8 @@ static inline uint32_t myrtos_ticks_now(void) {
 #define MYRTOS_PS_RUNNING     2
 #define MYRTOS_PS_WAIT_READ   3
 #define MYRTOS_PS_WAIT_WRITE  6
+#define MYRTOS_PS_WAIT_RECV   7
+#define MYRTOS_PS_WAIT_REPLY  8
 #define MYRTOS_PS_WAIT_CHILD  4
 #define MYRTOS_PS_SLEEPING    5
 
@@ -324,6 +374,7 @@ typedef struct {
 // Ask about one slot. Slots are not compacted, so walk from 0 to the limit and
 // skip the ones that answer -1 rather than stopping at the first.
 #define MYRTOS_PS_SLOTS MYRTOS_MAX_PROCESSES
+
 static inline int32_t myrtos_psinfo(uint32_t slot, myrtos_psinfo_t *out) {
     return myrtos_syscall(SYS_PSINFO, slot, (uint32_t)(uintptr_t)out, 0);
 }

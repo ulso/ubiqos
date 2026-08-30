@@ -11,13 +11,16 @@
 // is exactly what a position-independent module may not contain -- the build's
 // check refused the module, which is what it is for.
 // The order is the ABI's constant order, not a readable one: FREE, READY,
-// RUNNING, WAIT_READ, WAIT_CHILD, SLEEPING. Getting it wrong is silent -- the
-// first version had run and ready swapped and simply reported the wrong thing.
-static const char STATE_NAMES[] = "?\0ready\0run\0read\0child\0sleep";
+// RUNNING, WAIT_READ, WAIT_CHILD, SLEEPING, WAIT_WRITE, WAIT_RECV, WAIT_REPLY.
+// WAIT_WRITE came later and was given 6 so the earlier numbers would not move,
+// which is why it sits out of sequence here. Getting it wrong is silent -- the
+// first version had run and ready swapped and simply reported the wrong thing,
+// and for a while a process waiting to write showed up as a question mark.
+static const char STATE_NAMES[] = "?\0ready\0run\0read\0child\0sleep\0write\0recv\0reply";
 
 static const char *state_name(uint32_t s) {
     const char *p = STATE_NAMES;
-    if (s > MYRTOS_PS_SLEEPING) return p;
+    if (s > MYRTOS_PS_WAIT_REPLY) return p;
     while (s--) { while (*p) p++; p++; }
     return p;
 }

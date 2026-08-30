@@ -193,6 +193,8 @@ myrtos_add_module(spin modules/spin/spin.c)
 myrtos_add_module(spinrt modules/spin/spin.c RT)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
+myrtos_add_module(msgtest modules/msgtest/msgtest.c)
+myrtos_add_module(msgcli modules/msgcli/msgcli.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
@@ -221,6 +223,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/spinrt.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nice.mod
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/msgtest.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod

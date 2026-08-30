@@ -20,7 +20,9 @@ typedef enum {
     PROC_STATE_WAIT_READ,       // waiting for a device to have something
     PROC_STATE_WAIT_WRITE,      // waiting for room to write
     PROC_STATE_WAIT_CHILD,      // waiting for another process to exit
-    PROC_STATE_SLEEPING         // waiting for a length of time
+    PROC_STATE_SLEEPING,        // waiting for a length of time
+    PROC_STATE_WAIT_RECV,       // a server with nothing to serve
+    PROC_STATE_WAIT_REPLY       // a sender whose message has not been answered
 } proc_state_t;
 
 typedef struct {
@@ -41,6 +43,16 @@ typedef struct {
     uint32_t priority;        // 0 is the idle process, 31 the most urgent
     int32_t  next_ready;      // READY: next in this priority's queue, -1 at the end
     struct alloc_hdr *allocs; // everything this process has been given
+
+    // Messages. A rendezvous queues senders, not messages: the message stays in
+    // the sender's memory, which cannot change because the sender is stopped.
+    // So this is one more list through the process table, like the two above.
+    int32_t  msg_next;        // WAIT_REPLY: next sender queued on the same server
+    int32_t  msg_head;        // senders waiting for ME, -1 when none
+    int32_t  msg_tail;
+    int32_t  msg_serving;     // the sender I am serving, -1 when none
+    myrtos_msg_t msg;         // WAIT_REPLY: what this sender is offering
+    myrtos_msg_t *msg_out;    // WAIT_RECV: where the message is to be delivered
 } pcb_t;
 
 // --- MEMORY HANDED TO PROCESSES -------------------------------------------
@@ -204,6 +216,9 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].data_size = 0;        // in the kernel's own variables
     process_table[slot].mem_size = stack_bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
+    process_table[slot].msg_next = process_table[slot].msg_head = -1;
+    process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
+    process_table[slot].msg_out = 0;
     process_table[slot].args     = NULL;
     process_table[slot].sleep_next = -1;
     process_table[slot].allocs = NULL;
@@ -331,6 +346,9 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
                                                - data_base);
     process_table[slot].mem_size = bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
+    process_table[slot].msg_next = process_table[slot].msg_head = -1;
+    process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
+    process_table[slot].msg_out = 0;
     process_table[slot].args = (const char*)mem;
     process_table[slot].sleep_next = -1;
 
@@ -644,9 +662,120 @@ void myrtos_wake_readers(void) {
     }
 }
 
+
+// --- MESSAGES -------------------------------------------------------------
+// send blocks until reply. That is the entire safety argument for passing a raw
+// pointer: the sender is stopped, so its buffer cannot move or be rewritten, and
+// the receiver may read it right up until it answers. Nothing is copied but the
+// twelve-byte descriptor, and nothing is allocated at all.
+
+static void msg_unlink_all(int32_t pid);
+
+// True when the sender has been queued and must now block.
+bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
+    if (dest <= 0 || dest >= MAX_PROCESSES || !m) return false;
+    pcb_t *d = &process_table[dest];
+    if (d->state == PROC_STATE_FREE) return false;
+
+    pcb_t *me = &process_table[current_pid];
+    me->msg = *m;
+    me->msg_next = -1;
+
+    if (d->state == PROC_STATE_WAIT_RECV) {
+        // Nobody ahead of us: hand it straight over and wake the server.
+        *d->msg_out = me->msg;
+        d->msg_out = 0;
+        d->msg_serving = (int32_t)current_pid;
+        ((myrtos_frame_t*)(uintptr_t)d->saved_sp)->a0 = (uint32_t)current_pid;
+        d->state = PROC_STATE_READY;
+        ready_enqueue(dest);
+    } else {
+        if (d->msg_tail < 0) d->msg_head = (int32_t)current_pid;
+        else process_table[d->msg_tail].msg_next = (int32_t)current_pid;
+        d->msg_tail = (int32_t)current_pid;
+    }
+    me->state = PROC_STATE_WAIT_REPLY;
+    return true;
+}
+
+// The sender's pid, or -1 when the caller has been put to sleep waiting.
+int32_t myrtos_msg_receive(myrtos_msg_t *out) {
+    pcb_t *me = &process_table[current_pid];
+    if (me->msg_serving >= 0) return -2;        // answer the last one first
+    if (me->msg_head >= 0) {
+        int32_t from = me->msg_head;
+        me->msg_head = process_table[from].msg_next;
+        if (me->msg_head < 0) me->msg_tail = -1;
+        process_table[from].msg_next = -1;
+        *out = process_table[from].msg;
+        me->msg_serving = from;
+        return from;
+    }
+    me->msg_out = out;
+    me->state = PROC_STATE_WAIT_RECV;
+    return -1;
+}
+
+int32_t myrtos_msg_reply(int32_t status) {
+    pcb_t *me = &process_table[current_pid];
+    int32_t s = me->msg_serving;
+    if (s < 0) return -1;
+    me->msg_serving = -1;
+    if (process_table[s].state == PROC_STATE_WAIT_REPLY) {
+        ((myrtos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)status;
+        process_table[s].state = PROC_STATE_READY;
+        ready_enqueue(s);
+    }
+    return 0;
+}
+
+// A process by module name, so a client can name the service it wants without
+// anyone having written a pid down.
+int32_t myrtos_find_pid(const char *name) {
+    if (!name) return -1;
+    for (int i = 1; i < MAX_PROCESSES; i++) {
+        const pcb_t *p = &process_table[i];
+        if (p->state == PROC_STATE_FREE || !p->module) continue;
+        const char *n = (const char*)((uintptr_t)p->module + p->module->name_offset);
+        int k = 0;
+        while (k < 11 && name[k] && n[k] == name[k]) k++;
+        if (!name[k] && (n[k] == 0 || n[k] == ' ')) return (int32_t)p->pid;
+    }
+    return -1;
+}
+
+// A server that dies must not take its callers with it. Everyone queued on it,
+// and anyone it was serving, is released with a failure rather than left in
+// WAIT_REPLY for ever.
+static void msg_unlink_all(int32_t pid) {
+    pcb_t *p = &process_table[pid];
+    int32_t s = p->msg_head;
+    while (s >= 0) {
+        int32_t next = process_table[s].msg_next;
+        process_table[s].msg_next = -1;
+        if (process_table[s].state == PROC_STATE_WAIT_REPLY) {
+            ((myrtos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)-1;
+            process_table[s].state = PROC_STATE_READY;
+            ready_enqueue(s);
+        }
+        s = next;
+    }
+    p->msg_head = p->msg_tail = -1;
+    if (p->msg_serving >= 0) {
+        int32_t v = p->msg_serving;
+        p->msg_serving = -1;
+        if (process_table[v].state == PROC_STATE_WAIT_REPLY) {
+            ((myrtos_frame_t*)(uintptr_t)process_table[v].saved_sp)->a0 = (uint32_t)-1;
+            process_table[v].state = PROC_STATE_READY;
+            ready_enqueue(v);
+        }
+    }
+}
+
 void myrtos_process_exit(void) {
     if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
     sleep_remove(current_pid);                  // harmless if it was not asleep
+    msg_unlink_all((int32_t)current_pid);       // release anyone waiting on us
     myrtos_print("Process ");
     myrtos_print_u32(current_pid);
     myrtos_print(" exited.\n");

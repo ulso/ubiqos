@@ -18,6 +18,10 @@ uint32_t myrtos_process_count(void);
 int32_t myrtos_process_create(const myrtos_module_header_t *m, const char *args);
 uint32_t myrtos_process_get_args(char *buf, uint32_t len);
 void myrtos_block_on_read(int32_t path);
+bool    myrtos_msg_send(int32_t dest, const myrtos_msg_t *m);
+int32_t myrtos_msg_receive(myrtos_msg_t *out);
+int32_t myrtos_msg_reply(int32_t status);
+int32_t myrtos_find_pid(const char *name);
 void myrtos_block_on_write(int32_t path);
 bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
@@ -106,6 +110,29 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = (uint32_t)wn;
             break;
         }
+        case SYS_SEND: {
+            // No mepc rewind here, unlike a blocking read: the call is not made
+            // again. The reply writes its status straight into this frame's a0 and
+            // the process resumes as though send had returned normally.
+            if (!myrtos_msg_send((int32_t)frame->a0,
+                                 (const myrtos_msg_t*)(uintptr_t)frame->a1)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        }
+        case SYS_RECEIVE: {
+            int32_t from = myrtos_msg_receive((myrtos_msg_t*)(uintptr_t)frame->a0);
+            if (from == -1) return myrtos_switch(sp);   // nothing yet; wait
+            frame->a0 = (uint32_t)from;                 // -2 = reply first
+            break;
+        }
+        case SYS_REPLY:
+            frame->a0 = (uint32_t)myrtos_msg_reply((int32_t)frame->a0);
+            break;
+        case SYS_PIDOF:
+            frame->a0 = (uint32_t)myrtos_find_pid((const char*)(uintptr_t)frame->a0);
+            break;
         case SYS_READ: {
             int32_t path = (int32_t)frame->a0;
             int32_t n = myrtos_io_read(path, (uint8_t*)(uintptr_t)frame->a1,
