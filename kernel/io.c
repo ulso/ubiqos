@@ -114,7 +114,21 @@ void myrtos_console_putc(char c);
 
 static int32_t con_open(void)  { return 0; }
 static int32_t con_close(void) { return 0; }
+// Bounded on purpose. A write runs in the trap handler with interrupts off, and
+// drawing a character costs 128 bytes of framebuffer plus a scroll now and then
+// -- so a single large write held the processor for tens of milliseconds. The
+// display did not care, but the keyboard is bit-banged on PIO and polled every
+// millisecond, and the USB task is a kernel thread that cannot run while a trap
+// is in progress. The keyboard was simply lost, and it never came back.
+//
+// "help" is the longest thing the shell prints, which is why it was help that
+// killed it while ls and ps went by unharmed. Returning a partial count is
+// already the contract -- myrtos_write loops until everything is out -- so this
+// costs nothing but gives the kernel a breath between chunks.
+#define CON_CHUNK 64
+
 static int32_t con_write(const uint8_t *buf, uint32_t len) {
+    if (len > CON_CHUNK) len = CON_CHUNK;
     for (uint32_t i = 0; i < len; i++) myrtos_console_putc((char)buf[i]);
     return (int32_t)len;
 }

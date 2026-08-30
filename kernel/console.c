@@ -38,22 +38,38 @@ static inline uint8_t *cell_line(uint32_t row, uint32_t y) {
     return &myrtos_framebuf[fb * MYRTOS_H_ACTIVE];
 }
 
+// Four pixels per word, looked up a nibble at a time: two stores per scanline
+// instead of eight. A cell is eight pixels wide and every line of the
+// framebuffer is a multiple of four bytes, so the alignment always works out.
+static uint32_t nibble[16], nibble_inv[16];
+
+static void build_nibbles(void) {
+    for (uint32_t n = 0; n < 16; n++) {
+        uint32_t w = 0, wi = 0;
+        for (uint32_t b = 0; b < 4; b++) {
+            bool on = (n >> (3 - b)) & 1;
+            w  |= (uint32_t)(on ? FG : BG) << (b * 8);
+            wi |= (uint32_t)(on ? BG : FG) << (b * 8);
+        }
+        nibble[n] = w; nibble_inv[n] = wi;
+    }
+}
+
 static void draw_glyph(uint32_t col, uint32_t row, char c, bool invert) {
     uint32_t idx = (c < 32 || c > 126) ? 0 : (uint32_t)(c - 32);
+    const uint32_t *t = invert ? nibble_inv : nibble;
     for (uint32_t y = 0; y < CELL_H; y++) {
         uint8_t bits = myrtos_font8x16[idx][y];
-        uint8_t *p = cell_line(row, y) + col * CELL_W;
-        for (uint32_t x = 0; x < CELL_W; x++) {
-            bool on = (bits & (0x80u >> x)) != 0;
-            p[x] = (on != invert) ? FG : BG;
-        }
+        uint32_t *p = (uint32_t*)(cell_line(row, y) + col * CELL_W);
+        p[0] = t[bits >> 4];
+        p[1] = t[bits & 0x0f];
     }
 }
 
 static void clear_row(uint32_t row) {
     for (uint32_t y = 0; y < CELL_H; y++) {
-        uint8_t *p = cell_line(row, y);
-        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE; x++) p[x] = BG;   // full width
+        uint32_t *p = (uint32_t*)cell_line(row, y);
+        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = nibble[0];
     }
     for (uint32_t c = 0; c < COLS; c++) cell_char[row][c] = ' ';
 }
@@ -98,6 +114,7 @@ void myrtos_console_putc(char c) {
 }
 
 void myrtos_console_init(void) {
+    build_nibbles();
     myrtos_video_set_origin(0);
     for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
         myrtos_framebuf[i] = BG;                 // margins included
