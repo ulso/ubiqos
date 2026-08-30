@@ -60,6 +60,7 @@ static void usb_thread(void) {
     for (;;) {
         myrtos_usb_task();          // the console, on the hardware controller
         myrtos_usbhost_task();      // the keyboard, on PIO
+        { extern void myrtos_usbhost_repeat(void); myrtos_usbhost_repeat(); }
         myrtos_sleep(1);
 
 
