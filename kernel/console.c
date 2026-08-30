@@ -42,6 +42,12 @@ static uint32_t cur_col, cur_row;
 // last column and only moves when another character actually turns up, so a
 // newline right after a full line does what it says and nothing more.
 static bool wrap_pending;
+
+// Which rows ended because the text ran off the edge, rather than because a
+// newline arrived. Backspace may walk back up through the first kind and must
+// not walk up through the second: what is above an explicit newline is a line
+// that was finished, and nobody is editing it any more.
+static bool row_wrapped[ROWS];
 static bool ready;
 
 // Row and glyph-line to a scanline in the framebuffer, through the origin.
@@ -87,6 +93,7 @@ static void clear_row(uint32_t row) {
         for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = nibble[0];
     }
     for (uint32_t c = 0; c < COLS; c++) cell_char[row][c] = ' ';
+    row_wrapped[row] = false;
 }
 
 static void put_cell(uint32_t col, uint32_t row, char c) {
@@ -103,8 +110,10 @@ static void newline(void) {
     if (++cur_row >= ROWS) {
         cur_row = ROWS - 1;
         myrtos_video_set_origin(myrtos_video_origin + CELL_H);
-        for (uint32_t r = 1; r < ROWS; r++)          // the text moves up with it
+        for (uint32_t r = 1; r < ROWS; r++) {        // the text moves up with it
             for (uint32_t c = 0; c < COLS; c++) cell_char[r - 1][c] = cell_char[r][c];
+            row_wrapped[r - 1] = row_wrapped[r];
+        }
         clear_row(ROWS - 1);            // the row that just came round
     }
 }
@@ -115,6 +124,7 @@ static void draw_char(char c) {
     switch (c) {
     case '\n':
         wrap_pending = false;
+        row_wrapped[cur_row] = false;
         newline();
         break;
     case '\r':
@@ -122,19 +132,29 @@ static void draw_char(char c) {
         cur_col = 0;
         break;
     case '\b':
-        if (wrap_pending) { wrap_pending = false; put_cell(cur_col, cur_row, ' '); }
-        else if (cur_col)  { cur_col--; put_cell(cur_col, cur_row, ' '); }
+        if (wrap_pending) {
+            wrap_pending = false;
+            put_cell(cur_col, cur_row, ' ');
+        } else if (cur_col) {
+            cur_col--;
+            put_cell(cur_col, cur_row, ' ');
+        } else if (cur_row && row_wrapped[cur_row - 1]) {
+            cur_row--;
+            cur_col = COLS - 1;
+            row_wrapped[cur_row] = false;
+            put_cell(cur_col, cur_row, ' ');
+        }
         break;
     case '\t':
         do {
-            if (wrap_pending) { wrap_pending = false; newline(); }
+            if (wrap_pending) { wrap_pending = false; row_wrapped[cur_row] = true; newline(); }
             put_cell(cur_col, cur_row, ' ');
             if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
         } while (cur_col % 8);
         break;
     default:
         if ((unsigned char)c < 32) break;
-        if (wrap_pending) { wrap_pending = false; newline(); }
+        if (wrap_pending) { wrap_pending = false; row_wrapped[cur_row] = true; newline(); }
         put_cell(cur_col, cur_row, c);
         if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
         break;
@@ -219,6 +239,7 @@ void myrtos_console_init(void) {
         myrtos_framebuf[i] = BG;                 // margins included
     cur_col = cur_row = 0;
     wrap_pending = false;
+    for (uint32_t r = 0; r < ROWS; r++) row_wrapped[r] = false;
     ready = true;
     cursor(true);
 }
