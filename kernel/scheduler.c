@@ -374,13 +374,10 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
 
     // The addresses are the whole point: if two processes run the same module,
     // the code should be at the same place and the data areas at different ones.
-    myrtos_print("  pid ");
-    myrtos_print_u32(slot);
-    myrtos_print(": code at 0x");
-    myrtos_print_hex((uint32_t)(uintptr_t)module_ptr);
-    myrtos_print(", data at 0x");
-    myrtos_print_hex((uint32_t)(uintptr_t)mem);
-    myrtos_print("\n");
+    // Where the code and the data landed used to be printed here, and where a
+    // process had gone was the only way to see anything at all while the loader
+    // was being written. With a shell in front of it, it is two lines of noise
+    // after every command; ps says where a process is, when anyone asks.
     return slot;
 }
 
@@ -828,9 +825,6 @@ void myrtos_process_exit(void) {
     if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
     sleep_remove(current_pid);                  // harmless if it was not asleep
     msg_unlink_all((int32_t)current_pid);       // release anyone waiting on us
-    myrtos_print("Process ");
-    myrtos_print_u32(current_pid);
-    myrtos_print(" exited.\n");
     myrtos_io_close_all(current_pid);
     if (process_table[current_pid].module) {    // a kernel thread has none
         myrtos_moddir_unlink(process_table[current_pid].module);
