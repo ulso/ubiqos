@@ -32,6 +32,7 @@ add_executable(os_kernel
     kernel/scheduler.S
     kernel/pio/pioprobe.c
     kernel/usbhost.c
+    kernel/video.c
 
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
     # as a submodule so the version is written down: the copy that was lying

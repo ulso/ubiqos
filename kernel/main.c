@@ -13,6 +13,8 @@
 #include "hardware/psram.h"
 
 void myrtos_pio_probe(void);
+void myrtos_video_init(void);
+void myrtos_video_testcard(void);
 void myrtos_usbhost_init(void);
 #include "usbdev.h"
 
@@ -42,14 +44,18 @@ void myrtos_putc(char c) {
 // writes get for free the kernel must therefore take itself, with a critical
 // section.
 void myrtos_print(const char *s) {
-    uint32_t mstatus;
-    __asm__ volatile("csrrc %0, mstatus, %1" : "=r"(mstatus) : "r"(1u << 3));
+    // This used to hold interrupts off for the whole string, so a kernel line
+    // could not be interleaved with a module's. The cost turned out to be
+    // unaffordable: myrtos_putc waits on the UART, and forty characters at
+    // 115200 baud is three and a half milliseconds -- a hundred scanlines, and
+    // the display's DMA chain dies the first time it starves.
+    //
+    // It ran for a third of a second and stopped, every boot, and the counter
+    // that found it was the only way it was ever going to be found. Interleaved
+    // diagnostics are cosmetic; a picture is not.
     while (*s) {
         if (*s == '\n') myrtos_putc('\r');
         myrtos_putc(*s++);
-    }
-    if (mstatus & (1u << 3)) {
-        __asm__ volatile("csrs mstatus, %0" : : "r"(1u << 3));
     }
 }
 
@@ -236,6 +242,15 @@ void myrtos_kernel_main(void) {
     myrtos_pio_probe();
     myrtos_usbhost_init();
 
+    // After the USB host, and not by preference. Pico-PIO-USB claims DMA
+    // channel zero by a hardcoded mask, so anything that claims channels
+    // dynamically has to go second -- ours took channel zero first, and the
+    // library's dma_claim_mask asserted on a channel already spoken for. The
+    // system stopped before the USB process had started, so both consoles went
+    // quiet at once and it looked like the clock change had broken everything.
+    myrtos_video_init();
+    myrtos_video_testcard();
+
     myrtos_flash_scan();
 
     // The buffer a module is read into on its way from the card. It is touched
@@ -377,6 +392,14 @@ void myrtos_reboot_bootsel(void) {
 
 // The Pico SDK's crt0 calls main once clocks and runtime are set up.
 int main(void) {
+    // Before anything that depends on a clock rate, the UART included. HSTX
+    // shifts two bits per cycle and needs five cycles per TMDS character, so
+    // the pixel clock is clk_hstx/5 -- and clk_hstx has only a two-bit divider,
+    // which cannot reach 125 MHz from the SDK's default 150. So the system runs
+    // at 125 and the picture is right; whether PIO-USB minds is the next thing
+    // to find out.
+    set_sys_clock_khz(125000, true);
+
     myrtos_uart_init();
     myrtos_kernel_main();
     return 0;
