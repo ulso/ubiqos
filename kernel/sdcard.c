@@ -209,17 +209,8 @@ static bool use_sdio;
 bool myrtos_sd_init(void) {
     use_sdio = false;
 
-    // SPI. The SDIO driver is here, builds, and has one real bug fixed in it --
-    // see third_party/pico_sd_card/LOCAL-CHANGES.md -- but it still does not
-    // return on this board, and it runs before the scheduler, so a failure takes
-    // the console and USB with it. Three attempts, three locked boards.
-    //
-    // It is parked rather than abandoned. What it would have bought is speed,
-    // and the latency it would have eased is already handled structurally by the
-    // filesystem server. Picking it up again means reading the rest of the
-    // driver for further 32-bit pin assumptions rather than flashing to find
-    // out, and doing that against a bench setup that can be reset without a
-    // button press.
+    // SPI at boot. SDIO gets as far as a data read and then the DMA never
+    // finishes -- see the note in sdcard.c history and LOCAL-CHANGES.md.
     return spi_init_card();
 }
 
