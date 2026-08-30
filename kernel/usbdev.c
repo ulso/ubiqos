@@ -56,8 +56,10 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
 // gives a device to answer a standard request with no data stage. Fifty times
 // the margin, for a sleep that costs nothing.
 static void usb_thread(void) {
+    extern void myrtos_usbhost_task(void);
     for (;;) {
-        myrtos_usb_task();
+        myrtos_usb_task();          // the console, on the hardware controller
+        myrtos_usbhost_task();      // the keyboard, on PIO
         myrtos_sleep(1);
     }
 }

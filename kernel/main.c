@@ -12,6 +12,7 @@
 #include "pico/bootrom.h"
 
 void myrtos_pio_probe(void);
+void myrtos_usbhost_init(void);
 #include "usbdev.h"
 
 // --- MYRTOS KONSTANTER ---
@@ -202,6 +203,7 @@ void myrtos_kernel_main(void) {
     // card may add to them, and a module of the same name there is registered
     // alongside -- whichever was registered first wins the lookup.
     myrtos_pio_probe();
+    myrtos_usbhost_init();
 
     myrtos_flash_scan();
 

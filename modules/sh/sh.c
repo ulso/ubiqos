@@ -15,6 +15,7 @@ static void help(int32_t c) {
         "  help     this text\r\n"
         "  lsmod    list modules\r\n"
         "  ps       list processes\r\n"
+        "  keys     read the USB keyboard\r\n"
         "  free     memory and processes\r\n"
         "  echo     print its arguments\r\n"
         "  ls       list the SD card\r\n"

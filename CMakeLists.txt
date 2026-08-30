@@ -31,6 +31,23 @@ add_executable(os_kernel
     kernel/usb_descriptors.c
     kernel/scheduler.S
     kernel/pio/pioprobe.c
+    kernel/usbhost.c
+
+    # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
+    # as a submodule so the version is written down: the copy that was lying
+    # around was eleven months old and missing an out-of-bounds memcpy fix and
+    # the RP2350-E9 errata conditional.
+    lib/Pico-PIO-USB/src/pio_usb.c
+    lib/Pico-PIO-USB/src/pio_usb_host.c
+    lib/Pico-PIO-USB/src/pio_usb_device.c
+    lib/Pico-PIO-USB/src/usb_crc.c
+
+    # TinyUSB's host side, and the glue that drives it from PIO rather than from
+    # the hardware controller -- which is busy being our console.
+    ${PICO_SDK_PATH}/lib/tinyusb/src/host/usbh.c
+    ${PICO_SDK_PATH}/lib/tinyusb/src/host/hub.c
+    ${PICO_SDK_PATH}/lib/tinyusb/src/class/hid/hid_host.c
+    ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
 )
 
 # Execution happens in RAM, but the image lives in flash and is copied there at
@@ -47,11 +64,12 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
-    pico_bootrom hardware_pio
+    pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib
     tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.
-target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel)
+target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src)
 
 # Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)
@@ -162,11 +180,13 @@ myrtos_add_module(sleep modules/sleep/sleep.c)
 myrtos_add_module(spin modules/spin/spin.c)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
+myrtos_add_module(keys modules/keys/keys.c)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
 myrtos_add_module(bootsel modules/bootsel/bootsel.c)
 myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
+myrtos_add_data_module(kbddesc modules/kbd_desc/kbd_desc.c)
 
 add_custom_target(modules ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
@@ -186,8 +206,10 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/spin.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nice.mod
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod
             ${CMAKE_CURRENT_BINARY_DIR}/bootsel.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod)

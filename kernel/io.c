@@ -88,6 +88,33 @@ static int32_t usb_readable(void) {
     return (int32_t)myrtos_usb_available();
 }
 
+// --- DRIVER: USB keyboard -------------------------------------------------
+// Read only, and no configuration: which pins the host uses is the host's
+// business, and there is only one of it. What makes this a device rather than a
+// special case is that a process opens it by name and reads it like any other.
+int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len);
+uint32_t myrtos_usbhost_available(void);
+
+static int32_t kbd_open(void)  { return 0; }
+static int32_t kbd_close(void) { return 0; }
+static int32_t kbd_write(const uint8_t *buf, uint32_t len) {
+    (void)buf; (void)len;
+    return -1;                      // a keyboard has nothing to say back
+}
+static int32_t kbd_read(uint8_t *buf, uint32_t len) {
+    return myrtos_usbhost_read(buf, len);
+}
+static int32_t kbd_readable(void) {
+    return (int32_t)myrtos_usbhost_available();
+}
+
+static const myrtos_driver_t driver_kbd = {
+    .module_name = "USBKBD  MOD",
+    .configure = 0,
+    .open = kbd_open, .write = kbd_write, .read = kbd_read, .close = kbd_close,
+    .readable = kbd_readable
+};
+
 static int32_t usb_writable(void) {
     return (int32_t)myrtos_usb_writable();
 }
@@ -137,6 +164,7 @@ void myrtos_io_init(void) {
     driver_count = 0;
     drivers[driver_count++] = &driver_uart;
     drivers[driver_count++] = &driver_usb;
+    drivers[driver_count++] = &driver_kbd;
     device_count = 0;
     for (int p = 0; p < MYRTOS_MAX_PROCS; p++)
         for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
