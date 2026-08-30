@@ -11,6 +11,7 @@
 #include "flashmod.h"
 #include "pico/bootrom.h"
 #include "hardware/psram.h"
+#include "pico/time.h"
 
 void myrtos_pio_probe(void);
 void myrtos_video_init(void);
@@ -361,6 +362,7 @@ void myrtos_kernel_main(void) {
     if (started) {
         myrtos_print_u32(started);
         myrtos_print(" process(es) ready. Enabling pre-emption, 1 ms quantum...\n");
+
         myrtos_timer_init(1000);
     } else {
         myrtos_print("Nothing to run.\n");

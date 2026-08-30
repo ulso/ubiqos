@@ -62,25 +62,7 @@ static void usb_thread(void) {
         myrtos_usbhost_task();      // the keyboard, on PIO
         myrtos_sleep(1);
 
-        // Is the display generating scanlines? At 640x480 the interrupt should
-        // fire 31500 times a second, so this number moving by roughly 94500
-        // between prints means the chain is running and the fault is further
-        // down the wire.
-        extern volatile uint32_t myrtos_video_irqs;
-        extern void myrtos_print(const char *);
-        extern void myrtos_print_u32(uint32_t);
-        static uint32_t n;
-        if (++n >= 3000) {
-            n = 0;
-            extern volatile uint32_t myrtos_ticks;
-            static uint32_t last_irq, last_tick;
-            uint32_t now = myrtos_ticks, irqs = myrtos_video_irqs;
-            uint32_t dt = now - last_tick, di = irqs - last_irq;
-            last_tick = now; last_irq = irqs;
-            myrtos_print("Video: ");
-            myrtos_print_u32(dt ? di / dt : 0);
-            myrtos_print(" interrupts per ms (want about 32 for one per line)\n");
-        }
+
     }
 }
 
