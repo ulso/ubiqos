@@ -104,7 +104,9 @@ void module_main(void) {
     myrtos_write_str(c, "\r\nmyrtos shell ready. Type 'help'.\r\n");
     prompt(c);
 
-    char line[48];
+    // Long enough for a command and a path or two. Forty-eight was chosen when
+    // there was only a root directory to name, and a single path can eat that.
+    char line[128];
     uint32_t len = 0;
 
     for (;;) {
