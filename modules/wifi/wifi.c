@@ -5,9 +5,42 @@
 // A version string coming back settles three things at once: that the wiring is
 // right, that the handshake works, and that the chip really speaks NINA -- which
 // is what decides that myrtos needs no TCP/IP stack of its own.
-void module_main(void) {
+static bool is(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return !*a && !*b;
+}
+
+void module_main(int argc, char **argv) {
     myrtos_line_t line;
     char version[16];
+
+    // "wifi scan" lists what is on the air. It needs no name and no password:
+    // a scan is what the chip hears, not what it joins.
+    if (argc > 1 && is(argv[1], "scan")) {
+        int32_t n = myrtos_wifi_look();
+        if (n < 0) {
+            myrtos_write_str(MYRTOS_STDOUT, "wifi: no answer\n");
+            return;
+        }
+        for (int32_t i = 0; i < n; i++) {
+            char ssid[34];
+            int32_t rssi = myrtos_wifi_network(i, ssid, sizeof(ssid));
+            myrtos_line_reset(&line);
+            myrtos_line_str(&line, ssid);
+            uint32_t k = 0;
+            while (ssid[k]) k++;
+            while (k++ < 34) myrtos_line_str(&line, " ");
+            myrtos_line_str(&line, "-");
+            myrtos_line_u32(&line, (uint32_t)(-rssi));
+            myrtos_line_str(&line, " dBm\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &line);
+        }
+        myrtos_line_reset(&line);
+        myrtos_line_u32(&line, (uint32_t)n);
+        myrtos_line_str(&line, n == 1 ? " network\n" : " networks\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &line);
+        return;
+    }
 
     int32_t r = myrtos_wifi_version(version, sizeof(version));
 

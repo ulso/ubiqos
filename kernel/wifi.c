@@ -36,7 +36,10 @@ void myrtos_print_u32(uint32_t v);
 #define END_CMD     0xEEu
 #define ERR_CMD     0xEFu
 #define REPLY_FLAG  0x80u
-#define GET_FW_VERSION_CMD 0x37u
+#define GET_FW_VERSION_CMD  0x37u
+#define SCAN_NETWORKS_CMD   0x27u
+#define START_SCAN_CMD      0x36u
+#define GET_IDX_RSSI_CMD    0x32u
 
 static uint8_t xfer(uint8_t v) {
     uint8_t r = 0;
@@ -149,4 +152,135 @@ int32_t myrtos_wifi_firmware(char *out, uint32_t max) {
 // past before anyone can read it, and this is a line worth reading.
 void myrtos_wifi_probe(void) {
     myrtos_wifi_init();
+}
+
+
+// --- SCANNING ---------------------------------------------------------------
+// Listing what is on the air needs no credentials: the chip is told to look, and
+// asked afterwards what it found. Two commands, because the looking takes
+// seconds and the answer is not ready when the first one returns.
+
+#define WIFI_MAX_NETS 16
+#define WIFI_SSID_MAX 33
+
+// The list lives in PSRAM. Half a kilobyte is not much until SRAM is 300 kB of
+// framebuffer and a kernel, and a scan result is touched once a minute at most.
+typedef struct {
+    char    ssid[WIFI_MAX_NETS][WIFI_SSID_MAX];
+    int32_t rssi[WIFI_MAX_NETS];
+} wifi_scan_t;
+
+extern void *myrtos_tlsf_malloc(void *pool, uint32_t size);
+extern void *myrtos_bulk_pool;
+
+static wifi_scan_t *scan;
+static uint32_t scan_count;
+
+static bool scan_room(void) {
+    if (scan) return true;
+    if (!myrtos_bulk_pool) return false;
+    scan = (wifi_scan_t*)myrtos_tlsf_malloc(myrtos_bulk_pool, sizeof(wifi_scan_t));
+    return scan != 0;
+}
+
+// Read a reply whose parameter count is the answer rather than being known in
+// advance -- one parameter per network found.
+static int32_t read_list(uint8_t cmd) {
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) {
+        b = xfer(0xff);
+        if (b == START_CMD || b == ERR_CMD) break;
+    }
+    if (b != START_CMD) return -1;
+    if (xfer(0xff) != (cmd | REPLY_FLAG)) return -1;
+
+    uint32_t n = xfer(0xff);
+    if (n > WIFI_MAX_NETS) n = WIFI_MAX_NETS;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t len = xfer(0xff);
+        for (uint32_t k = 0; k < len; k++) {
+            uint8_t v = xfer(0xff);
+            if (k < WIFI_SSID_MAX - 1) scan->ssid[i][k] = (char)v;
+        }
+        scan->ssid[i][len < WIFI_SSID_MAX ? len : WIFI_SSID_MAX - 1] = 0;
+    }
+    xfer(0xff);                                  // END_CMD
+    return (int32_t)n;
+}
+
+static bool simple_cmd(uint8_t cmd) {
+    if (!select_chip()) return false;
+    xfer(START_CMD); xfer(cmd); xfer(0); xfer(END_CMD);
+    deselect_chip();
+    return true;
+}
+
+// The signal strength for one entry, a four-byte little-endian negative number.
+static int32_t rssi_of(uint32_t index) {
+    if (!select_chip()) return 0;
+    xfer(START_CMD); xfer(GET_IDX_RSSI_CMD); xfer(1);
+    xfer(1); xfer((uint8_t)index);               // one parameter, one byte
+    xfer(END_CMD);
+    deselect_chip();
+
+    if (!select_chip()) return 0;
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    int32_t v = 0;
+    if (b == START_CMD && xfer(0xff) == (GET_IDX_RSSI_CMD | REPLY_FLAG) && xfer(0xff) == 1) {
+        uint32_t len = xfer(0xff);
+        uint32_t raw = 0;
+        for (uint32_t i = 0; i < len && i < 4; i++) raw |= (uint32_t)xfer(0xff) << (8 * i);
+        xfer(0xff);
+        v = (int32_t)raw;
+    }
+    deselect_chip();
+    return v;
+}
+
+int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
+    if (!scan_room()) return -1;
+
+    if (index < 0) {
+        scan_count = 0;
+        if (!simple_cmd(START_SCAN_CMD)) return -1;
+
+        // Read the acknowledgement properly rather than throwing bytes away: a
+        // frame left half-read is a frame the next command has to recover from.
+        if (select_chip()) {
+            uint8_t b = 0;
+            for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+            if (b == START_CMD) {
+                xfer(0xff);                        // command | reply
+                uint32_t np = xfer(0xff);
+                for (uint32_t k = 0; k < np; k++) {
+                    uint32_t len = xfer(0xff);
+                    while (len--) xfer(0xff);
+                }
+                xfer(0xff);                        // END_CMD
+            }
+            deselect_chip();
+        }
+
+        // The chip is off looking, and it takes seconds. Asking too soon gets an
+        // empty list rather than an error, which reads as "no networks" and is
+        // worse than waiting -- two seconds, ten times, is what the Arduino
+        // library waits and it is not being cautious for nothing.
+        for (int tries = 0; tries < 10 && scan_count == 0; tries++) {
+            sleep_ms(2000);
+            if (!simple_cmd(SCAN_NETWORKS_CMD)) continue;
+            if (!select_chip()) continue;
+            int32_t n = read_list(SCAN_NETWORKS_CMD);
+            deselect_chip();
+            if (n > 0) scan_count = (uint32_t)n;
+        }
+        for (uint32_t i = 0; i < scan_count; i++) scan->rssi[i] = rssi_of(i);
+        return (int32_t)scan_count;
+    }
+
+    if ((uint32_t)index >= scan_count) return -1;
+    uint32_t i = 0;
+    while (i < max - 1 && scan->ssid[index][i]) { out[i] = scan->ssid[index][i]; i++; }
+    out[i] = 0;
+    return scan->rssi[index];
 }

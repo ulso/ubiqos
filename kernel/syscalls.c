@@ -232,6 +232,12 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_WIFISCAN: {
+            extern int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max);
+            frame->a0 = (uint32_t)myrtos_wifi_scan((int32_t)frame->a0,
+                                                   (char*)(uintptr_t)frame->a1, frame->a2);
+            break;
+        }
         case SYS_WIFIVER: {
             extern int32_t myrtos_wifi_firmware(char *out, uint32_t max);
             frame->a0 = (uint32_t)myrtos_wifi_firmware((char*)(uintptr_t)frame->a0,

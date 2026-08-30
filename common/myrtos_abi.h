@@ -154,6 +154,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_MOUNT    34u   // -> a0 = 0 ok, -1 no card
 #define SYS_REPLYTO  35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
 #define SYS_WIFIVER  36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
+#define SYS_WIFISCAN 37u   // a0 = -1 to look -> a0 = count; a0 = index -> a0 = rssi
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -388,6 +389,16 @@ static inline int32_t myrtos_rmdir(const char *path) {
 // with a name, like the keyboard and the screen, and this goes away.
 static inline int32_t myrtos_wifi_version(char *buf, uint32_t len) {
     return myrtos_syscall(SYS_WIFIVER, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
+// Look for networks, then read what was found. Neither needs a name or a
+// password: a scan is what the chip hears, not what it joins.
+static inline int32_t myrtos_wifi_look(void) {
+    return myrtos_syscall(SYS_WIFISCAN, (uint32_t)-1, 0, 0);
+}
+
+static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t len) {
+    return myrtos_syscall(SYS_WIFISCAN, (uint32_t)index, (uint32_t)(uintptr_t)ssid, len);
 }
 
 static inline int32_t myrtos_mount(void) {
