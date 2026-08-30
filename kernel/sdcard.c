@@ -69,7 +69,7 @@ bool myrtos_sd_present(void) {
     return gpio_get(SD_DETECT_PIN) == 0;   // active low
 }
 
-bool myrtos_sd_init(void) {
+static bool spi_init_card(void) {
     gpio_init(SD_CS_PIN);
     gpio_set_dir(SD_CS_PIN, GPIO_OUT);
     cs_high();
@@ -128,7 +128,7 @@ bool myrtos_sd_init(void) {
     return true;
 }
 
-bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
+static bool spi_read_block(uint32_t lba, uint8_t *buf) {
     uint32_t addr = sd_block_addressed ? lba : lba * 512u;
 
     cs_low();
@@ -150,7 +150,7 @@ bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     return true;
 }
 
-bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
+static bool spi_write_block(uint32_t lba, const uint8_t *buf) {
     uint32_t addr = sd_block_addressed ? lba : lba * 512u;
 
     cs_low();
@@ -182,4 +182,84 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     }
     cs_high();
     return false;                       // still busy: treat as a failed write
+}
+
+
+// --- SDIO ------------------------------------------------------------------
+// The card has four data lines on this board -- GP36 to GP39, clock on 34 and
+// command on 35 -- and the board header names them, so the vendored driver's own
+// defaults are right. Four bits at a time instead of one.
+//
+// But it is NOT tried at startup, and that is deliberate. The first attempt hung
+// before the console had drawn anything and before the USB task had run, so the
+// board went dark and off the bus at once: nothing to look at, nothing to talk
+// to, and only the BOOTSEL button left. A driver marked "prototyping level" does
+// not belong in front of the two things that make a failure observable.
+//
+// So the board boots on SPI, which is known to work, and SDIO is asked for by
+// the `mount` command. A hang there costs the filesystem server, which is a
+// process like any other -- the shell, the screen and the keyboard carry on, and
+// the machine can be looked at instead of just power-cycled.
+
+#include "pico/sd_card.h"
+#include "hardware/pio.h"
+
+static bool use_sdio;
+
+bool myrtos_sd_init(void) {
+    use_sdio = false;
+
+    // SPI. The SDIO driver is here, builds, and has one real bug fixed in it --
+    // see third_party/pico_sd_card/LOCAL-CHANGES.md -- but it still does not
+    // return on this board, and it runs before the scheduler, so a failure takes
+    // the console and USB with it. Three attempts, three locked boards.
+    //
+    // It is parked rather than abandoned. What it would have bought is speed,
+    // and the latency it would have eased is already handled structurally by the
+    // filesystem server. Picking it up again means reading the rest of the
+    // driver for further 32-bit pin assumptions rather than flashing to find
+    // out, and doing that against a bench setup that can be reset without a
+    // button press.
+    return spi_init_card();
+}
+
+// Try to move the card to four-bit SDIO. Returns false and leaves SPI in place
+// if the card will not have it.
+bool myrtos_sd_try_sdio(void) {
+    if (use_sdio) return true;
+
+    // The card is on GP34 to GP39, and on RP2350 one PIO reaches either GPIO
+    // 0-31 or 16-47, never both. The default window is the low one, so without
+    // this the state machines are configured for pins they cannot see: nothing
+    // is driven, the card never answers, and the driver waits for ever. The
+    // driver comes from the RP2040 world, where the question does not arise.
+    pio_set_gpio_base(pio1, 16);
+
+    if (sd_init_4pins() != SD_OK) return false;
+    if (sd_set_wide_bus(true) != SD_OK) return false;
+    use_sdio = true;
+    return true;
+}
+
+bool myrtos_sd_is_sdio(void) { return use_sdio; }
+
+// The driver takes words, so a caller's buffer has to be aligned. Everything
+// that reaches here is a static 512-byte buffer in the kernel, declared aligned.
+bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
+    if (!use_sdio) return spi_read_block(lba, buf);
+    if ((uintptr_t)buf & 3u) return false;
+    return sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) == SD_OK;
+}
+
+bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
+    if (!use_sdio) return spi_write_block(lba, buf);
+    if ((uintptr_t)buf & 3u) return false;
+    if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) return false;
+
+    // Asynchronous, and there is nothing else for this process to do until it
+    // lands. Spinning is honest here: the filesystem server is a process, so the
+    // scheduler can take the processor away from it while it waits.
+    int status = SD_OK;
+    while (!sd_write_complete(&status)) { }
+    return status == SD_OK;
 }

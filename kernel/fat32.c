@@ -13,12 +13,12 @@ static uint32_t sectors_per_fat;
 static uint32_t cluster_count;      // bounds the search for a free cluster
 static bool     mounted;
 
-static uint8_t sector[512];
+static uint8_t sector[512] __attribute__((aligned(4)));
 
 // The FAT gets a buffer of its own. Allocation walks the FAT while a directory
 // entry or a data sector is being held in `sector`, and one shared buffer would
 // have them overwrite each other.
-static uint8_t fatbuf[512];
+static uint8_t fatbuf[512] __attribute__((aligned(4)));
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static uint32_t rd32(const uint8_t *p) {
@@ -652,5 +652,10 @@ bool myrtos_fat_rmdir(const char *path) {
 // needs the whole conversation repeated, not just the boot sector reread, since
 // a fresh card comes up idle and knows nothing of what was asked before.
 bool myrtos_fat_remount(void) {
-    return myrtos_sd_init() && myrtos_fat_mount();
+    // Ask for SDIO here rather than at startup. If the card will not have it,
+    // or the driver hangs trying, the cost is this one process rather than a
+    // board that never reaches its console. See the note in sdcard.c.
+    if (!myrtos_sd_init()) return false;
+    myrtos_sd_try_sdio();
+    return myrtos_fat_mount();
 }

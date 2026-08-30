@@ -35,6 +35,8 @@ add_executable(os_kernel
     kernel/video.c
     kernel/console.c
     kernel/fsserver.c
+    kernel/printf.c
+    third_party/pico_sd_card/sd_card.c
     kernel/font8x16.c
 
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
@@ -63,6 +65,16 @@ pico_set_binary_type(os_kernel copy_to_ram)
 
 pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.pio)
 
+# The SD card over SDIO, four data lines on PIO, vendored from pico-extras. The
+# board wires DAT0..DAT3 to GP36..GP39 and the board header already names them,
+# so the driver's own defaults are the right ones here.
+#
+# It prints on its error paths. Rather than edit somebody else's source, its
+# printf is pointed at ours -- see kernel/printf.c.
+pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.pio)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
+    PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
+
 # Link against the Pico standard libraries and enable PSRAM support.
 # pico_standard_link provides only linker scripts and link flags. The startup
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
@@ -73,7 +85,9 @@ target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardwar
 
 # TinyUSB looks for tusb_config.h on the include path.
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/include)
 
 # Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)

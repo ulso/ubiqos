@@ -18,4 +18,8 @@ bool    myrtos_sd_read_block(uint32_t lba, uint8_t *buf);
 bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf);
 bool    myrtos_sd_present(void);
 
+// Four-bit SDIO, asked for rather than assumed -- see the note in sdcard.c.
+bool    myrtos_sd_try_sdio(void);
+bool    myrtos_sd_is_sdio(void);
+
 #endif
