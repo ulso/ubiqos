@@ -21,6 +21,8 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
+#include "../common/modules.h"   // myrtos_sleep and the message types
+#include "usbdev.h"                // the named priorities
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -267,7 +269,12 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
         // worse than waiting -- two seconds, ten times, is what the Arduino
         // library waits and it is not being cautious for nothing.
         for (int tries = 0; tries < 10 && scan_count == 0; tries++) {
-            sleep_ms(2000);
+            // myrtos_sleep, not the SDK's sleep_ms. The SDK's spins, and a
+            // kernel thread that spins never reaches the scheduler: it is only
+            // preempted where it makes a system call. Two seconds of spinning
+            // froze the whole machine, which is what the serial shell going
+            // quiet alongside the keyboard was saying.
+            myrtos_sleep(2000);
             if (!simple_cmd(SCAN_NETWORKS_CMD)) continue;
             if (!select_chip()) continue;
             int32_t n = read_list(SCAN_NETWORKS_CMD);
@@ -293,8 +300,6 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
 // survive it. This is the fifth time that root cause has surfaced in this
 // project and the second time the answer was a process of its own.
 
-#include "../common/modules.h"
-#include "usbdev.h"      // the named priorities
 
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 
