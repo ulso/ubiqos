@@ -196,6 +196,8 @@ myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
 myrtos_add_module(mkdir modules/mkdir/mkdir.c)
 myrtos_add_module(pwd modules/pwd/pwd.c)
+myrtos_add_module(rmdir modules/rmdir/rmdir.c)
+myrtos_add_module(mount modules/mount/mount.c)
 myrtos_add_module(msgtest modules/msgtest/msgtest.c)
 myrtos_add_module(msgcli modules/msgcli/msgcli.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
@@ -228,6 +230,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mkdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/rmdir.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/mount.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod

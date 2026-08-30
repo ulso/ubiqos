@@ -97,6 +97,14 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     case MYRTOS_MSG_FS_MKDIR:
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         return myrtos_fat_mkdir(abs) ? 0 : -1;
+    case MYRTOS_MSG_FS_RMDIR:
+        make_abs(from, (const char*)m->data, abs, sizeof(abs));
+        return myrtos_fat_rmdir(abs) ? 0 : -1;
+    case MYRTOS_MSG_FS_MOUNT:
+        // Talking to the card can take a second when there is none in the slot,
+        // which is a reason for this to be asked for rather than attempted
+        // behind every failed listing.
+        return myrtos_fat_remount() ? 0 : -1;
     case MYRTOS_MSG_FS_DIR: {
         const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)m->data;
         make_abs(from, d->path, abs, sizeof(abs));

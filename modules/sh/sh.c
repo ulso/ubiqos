@@ -47,6 +47,8 @@ static void help(int32_t c) {
         "  cd       change directory (built in)\r\n"
         "  pwd      where you are\r\n"
         "  mkdir    make a directory\r\n"
+        "  rmdir    remove an empty directory\r\n"
+        "  mount    take the SD card again\r\n"
         "  cat      show a file\r\n"
         "  cp       copy a file\r\n"
         "  rm       delete a file\r\n"

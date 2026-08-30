@@ -597,3 +597,60 @@ bool myrtos_fat_mkdir(const char *path) {
     wr16(&sector[off + 26], (uint16_t)(fresh & 0xffff));
     return myrtos_sd_write_block(lba, sector);
 }
+
+// Remove a directory, provided it is empty. "Empty" means nothing in it but its
+// own "." and "..", which every directory has and neither of which counts.
+//
+// The entry is deleted before the clusters are freed, the same order as for a
+// file: the other way round would leave a name pointing at clusters that had
+// been handed to somebody else.
+bool myrtos_fat_rmdir(const char *path) {
+    if (!mounted) return false;
+
+    uint32_t dir = 0;
+    char name_83[12];
+    if (!resolve_parent(path, &dir, name_83)) return false;
+    if (name_83[0] == '.') return false;              // never "." or ".."
+
+    uint32_t lba, off;
+    if (!dir_locate(dir, name_83, &lba, &off)) return false;
+    if (!(sector[off + 11] & 0x10)) return false;     // a file, not a directory
+
+    uint32_t cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
+    if (cluster < 2 || cluster == root_cluster) return false;
+
+    bool empty = true, done = false;
+    uint32_t c = cluster;
+    while (!done && c >= 2 && c < 0x0ffffff8) {
+        for (uint32_t s = 0; s < sectors_per_cluster && !done; s++) {
+            if (!myrtos_sd_read_block(cluster_to_lba(c) + s, sector)) return false;
+            for (int e = 0; e < 512; e += 32) {
+                if (sector[e] == 0x00) { done = true; break; }   // end of the directory
+                if (sector[e] == 0xe5) continue;                 // deleted
+                if (sector[e + 11] == 0x0f) continue;            // long-name fragment
+                if (sector[e] == '.') continue;                  // "." and ".."
+                empty = false;
+                done = true;
+                break;
+            }
+        }
+        if (done) break;
+        c = fat_next_cluster(c);
+    }
+    if (!empty) return false;
+
+    if (!myrtos_sd_read_block(lba, sector)) return false;
+    sector[off] = 0xe5;
+    if (!myrtos_sd_write_block(lba, sector)) return false;
+
+    fat_free_chain(cluster);
+    return true;
+}
+
+// Take the card again from the beginning. Mounting happens once at startup, so
+// a card swapped while the board is running is not seen -- and a swapped card
+// needs the whole conversation repeated, not just the boot sector reread, since
+// a fresh card comes up idle and knows nothing of what was asked before.
+bool myrtos_fat_remount(void) {
+    return myrtos_sd_init() && myrtos_fat_mount();
+}

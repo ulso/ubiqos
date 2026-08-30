@@ -34,6 +34,12 @@ bool     myrtos_fat_remove(const char *path);
 // Make a directory, with its "." and ".." in place before it is named.
 bool     myrtos_fat_mkdir(const char *path);
 
+// Remove a directory. Refuses one that still has anything in it.
+bool     myrtos_fat_rmdir(const char *path);
+
+// Take the card again from the beginning, for one swapped while running.
+bool     myrtos_fat_remount(void);
+
 // "readme.txt" -> "README  TXT", the form the directory actually stores.
 bool     myrtos_fat_name_to_83(const char *user, char *out_11);
 

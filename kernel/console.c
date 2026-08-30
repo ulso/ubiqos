@@ -35,6 +35,13 @@ extern const uint8_t myrtos_font8x16[224][16];
 // text means the cursor can be lifted by redrawing what was really there.
 static char cell_char[ROWS][COLS];
 static uint32_t cur_col, cur_row;
+
+// A line of exactly eighty characters used to break twice: once when the
+// eightieth was written and again when the newline arrived, leaving a blank
+// line behind. Real terminals hold the wrap back -- the cursor stays on the
+// last column and only moves when another character actually turns up, so a
+// newline right after a full line does what it says and nothing more.
+static bool wrap_pending;
 static bool ready;
 
 // Row and glyph-line to a scanline in the framebuffer, through the origin.
@@ -106,16 +113,30 @@ static void draw_char(char c) {
     if (!ready) return;
     cursor(false);
     switch (c) {
-    case '\n': newline();                                  break;
-    case '\r': cur_col = 0;                                break;
-    case '\b': if (cur_col) { cur_col--; put_cell(cur_col, cur_row, ' '); } break;
-    case '\t': do { put_cell(cur_col, cur_row, ' ');
-                    if (++cur_col >= COLS) newline();
-               } while (cur_col % 8);                      break;
+    case '\n':
+        wrap_pending = false;
+        newline();
+        break;
+    case '\r':
+        wrap_pending = false;
+        cur_col = 0;
+        break;
+    case '\b':
+        if (wrap_pending) { wrap_pending = false; put_cell(cur_col, cur_row, ' '); }
+        else if (cur_col)  { cur_col--; put_cell(cur_col, cur_row, ' '); }
+        break;
+    case '\t':
+        do {
+            if (wrap_pending) { wrap_pending = false; newline(); }
+            put_cell(cur_col, cur_row, ' ');
+            if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
+        } while (cur_col % 8);
+        break;
     default:
         if ((unsigned char)c < 32) break;
+        if (wrap_pending) { wrap_pending = false; newline(); }
         put_cell(cur_col, cur_row, c);
-        if (++cur_col >= COLS) newline();
+        if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
         break;
     }
     cursor(true);
@@ -197,6 +218,7 @@ void myrtos_console_init(void) {
     for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
         myrtos_framebuf[i] = BG;                 // margins included
     cur_col = cur_row = 0;
+    wrap_pending = false;
     ready = true;
     cursor(true);
 }

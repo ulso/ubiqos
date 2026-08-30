@@ -221,6 +221,18 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_RMDIR:
+            if (!fs_request(MYRTOS_MSG_FS_RMDIR, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        case SYS_MOUNT:
+            if (!fs_request(MYRTOS_MSG_FS_MOUNT, 0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         case SYS_FSREAD:
             if (!fs_request(MYRTOS_MSG_FS_READ, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;

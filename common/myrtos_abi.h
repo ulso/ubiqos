@@ -146,6 +146,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_MKDIR    30u   // a0 = path -> a0 = 0 ok, -1 failed
 #define SYS_CHDIR    31u   // a0 = path -> a0 = 0 ok, -1 no such directory
 #define SYS_GETCWD   32u   // a0 = buf, a1 = length -> a0 = characters copied
+#define SYS_RMDIR    33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
+#define SYS_MOUNT    34u   // -> a0 = 0 ok, -1 no card
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -177,6 +179,8 @@ typedef struct {
 #define MYRTOS_MSG_FS_DIR    5u
 #define MYRTOS_MSG_FS_MKDIR  6u
 #define MYRTOS_MSG_FS_CHDIR  7u
+#define MYRTOS_MSG_FS_RMDIR  8u
+#define MYRTOS_MSG_FS_MOUNT  9u
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -330,6 +334,16 @@ static inline int32_t myrtos_chdir(const char *path) {
 
 static inline int32_t myrtos_getcwd(char *buf, uint32_t len) {
     return myrtos_syscall(SYS_GETCWD, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
+static inline int32_t myrtos_rmdir(const char *path) {
+    return myrtos_syscall(SYS_RMDIR, (uint32_t)(uintptr_t)path, 0, 0);
+}
+
+// Take the card again from the beginning. Mounting happens once at startup, so
+// a card put in or swapped while the board is running needs this.
+static inline int32_t myrtos_mount(void) {
+    return myrtos_syscall(SYS_MOUNT, 0, 0, 0);
 }
 
 static inline int32_t myrtos_mkdir(const char *path) {
