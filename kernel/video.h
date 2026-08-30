@@ -22,5 +22,13 @@ void myrtos_video_set_origin(uint32_t line);
 
 void myrtos_console_init(void);
 void myrtos_console_putc(char c);
+void myrtos_console_start_server(void);
+uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len);
+uint32_t myrtos_console_room(void);
+
+// Below the USB task: the keyboard must never wait behind pixels. Above a shell,
+// so what has been printed reaches the screen rather than queuing behind the
+// process that printed it.
+#define MYRTOS_PRIO_CONSOLE 24
 
 #endif

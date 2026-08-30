@@ -256,6 +256,7 @@ void myrtos_kernel_main(void) {
     // quiet at once and it looked like the clock change had broken everything.
     myrtos_video_init();
     myrtos_console_init();
+    myrtos_console_start_server();
 
     myrtos_flash_scan();
 

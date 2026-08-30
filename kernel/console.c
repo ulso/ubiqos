@@ -8,6 +8,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "video.h"
+#include "hardware/sync.h"
+
+#include "../common/modules.h"   // myrtos_sleep, through the shared ABI
+
+void myrtos_print(const char *s);
 
 #define CELL_W 8
 #define CELL_H 16
@@ -94,7 +99,7 @@ static void newline(void) {
     }
 }
 
-void myrtos_console_putc(char c) {
+static void draw_char(char c) {
     if (!ready) return;
     cursor(false);
     switch (c) {
@@ -111,6 +116,76 @@ void myrtos_console_putc(char c) {
         break;
     }
     cursor(true);
+}
+
+// --- THE RING -------------------------------------------------------------
+// Drawing a character is expensive and used to happen wherever the write came
+// from -- which for a process meant inside the trap, with interrupts off. Now
+// nothing draws there. A write copies bytes into this ring and returns; a kernel
+// thread drains it and does the drawing in process context, where the scheduler
+// can take the processor away from it whenever the USB task wants it.
+//
+// The critical section is around the copy alone, a few microseconds, rather than
+// around the drawing. That is the difference between protecting the bookkeeping,
+// which genuinely needs it, and holding the machine for the duration of some
+// hundred and fifty kilobytes of pixels, which never did.
+//
+// It also settles an old race: the kernel prints with interrupts on and a
+// process writes from inside a trap, so both could once be halfway through a
+// glyph at the same time. Only the server draws now, so cur_col and cur_row have
+// exactly one writer.
+#define RING_SIZE 4096u
+#define RING_MASK (RING_SIZE - 1u)
+
+static uint8_t ring[RING_SIZE];
+static volatile uint32_t ring_head, ring_tail;
+static volatile bool server_up;
+
+static uint32_t ring_used(void) { return (ring_head - ring_tail) & RING_MASK; }
+
+uint32_t myrtos_console_room(void) { return RING_SIZE - 1u - ring_used(); }
+
+// Returns how much was taken. Nothing taken means full, and the caller's write
+// blocks on WAIT_WRITE exactly as it does for a full USB endpoint -- machinery
+// that already existed and needed no changing.
+uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len) {
+    uint32_t st = save_and_disable_interrupts();
+    uint32_t room = RING_SIZE - 1u - ((ring_head - ring_tail) & RING_MASK);
+    if (len > room) len = room;
+    for (uint32_t i = 0; i < len; i++)
+        ring[(ring_head + i) & RING_MASK] = buf[i];
+    ring_head = (ring_head + len) & RING_MASK;
+    restore_interrupts(st);
+    return len;
+}
+
+// The kernel's own printing goes the same way, so that it too is drawn by the
+// server and cannot interleave with a module's output mid-character. Before the
+// server exists there is nothing else running, so drawing directly is safe.
+void myrtos_console_putc(char c) {
+    if (!server_up) { draw_char(c); return; }
+    uint8_t b = (uint8_t)c;
+    while (myrtos_console_put(&b, 1) == 0) { /* the kernel waits; it is rare */ }
+}
+
+static void console_thread(void) {
+    server_up = true;
+    for (;;) {
+        while (ring_tail != ring_head) {
+            draw_char((char)ring[ring_tail]);
+            ring_tail = (ring_tail + 1) & RING_MASK;
+        }
+        myrtos_sleep(1);
+    }
+}
+
+void myrtos_console_start_server(void) {
+    extern int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes,
+                                        uint32_t priority);
+    // Below the USB task, which must never wait for pixels, and above a shell,
+    // so output drains rather than queuing behind whatever asked for it.
+    if (myrtos_kernel_thread(console_thread, 2048, MYRTOS_PRIO_CONSOLE) < 0)
+        myrtos_print("Console: could not start its service process\n");
 }
 
 void myrtos_console_init(void) {
