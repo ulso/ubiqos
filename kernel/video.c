@@ -1,4 +1,5 @@
 #include "tlsf.h"
+#include "video.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
@@ -27,11 +28,11 @@ void myrtos_print_hex(uint32_t v);
 #define H_FRONT_PORCH   16
 #define H_SYNC_WIDTH    96
 #define H_BACK_PORCH    48
-#define H_ACTIVE        640
+#define H_ACTIVE        MYRTOS_H_ACTIVE
 #define V_FRONT_PORCH   10
 #define V_SYNC_WIDTH    2
 #define V_BACK_PORCH    52      // 33 by the standard; see the note on the table
-#define V_ACTIVE        480
+#define V_ACTIVE        MYRTOS_V_ACTIVE
 #define H_TOTAL (H_FRONT_PORCH + H_SYNC_WIDTH + H_BACK_PORCH + H_ACTIVE)
 #define V_TOTAL (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH + V_ACTIVE)
 
@@ -77,11 +78,22 @@ static uint32_t vactive_line[] = {
 // kernel owns, and it should not be able to fail at an awkward moment. In SRAM
 // for now, where its timing is never the question -- PSRAM once the picture is
 // steady.
-// The framebuffer lives in PSRAM. It is 300 kB, which is most of SRAM, and the
-// kernel is a copy_to_ram image so nothing else needs the QMI at run time --
-// the display gets the interface to itself. Allocated at init rather than
-// declared, because the pool is only known once PSRAM has been sized.
-uint8_t *myrtos_framebuf;
+// The framebuffer is in SRAM, and it was in PSRAM for exactly one experiment.
+//
+// A static image survives PSRAM fine -- the test card wrote 300 kB sequentially
+// and disturbed nothing. A text console does not. A glyph is eight bytes on each
+// of sixteen scanlines 640 bytes apart, so every character touches sixteen cache
+// lines and each one must be fetched from PSRAM before it can be written back.
+// That holds the QMI far longer per byte than a sequential write does, the
+// display's own reads stall behind it, the HSTX FIFO underruns, and the monitor
+// drops sync and spends a couple of seconds finding it again. It looked like
+// flicker; it was the picture dying and being reacquired, once per line printed.
+//
+// So the 300 kB stays here. PSRAM is for bulk that is not streamed 57 times a
+// second: module data, file buffers, whatever the shell wants.
+static uint8_t framebuf_store[MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE]
+    __attribute__((aligned(4)));
+uint8_t *myrtos_framebuf = framebuf_store;
 
 // --- HOW THE FRAME IS PLAYED ----------------------------------------------
 // Two channels, and no interrupt at all.
@@ -129,6 +141,21 @@ static const void  *frame_addrs[FRAME_ENTRIES]
     __attribute__((aligned(FRAME_ENTRIES * 4)));
 
 static int ch_data = -1, ch_count = -1, ch_addr = -1;
+
+uint32_t myrtos_video_origin;
+
+// Point every active display row at a framebuffer line, offset by the origin.
+// The control channel may be reading the table while this runs; it reads about
+// one entry per 32 us and the rewrite takes some sixteen, so at worst a single
+// scanline shows the wrong content for a single frame. That is the same tear any
+// unsynchronised scroll has, and it is not visible.
+void myrtos_video_set_origin(uint32_t line) {
+    myrtos_video_origin = line % V_ACTIVE;
+    for (uint r = 0; r < V_ACTIVE; r++) {
+        uint fb = (myrtos_video_origin + r) % V_ACTIVE;
+        frame_addrs[BLANK_LINES + r * 2 + 1] = &myrtos_framebuf[fb * H_ACTIVE];
+    }
+}
 
 static void build_frame_list(void) {
     uint n = 0;
@@ -199,14 +226,6 @@ void myrtos_video_init(void) {
         hstx_ctrl_hw->bit[bit + 1] = sel;                             // P
     }
     for (int i = 12; i <= 19; ++i) gpio_set_function(i, 0);
-
-    extern tlsf_pool_t myrtos_bulk_pool;
-    myrtos_framebuf = myrtos_bulk_pool
-        ? myrtos_tlsf_malloc(myrtos_bulk_pool, H_ACTIVE * V_ACTIVE) : 0;
-    if (!myrtos_framebuf) {
-        myrtos_print("Video: no PSRAM for the framebuffer, display disabled\n");
-        return;
-    }
 
     build_frame_list();
 

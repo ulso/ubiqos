@@ -18,6 +18,7 @@ void myrtos_video_init(void);
 void myrtos_video_testcard(void);
 void myrtos_usbhost_init(void);
 #include "usbdev.h"
+#include "video.h"
 
 // --- MYRTOS KONSTANTER ---
 #define MYRTOS_SYNC_CODE 0x0509000B
@@ -37,6 +38,10 @@ void myrtos_uart_init(void) {
 }
 
 void myrtos_putc(char c) {
+    // Every line the system prints goes through here -- the kernel's own output
+    // and every module's write syscall alike -- so hooking the screen on at this
+    // one point puts all of it on the display without touching a single caller.
+    myrtos_console_putc(c);
     uart_putc_raw(MYRTOS_UART, c);
 }
 
@@ -250,7 +255,7 @@ void myrtos_kernel_main(void) {
     // system stopped before the USB process had started, so both consoles went
     // quiet at once and it looked like the clock change had broken everything.
     myrtos_video_init();
-    myrtos_video_testcard();
+    myrtos_console_init();
 
     myrtos_flash_scan();
 
