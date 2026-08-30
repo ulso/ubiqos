@@ -34,6 +34,7 @@ add_executable(os_kernel
     kernel/usbhost.c
     kernel/video.c
     kernel/console.c
+    kernel/fsserver.c
     kernel/font8x16.c
 
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned

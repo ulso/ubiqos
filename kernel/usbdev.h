@@ -19,6 +19,7 @@ void myrtos_usb_start_task(void); // starts the process that does so
 // Above anything an application is given by default, so a busy program cannot
 // stop the console being serviced. Below the top, which is left free.
 #define MYRTOS_PRIO_USB 30
+#define MYRTOS_PRIO_FS  22
 bool myrtos_usb_ready(void);
 int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len);
 int32_t myrtos_usb_read(uint8_t *buf, uint32_t len);

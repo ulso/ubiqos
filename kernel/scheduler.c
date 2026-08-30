@@ -433,6 +433,8 @@ int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
         case PROC_STATE_WAIT_WRITE: out->state = MYRTOS_PS_WAIT_WRITE; break;
         case PROC_STATE_WAIT_CHILD: out->state = MYRTOS_PS_WAIT_CHILD; break;
         case PROC_STATE_SLEEPING:   out->state = MYRTOS_PS_SLEEPING; break;
+        case PROC_STATE_WAIT_RECV:  out->state = MYRTOS_PS_WAIT_RECV; break;
+        case PROC_STATE_WAIT_REPLY: out->state = MYRTOS_PS_WAIT_REPLY; break;
         default:                    out->state = MYRTOS_PS_FREE; break;
     }
 
@@ -783,6 +785,23 @@ static void msg_unlink_all(int32_t pid) {
 
 // The current directory, and how a child comes to share its parent's.
 const char *myrtos_cwd_get(void) { return process_table[current_pid].cwd; }
+
+// The same, for another process. The filesystem server resolves a client's
+// relative path and so needs the client's directory, not its own.
+const char *myrtos_cwd_of(int32_t pid) {
+    if (pid < 0 || pid >= MAX_PROCESSES) return "/";
+    return process_table[pid].cwd;
+}
+
+bool myrtos_cwd_set_of(int32_t pid, const char *abs) {
+    if (pid < 0 || pid >= MAX_PROCESSES) return false;
+    char *dst = process_table[pid].cwd;
+    uint32_t max = sizeof(process_table[0].cwd), i = 0;
+    while (abs[i] && i < max - 1) { dst[i] = abs[i]; i++; }
+    if (abs[i]) return false;
+    dst[i] = 0;
+    return true;
+}
 
 void myrtos_cwd_inherit(int32_t parent, int32_t child) {
     if (parent < 0 || parent >= MAX_PROCESSES) return;

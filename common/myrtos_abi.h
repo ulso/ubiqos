@@ -151,6 +151,17 @@ typedef struct {
 
 #define MYRTOS_MSG_WRITE  1u   // data = characters, len = how many
 
+// The filesystem is a service. These are sent by the kernel on a process's
+// behalf when it makes a filesystem call, not by the process itself: data
+// points at the request the process already built, which stays valid because
+// the process is blocked in send until the answer comes back.
+#define MYRTOS_MSG_FS_READ   2u
+#define MYRTOS_MSG_FS_WRITE  3u
+#define MYRTOS_MSG_FS_REMOVE 4u
+#define MYRTOS_MSG_FS_DIR    5u
+#define MYRTOS_MSG_FS_MKDIR  6u
+#define MYRTOS_MSG_FS_CHDIR  7u
+
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
 #define MYRTOS_MEM_BULK_FREE    2u   // largest free block in PSRAM

@@ -257,6 +257,8 @@ void myrtos_kernel_main(void) {
     myrtos_video_init();
     myrtos_console_init();
     myrtos_console_start_server();
+    extern void myrtos_fs_start_server(void);
+    myrtos_fs_start_server();
 
     myrtos_flash_scan();
 

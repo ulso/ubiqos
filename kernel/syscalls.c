@@ -23,53 +23,29 @@ int32_t myrtos_msg_receive(myrtos_msg_t *out);
 int32_t myrtos_msg_reply(int32_t status);
 int32_t myrtos_find_pid(const char *name);
 const char *myrtos_cwd_get(void);
+int32_t myrtos_fs_server_pid(void);
+
+// Hand a filesystem call to the server and block until it answers. The request
+// is not copied: it points into the calling process's own memory, which cannot
+// change because the process is stopped in send until the reply, and the
+// reply's status lands in this frame's a0 as the call's return value.
+//
+// The work used to happen right here, in the trap, with interrupts off for as
+// long as the card took. Zeroing a cluster is milliseconds, and the USB task is
+// a process that cannot run while a trap is in progress -- so the keyboard was
+// lost every time a directory was made.
+static bool fs_request(uint32_t type, void *data) {
+    int32_t srv = myrtos_fs_server_pid();
+    if (srv < 0) return false;
+    myrtos_msg_t m;
+    m.type = type;
+    m.len  = 0;
+    m.data = data;
+    return myrtos_msg_send(srv, &m);
+}
 void    myrtos_cwd_inherit(int32_t parent, int32_t child);
 bool    myrtos_cwd_set(const char *abs);
 
-// Build an absolute, tidied path from one as it was typed. A relative path
-// starts at the calling process's current directory, and "." and ".." are
-// folded away here so that what the shell displays and what the filesystem
-// walks are the same thing. The filesystem itself only ever sees absolute
-// paths, and so needs to know nothing about processes.
-static void make_abs(const char *in, char *out, uint32_t out_len) {
-    char buf[128];
-    uint32_t n = 0;
-
-    if (!in) in = "";
-    if (in[0] != '/') {
-        const char *cwd = myrtos_cwd_get();
-        while (cwd[n] && n < sizeof(buf) - 2) { buf[n] = cwd[n]; n++; }
-        if (n == 0 || buf[n - 1] != '/') buf[n++] = '/';
-    } else {
-        buf[n++] = '/';
-    }
-
-    uint32_t i = 0;
-    while (in[i] && n < sizeof(buf) - 2) {
-        if (in[i] == '/') { i++; continue; }
-
-        char comp[16];
-        uint32_t c = 0;
-        while (in[i] && in[i] != '/' && c < sizeof(comp) - 1) comp[c++] = in[i++];
-        comp[c] = 0;
-        while (in[i] && in[i] != '/') i++;          // a longer component is cut
-
-        if (comp[0] == '.' && comp[1] == 0) continue;
-        if (comp[0] == '.' && comp[1] == '.' && comp[2] == 0) {
-            if (n > 1) { n--; while (n > 1 && buf[n - 1] != '/') n--; }
-            continue;
-        }
-        for (uint32_t k = 0; k < c && n < sizeof(buf) - 2; k++) buf[n++] = comp[k];
-        buf[n++] = '/';
-    }
-
-    if (n > 1 && buf[n - 1] == '/') n--;             // no trailing slash but at the root
-    buf[n] = 0;
-
-    uint32_t k = 0;
-    while (buf[k] && k < out_len - 1) { out[k] = buf[k]; k++; }
-    out[k] = 0;
-}
 void myrtos_block_on_write(int32_t path);
 bool myrtos_block_on_child(int32_t pid);
 void myrtos_wake_readers(void);
@@ -218,24 +194,18 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         case SYS_ARGS:
             frame->a0 = myrtos_process_get_args((char*)(uintptr_t)frame->a0, frame->a1);
             break;
-        case SYS_FSDIR: {
-            const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)(uintptr_t)frame->a0;
-            char abs[128];
-              make_abs(d->path, abs, sizeof(abs));
-              frame->a0 = (uint32_t)myrtos_fat_stat_nth(abs, d->index, d->name, d->size);
-            break;
-        }
-        case SYS_CHDIR: {
-            char abs[128];
-            make_abs((const char*)(uintptr_t)frame->a0, abs, sizeof(abs));
-            // The directory has to exist, and listing its first entry is the
-            // cheapest way to ask. An empty directory still has "." in it, so a
-            // real directory always answers.
-            char nm[12]; uint32_t sz = 0;
-            bool ok = (abs[1] == 0) || (myrtos_fat_stat_nth(abs, 0, nm, &sz) >= 0);
-            frame->a0 = (ok && myrtos_cwd_set(abs)) ? 0u : (uint32_t)-1;
-            break;
-        }
+        case SYS_FSDIR:
+            if (!fs_request(MYRTOS_MSG_FS_DIR, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        case SYS_CHDIR:
+            if (!fs_request(MYRTOS_MSG_FS_CHDIR, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         case SYS_GETCWD: {
             char *out = (char*)(uintptr_t)frame->a0;
             const char *cwd = myrtos_cwd_get();
@@ -246,30 +216,29 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         }
         case SYS_MKDIR:
-            char abs[128];
-              make_abs((const char*)(uintptr_t)frame->a0, abs, sizeof(abs));
-              frame->a0 = myrtos_fat_mkdir(abs) ? 0u : (uint32_t)-1;
-            break;
-        case SYS_FSREAD: {
-            const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)(uintptr_t)frame->a0;
-            char abs[128];
-              make_abs(r->name, abs, sizeof(abs));
-              frame->a0 = (uint32_t)myrtos_fat_read_at(abs, r->offset, r->buf, r->len);
-            break;
-        }
-        case SYS_FSWRITE: {
-            const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)(uintptr_t)frame->a0;
-            char abs[128];
-              make_abs(r->name, abs, sizeof(abs));
-              frame->a0 = (uint32_t)myrtos_fat_write_at(abs, r->offset, r->buf, r->len);
-            break;
-        }
-        case SYS_FSREMOVE: {
-            char abs[128];
-              make_abs((const char*)(uintptr_t)frame->a0, abs, sizeof(abs));
-              frame->a0 = myrtos_fat_remove(abs) ? 0u : (uint32_t)-1;
-            break;
-        }
+            if (!fs_request(MYRTOS_MSG_FS_MKDIR, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        case SYS_FSREAD:
+            if (!fs_request(MYRTOS_MSG_FS_READ, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        case SYS_FSWRITE:
+            if (!fs_request(MYRTOS_MSG_FS_WRITE, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        case SYS_FSREMOVE:
+            if (!fs_request(MYRTOS_MSG_FS_REMOVE, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         case SYS_CLOSE:
             frame->a0 = (uint32_t)myrtos_io_close((int32_t)frame->a0, myrtos_current_pid());
             break;
