@@ -177,6 +177,7 @@ extern void *myrtos_bulk_pool;
 
 static wifi_scan_t *scan;
 static uint32_t scan_count;
+static uint8_t  start_reply;
 
 static bool scan_room(void) {
     if (scan) return true;
@@ -249,15 +250,23 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
 
         // Read the acknowledgement properly rather than throwing bytes away: a
         // frame left half-read is a frame the next command has to recover from.
+        // Keep what the start command answered. The library checks it and gives
+        // up when it says failure; throwing it away is how a refusal turns into
+        // "no networks", which sends the reader looking in the wrong place.
+        start_reply = 0xfe;
         if (select_chip()) {
             uint8_t b = 0;
             for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+            if (b == ERR_CMD) start_reply = 0xef;
             if (b == START_CMD) {
                 xfer(0xff);                        // command | reply
                 uint32_t np = xfer(0xff);
                 for (uint32_t k = 0; k < np; k++) {
                     uint32_t len = xfer(0xff);
-                    while (len--) xfer(0xff);
+                    for (uint32_t j = 0; j < len; j++) {
+                        uint8_t v = xfer(0xff);
+                        if (k == 0 && j == 0) start_reply = v;
+                    }
                 }
                 xfer(0xff);                        // END_CMD
             }
@@ -282,6 +291,15 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
             if (n > 0) scan_count = (uint32_t)n;
         }
         for (uint32_t i = 0; i < scan_count; i++) scan->rssi[i] = rssi_of(i);
+
+        // Nothing found: say what the chip said when told to look, since that is
+        // the only part of the exchange we have not been able to see.
+        if (scan_count == 0 && out && max >= 12) {
+            const char hex[] = "0123456789abcdef";
+            out[0] = 's'; out[1] = 't'; out[2] = 'a'; out[3] = 'r'; out[4] = 't';
+            out[5] = '='; out[6] = hex[(start_reply >> 4) & 15];
+            out[7] = hex[start_reply & 15]; out[8] = 0;
+        }
         return (int32_t)scan_count;
     }
 
