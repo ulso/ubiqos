@@ -116,9 +116,16 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FREE     22u   // a0 = pointer -> a0 = 0, -1 if not ours
 #define SYS_REALLOC  23u   // a0 = pointer, a1 = bytes -> a0 = pointer
 #define SYS_DATAAREA 24u   // a0 = &size or 0 -> a0 = base of this process's area
+#define SYS_ALLOCBULK 25u  // a0 = bytes -> a0 = pointer, from PSRAM if there is any
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
+#define MYRTOS_MEM_BULK_FREE    2u   // largest free block in PSRAM
+#define MYRTOS_MEM_BULK_SIZE    3u   // how much PSRAM there is at all
+
+// Where the second pool lives: the XIP window after sixteen megabytes of flash
+// address space, which is also where our resident module region ends.
+#define MYRTOS_PSRAM_BASE 0x11000000u
 
 // The call itself. It is identical in every module, so it belongs here.
 static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c) {
@@ -331,6 +338,13 @@ static inline void myrtos_bootsel(void) {
 // data area the module header reserved.
 static inline void *myrtos_alloc(uint32_t size) {
     return (void*)(uintptr_t)myrtos_syscall(SYS_ALLOC, size, 0, 0);
+}
+
+// Large and patient: from PSRAM when the board has it, so a framebuffer or a
+// file buffer does not eat the SRAM that module code and stacks run from.
+// Falls back to ordinary memory rather than failing.
+static inline void *myrtos_alloc_bulk(uint32_t size) {
+    return (void*)(uintptr_t)myrtos_syscall(SYS_ALLOCBULK, size, 0, 0);
 }
 
 // Returns 0, or -1 for a pointer this process was not given.

@@ -64,7 +64,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
-    pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib
+    pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
     tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.

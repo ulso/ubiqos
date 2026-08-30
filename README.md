@@ -16,6 +16,7 @@ RAM-only image gives the boot ROM nothing to switch on.
 - Pre-emptive scheduling on the machine timer, 1 ms quantum, up to 32 processes
 - A 320 kB TLSF heap that splits and coalesces blocks, which modules can ask
   from; the kernel records the owner, so death returns what death takes
+- A second pool over the board's 8 MB of PSRAM for what is merely large
 - Modules loaded from FAT32 on the SD card, or found resident in flash
 - A module directory with link counts and revisions — a name exists once, and
   the highest revision of it wins
@@ -240,6 +241,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 22 | `SYS_FREE` | pointer → 0, or -1 if not ours |
 | 23 | `SYS_REALLOC` | pointer, bytes → pointer |
 | 24 | `SYS_DATAAREA` | &size → this process's data area and its size |
+| 25 | `SYS_ALLOCBULK` | bytes → pointer, from PSRAM when there is any |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was

@@ -61,6 +61,13 @@ typedef struct alloc_hdr {
 
 #define ALLOC_MAGIC 0x4d454d21u   // "MEM!"
 
+// The second pool. SRAM holds what has timing constraints -- module code runs
+// from there, and so do stacks -- while PSRAM takes what is merely large.
+// Eight megabytes against seventy kilobytes of headroom is not a close call for
+// a framebuffer, but it sits on QSPI behind the XIP cache, so what goes there
+// must not care when it arrives.
+tlsf_pool_t myrtos_bulk_pool;
+
 static pcb_t process_table[MAX_PROCESSES];
 static int32_t current_pid = KERNEL_PID;
 
@@ -505,14 +512,34 @@ static bool alloc_unlink(int32_t pid, alloc_hdr_t *h) {
     return false;
 }
 
-void *myrtos_mem_alloc(uint32_t size) {
-    if (!size || current_pid == KERNEL_PID) return NULL;
-    alloc_hdr_t *h = myrtos_tlsf_malloc(myrtos_mem_pool, size + sizeof(alloc_hdr_t));
+static void *alloc_from(tlsf_pool_t pool, uint32_t size) {
+    if (!size || !pool || current_pid == KERNEL_PID) return NULL;
+    alloc_hdr_t *h = myrtos_tlsf_malloc(pool, size + sizeof(alloc_hdr_t));
     if (!h) return NULL;
     h->size = size;
     h->magic = ALLOC_MAGIC;
     alloc_link(current_pid, h);
     return (void*)(h + 1);
+}
+
+void *myrtos_mem_alloc(uint32_t size) {
+    return alloc_from(myrtos_mem_pool, size);
+}
+
+// Deliberately a separate call rather than a flag. The choice is not about how
+// much memory is wanted but about what it is for: this says "large, and I do
+// not mind waiting". Falls back to SRAM when there is no PSRAM, so a module
+// asking for it still works on a board without any.
+void *myrtos_mem_alloc_bulk(uint32_t size) {
+    void *p = alloc_from(myrtos_bulk_pool, size);
+    return p ? p : alloc_from(myrtos_mem_pool, size);
+}
+
+// Which pool a block came from is decided by where it is, so the header does
+// not have to carry it.
+static tlsf_pool_t pool_of(void *p) {
+    return ((uintptr_t)p >= MYRTOS_PSRAM_BASE && myrtos_bulk_pool)
+         ? myrtos_bulk_pool : myrtos_mem_pool;
 }
 
 // Refuses anything this process does not own. Without the check a module could
@@ -524,7 +551,7 @@ int32_t myrtos_mem_free(void *ptr) {
     if (h->owner != (uint32_t)current_pid) return -1;
     if (!alloc_unlink(current_pid, h)) return -1;
     h->magic = 0;
-    myrtos_tlsf_free(myrtos_mem_pool, h);
+    myrtos_tlsf_free(pool_of(h), h);
     return 0;
 }
 
@@ -617,7 +644,7 @@ void myrtos_process_exit(void) {
     // Everything this process was given goes back, whether it freed it or not.
     alloc_hdr_t *h = process_table[current_pid].allocs;
     while (h) { alloc_hdr_t *next = h->next; h->magic = 0;
-                myrtos_tlsf_free(myrtos_mem_pool, h); h = next; }
+                myrtos_tlsf_free(pool_of(h), h); h = next; }
     process_table[current_pid].allocs = NULL;
 
     myrtos_tlsf_free(myrtos_mem_pool, process_table[current_pid].mem_base);

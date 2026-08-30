@@ -10,6 +10,7 @@
 #include "moddir.h"
 #include "flashmod.h"
 #include "pico/bootrom.h"
+#include "hardware/psram.h"
 
 void myrtos_pio_probe(void);
 void myrtos_usbhost_init(void);
@@ -69,6 +70,30 @@ void myrtos_print_u32(uint32_t v) {
     if (!v) buf[--i] = '0';
     while (v) { buf[--i] = '0' + (v % 10); v /= 10; }
     myrtos_print(&buf[i]);
+}
+
+// How much PSRAM the board turned out to have. Zero on a board without any,
+// and the second pool is simply not created.
+static uint32_t psram_bytes;
+uint32_t myrtos_psram_bytes(void) { return psram_bytes; }
+
+// The second pool covers the whole PSRAM window. Nothing that matters for
+// timing goes here -- module code runs from SRAM and so do the stacks -- but a
+// framebuffer or a file buffer has no business eating the seventy kilobytes
+// that were left.
+static void myrtos_bulk_pool_init(void) {
+    extern tlsf_pool_t myrtos_bulk_pool;
+    if (!psram_is_available()) {
+        myrtos_print("PSRAM: none found; bulk allocations fall back to SRAM\n");
+        return;
+    }
+    psram_bytes = (uint32_t)psram_get_size();
+    myrtos_bulk_pool = myrtos_tlsf_create((void*)MYRTOS_PSRAM_BASE, psram_bytes);
+    myrtos_print("PSRAM: ");
+    myrtos_print_u32(psram_bytes / 1024);
+    myrtos_print(" kB at 0x");
+    myrtos_print_hex(MYRTOS_PSRAM_BASE);
+    myrtos_print(myrtos_bulk_pool ? ", second pool ready\n" : ", pool refused\n");
 }
 
 // --- MEMORY MANAGEMENT (TLSF) ---
@@ -202,6 +227,7 @@ void myrtos_kernel_main(void) {
     // Flash first: resident modules run where they lie and cost no heap. The
     // card may add to them, and a module of the same name there is registered
     // alongside -- whichever was registered first wins the lookup.
+    myrtos_bulk_pool_init();
     myrtos_pio_probe();
     myrtos_usbhost_init();
 

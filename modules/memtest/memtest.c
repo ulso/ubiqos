@@ -4,6 +4,7 @@
 //
 //   memtest         allocate, write, grow, verify, release
 //   memtest leak    allocate and exit without freeing, on purpose
+//   memtest bulk N  take N kB from PSRAM, fill it, read it back
 //
 // The second mode is the interesting one: run free before and after and the
 // largest block should be unchanged, because dying returns what dying takes.
@@ -29,6 +30,28 @@ void module_main(int argc, char **argv) {
         }
         say("leaked 4 x 2000 bytes on purpose", 0, false);
         return;                      // no frees; the kernel must reclaim
+    }
+
+    if (argc == 3 && eq(argv[1], "bulk")) {
+        uint32_t kb = 0;
+        for (const char *c = argv[2]; *c >= '0' && *c <= '9'; c++) kb = kb * 10 + (uint32_t)(*c - '0');
+        if (!kb) kb = 512;
+        uint32_t n = kb * 1024;
+
+        uint8_t *b = (uint8_t*)myrtos_alloc_bulk(n);
+        if (!b) { say("bulk: allocation refused", 0, false); return; }
+        say("got a block at ", (uint32_t)(uintptr_t)b, true);
+
+        // A pattern that depends on position, so a wrong address shows up as a
+        // wrong value rather than as silence.
+        for (uint32_t i = 0; i < n; i++) b[i] = (uint8_t)((i * 31u + (i >> 8)) & 0xff);
+        uint32_t bad = 0;
+        for (uint32_t i = 0; i < n; i++)
+            if (b[i] != (uint8_t)((i * 31u + (i >> 8)) & 0xff)) bad++;
+
+        say(bad ? "bulk: wrong bytes: " : "bulk verified, wrong bytes: ", bad, true);
+        say("freed, returns ", (uint32_t)myrtos_free(b), true);
+        return;
     }
 
     uint8_t *p = (uint8_t*)myrtos_alloc(1000);
