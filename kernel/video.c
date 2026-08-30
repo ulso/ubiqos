@@ -150,14 +150,9 @@ uint32_t myrtos_video_origin;
 // scanline shows the wrong content for a single frame. That is the same tear any
 // unsynchronised scroll has, and it is not visible.
 void myrtos_video_set_origin(uint32_t line) {
-    myrtos_video_origin = line % MYRTOS_TEXT_H;
+    myrtos_video_origin = line % V_ACTIVE;
     for (uint r = 0; r < V_ACTIVE; r++) {
-        uint fb;
-        if (r < MYRTOS_TEXT_TOP || r >= MYRTOS_TEXT_TOP + MYRTOS_TEXT_H)
-            fb = r;                                  // margin: never rotates
-        else
-            fb = MYRTOS_TEXT_TOP +
-                 ((r - MYRTOS_TEXT_TOP + myrtos_video_origin) % MYRTOS_TEXT_H);
+        uint fb = (myrtos_video_origin + r) % V_ACTIVE;
         frame_addrs[BLANK_LINES + r * 2 + 1] = &myrtos_framebuf[fb * H_ACTIVE];
     }
 }

@@ -11,15 +11,12 @@
 
 #define CELL_W 8
 #define CELL_H 16
-// A margin, because the monitor does not show the whole picture. This Samsung
-// cuts a few pixels off the left, which is invisible for a solid block like the
-// cursor and eats the first letter of every line. Overscan varies by display, so
-// the text keeps a character's width clear on each side rather than assuming the
-// edge is reachable.
-#define MARGIN_X 8
-#define MARGIN_Y MYRTOS_TEXT_TOP
-#define COLS   ((MYRTOS_H_ACTIVE - 2 * MARGIN_X) / CELL_W)   // 78
-#define ROWS   (MYRTOS_TEXT_H / CELL_H)                      // 29
+// No margin. There was one for a while, on the theory that the monitor cut a few
+// pixels off the left -- every line was missing its first character. It was not
+// overscan; it was the cursor eating them, see below. With that fixed the screen
+// divides exactly: 640 by 8 and 480 by 16, with nothing left over.
+#define COLS   (MYRTOS_H_ACTIVE / CELL_W)   // 80
+#define ROWS   (MYRTOS_V_ACTIVE / CELL_H)   // 30
 
 #define FG 0xff     // white
 #define BG 0x00     // black
@@ -37,8 +34,7 @@ static bool ready;
 
 // Row and glyph-line to a scanline in the framebuffer, through the origin.
 static inline uint8_t *cell_line(uint32_t row, uint32_t y) {
-    uint32_t fb = MYRTOS_TEXT_TOP +
-        ((row * CELL_H + y + myrtos_video_origin) % MYRTOS_TEXT_H);
+    uint32_t fb = (myrtos_video_origin + row * CELL_H + y) % MYRTOS_V_ACTIVE;
     return &myrtos_framebuf[fb * MYRTOS_H_ACTIVE];
 }
 
@@ -46,7 +42,7 @@ static void draw_glyph(uint32_t col, uint32_t row, char c, bool invert) {
     uint32_t idx = (c < 32 || c > 126) ? 0 : (uint32_t)(c - 32);
     for (uint32_t y = 0; y < CELL_H; y++) {
         uint8_t bits = myrtos_font8x16[idx][y];
-        uint8_t *p = cell_line(row, y) + MARGIN_X + col * CELL_W;
+        uint8_t *p = cell_line(row, y) + col * CELL_W;
         for (uint32_t x = 0; x < CELL_W; x++) {
             bool on = (bits & (0x80u >> x)) != 0;
             p[x] = (on != invert) ? FG : BG;

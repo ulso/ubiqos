@@ -17,12 +17,6 @@ extern uint8_t *myrtos_framebuf;
 // from a table of line addresses, so rotating the table is the whole job. It is
 // 480 stores in SRAM against 300 kB of read-modify-write in PSRAM, which is the
 // difference between a scroll nobody notices and one that stutters.
-// The scrolling region is the text area only. The margins are fixed lines that
-// no rotation ever touches -- rotating all 480 walked old glyph pixels through
-// them, and nothing cleared them again.
-#define MYRTOS_TEXT_TOP 8
-#define MYRTOS_TEXT_H   464
-
 extern uint32_t myrtos_video_origin;
 void myrtos_video_set_origin(uint32_t line);
 
