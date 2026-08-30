@@ -95,6 +95,15 @@ static int32_t usb_readable(void) {
 int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len);
 uint32_t myrtos_usbhost_available(void);
 
+void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k);
+
+// The layout arrives with the descriptor, like the UART's pins and baud rate.
+static int32_t kbd_configure(const void *config, uint32_t size) {
+    if (size < sizeof(myrtos_keymap_t)) return -1;
+    myrtos_usbhost_set_keymap((const myrtos_keymap_t*)config);
+    return 0;
+}
+
 static int32_t kbd_open(void)  { return 0; }
 static int32_t kbd_close(void) { return 0; }
 static int32_t kbd_write(const uint8_t *buf, uint32_t len) {
@@ -141,7 +150,7 @@ static const myrtos_driver_t driver_console = {
 
 static const myrtos_driver_t driver_kbd = {
     .module_name = "USBKBD  MOD",
-    .configure = 0,
+    .configure = kbd_configure,
     .open = kbd_open, .write = kbd_write, .read = kbd_read, .close = kbd_close,
     .readable = kbd_readable
 };

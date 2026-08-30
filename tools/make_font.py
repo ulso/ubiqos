@@ -19,7 +19,7 @@ import sys
 
 BDF   = "third_party/terminus/ter-u16n.bdf"
 OUT   = "kernel/font8x16.c"
-FIRST, LAST = 32, 126
+FIRST, LAST = 32, 255
 CELL_W, CELL_H = 8, 16
 
 
@@ -69,8 +69,12 @@ def to_cell(fbb, glyphs, cp):
     return rows
 
 
-HEADER = '''// An 8x16 fixed-width font covering ASCII 32..126, one byte per scanline with
-// the most significant bit leftmost, sixteen bytes per glyph.
+HEADER = '''// An 8x16 fixed-width font covering 32..255 -- ASCII and Latin-1 -- one byte per
+// scanline with the most significant bit leftmost, sixteen bytes per glyph.
+//
+// Latin-1 rather than ASCII because a keyboard layout is no use without the
+// letters it produces: a Swedish one gives a, a and o with their marks, and
+// there has to be something to draw.
 //
 // Terminus, a bitmap font drawn by hand on this exact grid. The table is baked
 // into the kernel image and so inherits the typeface's licence:
@@ -83,7 +87,7 @@ HEADER = '''// An 8x16 fixed-width font covering ASCII 32..126, one byte per sca
 // table.
 #include <stdint.h>
 
-const uint8_t myrtos_font8x16[95][16] = {
+const uint8_t myrtos_font8x16[224][16] = {
 '''
 
 
@@ -91,7 +95,7 @@ def main():
     fbb, glyphs = read_bdf(BDF)
     cells = [(cp, to_cell(fbb, glyphs, cp)) for cp in range(FIRST, LAST + 1)]
     if "--preview" in sys.argv:
-        for ch in "AmgW1#@":
+        for ch in "AmgW1#@\u00e5\u00e4\u00f6":
             print(ch)
             for row in to_cell(fbb, glyphs, ord(ch)):
                 print("  " + "".join("#" if row & (0x80 >> i) else "." for i in range(8)))

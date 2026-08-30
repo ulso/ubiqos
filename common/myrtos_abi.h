@@ -46,6 +46,22 @@
 // rather than rebuilding the kernel. To change UART or baud rate you change
 // the descriptor.
 
+// A keyboard layout, carried in the descriptor's configuration tail so it can
+// be changed by replacing a module on the card rather than rebuilding anything.
+// Indexed by HID usage code; three levels, because a Swedish keyboard needs
+// AltGr for the braces a programmer cannot do without.
+//
+// Characters are Latin-1, which is what the console's font draws. Dead keys are
+// not dead here: the acute and the diaeresis produce themselves, since holding a
+// key back until the next one needs state the driver does not yet keep.
+#define MYRTOS_KEYMAP_KEYS 104
+
+typedef struct {
+    uint8_t plain[MYRTOS_KEYMAP_KEYS];
+    uint8_t shift[MYRTOS_KEYMAP_KEYS];
+    uint8_t altgr[MYRTOS_KEYMAP_KEYS];
+} myrtos_keymap_t;
+
 #define MYRTOS_CLASS_CHAR   1   // character stream: terminal, serial port
 #define MYRTOS_CLASS_BLOCK  2   // block oriented: SD, disk
 

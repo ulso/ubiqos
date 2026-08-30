@@ -1,3 +1,4 @@
+#include "../common/modules.h"   // the keymap type, through the shared ABI
 #include <stdint.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
@@ -102,9 +103,14 @@ void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
     myrtos_print("USB host: HID gone\n");
 }
 
-// The smallest table that turns a keycode into a character. Not a layout, and
-// deliberately not one: a real one belongs in a descriptor on the card, where
-// it can be changed without rebuilding the kernel.
+// The layout comes from the keyboard's descriptor, which is where it belongs:
+// changing it is a matter of replacing one module rather than rebuilding the
+// kernel. Until a descriptor has been registered these two lines stand in --
+// enough to type a command, and American whatever is printed on the keys.
+static const myrtos_keymap_t *keymap;
+
+void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k) { keymap = k; }
+
 static const char plain[] =
     "\0\0\0\0abcdefghijklmnopqrstuvwxyz1234567890\n\x1b\b\t -=[]\\\0;'`,./";
 static const char shift[] =
@@ -119,7 +125,8 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
         // So each report is compared with the one before, and only keys that
         // were not already down produce a character.
         static uint8_t was[6];
-        bool sh = (report[0] & 0x22) != 0;          // either shift
+        bool sh  = (report[0] & 0x22) != 0;         // either shift
+        bool alt = (report[0] & 0x40) != 0;         // right alt, which is AltGr
 
         for (int i = 2; i < 8; i++) {
             uint8_t k = report[i];
@@ -129,10 +136,18 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
             for (int j = 0; j < 6; j++) if (was[j] == k) held = true;
             if (held) continue;
 
-            if (k < sizeof(plain) - 1) {
-                char c = sh ? shift[k] : plain[k];
-                if (c) push((uint8_t)c);
+            uint8_t c = 0;
+            if (keymap) {
+                if (k < MYRTOS_KEYMAP_KEYS) {
+                    c = alt ? keymap->altgr[k] : (sh ? keymap->shift[k] : keymap->plain[k]);
+                    // AltGr on a key that has nothing there falls back to the
+                    // unshifted character, as it does everywhere else.
+                    if (alt && !c) c = keymap->plain[k];
+                }
+            } else if (k < sizeof(plain) - 1) {
+                c = (uint8_t)(sh ? shift[k] : plain[k]);
             }
+            if (c) push(c);
         }
         for (int i = 0; i < 6; i++) was[i] = report[i + 2];
     }

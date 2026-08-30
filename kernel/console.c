@@ -26,7 +26,7 @@ void myrtos_print(const char *s);
 #define FG 0xff     // white
 #define BG 0x00     // black
 
-extern const uint8_t myrtos_font8x16[95][16];
+extern const uint8_t myrtos_font8x16[224][16];
 
 // What is in each cell. The cursor used to be drawn as a solid block and lifted
 // by drawing a space, which destroyed whatever was under it: myrtos_print emits
@@ -61,7 +61,10 @@ static void build_nibbles(void) {
 }
 
 static void draw_glyph(uint32_t col, uint32_t row, char c, bool invert) {
-    uint32_t idx = (c < 32 || c > 126) ? 0 : (uint32_t)(c - 32);
+    // Latin-1, not ASCII: a Swedish keyboard produces letters above 126 and
+    // they have to land somewhere. Anything below space is drawn as one.
+    uint8_t b = (uint8_t)c;
+    uint32_t idx = (b < 32) ? 0 : (uint32_t)(b - 32);
     const uint32_t *t = invert ? nibble_inv : nibble;
     for (uint32_t y = 0; y < CELL_H; y++) {
         uint8_t bits = myrtos_font8x16[idx][y];
