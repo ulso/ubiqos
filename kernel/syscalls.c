@@ -21,6 +21,7 @@ void myrtos_block_on_read(int32_t path);
 bool    myrtos_msg_send(int32_t dest, const myrtos_msg_t *m);
 int32_t myrtos_msg_receive(myrtos_msg_t *out);
 int32_t myrtos_msg_reply(int32_t status);
+int32_t myrtos_msg_reply_to(int32_t pid, int32_t status);
 int32_t myrtos_find_pid(const char *name);
 const char *myrtos_cwd_get(void);
 int32_t myrtos_fs_server_pid(void);
@@ -153,6 +154,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         }
         case SYS_REPLY:
             frame->a0 = (uint32_t)myrtos_msg_reply((int32_t)frame->a0);
+            break;
+        case SYS_REPLYTO:
+            frame->a0 = (uint32_t)myrtos_msg_reply_to((int32_t)frame->a0,
+                                                      (int32_t)frame->a1);
             break;
         case SYS_PIDOF:
             frame->a0 = (uint32_t)myrtos_find_pid((const char*)(uintptr_t)frame->a0);

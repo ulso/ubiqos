@@ -50,7 +50,8 @@ typedef struct {
     int32_t  msg_next;        // WAIT_REPLY: next sender queued on the same server
     int32_t  msg_head;        // senders waiting for ME, -1 when none
     int32_t  msg_tail;
-    int32_t  msg_serving;     // the sender I am serving, -1 when none
+    int32_t  msg_serving;     // the most recent sender received, -1 when none
+    int32_t  msg_dest;        // WAIT_REPLY: the server this sender is waiting on
     myrtos_msg_t msg;         // WAIT_REPLY: what this sender is offering
     myrtos_msg_t *msg_out;    // WAIT_RECV: where the message is to be delivered
 
@@ -223,6 +224,7 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].msg_next = process_table[slot].msg_head = -1;
     process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
+    process_table[slot].msg_dest = -1;
     process_table[slot].msg_out = 0;
     process_table[slot].cwd[0] = '/';
     process_table[slot].cwd[1] = 0;
@@ -355,6 +357,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
     process_table[slot].msg_next = process_table[slot].msg_head = -1;
     process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
+    process_table[slot].msg_dest = -1;
     process_table[slot].msg_out = 0;
     process_table[slot].cwd[0] = '/';
     process_table[slot].cwd[1] = 0;
@@ -687,7 +690,9 @@ bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
 
     pcb_t *me = &process_table[current_pid];
     me->msg = *m;
+    me->msg.sender = (int32_t)current_pid;   // so the receiver can put it aside
     me->msg_next = -1;
+    me->msg_dest = dest;
 
     if (d->state == PROC_STATE_WAIT_RECV) {
         // Nobody ahead of us: hand it straight over and wake the server.
@@ -708,8 +713,11 @@ bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
 
 // The sender's pid, or -1 when the caller has been put to sleep waiting.
 int32_t myrtos_msg_receive(myrtos_msg_t *out) {
+    // A second request may be taken before the first is answered: a server that
+    // has to wait for something puts the sender aside with myrtos_reply_to and
+    // goes on serving. msg_serving is merely the most recent, for the simple
+    // servers that answer before they ask again.
     pcb_t *me = &process_table[current_pid];
-    if (me->msg_serving >= 0) return -2;        // answer the last one first
     if (me->msg_head >= 0) {
         int32_t from = me->msg_head;
         me->msg_head = process_table[from].msg_next;
@@ -739,6 +747,23 @@ int32_t myrtos_msg_reply(int32_t status) {
 
 // A process by module name, so a client can name the service it wants without
 // anyone having written a pid down.
+// Answer a particular sender. Refuses one that is not blocked waiting on this
+// process, so a server cannot release somebody else's client.
+int32_t myrtos_msg_reply_to(int32_t pid, int32_t status) {
+    if (pid <= 0 || pid >= MAX_PROCESSES) return -1;
+    pcb_t *p = &process_table[pid];
+    if (p->state != PROC_STATE_WAIT_REPLY) return -1;
+    if (p->msg_dest != (int32_t)current_pid) return -1;
+
+    if (process_table[current_pid].msg_serving == pid)
+        process_table[current_pid].msg_serving = -1;
+    p->msg_dest = -1;
+    ((myrtos_frame_t*)(uintptr_t)p->saved_sp)->a0 = (uint32_t)status;
+    p->state = PROC_STATE_READY;
+    ready_enqueue(pid);
+    return 0;
+}
+
 int32_t myrtos_find_pid(const char *name) {
     if (!name) return -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {
@@ -769,6 +794,18 @@ static void msg_unlink_all(int32_t pid) {
         s = next;
     }
     p->msg_head = p->msg_tail = -1;
+
+    // Anyone put aside for a later answer is waiting on us too, and is not in
+    // the queue any more. They would wait for ever otherwise.
+    for (int i = 1; i < MAX_PROCESSES; i++) {
+        if (process_table[i].state != PROC_STATE_WAIT_REPLY) continue;
+        if (process_table[i].msg_dest != pid) continue;
+        process_table[i].msg_dest = -1;
+        ((myrtos_frame_t*)(uintptr_t)process_table[i].saved_sp)->a0 = (uint32_t)-1;
+        process_table[i].state = PROC_STATE_READY;
+        ready_enqueue(i);
+    }
+
     if (p->msg_serving >= 0) {
         int32_t v = p->msg_serving;
         p->msg_serving = -1;

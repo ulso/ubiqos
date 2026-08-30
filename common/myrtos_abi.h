@@ -54,6 +54,10 @@
 // Characters are Latin-1, which is what the console's font draws. Dead keys are
 // not dead here: the acute and the diaeresis produce themselves, since holding a
 // key back until the next one needs state the driver does not yet keep.
+// Eleven characters and a NUL. Module names, device names and process names are
+// all this long, and the number was written out at each of them.
+#define MYRTOS_NAME_LEN 12
+
 #define MYRTOS_KEYMAP_KEYS 104
 
 typedef struct {
@@ -66,8 +70,8 @@ typedef struct {
 #define MYRTOS_CLASS_BLOCK  2   // block oriented: SD, disk
 
 typedef struct __attribute__((packed, aligned(4))) {
-    char     device_name[12];   // what a process opens: "term"
-    char     driver_name[12];   // the module handling it: "UART    MOD"
+    char     device_name[MYRTOS_NAME_LEN];   // what a process opens: "term"
+    char     driver_name[MYRTOS_NAME_LEN];   // the module handling it: "UART    MOD"
     uint16_t device_class;      // MYRTOS_CLASS_*
     uint16_t reserved;
     uint32_t config_offset;     // from the start of the descriptor to the tail
@@ -148,6 +152,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_GETCWD   32u   // a0 = buf, a1 = length -> a0 = characters copied
 #define SYS_RMDIR    33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
 #define SYS_MOUNT    34u   // -> a0 = 0 ok, -1 no card
+#define SYS_REPLYTO  35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -165,6 +170,7 @@ typedef struct {
     uint32_t type;         // what this is; the receiver switches on it
     uint32_t len;          // how much data points at
     void    *data;         // the sender's own memory, valid until the reply
+    int32_t  sender;       // filled in by receive; ignored on send
 } myrtos_msg_t;
 
 #define MYRTOS_MSG_WRITE  1u   // data = characters, len = how many
@@ -263,6 +269,18 @@ static inline int32_t myrtos_receive(myrtos_msg_t *out) {
 // not be touched -- that is the whole guarantee.
 static inline int32_t myrtos_reply(int32_t status) {
     return myrtos_syscall(SYS_REPLY, (uint32_t)status, 0, 0);
+}
+
+// Answer a particular sender rather than the last one received. A server that
+// cannot finish a request at once -- one waiting for the network, say -- puts the
+// sender's pid aside, goes on serving others, and answers this one when the
+// answer exists. Without it a server has exactly one request in flight, which is
+// fine for a disk and useless for a protocol stack.
+//
+// It refuses a pid that is not blocked waiting on THIS process, so a server
+// cannot release somebody else's client.
+static inline int32_t myrtos_reply_to(int32_t pid, int32_t status) {
+    return myrtos_syscall(SYS_REPLYTO, (uint32_t)pid, (uint32_t)status, 0);
 }
 
 // Find a running process by its module name. A client has to be able to name the
@@ -434,7 +452,7 @@ typedef struct {
     uint32_t state;        // MYRTOS_PS_*
     uint32_t priority;
     uint32_t mem_size;     // data and stack together, as the header asked
-    char     name[12];     // the module's, or a kernel thread's stand-in
+    char     name[MYRTOS_NAME_LEN];     // the module's, or a kernel thread's stand-in
 } myrtos_psinfo_t;
 
 // How many processes can exist, kernel included. This lived in three places --
@@ -606,7 +624,7 @@ static inline int32_t myrtos_write_u32(int32_t path, uint32_t v) {
 // One entry of the module directory. The revision is what decides which copy of
 // a name the system keeps, so it belongs in any listing of them.
 typedef struct {
-    char     name[12];
+    char     name[MYRTOS_NAME_LEN];
     uint32_t links;        // processes running it right now
     uint32_t revision;     // the highest of this name won
     uint32_t size;         // the whole module, header included
