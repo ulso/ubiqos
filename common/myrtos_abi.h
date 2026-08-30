@@ -190,6 +190,18 @@ typedef struct {
 #define MYRTOS_MSG_FS_RMDIR  8u
 #define MYRTOS_MSG_FS_MOUNT  9u
 
+// The WiFi coprocessor is a service too, for the same reason the filesystem is:
+// talking to it means waiting seconds for a scan, and waiting must not happen
+// inside a trap.
+#define MYRTOS_MSG_WIFI_VER   10u
+#define MYRTOS_MSG_WIFI_SCAN  11u
+
+typedef struct {
+    int32_t   index;       // scan: -1 to look, otherwise which entry
+    char     *buf;
+    uint32_t  len;
+} myrtos_wifi_req_t;
+
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
 #define MYRTOS_MEM_BULK_FREE    2u   // largest free block in PSRAM

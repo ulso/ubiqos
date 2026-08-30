@@ -25,6 +25,7 @@ int32_t myrtos_msg_reply_to(int32_t pid, int32_t status);
 int32_t myrtos_find_pid(const char *name);
 const char *myrtos_cwd_get(void);
 int32_t myrtos_fs_server_pid(void);
+int32_t myrtos_wifi_server_pid(void);
 
 // Hand a filesystem call to the server and block until it answers. The request
 // is not copied: it points into the calling process's own memory, which cannot
@@ -35,14 +36,17 @@ int32_t myrtos_fs_server_pid(void);
 // long as the card took. Zeroing a cluster is milliseconds, and the USB task is
 // a process that cannot run while a trap is in progress -- so the keyboard was
 // lost every time a directory was made.
-static bool fs_request(uint32_t type, void *data) {
-    int32_t srv = myrtos_fs_server_pid();
+static bool server_request(int32_t srv, uint32_t type, void *data) {
     if (srv < 0) return false;
     myrtos_msg_t m;
     m.type = type;
     m.len  = 0;
     m.data = data;
     return myrtos_msg_send(srv, &m);
+}
+
+static bool fs_request(uint32_t type, void *data) {
+    return server_request(myrtos_fs_server_pid(), type, data);
 }
 void    myrtos_cwd_inherit(int32_t parent, int32_t child);
 bool    myrtos_cwd_set(const char *abs);
@@ -233,16 +237,40 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         case SYS_WIFISCAN: {
-            extern int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max);
-            frame->a0 = (uint32_t)myrtos_wifi_scan((int32_t)frame->a0,
-                                                   (char*)(uintptr_t)frame->a1, frame->a2);
-            break;
+            // Through the service rather than here: a scan waits seconds, and
+            // waiting inside a trap stops the machine. The request is built on
+            // this stack, which is safe because send blocks until the answer.
+            myrtos_wifi_req_t req;
+            req.index = (int32_t)frame->a0;
+            req.buf   = (char*)(uintptr_t)frame->a1;
+            req.len   = frame->a2;
+            if (MYRTOS_MSG_WIFI_SCAN == MYRTOS_MSG_WIFI_VER) {
+                req.buf = (char*)(uintptr_t)frame->a0;
+                req.len = frame->a1;
+            }
+            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_SCAN, &req)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         }
         case SYS_WIFIVER: {
-            extern int32_t myrtos_wifi_firmware(char *out, uint32_t max);
-            frame->a0 = (uint32_t)myrtos_wifi_firmware((char*)(uintptr_t)frame->a0,
-                                                       frame->a1);
-            break;
+            // Through the service rather than here: a scan waits seconds, and
+            // waiting inside a trap stops the machine. The request is built on
+            // this stack, which is safe because send blocks until the answer.
+            myrtos_wifi_req_t req;
+            req.index = (int32_t)frame->a0;
+            req.buf   = (char*)(uintptr_t)frame->a1;
+            req.len   = frame->a2;
+            if (MYRTOS_MSG_WIFI_VER == MYRTOS_MSG_WIFI_VER) {
+                req.buf = (char*)(uintptr_t)frame->a0;
+                req.len = frame->a1;
+            }
+            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_VER, &req)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         }
         case SYS_MOUNT:
             if (!fs_request(MYRTOS_MSG_FS_MOUNT, 0)) {

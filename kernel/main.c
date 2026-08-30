@@ -272,6 +272,8 @@ void myrtos_kernel_main(void) {
     // so on a screen that exists rather than taking the boot down with it.
     extern void myrtos_wifi_probe(void);
     myrtos_wifi_probe();
+    extern void myrtos_wifi_start_server(void);
+    myrtos_wifi_start_server();
 
     myrtos_flash_scan();
 

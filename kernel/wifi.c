@@ -284,3 +284,44 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
     out[i] = 0;
     return scan->rssi[index];
 }
+
+
+// --- THE SERVICE ------------------------------------------------------------
+// Every call here waits: for a handshake, or for a scan that takes twenty
+// seconds. Done inside a trap that is twenty seconds with interrupts off, and
+// the keyboard -- bit-banged on PIO and polled every millisecond -- does not
+// survive it. This is the fifth time that root cause has surfaced in this
+// project and the second time the answer was a process of its own.
+
+#include "../common/modules.h"
+#include "usbdev.h"      // the named priorities
+
+int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
+
+static int32_t server_pid = -1;
+
+int32_t myrtos_wifi_server_pid(void) { return server_pid; }
+
+static int32_t handle(const myrtos_msg_t *m) {
+    const myrtos_wifi_req_t *r = (const myrtos_wifi_req_t*)m->data;
+    switch (m->type) {
+    case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
+    case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
+    default:                   return -1;
+    }
+}
+
+static void wifi_thread(void) {
+    for (;;) {
+        myrtos_msg_t m;
+        int32_t from = myrtos_receive(&m);
+        if (from < 0) continue;
+        myrtos_reply(handle(&m));
+    }
+}
+
+void myrtos_wifi_start_server(void) {
+    // Below the USB task, which is the thing this exists to stop starving.
+    server_pid = myrtos_kernel_thread(wifi_thread, 2048, MYRTOS_PRIO_WIFI);
+    if (server_pid < 0) myrtos_print("WiFi: could not start its service process\n");
+}
