@@ -267,16 +267,31 @@ void myrtos_video_init(void) {
 // Something recognisable, so the first picture says whether the pinout and the
 // timing are right rather than merely that something came out.
 void myrtos_video_testcard(void) {
+    // Below the bars, all 256 colours in a 16x16 grid, ordered by byte value.
+    // The previous ramp built its colour with ((x >> 5) << 5), which wraps at
+    // 256 pixels, and ((y >> 5) << 2), which grows past the three bits of the
+    // green field and bleeds into red. It repeated two and a half times across
+    // the screen and looked like a fault in the video path when it was only bad
+    // arithmetic. Every cell here is one distinct value, so a wrong bit shows up
+    // as a cell out of order rather than as a pattern that is hard to read.
+    const uint grid_top = 64;
+    const uint cell_w = H_ACTIVE / 16;
+    const uint cell_h = (V_ACTIVE - grid_top) / 16;
+
     for (uint y = 0; y < V_ACTIVE; y++) {
         for (uint x = 0; x < H_ACTIVE; x++) {
             uint8_t c;
-            if (y < 64) {
+            if (y < grid_top) {
                 static const uint8_t bars[8] = {0xff,0xfc,0x1f,0x1c,0xe3,0xe0,0x03,0x00};
                 c = bars[(x * 8) / H_ACTIVE];
             } else if (x < 8 || x >= H_ACTIVE - 8 || y >= V_ACTIVE - 8) {
                 c = 0xff;                       // a border, to show the edges
             } else {
-                c = (uint8_t)(((x >> 5) << 5) | ((y >> 5) << 2));
+                uint col = x / cell_w;
+                uint row = (y - grid_top) / cell_h;
+                if (col > 15) col = 15;
+                if (row > 15) row = 15;
+                c = (uint8_t)(row * 16 + col);
             }
             myrtos_framebuf[y * H_ACTIVE + x] = c;
         }
