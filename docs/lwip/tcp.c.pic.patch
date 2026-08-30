@@ -1,5 +1,5 @@
---- /Users/ulf/.pico-sdk/sdk/2.2.0/lib/lwip/src/core/tcp.c	2026-04-04 19:39:12
-+++ /private/tmp/claude-501/-Users-ulf-Documents-Projects-rust/6ab954b7-5966-4c63-be6e-9b808dfbbfb2/scratchpad/lwip2/tcp_patched.c	2026-08-30 18:14:26
+--- a/lwip/core/tcp.c	2026-04-04 19:39:12
++++ b/lwip/core/tcp.c	2026-08-30 18:49:28
 @@ -141,20 +141,39 @@
  #define INITIAL_MSS TCP_MSS
  #endif

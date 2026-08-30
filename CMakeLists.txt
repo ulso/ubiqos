@@ -221,6 +221,67 @@ myrtos_add_module(spinrt modules/spin/spin.c RT)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
 myrtos_add_module(mkdir modules/mkdir/mkdir.c)
+# The TCP/IP stack, NOT built yet -- see docs/lwip/README.md.
+#
+# It compiles, links and very nearly passes the position-independence check: 57
+# absolute addresses remain, in five tables that can be dealt with the way tcp.c
+# already was. What stops it is not that.
+#
+# A flash-resident module executes in place at 0x10100000, so its .data would be
+# IN FLASH and writes to it would vanish. The check's refusal of writable
+# sections is a hardware fact, not a matter of style, and SINGLE was written
+# without asking why the rule was there. lwIP's globals have to reach the
+# process's own data area, which means thread-local storage, which means either
+# a loader that copies a SINGLE module into RAM or a way to put a whole
+# translation unit's globals in .tdata.
+#
+# Left here, in one piece and building nothing, so the next attempt starts from a
+# port that works rather than from an empty directory.
+#
+# # The TCP/IP stack. SINGLE because lwIP keeps its tables in globals and there is
+# # one of it; see docs/lwip. Two files of lwIP carry a local change for position
+# # independence, and the port -- lwipopts.h, arch/cc.h, sys_arch.c and a small
+# # string library, since a module is linked -nostdlib -- lives with the module.
+# myrtos_add_module(lwipd modules/lwipd/lwipd.c
+#     modules/lwipd/sys_arch.c
+#     modules/lwipd/mini_string.c
+#     modules/lwipd/mini_libc.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/init.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/def.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/dns.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/inet_chksum.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ip.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/mem.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/memp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/netif.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/pbuf.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/raw.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/stats.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/sys.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/tcp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/tcp_in.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/tcp_out.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/timeouts.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/udp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/acd.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/autoip.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/dhcp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/etharp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/icmp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/igmp.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/ip4.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/ip4_addr.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/core/ipv4/ip4_frag.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/netif/ethernet.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/apps/mdns/mdns.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/apps/mdns/mdns_domain.c
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/apps/mdns/mdns_out.c
+#     SINGLE)
+# target_include_directories(lwipd_app PRIVATE
+#     ${CMAKE_CURRENT_SOURCE_DIR}/modules/lwipd
+#     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/include)
+#
+
 myrtos_add_module(pwd modules/pwd/pwd.c)
 myrtos_add_module(rmdir modules/rmdir/rmdir.c)
 myrtos_add_module(mount modules/mount/mount.c)
