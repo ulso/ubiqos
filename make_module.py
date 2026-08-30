@@ -70,7 +70,7 @@ def tls_layout(elf_path, nm_tool):
 
 def create_module(input_bin_path, output_mod_path, module_name,
                   elf_path=None, nm_tool=None, entry_symbol="module_main",
-                  revision=1, realtime=False,
+                  revision=1, realtime=False, single=False,
                   module_type="program"):
     with open(input_bin_path, "rb") as f:
         code_bytes = f.read()
@@ -125,7 +125,10 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
-    attrs = 1 | (2 if realtime else 0)
+    # Bit 0 is re-entrant, as in OS-9: one copy of the code, one data area per
+    # process. A module without it has writable data shared between instances,
+    # so the kernel allows only one instance to exist.
+    attrs = (0 if single else 1) | (2 if realtime else 0)
     attr_rev  = (attrs << 8) | MYRTOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
 # trap frame is 128 bytes, so 4 kB leaves ample depth for call chains.
@@ -159,7 +162,8 @@ def create_module(input_bin_path, output_mod_path, module_name,
 
     print(f"  module '{module_name}' revision {revision}, "
           f"{module_size} bytes, {tls_total} thread-local"
-          f"{', real-time' if realtime else ''}")
+          f"{', real-time' if realtime else ''}"
+          f"{', single instance' if single else ''}")
 
 if __name__ == "__main__":
 # --data as a flag rather than a positional argument: CMake drops empty
@@ -172,7 +176,8 @@ if __name__ == "__main__":
     # name, so a patched module replaces the one already there by carrying a
     # larger number and nothing else.
     realtime = "--rt" in argv
-    argv = [a for a in argv if a != "--rt"]
+    single   = "--single" in argv
+    argv = [a for a in argv if a not in ("--rt", "--single")]
 
     revision = 1
     if "--rev" in argv:
@@ -181,4 +186,4 @@ if __name__ == "__main__":
         del argv[i:i + 2]
 
     create_module(*argv, module_type=module_type, revision=revision,
-                  realtime=realtime)
+                  realtime=realtime, single=single)

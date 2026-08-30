@@ -121,13 +121,20 @@ void module_main(void) {
                     help(c);
                 } else if (line_is(line, "cd") || line_starts(line, "cd ")) {
                     change_dir(c, line);
-                } else if (exec_line(line) < 0) {
-                    myrtos_line_t l;
-                    myrtos_line_reset(&l);
-                    myrtos_line_str(&l, "no such module: ");
-                    myrtos_line_str(&l, line);   // exec_line NUL-terminated the name
-                    myrtos_line_str(&l, "\r\n");
-                    myrtos_line_flush(c, &l);
+                } else {
+                    int32_t r = exec_line(line);
+                    if (r < 0) {
+                        myrtos_line_t l;
+                        myrtos_line_reset(&l);
+                        // -2 means the module is there but is not re-entrant and
+                        // is already running. Saying "no such module" for that
+                        // sends the reader looking for the wrong problem.
+                        myrtos_line_str(&l, r == -2 ? "already running: "
+                                                    : "no such module: ");
+                        myrtos_line_str(&l, line);   // exec_line NUL-terminated the name
+                        myrtos_line_str(&l, "\r\n");
+                        myrtos_line_flush(c, &l);
+                    }
                 }
             }
             len = 0;

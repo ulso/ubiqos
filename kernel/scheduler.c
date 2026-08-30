@@ -239,6 +239,22 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
 
 int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
                               const char *args) {
+    // A module without the re-entrant attribute has writable data that every
+    // instance would share, so there may only be one. OS-9 said the same thing
+    // with the same bit. A service that owns hardware, or a protocol stack with
+    // tables of its own, is one of these by nature -- and forcing its globals
+    // into per-process storage would be ceremony for a process there is one of.
+    if (module_ptr && !((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT)) {
+        for (int i = 1; i < MAX_PROCESSES; i++) {
+            if (process_table[i].state == PROC_STATE_FREE) continue;
+            if (process_table[i].module != module_ptr) continue;
+            myrtos_print("  refused: ");
+            myrtos_print((const char*)((uintptr_t)module_ptr + module_ptr->name_offset));
+            myrtos_print(" is not re-entrant and is already running\n");
+            return -2;      // distinct from -1, so a shell can say which it was
+        }
+    }
+
     int32_t slot = -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {      // 0 is the kernel
         if (process_table[i].state == PROC_STATE_FREE) { slot = i; break; }

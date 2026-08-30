@@ -46,5 +46,9 @@ void module_main(int argc, char **argv) {
     }
 
     myrtos_wait(child);
+
+    // Linger, so that a second attempt to start this module overlaps with this
+    // one. It is marked SINGLE, and the refusal is the thing being shown.
+    myrtos_sleep(3000);
     myrtos_write_str(MYRTOS_STDOUT, "msgtest: done\n");
 }

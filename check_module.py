@@ -17,7 +17,14 @@ objcopy extracts the raw binary.
 """
 import subprocess, sys, re
 
-readelf, obj_files, elf = sys.argv[1], sys.argv[2:-1], sys.argv[-1]
+# A module marked SINGLE is not re-entrant: it may only ever run once, so its
+# writable data is shared with nobody and the objection below does not apply.
+# That is what OS-9's re-entrant attribute meant, and it is what lets a service
+# like a protocol stack keep its globals where its authors put them.
+argv = [a for a in sys.argv if a != "--single"]
+single = len(argv) != len(sys.argv)
+
+readelf, obj_files, elf = argv[1], argv[2:-1], argv[-1]
 
 # PC-relative and purely local types. Anything else in an allocated section is
 # an absolute address.
@@ -70,7 +77,7 @@ for line in out.splitlines():
     # .tdata and .tbss are deliberately not in this list. They are writable, but
     # one copy per process rather than one shared between them, which is exactly
     # what a module needs. Everything else writable would be shared.
-    if m and m.group(1) in (".data", ".bss", ".sdata", ".sbss"):
+    if m and not single and m.group(1) in (".data", ".bss", ".sdata", ".sbss"):
         if m.group(2) != "000000":
             problems.append(f"{elf}: writable section {m.group(1)} is present")
 

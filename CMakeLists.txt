@@ -114,6 +114,14 @@ function(myrtos_add_module name source)
         set(rt_flag "--rt")
         list(REMOVE_ITEM ARGN "RT")
     endif()
+    # A trailing SINGLE marks the module not re-entrant: its writable data is
+    # shared, so only one instance may run. A service that owns hardware or a
+    # protocol stack is one of these by nature.
+    set(single_flag "")
+    if("SINGLE" IN_LIST ARGN)
+        set(single_flag "--single")
+        list(REMOVE_ITEM ARGN "SINGLE")
+    endif()
     add_executable(${name}_app ${source} ${ARGN})
     target_compile_options(${name}_app PRIVATE
         -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
@@ -129,6 +137,7 @@ function(myrtos_add_module name source)
 # unknown address, and that does not show in the source.
     add_custom_command(TARGET ${name}_app POST_BUILD
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+                ${single_flag}
                 ${CMAKE_READELF}
                 $<TARGET_OBJECTS:${name}_app>
                 $<TARGET_FILE:${name}_app>
@@ -146,6 +155,7 @@ function(myrtos_add_module name source)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${single_flag}
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
                 "${name}"
@@ -167,6 +177,7 @@ function(myrtos_add_data_module name source)
 
     add_custom_command(TARGET ${name}_app POST_BUILD
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+                ${single_flag}
                 ${CMAKE_READELF}
                 $<TARGET_OBJECTS:${name}_app>
                 $<TARGET_FILE:${name}_app>
@@ -182,6 +193,7 @@ function(myrtos_add_data_module name source)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${single_flag}
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
                 "${name}" --data
@@ -212,7 +224,7 @@ myrtos_add_module(mkdir modules/mkdir/mkdir.c)
 myrtos_add_module(pwd modules/pwd/pwd.c)
 myrtos_add_module(rmdir modules/rmdir/rmdir.c)
 myrtos_add_module(mount modules/mount/mount.c)
-myrtos_add_module(msgtest modules/msgtest/msgtest.c)
+myrtos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
 myrtos_add_module(msgcli modules/msgcli/msgcli.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
