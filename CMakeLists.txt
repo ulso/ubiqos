@@ -292,6 +292,7 @@ target_include_directories(lwipd_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/include)
 #
 
+myrtos_add_module(wifi modules/wifi/wifi.c)
 myrtos_add_module(pwd modules/pwd/pwd.c)
 myrtos_add_module(rmdir modules/rmdir/rmdir.c)
 myrtos_add_module(mount modules/mount/mount.c)
@@ -327,6 +328,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mkdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/wifi.mod
             ${CMAKE_CURRENT_BINARY_DIR}/lwipd.mod
             ${CMAKE_CURRENT_BINARY_DIR}/rmdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mount.mod

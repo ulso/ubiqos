@@ -49,6 +49,7 @@ static void help(int32_t c) {
         "  mkdir    make a directory\r\n"
         "  rmdir    remove an empty directory\r\n"
         "  mount    take the SD card again\r\n"
+        "  wifi     ask the ESP32-C6 its firmware\r\n"
         "  cat      show a file\r\n"
         "  cp       copy a file\r\n"
         "  rm       delete a file\r\n"

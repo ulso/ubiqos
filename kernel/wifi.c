@@ -78,15 +78,43 @@ void myrtos_wifi_init(void) {
 // Ask the chip what firmware it is running. A version string coming back settles
 // three things at once: the wiring, the handshake, and that the chip really does
 // speak NINA rather than something that would have needed a stack of our own.
-bool myrtos_wifi_firmware(char *out, uint32_t max) {
-    if (!select_chip()) { myrtos_print("WiFi: no handshake\n"); return false; }
+// Returns 0, or which of the three ways it failed -- the caller can then say so
+// where the caller's output goes, rather than the kernel saying it on a console
+// the asker may not be looking at.
+int32_t myrtos_wifi_firmware(char *out, uint32_t max) {
+    if (!select_chip()) {
+        // Say what the line is actually doing rather than only that it did not
+        // move. Reading it with each pull in turn tells driven from floating: a
+        // driven line ignores the pull, a floating one follows it.
+        gpio_set_pulls(WIFI_ACK, false, false);
+        bool bare = gpio_get(WIFI_ACK);
+        gpio_set_pulls(WIFI_ACK, true, false);
+        busy_wait_us(50);
+        bool with_up = gpio_get(WIFI_ACK);
+        gpio_set_pulls(WIFI_ACK, false, true);
+        busy_wait_us(50);
+        bool with_down = gpio_get(WIFI_ACK);
+        gpio_set_pulls(WIFI_ACK, false, false);
+
+        if (max >= 16) {
+            const char *v = bare ? "1" : "0";
+            out[0] = 'a'; out[1] = 'c'; out[2] = 'k'; out[3] = '=';
+            out[4] = v[0];
+            out[5] = ' '; out[6] = 'u'; out[7] = 'p'; out[8] = '=';
+            out[9] = with_up ? '1' : '0';
+            out[10] = ' '; out[11] = 'd'; out[12] = 'n'; out[13] = '=';
+            out[14] = with_down ? '1' : '0';
+            out[15] = 0;
+        }
+        return -1;
+    }
     xfer(START_CMD);
     xfer(GET_FW_VERSION_CMD & ~REPLY_FLAG);
     xfer(0);                                     // no parameters
     xfer(END_CMD);
     deselect_chip();
 
-    if (!select_chip()) { myrtos_print("WiFi: no reply\n"); return false; }
+    if (!select_chip()) { return -2; }               // took it, never came back
 
     // The chip pads with 0xFF until it has something; read past that to the
     // start byte rather than assuming the first byte is meaningful.
@@ -95,14 +123,13 @@ bool myrtos_wifi_firmware(char *out, uint32_t max) {
         b = xfer(0xff);
         if (b == START_CMD || b == ERR_CMD) break;
     }
-    if (b != START_CMD) { deselect_chip(); myrtos_print("WiFi: no start byte\n"); return false; }
+    if (b != START_CMD) { deselect_chip(); return -3; }   // answered, but not 0xE0
 
     uint8_t cmd = xfer(0xff);
     uint8_t nparam = xfer(0xff);
     if (cmd != (GET_FW_VERSION_CMD | REPLY_FLAG) || nparam != 1) {
         deselect_chip();
-        myrtos_print("WiFi: unexpected reply\n");
-        return false;
+        return -4;                                   // wrong command or count
     }
 
     uint32_t len = xfer(0xff);
@@ -114,15 +141,12 @@ bool myrtos_wifi_firmware(char *out, uint32_t max) {
     out[i < max ? i : max - 1] = 0;
     xfer(0xff);                                  // END_CMD
     deselect_chip();
-    return true;
+    return 0;
 }
 
+// Boot only sets the pins up. Asking the chip anything is what the `wifi`
+// command is for: a line printed among thirty others at startup has scrolled
+// past before anyone can read it, and this is a line worth reading.
 void myrtos_wifi_probe(void) {
-    char version[16];
     myrtos_wifi_init();
-    if (myrtos_wifi_firmware(version, sizeof(version))) {
-        myrtos_print("WiFi: ESP32-C6 firmware ");
-        myrtos_print(version);
-        myrtos_print("\n");
-    }
 }

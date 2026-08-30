@@ -153,6 +153,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_RMDIR    33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
 #define SYS_MOUNT    34u   // -> a0 = 0 ok, -1 no card
 #define SYS_REPLYTO  35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
+#define SYS_WIFIVER  36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -382,6 +383,13 @@ static inline int32_t myrtos_rmdir(const char *path) {
 
 // Take the card again from the beginning. Mounting happens once at startup, so
 // a card put in or swapped while the board is running needs this.
+// Ask the ESP32-C6 what firmware it is running. A probe interface rather than a
+// lasting one: when the driver can do more than one thing it becomes a device
+// with a name, like the keyboard and the screen, and this goes away.
+static inline int32_t myrtos_wifi_version(char *buf, uint32_t len) {
+    return myrtos_syscall(SYS_WIFIVER, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
 static inline int32_t myrtos_mount(void) {
     return myrtos_syscall(SYS_MOUNT, 0, 0, 0);
 }
