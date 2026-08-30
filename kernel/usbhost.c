@@ -23,6 +23,7 @@ void myrtos_print_u32(uint32_t v);
 // hub behind the two host sockets is one of them, so nothing enumerates while
 // it is low -- which looks exactly like a host that is not working.
 #define PERIPH_RESET     22
+#define ESP_BOOT          0   // to the ESP32-C6's GPIO9, and the BOOT button
 
 static uint8_t keys[32];
 static uint32_t head, tail;
@@ -35,8 +36,24 @@ uint32_t tusb_time_millis_api(void) {
 }
 
 void myrtos_usbhost_init(void) {
+    // GP22 releases the USB hub, the audio DAC and the ESP32-C6 together, so the
+    // ESP's reset happens here whether or not anybody wants WiFi.
+    //
+    // And it has to happen with GP0 high. The ESP samples its GPIO9 as it leaves
+    // reset -- low means the serial bootloader, high means run the firmware --
+    // and that pin is wired to GP0 on this board. An RP2350 pin comes out of
+    // reset as an input with its PULL-DOWN on, so GP0 was holding the ESP in
+    // bootloader mode every time. The chip had power and drove its busy line,
+    // which is what made it look present but permanently not ready.
+    gpio_init(ESP_BOOT);
+    gpio_set_dir(ESP_BOOT, GPIO_IN);
+    gpio_set_pulls(ESP_BOOT, true, false);   // pull up, and leave the button alone
+    sleep_ms(1);
+
     gpio_init(PERIPH_RESET);
     gpio_set_dir(PERIPH_RESET, GPIO_OUT);
+    gpio_put(PERIPH_RESET, 0);            // a real pulse, not just a release
+    sleep_ms(10);
     gpio_put(PERIPH_RESET, 1);            // let the on-board peripherals go
 
     gpio_init(USB_HOST_POWER);
