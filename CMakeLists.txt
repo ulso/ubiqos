@@ -87,7 +87,15 @@ pico_add_extra_outputs(os_kernel)
 # any other program. What it may not do is keep state in a file-scope variable,
 # static or not -- one copy of the code is shared by every process running it,
 # so the variable would be shared too. See docs/writing-modules.md.
+# A trailing RT marks the module real-time: its code and its process memory
+# stay in SRAM instead of going to PSRAM. Anything whose timing matters wants
+# it -- the shell, and whatever reads a device that will not wait.
 function(myrtos_add_module name source)
+    set(rt_flag "")
+    if("RT" IN_LIST ARGN)
+        set(rt_flag "--rt")
+        list(REMOVE_ITEM ARGN "RT")
+    endif()
     add_executable(${name}_app ${source} ${ARGN})
     target_compile_options(${name}_app PRIVATE
         -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
@@ -126,9 +134,10 @@ function(myrtos_add_module name source)
                 $<TARGET_FILE:${name}_app>
                 ${CMAKE_NM}
                 module_main
+                ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-        COMMENT "Bygger modulen ${name}.mod")
+        COMMENT "Building module ${name}.mod")
 endfunction()
 
 # A data module has no entry point: it IS its bytes.
@@ -160,7 +169,7 @@ function(myrtos_add_data_module name source)
                 "${name}" --data
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-        COMMENT "Bygger databmodulen ${name}.mod")
+        COMMENT "Building data module ${name}.mod")
 endfunction()
 
 myrtos_add_module(counter modules/counter/counter.c)
@@ -169,7 +178,7 @@ myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(echo modules/echo/echo.c)
 myrtos_add_module(usbecho modules/usbecho/usbecho.c)
-myrtos_add_module(sh modules/sh/sh.c)
+myrtos_add_module(sh modules/sh/sh.c RT)
 myrtos_add_module(ls modules/ls/ls.c)
 myrtos_add_module(cat modules/cat/cat.c)
 myrtos_add_module(rm modules/rm/rm.c)
@@ -178,9 +187,10 @@ myrtos_add_module(write modules/write/write.c)
 myrtos_add_module(fill modules/fill/fill.c)
 myrtos_add_module(sleep modules/sleep/sleep.c)
 myrtos_add_module(spin modules/spin/spin.c)
+myrtos_add_module(spinrt modules/spin/spin.c RT)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
-myrtos_add_module(keys modules/keys/keys.c)
+myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
 myrtos_add_module(bootsel modules/bootsel/bootsel.c)
@@ -204,6 +214,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/fill.mod
             ${CMAKE_CURRENT_BINARY_DIR}/sleep.mod
             ${CMAKE_CURRENT_BINARY_DIR}/spin.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/spinrt.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nice.mod
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod

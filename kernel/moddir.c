@@ -71,7 +71,8 @@ static bool supersedes(const myrtos_module_header_t *fresh, const char *name) {
     myrtos_print_u32(old->header->revision);
     myrtos_print("\n");
 
-    if (old->owned) myrtos_tlsf_free(myrtos_mem_pool, old->owned);
+    extern tlsf_pool_t myrtos_pool_of_address(void *p);
+    if (old->owned) myrtos_tlsf_free(myrtos_pool_of_address(old->owned), old->owned);
     *old = modules[--module_count];       // close the gap
     return true;
 }
@@ -100,13 +101,17 @@ bool myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name) 
     if (!verify_myrtos_header((myrtos_module_header_t*)src)) return false;
     if (!supersedes((const myrtos_module_header_t*)src, name)) return false;
 
-    void *space = myrtos_tlsf_malloc(myrtos_mem_pool, len);
+    // A real-time module is copied into SRAM; the rest go to PSRAM, where the
+    // code still runs but through the XIP cache.
+    extern tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
+    tlsf_pool_t pool = myrtos_pool_for((const myrtos_module_header_t*)src);
+    void *space = myrtos_tlsf_malloc(pool, len);
     if (!space) { myrtos_print("  no heap for module\n"); return false; }
     uint8_t *d = (uint8_t*)space;
     for (uint32_t i = 0; i < len; i++) d[i] = src[i];
 
     myrtos_module_entry_t *e = alloc_entry();
-    if (!e) { myrtos_tlsf_free(myrtos_mem_pool, space); return false; }
+    if (!e) { myrtos_tlsf_free(pool, space); return false; }
     e->header = (const myrtos_module_header_t*)space;
     e->links = 0;
     e->owned = space;

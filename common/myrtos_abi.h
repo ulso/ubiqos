@@ -26,6 +26,12 @@
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE 0x0509000B
 
+// Attributes, in the high byte of attr_rev. The field already existed and held
+// one bit; this is what an attributes byte is for, and OS-9 used its the same
+// way, so nothing about the header's shape had to change.
+#define MYRTOS_ATTR_REENTRANT 0x01
+#define MYRTOS_ATTR_REALTIME  0x02   // keep this module's memory in SRAM
+
 // Type, in the high byte of type_lang.
 #define MYRTOS_TYPE_PROGRAM 1
 #define MYRTOS_TYPE_DRIVER  2

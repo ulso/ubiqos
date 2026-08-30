@@ -343,6 +343,34 @@ inside a function, and three levels of nesting with CRTP are all clean. Only the
 nested class with a virtual function and the one with a plain `static` member
 fail, and they fail for the reasons above rather than for being nested.
 
+## Real-time modules
+
+A module's process memory -- its data, stack and thread-local block -- comes
+from PSRAM by default, because SRAM is the scarce one and PSRAM is eight
+megabytes. Mark a module `RT` in `myrtos_add_module` and it gets SRAM instead:
+
+```cmake
+myrtos_add_module(sh modules/sh/sh.c RT)
+```
+
+It sets a bit in the attributes byte of the header, which already existed and
+held only one. The kernel honours it when allocating the process, and when
+copying a module from the card.
+
+Measured before assuming, with the same source built both ways, four runs each:
+
+    stack in SRAM    3157114  3157098  3157146  3157140
+    stack in PSRAM   3157108  3157141  3157132  3157086
+
+No difference at all. The XIP cache absorbs it, because a stack is a small
+working set touched over and over -- the trap frame is 144 bytes at the same
+addresses every system call.
+
+That is not a general claim about PSRAM. A framebuffer streamed by DMA is the
+opposite case: large, and every byte touched once, which is what a cache cannot
+help with. Mark things RT when their timing matters, and measure the ones that
+stream.
+
 ## Names are eight characters
 
 The module directory holds names in the 8.3 form a FAT card gives them, so a

@@ -61,6 +61,9 @@ typedef struct alloc_hdr {
 
 #define ALLOC_MAGIC 0x4d454d21u   // "MEM!"
 
+tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
+tlsf_pool_t myrtos_pool_of_address(void *p);
+
 // The second pool. SRAM holds what has timing constraints -- module code runs
 // from there, and so do stacks -- while PSRAM takes what is merely large.
 // Eight megabytes against seventy kilobytes of headroom is not a close call for
@@ -223,7 +226,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
 
     // One contiguous area: data at the bottom, stack downwards from the top.
     uint32_t bytes = module_ptr->mem_size;
-    void *mem = myrtos_tlsf_malloc(myrtos_mem_pool, bytes);
+    void *mem = myrtos_tlsf_malloc(myrtos_pool_for(module_ptr), bytes);
     if (!mem) {
         myrtos_print("Error: failed to allocate process memory.\n");
         return -1;
@@ -535,12 +538,22 @@ void *myrtos_mem_alloc_bulk(uint32_t size) {
     return p ? p : alloc_from(myrtos_mem_pool, size);
 }
 
+// Where a module's memory comes from. A real-time module keeps everything in
+// SRAM: its stack is touched by every call, and its code -- when it was copied
+// from the card rather than left in flash -- executes from wherever it landed.
+// Anything else can live in PSRAM, which is plentiful and slow.
+tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m) {
+    bool rt = m && ((m->attr_rev >> 8) & MYRTOS_ATTR_REALTIME);
+    return (rt || !myrtos_bulk_pool) ? myrtos_mem_pool : myrtos_bulk_pool;
+}
+
 // Which pool a block came from is decided by where it is, so the header does
 // not have to carry it.
-static tlsf_pool_t pool_of(void *p) {
+tlsf_pool_t myrtos_pool_of_address(void *p) {
     return ((uintptr_t)p >= MYRTOS_PSRAM_BASE && myrtos_bulk_pool)
          ? myrtos_bulk_pool : myrtos_mem_pool;
 }
+static tlsf_pool_t pool_of(void *p) { return myrtos_pool_of_address(p); }
 
 // Refuses anything this process does not own. Without the check a module could
 // free the kernel's own module copies by passing any pointer it liked.
@@ -647,7 +660,8 @@ void myrtos_process_exit(void) {
                 myrtos_tlsf_free(pool_of(h), h); h = next; }
     process_table[current_pid].allocs = NULL;
 
-    myrtos_tlsf_free(myrtos_mem_pool, process_table[current_pid].mem_base);
+    myrtos_tlsf_free(pool_of(process_table[current_pid].mem_base),
+                     process_table[current_pid].mem_base);
     process_table[current_pid].state = PROC_STATE_FREE;
     process_table[current_pid].mem_base = NULL;
 
