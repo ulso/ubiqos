@@ -197,6 +197,28 @@ typedef struct {
 // address space, which is also where our resident module region ends.
 #define MYRTOS_PSRAM_BASE 0x11000000u
 
+// Where a single-instance module is linked and loaded.
+//
+// Position independence exists so that one copy of a module's code can serve
+// several processes, each at whatever address it is given. A module that may
+// only run once has no such problem: it can be given an address and linked at
+// it. That is the whole trade -- give up being relocatable, and absolute
+// addresses and writable data both simply work.
+//
+// The last half megabyte of an eight megabyte PSRAM, kept back from the bulk
+// pool. A constant rather than something worked out at run time, because the
+// module has to be LINKED at it -- which is the entire point.
+#define MYRTOS_SINGLE_RESERVE  (512u * 1024u)
+#define MYRTOS_SINGLE_BASE     0x11780000u
+
+// Where such a module's CODE is linked. A .mod file is the header followed by
+// the payload, and the whole file is copied to the base -- so the payload lands
+// one header further on, and that is the address the linker must be told. Get
+// this wrong and every absolute address is off by the size of the header, which
+// shows up as a misaligned store somewhere unrelated. make_module checks it.
+#define MYRTOS_SINGLE_HEADER   44u
+#define MYRTOS_SINGLE_TEXT     (MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_HEADER)
+
 // The call itself. It is identical in every module, so it belongs here.
 static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c) {
     register uint32_t r_id __asm__("a7") = id;

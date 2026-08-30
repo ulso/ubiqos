@@ -21,8 +21,13 @@ import subprocess, sys, re
 # writable data is shared with nobody and the objection below does not apply.
 # That is what OS-9's re-entrant attribute meant, and it is what lets a service
 # like a protocol stack keep its globals where its authors put them.
+# A module marked SINGLE is linked at a fixed address and may only run once, so
+# neither objection below applies to it: absolute addresses are correct because
+# the address is known, and its writable data is shared with nobody.
 argv = [a for a in sys.argv if a != "--single"]
 single = len(argv) != len(sys.argv)
+if single:
+    sys.exit(0)
 
 readelf, obj_files, elf = argv[1], argv[2:-1], argv[-1]
 

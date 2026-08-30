@@ -255,6 +255,25 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         }
     }
 
+    // A single-instance module is linked at MYRTOS_SINGLE_BASE and has to run
+    // from there: its absolute addresses assume it, and its writable data only
+    // works because that address is in RAM. Copy the image there and jump into
+    // the copy. Everything else -- the directory entry, the unlink at exit --
+    // still refers to the module where it lives.
+    const myrtos_module_header_t *run = module_ptr;
+    if (module_ptr && !((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT)) {
+        if (module_ptr->module_size > MYRTOS_SINGLE_RESERVE) {
+            myrtos_print("  refused: single-instance module does not fit its region\n");
+            return -1;
+        }
+        if ((uintptr_t)module_ptr != MYRTOS_SINGLE_BASE) {
+            uint8_t *dst = (uint8_t*)MYRTOS_SINGLE_BASE;
+            const uint8_t *src = (const uint8_t*)module_ptr;
+            for (uint32_t i = 0; i < module_ptr->module_size; i++) dst[i] = src[i];
+            run = (const myrtos_module_header_t*)MYRTOS_SINGLE_BASE;
+        }
+    }
+
     int32_t slot = -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {      // 0 is the kernel
         if (process_table[i].state == PROC_STATE_FREE) { slot = i; break; }
@@ -344,7 +363,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // When the scheduler picks the process, the vector restores these values
     // and mret jumps to mepc. That is how a process starts: as though it had
     // just been interrupted immediately before its first instruction.
-    frame->mepc = (uint32_t)((uintptr_t)module_ptr + module_ptr->exec_offset);
+    frame->mepc = (uint32_t)((uintptr_t)run + run->exec_offset);
     frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
     frame->a0   = (uint32_t)argc;             // main(int argc, ...)
     frame->a1   = (uint32_t)(uintptr_t)argv;  //          ..., char **argv)

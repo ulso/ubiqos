@@ -6,6 +6,19 @@ import struct
 # Let's use 0x0509000B since it actively prevents CPU execution crashes via Custom-0!
 MYRTOS_SYNC = 0x0509000B
 
+def elf_load_base(elf_path, nm_tool):
+    """The lowest loaded address, which is where objcopy starts writing."""
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-lW", elf_path],
+                         capture_output=True, text=True).stdout
+    bases = [int(m.group(1), 16)
+             for m in re.finditer(r"^\s*LOAD\s+\S+\s+0x(\S+)", out, re.M)]
+    if not bases:
+        raise SystemExit(f"no LOAD segment in {elf_path}")
+    return min(bases)
+
+
 def find_entry_offset(elf_path, nm_tool, symbol):
     """Where the module's entry point sits in the raw binary.
 
@@ -154,6 +167,20 @@ def create_module(input_bin_path, output_mod_path, module_name,
         revision, 0, header_crc
     )
     assert len(header_bytes) == header_size, "header is not %d bytes" % header_size
+
+    # A single-instance module is linked at the address it will be loaded at, and
+    # the whole file is copied there -- so the code must be linked one header
+    # further on than the base. Getting it wrong shifts every absolute address by
+    # the size of the header, which surfaces as a misaligned store somewhere with
+    # nothing to do with the cause. Check it here, where both numbers are known.
+    if single:
+        want = 0x11780000 + header_size
+        load_base = elf_load_base(elf_path, nm_tool)
+        if load_base != want:
+            raise SystemExit(
+                "single-instance module is linked at 0x%08x, expected 0x%08x "
+                "(MYRTOS_SINGLE_BASE + %d-byte header) -- fix -Wl,-Ttext"
+                % (load_base, want, header_size))
 
     with open(output_mod_path, "wb") as f:
         f.write(header_bytes)

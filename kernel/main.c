@@ -100,7 +100,15 @@ static void myrtos_bulk_pool_init(void) {
         return;
     }
     psram_bytes = (uint32_t)psram_get_size();
-    myrtos_bulk_pool = myrtos_tlsf_create((void*)MYRTOS_PSRAM_BASE, psram_bytes);
+    // The half megabyte at MYRTOS_SINGLE_BASE is kept back: it is where a
+    // single-instance module is linked and loaded, and the allocator must not
+    // hand it out. On a smaller PSRAM than the one this was sized for the region
+    // is simply not there, and such a module will be refused rather than
+    // scribbled over the pool.
+    uint32_t pool_bytes = psram_bytes;
+    if (MYRTOS_PSRAM_BASE + psram_bytes >= MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_RESERVE)
+        pool_bytes = MYRTOS_SINGLE_BASE - MYRTOS_PSRAM_BASE;
+    myrtos_bulk_pool = myrtos_tlsf_create((void*)MYRTOS_PSRAM_BASE, pool_bytes);
     myrtos_print("PSRAM: ");
     myrtos_print_u32(psram_bytes / 1024);
     myrtos_print(" kB at 0x");
@@ -259,6 +267,11 @@ void myrtos_kernel_main(void) {
     myrtos_console_start_server();
     extern void myrtos_fs_start_server(void);
     myrtos_fs_start_server();
+
+    // After the console and the servers, so that a chip which is not there says
+    // so on a screen that exists rather than taking the boot down with it.
+    extern void myrtos_wifi_probe(void);
+    myrtos_wifi_probe();
 
     myrtos_flash_scan();
 
