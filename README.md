@@ -14,8 +14,8 @@ RAM-only image gives the boot ROM nothing to switch on.
 ## What exists
 
 - Pre-emptive scheduling on the machine timer, 1 ms quantum, up to 32 processes
-- A 320 kB TLSF heap that splits and coalesces blocks, which modules can ask
-  from; the kernel records the owner, so death returns what death takes
+- A 64 kB TLSF heap in SRAM for what has timing constraints, which modules can
+  ask from; the kernel records the owner, so death returns what death takes
 - A second pool over the board's 8 MB of PSRAM for what is merely large
 - Modules loaded from FAT32 on the SD card, or found resident in flash
 - A module directory with link counts and revisions — a name exists once, and

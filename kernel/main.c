@@ -74,6 +74,7 @@ void myrtos_print_u32(uint32_t v) {
 
 // How much PSRAM the board turned out to have. Zero on a board without any,
 // and the second pool is simply not created.
+extern tlsf_pool_t myrtos_bulk_pool;
 static uint32_t psram_bytes;
 uint32_t myrtos_psram_bytes(void) { return psram_bytes; }
 
@@ -82,7 +83,6 @@ uint32_t myrtos_psram_bytes(void) { return psram_bytes; }
 // framebuffer or a file buffer has no business eating the seventy kilobytes
 // that were left.
 static void myrtos_bulk_pool_init(void) {
-    extern tlsf_pool_t myrtos_bulk_pool;
     if (!psram_is_available()) {
         myrtos_print("PSRAM: none found; bulk allocations fall back to SRAM\n");
         return;
@@ -104,7 +104,12 @@ static void myrtos_bulk_pool_init(void) {
 //
 // Once PSRAM is set up on the QMI's second chip select it belongs as a SECOND
 // pool for bulk data -- not as a replacement for this one.
-#define MYRTOS_HEAP_SIZE (320 * 1024)
+// The SRAM heap only holds what has timing constraints now: real-time modules
+// and their processes, and the kernel's own threads. Everything else was given
+// PSRAM, so 320 kB became a reservation nobody was drawing on -- and SRAM is
+// what a framebuffer will want. Sixteen kilobytes are in use as this is
+// written, so 64 leaves room to be wrong by a factor of four.
+#define MYRTOS_HEAP_SIZE (64 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
@@ -233,12 +238,20 @@ void myrtos_kernel_main(void) {
 
     myrtos_flash_scan();
 
-    static uint8_t staging[32 * 1024];
+    // The buffer a module is read into on its way from the card. It is touched
+    // once per module and never again, which makes it exactly the wrong thing
+    // to keep 32 kB of SRAM for. PSRAM if there is any, and it is handed back
+    // as soon as the card has been read.
+    uint8_t *staging = myrtos_bulk_pool
+        ? myrtos_tlsf_malloc(myrtos_bulk_pool, 32 * 1024)
+        : myrtos_tlsf_malloc(myrtos_mem_pool, 32 * 1024);
+    const uint32_t staging_size = 32 * 1024;
+    if (!staging) myrtos_print("No buffer to read modules into; card ignored.\n");
 
-    if (myrtos_sd_init() && myrtos_fat_mount()) {
+    if (staging && myrtos_sd_init() && myrtos_fat_mount()) {
         char name[12];
         for (uint32_t i = 0; myrtos_fat_find_nth("MOD", i, name); i++) {
-            int32_t n = myrtos_fat_read_file(name, staging, sizeof(staging));
+            int32_t n = myrtos_fat_read_file(name, staging, staging_size);
             if (n <= 0) continue;
             if (myrtos_moddir_add_copy(staging, (uint32_t)n, name)) {
                 myrtos_print("Registered ");
@@ -250,6 +263,10 @@ void myrtos_kernel_main(void) {
         }
     } else {
         myrtos_print("SD: unavailable.\n");
+    }
+
+    if (staging) {
+        myrtos_tlsf_free(myrtos_bulk_pool ? myrtos_bulk_pool : myrtos_mem_pool, staging);
     }
 
     // Descriptors first: the devices must exist before any process tries to
