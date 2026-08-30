@@ -1,6 +1,6 @@
 #include "../../common/myrtos_abi.h"
 
-// ls -- lists the root directory of the SD card.
+// ls -- lists a directory on the SD card, the root when given no path.
 //
 // The kernel hands back raw 8.3 names, eleven characters with no dot and padded
 // with spaces. Presenting them as "sh.mod" is this utility's business: the
@@ -24,15 +24,26 @@ static void pretty(const char *raw, char *out) {
     out[n] = 0;
 }
 
-void module_main(void) {
+void module_main(int argc, char **argv) {
+    const char *path = (argc > 1) ? argv[1] : "";
     myrtos_line_t line;
     char raw[12], name[14];
     uint32_t size;
     uint32_t files = 0, bytes = 0;
 
     for (uint32_t i = 0; ; i++) {
-        int32_t attr = myrtos_fs_dir(i, raw, &size);
-        if (attr < 0) break;
+        int32_t attr = myrtos_fs_dir_at(path, i, raw, &size);
+        if (attr < 0) {
+            if (i == 0) {
+                myrtos_line_reset(&line);
+                myrtos_line_str(&line, "ls: no such directory: ");
+                myrtos_line_str(&line, path[0] ? path : "/");
+                myrtos_line_str(&line, "\n");
+                myrtos_line_flush(MYRTOS_STDOUT, &line);
+                return;
+            }
+            break;
+        }
 
         pretty(raw, name);
         myrtos_line_reset(&line);

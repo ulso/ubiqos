@@ -167,34 +167,26 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         case SYS_ARGS:
             frame->a0 = myrtos_process_get_args((char*)(uintptr_t)frame->a0, frame->a1);
             break;
-        case SYS_FSDIR:
-            frame->a0 = (uint32_t)myrtos_fat_stat_nth(frame->a0,
-                                                      (char*)(uintptr_t)frame->a1,
-                                                      (uint32_t*)(uintptr_t)frame->a2);
+        case SYS_FSDIR: {
+            const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)(uintptr_t)frame->a0;
+            frame->a0 = (uint32_t)myrtos_fat_stat_nth(d->path, d->index, d->name, d->size);
+            break;
+        }
+        case SYS_MKDIR:
+            frame->a0 = myrtos_fat_mkdir((const char*)(uintptr_t)frame->a0) ? 0u : (uint32_t)-1;
             break;
         case SYS_FSREAD: {
-            // The name arrives as the user typed it; padding it into 8.3 form is
-            // the filesystem's job, not every utility's.
             const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)(uintptr_t)frame->a0;
-            char name_83[12];
-            if (!myrtos_fat_name_to_83(r->name, name_83)) { frame->a0 = (uint32_t)-1; break; }
-            frame->a0 = (uint32_t)myrtos_fat_read_at(name_83, r->offset, r->buf, r->len);
+            frame->a0 = (uint32_t)myrtos_fat_read_at(r->name, r->offset, r->buf, r->len);
             break;
         }
         case SYS_FSWRITE: {
             const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)(uintptr_t)frame->a0;
-            char name_83[12];
-            if (!myrtos_fat_name_to_83(r->name, name_83)) { frame->a0 = (uint32_t)-1; break; }
-            frame->a0 = (uint32_t)myrtos_fat_write_at(name_83, r->offset, r->buf, r->len);
+            frame->a0 = (uint32_t)myrtos_fat_write_at(r->name, r->offset, r->buf, r->len);
             break;
         }
         case SYS_FSREMOVE: {
-            char name_83[12];
-            if (!myrtos_fat_name_to_83((const char*)(uintptr_t)frame->a0, name_83)) {
-                frame->a0 = (uint32_t)-1;
-                break;
-            }
-            frame->a0 = myrtos_fat_remove(name_83) ? 0u : (uint32_t)-1;
+            frame->a0 = myrtos_fat_remove((const char*)(uintptr_t)frame->a0) ? 0u : (uint32_t)-1;
             break;
         }
         case SYS_CLOSE:

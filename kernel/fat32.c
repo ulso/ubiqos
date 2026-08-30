@@ -92,10 +92,11 @@ static bool name_matches(const uint8_t *entry, const char *name_83) {
     return true;
 }
 
-// Look a name up in the root directory. Shared by every read path, so the
-// walk exists once rather than once per caller.
-static bool find_entry(const char *name_83, uint32_t *cluster_out, uint32_t *size_out) {
-    uint32_t dir_cluster = root_cluster;
+// Look a name up in one directory. Shared by every read path, so the walk
+// exists once rather than once per caller. The directory is a parameter now:
+// the root is just the one whose cluster the boot sector names.
+static bool find_entry(uint32_t dir_cluster, const char *name_83,
+                       uint32_t *cluster_out, uint32_t *size_out, uint8_t *attr_out) {
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
@@ -107,6 +108,7 @@ static bool find_entry(const char *name_83, uint32_t *cluster_out, uint32_t *siz
                 if (name_matches(&sector[e], name_83)) {
                     *cluster_out = ((uint32_t)rd16(&sector[e + 20]) << 16) | rd16(&sector[e + 26]);
                     *size_out = rd32(&sector[e + 28]);
+                    if (attr_out) *attr_out = sector[e + 11];
                     return true;
                 }
             }
@@ -116,11 +118,91 @@ static bool find_entry(const char *name_83, uint32_t *cluster_out, uint32_t *siz
     return false;
 }
 
+// --- PATHS ----------------------------------------------------------------
+// A path is resolved one component at a time, each lookup starting where the
+// last one ended. "." stays put and ".." follows the entry FAT keeps for it --
+// which holds zero in a directory whose parent is the root, since the root has
+// no cluster number of its own in the eyes of a subdirectory.
+
+static const char *skip_slashes(const char *p) {
+    while (*p == '/') p++;
+    return p;
+}
+
+// Copy one component out of the path and convert it to 8.3 form. Returns where
+// the path continues, or 0 when the component is unusable.
+//
+// "." and ".." are spelled out here rather than left to the name converter,
+// which looks for a stem before the dot, finds none, and calls the whole thing
+// unusable. FAT stores them as a dot and ten spaces, and two dots and nine.
+static const char *component_83(const char *p, char *out_11) {
+    char part[16];
+    uint32_t n = 0;
+    while (*p && *p != '/' && n < sizeof(part) - 1) part[n++] = *p++;
+    part[n] = 0;
+    while (*p && *p != '/') p++;              // a longer component is truncated
+
+    if (part[0] == '.' && (part[1] == 0 || (part[1] == '.' && part[2] == 0))) {
+        for (int i = 0; i < 11; i++) out_11[i] = ' ';
+        out_11[0] = '.';
+        if (part[1] == '.') out_11[1] = '.';
+        out_11[11] = 0;
+        return p;
+    }
+    if (!myrtos_fat_name_to_83(part, out_11)) return 0;
+    return p;
+}
+
+// Resolve a path that names a directory. An empty path, or one that is only
+// slashes, is the root.
+static bool resolve_dir(const char *path, uint32_t *dir_out) {
+    uint32_t dir = root_cluster;
+    const char *p = skip_slashes(path ? path : "");
+    while (*p) {
+        char name[12];
+        const char *next = component_83(p, name);
+        if (!next) return false;
+        if (name[0] == '.' && name[1] == ' ') {
+            /* "." is where we already are */
+        } else if (name[0] == '.' && name[1] == '.' && name[2] == ' ') {
+            // The root has no ".." entry of its own, so failing to find one
+            // means we are already at the top and stay there.
+            uint32_t cl = 0, sz = 0; uint8_t attr = 0;
+            if (find_entry(dir, name, &cl, &sz, &attr))
+                dir = cl ? cl : root_cluster;            // FAT writes zero for the root
+        } else {
+            uint32_t cl = 0, sz = 0; uint8_t attr = 0;
+            if (!find_entry(dir, name, &cl, &sz, &attr)) return false;
+            if (!(attr & 0x10)) return false;            // a file cannot be walked through
+            dir = cl;
+        }
+        p = skip_slashes(next);
+    }
+    *dir_out = dir;
+    return true;
+}
+
+// Resolve everything but the last component, which is handed back in 8.3 form.
+// "/docs/readme.txt" gives the cluster of docs and "README  TXT".
+static bool resolve_parent(const char *path, uint32_t *dir_out, char *leaf_83) {
+    const char *p = path ? path : "";
+    const char *last = p, *scan = p;
+    while (*scan) { if (*scan == '/') last = scan + 1; scan++; }
+
+    char parent[80];
+    uint32_t n = 0;
+    while (p + n < last && n < sizeof(parent) - 1) { parent[n] = p[n]; n++; }
+    parent[n] = 0;
+
+    if (!resolve_dir(parent, dir_out)) return false;
+    return myrtos_fat_name_to_83(last, leaf_83);
+}
+
 int32_t myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len) {
     if (!mounted) return -1;
 
     uint32_t file_cluster = 0, file_size = 0;
-    if (!find_entry(name_83, &file_cluster, &file_size)) return -1;
+    if (!find_entry(root_cluster, name_83, &file_cluster, &file_size, 0)) return -1;
 
     if (!file_cluster) return -1;
     if (file_size > max_len) return -2;
@@ -175,11 +257,15 @@ bool myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
 // asks for one piece at a time. The cluster chain is walked from the start on
 // every call, which is quadratic over a large file -- acceptable while files are
 // small, and the place to put a cursor if that stops being true.
-int32_t myrtos_fat_read_at(const char *name_83, uint32_t offset, uint8_t *buf, uint32_t len) {
+int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len) {
     if (!mounted) return -1;
 
-    uint32_t cluster = 0, file_size = 0;
-    if (!find_entry(name_83, &cluster, &file_size)) return -1;
+    uint32_t dir = 0; char name_83[12];
+    if (!resolve_parent(path, &dir, name_83)) return -1;
+
+    uint32_t cluster = 0, file_size = 0; uint8_t attr = 0;
+    if (!find_entry(dir, name_83, &cluster, &file_size, &attr)) return -1;
+    if (attr & 0x10) return -1;                          // a directory is not readable
     if (offset >= file_size) return 0;                  // end of file
     if (len > file_size - offset) len = file_size - offset;
 
@@ -206,11 +292,12 @@ int32_t myrtos_fat_read_at(const char *name_83, uint32_t offset, uint8_t *buf, u
 // nothing: ls should show what is on the card, not what the module loader cares
 // about. Hidden entries stay out, which is both what ls does without -a and
 // what keeps macOS AppleDouble files off the listing.
-int32_t myrtos_fat_stat_nth(uint32_t index, char *name_out, uint32_t *size_out) {
+int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
+                            char *name_out, uint32_t *size_out) {
     if (!mounted) return -1;
 
-    uint32_t seen = 0;
-    uint32_t dir_cluster = root_cluster;
+    uint32_t seen = 0, dir_cluster = 0;
+    if (!resolve_dir(dirpath, &dir_cluster)) return -1;
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
@@ -313,8 +400,8 @@ static void fat_free_chain(uint32_t cluster) {
 
 // Locate a directory entry and say where on the card it lives, so the size and
 // starting cluster can be written back after the data is on disk.
-static bool dir_locate(const char *name_83, uint32_t *lba_out, uint32_t *off_out) {
-    uint32_t dir_cluster = root_cluster;
+static bool dir_locate(uint32_t dir_cluster, const char *name_83,
+                       uint32_t *lba_out, uint32_t *off_out) {
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
             uint32_t lba = cluster_to_lba(dir_cluster) + s;
@@ -337,8 +424,8 @@ static bool dir_locate(const char *name_83, uint32_t *lba_out, uint32_t *off_out
 // A free slot: a deleted entry, or the never-used one that ends the directory.
 // The root directory is a cluster chain like any other, so it can be extended
 // when it fills up.
-static bool dir_alloc_slot(uint32_t *lba_out, uint32_t *off_out) {
-    uint32_t dir_cluster = root_cluster, last = root_cluster;
+static bool dir_alloc_slot(uint32_t dir_cluster, uint32_t *lba_out, uint32_t *off_out) {
+    uint32_t last = dir_cluster;
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
@@ -365,11 +452,14 @@ static bool dir_alloc_slot(uint32_t *lba_out, uint32_t *off_out) {
     return true;
 }
 
-bool myrtos_fat_remove(const char *name_83) {
+bool myrtos_fat_remove(const char *path) {
     if (!mounted) return false;
 
+    uint32_t dir = 0; char name_83[12];
+    if (!resolve_parent(path, &dir, name_83)) return false;
+
     uint32_t lba, off;
-    if (!dir_locate(name_83, &lba, &off)) return false;
+    if (!dir_locate(dir, name_83, &lba, &off)) return false;
     if (sector[off + 11] & 0x10) return false;          // a directory, not a file
 
     uint32_t cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
@@ -387,17 +477,20 @@ bool myrtos_fat_remove(const char *name_83) {
 // Write a slice of a file, creating it and extending it as needed. The mirror of
 // myrtos_fat_read_at, and for the same reason: a process has 4 kB for data and
 // stack, so a utility streams rather than holding a file in memory.
-int32_t myrtos_fat_write_at(const char *name_83, uint32_t offset,
+int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
                             const uint8_t *buf, uint32_t len) {
     if (!mounted || !len) return -1;
 
+    uint32_t dir = 0; char name_83[12];
+    if (!resolve_parent(path, &dir, name_83)) return -1;
+
     uint32_t lba, off, first_cluster, size;
-    if (dir_locate(name_83, &lba, &off)) {
+    if (dir_locate(dir, name_83, &lba, &off)) {
         if (sector[off + 11] & 0x10) return -1;         // a directory
         first_cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
         size = rd32(&sector[off + 28]);
     } else {
-        if (!dir_alloc_slot(&lba, &off)) return -1;
+        if (!dir_alloc_slot(dir, &lba, &off)) return -1;
         for (int i = 0; i < 11; i++) sector[off + i] = (uint8_t)name_83[i];
         for (int i = 11; i < 32; i++) sector[off + i] = 0;
         first_cluster = 0;
@@ -459,3 +552,48 @@ int32_t myrtos_fat_write_at(const char *name_83, uint32_t offset,
     return (int32_t)len;
 }
 
+
+// Make a directory. A new cluster is zeroed, given its own "." and "..", and
+// only then named in the parent -- so a half-made directory is never reachable.
+//
+// The ".." of a directory whose parent is the root holds zero, not the root's
+// cluster number. FAT has said so since the beginning, and resolve_dir turns it
+// back into root_cluster on the way up.
+bool myrtos_fat_mkdir(const char *path) {
+    if (!mounted) return false;
+
+    uint32_t dir = 0;
+    char name_83[12];
+    if (!resolve_parent(path, &dir, name_83)) return false;
+
+    uint32_t lba, off;
+    if (dir_locate(dir, name_83, &lba, &off)) return false;   // the name is taken
+
+    uint32_t fresh = fat_alloc();
+    if (!fresh) return false;
+
+    for (int i = 0; i < 512; i++) sector[i] = 0;
+    for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+        if (!myrtos_sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
+    }
+
+    for (int i = 0; i < 11; i++) { sector[i] = ' '; sector[32 + i] = ' '; }
+    sector[0] = '.';
+    sector[11] = 0x10;
+    wr16(&sector[20], (uint16_t)(fresh >> 16));
+    wr16(&sector[26], (uint16_t)(fresh & 0xffff));
+    sector[32] = '.'; sector[33] = '.';
+    sector[32 + 11] = 0x10;
+    uint32_t up = (dir == root_cluster) ? 0 : dir;
+    wr16(&sector[32 + 20], (uint16_t)(up >> 16));
+    wr16(&sector[32 + 26], (uint16_t)(up & 0xffff));
+    if (!myrtos_sd_write_block(cluster_to_lba(fresh), sector)) return false;
+
+    if (!dir_alloc_slot(dir, &lba, &off)) return false;
+    for (int i = 0; i < 11; i++) sector[off + i] = (uint8_t)name_83[i];
+    for (int i = 11; i < 32; i++) sector[off + i] = 0;
+    sector[off + 11] = 0x10;
+    wr16(&sector[off + 20], (uint16_t)(fresh >> 16));
+    wr16(&sector[off + 26], (uint16_t)(fresh & 0xffff));
+    return myrtos_sd_write_block(lba, sector);
+}

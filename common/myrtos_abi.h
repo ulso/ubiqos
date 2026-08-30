@@ -108,7 +108,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_READ      8u   // a0 = path, a1 = buf, a2 = length -> a0 = read, 0 = nothing
 #define SYS_EXEC      9u   // a0 = module name, a1 = argument string -> a0 = pid
 #define SYS_ARGS     10u   // a0 = buffer, a1 = length -> a0 = characters copied
-#define SYS_FSDIR    11u   // a0 = index, a1 = name(12), a2 = &size -> a0 = attr, -1 = end
+#define SYS_FSDIR    11u   // a0 = &myrtos_fs_dir_t -> a0 = attr byte, -1 = end
 #define SYS_FSREAD   12u   // a0 = &myrtos_fs_io_t -> a0 = bytes read, 0 = eof
 #define SYS_FSWRITE  13u   // a0 = &myrtos_fs_io_t -> a0 = bytes written
 #define SYS_FSREMOVE 14u   // a0 = name -> a0 = 0 ok, -1 failed
@@ -127,6 +127,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_RECEIVE  27u   // a0 = &myrtos_msg_t out -> a0 = sender pid
 #define SYS_REPLY    28u   // a0 = status -> a0 = 0, -1 if nobody is being served
 #define SYS_PIDOF    29u   // a0 = module name -> a0 = pid, -1 if not running
+#define SYS_MKDIR    30u   // a0 = path -> a0 = 0 ok, -1 failed
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -268,10 +269,31 @@ static inline int32_t myrtos_args(char *buf, uint32_t len) {
 
 #define MYRTOS_ATTR_DIRECTORY 0x10
 
-// Enumerate the root directory. index starts at zero; -1 means no more.
+// List one directory. Paths are absolute and slash-separated -- "/docs/notes" --
+// and an empty path or "/" is the root. Four things have to cross into the
+// kernel, one more than there are argument registers, so they travel as a
+// struct like reads and writes already do.
+typedef struct {
+    const char *path;
+    uint32_t    index;     // starts at zero
+    char       *name;      // twelve bytes out: eleven characters and a NUL
+    uint32_t   *size;      // out
+} myrtos_fs_dir_t;
+
+static inline int32_t myrtos_fs_dir_at(const char *path, uint32_t index,
+                                       char *name_out, uint32_t *size_out) {
+    myrtos_fs_dir_t d;
+    d.path = path; d.index = index; d.name = name_out; d.size = size_out;
+    return myrtos_syscall(SYS_FSDIR, (uint32_t)(uintptr_t)&d, 0, 0);
+}
+
+// The root, for callers that have no path to give.
 static inline int32_t myrtos_fs_dir(uint32_t index, char *name_out, uint32_t *size_out) {
-    return myrtos_syscall(SYS_FSDIR, index, (uint32_t)(uintptr_t)name_out,
-                          (uint32_t)(uintptr_t)size_out);
+    return myrtos_fs_dir_at("", index, name_out, size_out);
+}
+
+static inline int32_t myrtos_mkdir(const char *path) {
+    return myrtos_syscall(SYS_MKDIR, (uint32_t)(uintptr_t)path, 0, 0);
 }
 
 // Four arguments do not fit in a0-a2, so the request travels as a struct. Reads

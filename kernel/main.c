@@ -389,19 +389,15 @@ void myrtos_kernel_main(void) {
         myrtos_print("Nothing to run.\n");
     }
     myrtos_print("Kernel is now the idle process.\n");
-    extern volatile uint32_t myrtos_ticks;
-    uint32_t reported = 0;
     while (1) {
-        if (myrtos_ticks - reported >= 2000) {
-            reported = myrtos_ticks;
-            myrtos_print("[Kernel] idle, ticks: ");
-            myrtos_print_u32(myrtos_ticks);
-            myrtos_print("\n");
-        }
-        // USB is serviced by its own process now, not here. Doing it in the
-        // idle process meant that anything busy at a higher priority silenced
-        // the console in both directions -- received bytes reach TinyUSB's FIFO
-        // only when tud_task runs, so even input stopped.
+        // Nothing. USB is serviced by its own process, not here: doing it in the
+        // idle process meant anything busy at a higher priority silenced the
+        // console in both directions, since received bytes reach TinyUSB's FIFO
+        // only when tud_task runs.
+        //
+        // A tick count used to be printed here every two seconds. It was how the
+        // starving DMA chain was found, and once the display had a console on it
+        // the line was simply in the way.
     }
 }
 
