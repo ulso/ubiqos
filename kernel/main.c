@@ -348,6 +348,21 @@ void myrtos_kernel_main(void) {
             myrtos_print("'; nothing else runs until asked.\n");
             started = 1;
         }
+
+        // A second shell on the machine's own console, if the display and the
+        // keyboard are both there. Two shells, two sets of paths, one system:
+        // the serial line keeps working while the board also stands on its own
+        // with nothing attached but a monitor and a keyboard.
+        if (myrtos_io_has_device("con")) {
+            const myrtos_module_header_t *m2 = myrtos_moddir_link(shell);
+            int32_t pid2 = m2 ? myrtos_process_create(m2, "") : -1;
+            if (pid2 >= 0) {
+                myrtos_io_open_as("con", pid2, MYRTOS_STDIN);
+                myrtos_io_open_as("con", pid2, MYRTOS_STDOUT);
+                myrtos_io_open_as("con", pid2, MYRTOS_STDERR);
+                myrtos_print("Shell started on 'con' as well.\n");
+            }
+        }
     }
 
     // With no shell, start the first runnable module so the system still shows

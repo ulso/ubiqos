@@ -13,8 +13,8 @@
 // handles it, and carrying a configuration only the driver interprets. Adding a
 // device is then a matter of adding a file.
 
-#define MYRTOS_MAX_DRIVERS 4
-#define MYRTOS_MAX_DEVICES 4
+#define MYRTOS_MAX_DRIVERS 8
+#define MYRTOS_MAX_DEVICES 8
 #define MYRTOS_MAX_PATHS   8
 #define MYRTOS_PATH_NONE   (-1)
 
@@ -38,6 +38,7 @@ typedef struct {
 
 void    myrtos_io_init(void);
 uint32_t myrtos_io_device_count(void);
+bool myrtos_io_has_device(const char *name);
 
 // Register a device from a descriptor. The driver is looked up by name and is
 // handed the configuration tail; an unrecognised name rejects the descriptor.

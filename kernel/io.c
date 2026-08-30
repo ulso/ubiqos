@@ -108,6 +108,31 @@ static int32_t kbd_readable(void) {
     return (int32_t)myrtos_usbhost_available();
 }
 
+// The console: the display to write to, the keyboard to read from. Output never
+// blocks -- a screen is always ready -- so writable reports plenty of room.
+void myrtos_console_putc(char c);
+
+static int32_t con_open(void)  { return 0; }
+static int32_t con_close(void) { return 0; }
+static int32_t con_write(const uint8_t *buf, uint32_t len) {
+    for (uint32_t i = 0; i < len; i++) myrtos_console_putc((char)buf[i]);
+    return (int32_t)len;
+}
+static int32_t con_read(uint8_t *buf, uint32_t len) {
+    return myrtos_usbhost_read(buf, len);
+}
+static int32_t con_readable(void) {
+    return (int32_t)myrtos_usbhost_available();
+}
+static int32_t con_writable(void) { return 4096; }
+
+static const myrtos_driver_t driver_console = {
+    .module_name = "CONSOLE MOD",
+    .configure = 0,
+    .open = con_open, .write = con_write, .read = con_read, .close = con_close,
+    .readable = con_readable, .writable = con_writable
+};
+
 static const myrtos_driver_t driver_kbd = {
     .module_name = "USBKBD  MOD",
     .configure = 0,
@@ -165,6 +190,7 @@ void myrtos_io_init(void) {
     drivers[driver_count++] = &driver_uart;
     drivers[driver_count++] = &driver_usb;
     drivers[driver_count++] = &driver_kbd;
+    drivers[driver_count++] = &driver_console;
     device_count = 0;
     for (int p = 0; p < MYRTOS_MAX_PROCS; p++)
         for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
@@ -173,6 +199,15 @@ void myrtos_io_init(void) {
 }
 
 uint32_t myrtos_io_device_count(void) { return device_count; }
+
+// Whether a named device was registered. Asked before starting a process that
+// would have nowhere to talk: there is no way to kill another process, so the
+// question has to come first.
+bool myrtos_io_has_device(const char *name) {
+    for (uint32_t i = 0; i < device_count; i++)
+        if (str_eq(devices[i].name, name)) return true;
+    return false;
+}
 
 bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
     if (device_count >= MYRTOS_MAX_DEVICES) return false;

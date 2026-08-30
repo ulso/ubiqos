@@ -200,6 +200,7 @@ myrtos_add_module(bootsel modules/bootsel/bootsel.c)
 myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
 myrtos_add_data_module(kbddesc modules/kbd_desc/kbd_desc.c)
+myrtos_add_data_module(condesc modules/con_desc/con_desc.c)
 
 add_custom_target(modules ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
@@ -226,4 +227,5 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/bootsel.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod)
