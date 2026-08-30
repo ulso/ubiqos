@@ -29,7 +29,7 @@ void myrtos_print_hex(uint32_t v);
 #define H_ACTIVE        640
 #define V_FRONT_PORCH   10
 #define V_SYNC_WIDTH    2
-#define V_BACK_PORCH    33
+#define V_BACK_PORCH    52      // 33 by the standard; see the note on the table
 #define V_ACTIVE        480
 #define H_TOTAL (H_FRONT_PORCH + H_SYNC_WIDTH + H_BACK_PORCH + H_ACTIVE)
 #define V_TOTAL (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH + V_ACTIVE)
@@ -78,36 +78,72 @@ static uint32_t vactive_line[] = {
 // steady.
 uint8_t myrtos_framebuf[H_ACTIVE * V_ACTIVE] __attribute__((aligned(4)));
 
-static int ch_ping = -1, ch_pong = -1;
-static bool pong, cmdlist_posted;
-static uint v_scanline = V_FRONT_PORCH;
-volatile uint32_t myrtos_video_irqs;   // hur många rastelinjer som lämnat oss
+// --- HOW THE FRAME IS PLAYED ----------------------------------------------
+// Two channels, and no interrupt at all.
+//
+// The data channel writes into the HSTX FIFO. When it finishes it chains to the
+// control channel, which writes the next transfer's length and source into the
+// data channel's alias-3 registers -- length first, address second, and the
+// address write is the one that triggers. Then the data channel runs again.
+//
+// The control channel reads those pairs from a table holding an entire frame,
+// and a read ring wraps it back to the start, so the pair runs forever without
+// anyone telling it to.
+//
+// The first version used one interrupt per scanline instead, and worked --
+// until pre-emption started. From then on every system call held interrupts off
+// for longer than a scanline lasts, the chain starved, and the picture died
+// about five seconds into every boot. A display does not need to react to
+// anything; it needs to be fed, and feeding can be arranged in advance.
+//
+// The ring is why the vertical back porch is 52 lines rather than the standard
+// 33. A ring must be a power of two, and a frame is two transfers per active
+// line plus one per blank line: 480*2 + 64 = 1024 exactly. It costs refresh
+// rate -- 57 Hz rather than 60 -- and buys freedom from the kernel entirely.
 
-static void dma_irq_handler(void) {
-    myrtos_video_irqs++;
-    uint ch = pong ? (uint)ch_pong : (uint)ch_ping;
-    dma_channel_hw_t *c = &dma_hw->ch[ch];
-    dma_hw->intr = 1u << ch;
-    pong = !pong;
+#define BLANK_LINES   (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH)
+#define FRAME_ENTRIES (V_ACTIVE * 2 + BLANK_LINES)
 
-    if (v_scanline >= V_FRONT_PORCH && v_scanline < V_FRONT_PORCH + V_SYNC_WIDTH) {
-        c->read_addr = (uintptr_t)vblank_vsync_on;
-        c->transfer_count = count_of(vblank_vsync_on);
-    } else if (v_scanline < V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH) {
-        c->read_addr = (uintptr_t)vblank_vsync_off;
-        c->transfer_count = count_of(vblank_vsync_off);
-    } else if (!cmdlist_posted) {
-        c->read_addr = (uintptr_t)vactive_line;
-        c->transfer_count = count_of(vactive_line);
-        cmdlist_posted = true;
-    } else {
-        c->read_addr = (uintptr_t)&myrtos_framebuf[
-            (v_scanline - (V_TOTAL - V_ACTIVE)) * H_ACTIVE];
-        c->transfer_count = H_ACTIVE / sizeof(uint32_t);
-        cmdlist_posted = false;
+// The DMA has one ring, not two: RING_SEL chooses whether it applies to the
+// read side or the write side. Trying to have both -- a read ring to wrap the
+// table and a write ring to bounce between two registers -- silently kept only
+// the second, and the read pointer walked off the end of the table after one
+// frame.
+//
+// So the write side is split in two. One channel writes the length, one writes
+// the source address, each to a fixed register with no increment and no ring,
+// and each walks its own table with a read ring. Three channels, two tables,
+// and still not one interrupt.
+
+#define BLANK_LINES   (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH)
+#define FRAME_ENTRIES (V_ACTIVE * 2 + BLANK_LINES)
+
+static uint32_t     frame_counts[FRAME_ENTRIES]
+    __attribute__((aligned(FRAME_ENTRIES * 4)));
+static const void  *frame_addrs[FRAME_ENTRIES]
+    __attribute__((aligned(FRAME_ENTRIES * 4)));
+
+static int ch_data = -1, ch_count = -1, ch_addr = -1;
+
+static void build_frame_list(void) {
+    uint n = 0;
+    for (uint line = 0; line < V_TOTAL; line++) {
+        if (line < V_FRONT_PORCH || line >= V_FRONT_PORCH + V_SYNC_WIDTH) {
+            if (line < BLANK_LINES) {
+                frame_counts[n] = count_of(vblank_vsync_off);
+                frame_addrs[n++] = vblank_vsync_off;
+            }
+        } else {
+            frame_counts[n] = count_of(vblank_vsync_on);
+            frame_addrs[n++] = vblank_vsync_on;
+        }
+        if (line >= BLANK_LINES) {
+            frame_counts[n] = count_of(vactive_line);
+            frame_addrs[n++] = vactive_line;
+            frame_counts[n] = H_ACTIVE / sizeof(uint32_t);
+            frame_addrs[n++] = &myrtos_framebuf[(line - BLANK_LINES) * H_ACTIVE];
+        }
     }
-
-    if (!cmdlist_posted) v_scanline = (v_scanline + 1) % V_TOTAL;
 }
 
 void myrtos_video_init(void) {
@@ -159,30 +195,43 @@ void myrtos_video_init(void) {
     }
     for (int i = 12; i <= 19; ++i) gpio_set_function(i, 0);
 
-    // Two channels feeding the same FIFO, each chaining to the other, so one is
-    // always in flight while the interrupt reloads the one that just finished.
-    ch_ping = dma_claim_unused_channel(true);
-    ch_pong = dma_claim_unused_channel(true);
+    build_frame_list();
 
-    for (int i = 0; i < 2; i++) {
-        int ch    = i ? ch_pong : ch_ping;
-        int other = i ? ch_ping : ch_pong;
-        dma_channel_config c = dma_channel_get_default_config(ch);
-        channel_config_set_chain_to(&c, other);
-        channel_config_set_dreq(&c, DREQ_HSTX);
-        dma_channel_configure(ch, &c, &hstx_fifo_hw->fifo,
-                              vblank_vsync_off, count_of(vblank_vsync_off), false);
-    }
+    ch_data  = dma_claim_unused_channel(true);
+    ch_count = dma_claim_unused_channel(true);
+    ch_addr  = dma_claim_unused_channel(true);
 
-    dma_hw->ints0 = (1u << ch_ping) | (1u << ch_pong);
-    dma_hw->inte0 = (1u << ch_ping) | (1u << ch_pong);
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_irq_handler);
-    irq_set_enabled(DMA_IRQ_0, true);
+    // Data: memory to the FIFO, paced by HSTX. When it finishes it hands back
+    // to the first control channel rather than to an interrupt.
+    dma_channel_config d = dma_channel_get_default_config(ch_data);
+    channel_config_set_dreq(&d, DREQ_HSTX);
+    channel_config_set_chain_to(&d, ch_count);
+    dma_channel_configure(ch_data, &d, &hstx_fifo_hw->fifo,
+                          frame_addrs[0], frame_counts[0], false);
+
+    // Length, then address. The address register is the trigger, so it must be
+    // written second -- which is why these are two channels in this order and
+    // not one channel writing a pair.
+    dma_channel_config c = dma_channel_get_default_config(ch_count);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_ring(&c, false, 12);          // read wraps every 4096 bytes
+    channel_config_set_chain_to(&c, ch_addr);
+    dma_channel_configure(ch_count, &c,
+                          &dma_hw->ch[ch_data].al3_transfer_count,
+                          frame_counts, 1, false);
+
+    dma_channel_config a = dma_channel_get_default_config(ch_addr);
+    channel_config_set_write_increment(&a, false);
+    channel_config_set_ring(&a, false, 12);
+    channel_config_set_chain_to(&a, ch_addr);        // chain to self means none
+    dma_channel_configure(ch_addr, &a,
+                          &dma_hw->ch[ch_data].al3_read_addr_trig,
+                          frame_addrs, 1, false);
 
     // The display cannot wait; anything else can.
     bus_ctrl_hw->priority = BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
 
-    dma_channel_start(ch_ping);
+    dma_channel_start(ch_count);
 
     myrtos_print("Video: clk_sys ");
     myrtos_print_u32(clock_get_hz(clk_sys) / 1000000);
@@ -194,9 +243,11 @@ void myrtos_video_init(void) {
     myrtos_print(" (want 0x50050203), fifo stat 0x");
     myrtos_print_hex(hstx_fifo_hw->stat);
     myrtos_print(", 640x480, DMA ");
-    myrtos_print_u32((uint32_t)ch_ping);
-    myrtos_print(" and ");
-    myrtos_print_u32((uint32_t)ch_pong);
+    myrtos_print_u32((uint32_t)ch_data);
+    myrtos_print(", ");
+    myrtos_print_u32((uint32_t)ch_count);
+    myrtos_print(", ");
+    myrtos_print_u32((uint32_t)ch_addr);
     myrtos_print("\n");
 }
 
