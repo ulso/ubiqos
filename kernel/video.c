@@ -6,6 +6,7 @@
 #include "hardware/structs/hstx_ctrl.h"
 #include "hardware/structs/hstx_fifo.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/clocks.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -110,6 +111,14 @@ static void dma_irq_handler(void) {
 }
 
 void myrtos_video_init(void) {
+    // set_sys_clock_khz does not touch clk_hstx: it kept its own source, the
+    // system PLL at 150 MHz, while the processor went down to 125. The pixel
+    // clock is clk_hstx/5, so the display was being driven at 30 MHz instead of
+    // 25 and no monitor recognised what came out. Point it at clk_sys and say
+    // so, rather than trusting a default that was never chosen.
+    clock_configure(clk_hstx, 0, CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS,
+                    clock_get_hz(clk_sys), clock_get_hz(clk_sys));
+
     // RGB332 out of one byte: two bits of blue, three of green, three of red,
     // each rotated into place for its lane.
     hstx_ctrl_hw->expand_tmds =
@@ -175,9 +184,16 @@ void myrtos_video_init(void) {
 
     dma_channel_start(ch_ping);
 
-    myrtos_print("Video: HSTX csr 0x");
+    myrtos_print("Video: clk_sys ");
+    myrtos_print_u32(clock_get_hz(clk_sys) / 1000000);
+    myrtos_print(" MHz, clk_hstx ");
+    myrtos_print_u32(clock_get_hz(clk_hstx) / 1000000);
+    myrtos_print(" MHz\n");
+    myrtos_print("Video: csr 0x");
     myrtos_print_hex(hstx_ctrl_hw->csr);
-    myrtos_print(", 640x480, DMA channels ");
+    myrtos_print(" (want 0x50050203), fifo stat 0x");
+    myrtos_print_hex(hstx_fifo_hw->stat);
+    myrtos_print(", 640x480, DMA ");
     myrtos_print_u32((uint32_t)ch_ping);
     myrtos_print(" and ");
     myrtos_print_u32((uint32_t)ch_pong);
