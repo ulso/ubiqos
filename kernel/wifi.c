@@ -188,6 +188,18 @@ static uint32_t scan_count;
 static uint8_t  start_reply;
 static uint8_t  conn_status = 0xfe;
 
+// What actually came back on the wire, so it can be reported instead of
+// inferred. Three attempts at this problem have been guesses about the
+// protocol; the bytes settle it.
+static char     trace[40];
+static uint32_t trace_n;
+static void trace_reset(void) { trace_n = 0; trace[0] = 0; }
+static void trace_ch(char c)  { if (trace_n < sizeof(trace) - 1) { trace[trace_n++] = c; trace[trace_n] = 0; } }
+static void trace_hex(uint8_t v) {
+    const char h[] = "0123456789abcdef";
+    trace_ch(h[v >> 4]); trace_ch(h[v & 15]);
+}
+
 static bool scan_room(void) {
     if (scan) return true;
     if (!myrtos_bulk_pool) return false;
@@ -199,14 +211,19 @@ static bool scan_room(void) {
 // advance -- one parameter per network found.
 static int32_t read_list(uint8_t cmd) {
     uint8_t b = 0;
+    trace_ch('L');
     for (int i = 0; i < 64; i++) {
         b = xfer(0xff);
         if (b == START_CMD || b == ERR_CMD) break;
     }
+    trace_hex(b);
     if (b != START_CMD) return -1;
-    if (xfer(0xff) != (cmd | REPLY_FLAG)) return -1;
+    uint8_t rc = xfer(0xff);
+    trace_hex(rc);
+    if (rc != (cmd | REPLY_FLAG)) return -1;
 
     uint32_t n = xfer(0xff);
+    trace_ch('n'); trace_hex((uint8_t)n);
     if (n > WIFI_MAX_NETS) n = WIFI_MAX_NETS;
     for (uint32_t i = 0; i < n; i++) {
         uint32_t len = xfer(0xff);
@@ -260,20 +277,27 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
         // a loop before it does anything else, and a question the reference
         // implementation asks first is worth asking first: whatever it wakes up
         // in the firmware, we want woken too.
-        if (simple_cmd(GET_CONN_STATUS_CMD) && select_chip()) {
+        trace_reset();
+        bool sent = simple_cmd(GET_CONN_STATUS_CMD);
+        bool took = sent && select_chip();
+        trace_ch(sent ? 's' : 'S');       // capital means it failed
+        trace_ch(took ? 'k' : 'K');
+        if (took) {
             uint8_t b = 0;
-            for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+            for (int i = 0; i < 64; i++) { b = xfer(0xff); trace_hex(b); if (b == START_CMD || b == ERR_CMD) break; }
             if (b == START_CMD) {
-                xfer(0xff);
-                uint32_t np = xfer(0xff);
+                trace_ch('|');
+                uint8_t rc = xfer(0xff); trace_hex(rc);
+                uint32_t np = xfer(0xff); trace_hex((uint8_t)np);
                 for (uint32_t k = 0; k < np; k++) {
-                    uint32_t len = xfer(0xff);
+                    uint32_t len = xfer(0xff); trace_ch('.'); trace_hex((uint8_t)len);
                     for (uint32_t j = 0; j < len; j++) {
-                        uint8_t v = xfer(0xff);
+                        uint8_t v = xfer(0xff); trace_hex(v);
                         if (k == 0 && j == 0) conn_status = v;
                     }
                 }
-                xfer(0xff);
+                trace_ch('|');
+                trace_hex(xfer(0xff));
             }
             deselect_chip();
         }
@@ -328,11 +352,15 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
         // the only part of the exchange we have not been able to see.
         if (scan_count == 0 && out && max >= 12) {
             const char hex[] = "0123456789abcdef";
-            out[0] = 's'; out[1] = 't'; out[2] = 'a'; out[3] = 'r'; out[4] = 't';
-            out[5] = '='; out[6] = hex[(start_reply >> 4) & 15];
-            out[7] = hex[start_reply & 15];
-            out[8] = '/'; out[9] = hex[(conn_status >> 4) & 15];
-            out[10] = hex[conn_status & 15]; out[11] = 0;
+            uint32_t o = 0;
+            const char *p = "start=";
+            while (*p && o < max - 1) out[o++] = *p++;
+            if (o < max - 1) out[o++] = hex[(start_reply >> 4) & 15];
+            if (o < max - 1) out[o++] = hex[start_reply & 15];
+            if (o < max - 1) out[o++] = ' ';
+            p = trace;
+            while (*p && o < max - 1) out[o++] = *p++;
+            out[o] = 0;
         }
         return (int32_t)scan_count;
     }
