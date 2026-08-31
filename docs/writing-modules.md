@@ -392,3 +392,40 @@ target, which is why the check looks at all four.
 
     MODULE IS NOT POSITION INDEPENDENT:
       badtest_app.elf: writable section .sbss is present
+
+### Clang, and the relative vtables that would fix this
+
+Tried, and worth writing down. Homebrew's LLVM 23 has a riscv32 backend, and
+**every C module here compiles with it and passes `check_module.py`** given two
+flags beyond the ones GCC gets: `-std=gnu23`, because clang defaults to an older
+C where `bool` is not a keyword, and `-fno-jump-tables`.
+
+That second one is the interesting failure. `sh` came out with 97 `R_RISCV_32`
+in `.rela.rodata`, all pointing at one label: clang had turned a `switch` into a
+table of absolute addresses. It is the same shape as a hand-written table of
+function pointers and refused for the same reason. Worth noting that **GCC is
+not given `-fno-jump-tables` either** -- it has simply not emitted one yet, which
+is luck rather than design. The checker would catch it, as a puzzling build
+failure rather than a bug.
+
+On vtables, clang has `-fexperimental-relative-c++-abi-vtables`, which is real
+and does exactly what it says. Measured on a virtual call the compiler cannot
+devirtualise:
+
+| | vtable entries |
+|---|---|
+| gcc | `R_RISCV_32` x3 -- absolute |
+| clang | `R_RISCV_32` x3 -- absolute |
+| clang, relative vtables | `R_RISCV_PLT32` x3, addends 0, 4, 8 |
+
+`R_RISCV_PLT32` is PC-relative: what is stored is the distance from the vtable
+slot to the function, so the table needs no fixing up wherever it lands. It is
+`MYRTOS_RELTAB_*` in the ABI header, done by the compiler instead of by hand.
+
+**But GNU ld cannot link it** -- "internal error: unsupported relocation error",
+and this readelf prints the type as `unrecognized: 3b`. So it is clang *and*
+lld, a second toolchain for modules, and `R_RISCV_PLT32` added to the checker's
+allowed list. Not a flag; a decision.
+
+(The flag is Clang's alone. GCC has never had it, in any version -- a confident
+web answer says otherwise and is wrong about which compiler.)
