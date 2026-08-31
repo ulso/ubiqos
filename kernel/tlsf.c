@@ -1,4 +1,5 @@
 #include "tlsf.h"
+#include "hardware/sync.h"
 
 // Block header. size is the payload size; bit 0 marks it free.
 // prev_phys_block points at the neighbour at the next lower address, which is
@@ -108,7 +109,7 @@ tlsf_pool_t myrtos_tlsf_create(void* mem, size_t bytes) {
     return (tlsf_pool_t)ctrl;
 }
 
-void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
+static void* myrtos_tlsf_malloc_unlocked(tlsf_pool_t pool, size_t size) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     if (!ctrl || !size) return NULL;
 
@@ -151,7 +152,7 @@ void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
     return (void*)((uintptr_t)block + sizeof(block_header_t));
 }
 
-void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
+static void myrtos_tlsf_free_unlocked(tlsf_pool_t pool, void* ptr) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     if (!ctrl || !ptr) return;
 
@@ -183,7 +184,7 @@ void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
 // The largest contiguous free block. It exists to show that coalescing really
 // happens: without it this number shrinks with every cycle of allocation and
 // freeing.
-size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
+static size_t myrtos_tlsf_largest_free_unlocked(tlsf_pool_t pool) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     size_t best = 0;
     for (uintptr_t p = ctrl->pool_start; p < ctrl->pool_end; ) {
@@ -193,4 +194,55 @@ size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
         if (BLOCK_SIZE(b) == 0) break;
     }
     return best;
+}
+
+
+// --- THE LOCK -------------------------------------------------------------
+// The free lists are walked and rewritten by two kinds of caller, and until now
+// nothing kept them apart.
+//
+// A system call runs in a trap with interrupts off, so SYS_ALLOC, SYS_FREE,
+// SYS_EXEC and a process's own teardown were always atomic. A kernel thread is
+// not: the filesystem server allocates its staging buffer and the wifi server
+// its scan table with interrupts on, and either can be preempted anywhere --
+// including between taking a block out of a free list and putting the remainder
+// back. A system call arriving in that window works on a list that is halfway
+// through being changed, and hands out a block that is still on it.
+//
+// That is a race with no symptom of its own. It shows up later as a block
+// delivered twice, or a link into nothing, at whatever moment the damage is
+// finally read -- which is exactly the shape of a fault that is there one boot
+// and gone the next.
+//
+// A critical section rather than a server process, and the difference is worth
+// stating: the filesystem became a process because its work is long, measured
+// in milliseconds, and holding the machine for that is what broke the keyboard.
+// TLSF is O(1) and takes microseconds, so there is nothing to hold. A server
+// would also cost two context switches on the path taken by every exec, and
+// could not create a process without one -- process creation allocates.
+//
+// Nesting is free: save_and_disable_interrupts returns the previous state and
+// restore_interrupts puts that state back, so a call from a trap leaves
+// interrupts off, as they already were.
+void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
+    uint32_t st = save_and_disable_interrupts();
+    void* p = myrtos_tlsf_malloc_unlocked(pool, size);
+    restore_interrupts(st);
+    return p;
+}
+
+void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
+    uint32_t st = save_and_disable_interrupts();
+    myrtos_tlsf_free_unlocked(pool, ptr);
+    restore_interrupts(st);
+}
+
+// Walking the pool block by block reads the same structure the other two write,
+// so it needs the same protection -- a torn walk reports a number that was
+// never true, and free is the one number a caller acts on.
+size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
+    uint32_t st = save_and_disable_interrupts();
+    size_t n = myrtos_tlsf_largest_free_unlocked(pool);
+    restore_interrupts(st);
+    return n;
 }
