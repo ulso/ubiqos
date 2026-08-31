@@ -59,6 +59,7 @@ pico_sdk_init()
 # 1. BUILD THE OPERATING SYSTEM KERNEL (myrtos)
 # ============================================================================
 add_executable(os_kernel 
+    kernel/crashlog.c
     kernel/main.c 
     kernel/tlsf.c
     kernel/scheduler.c 
@@ -135,6 +136,10 @@ target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
 
 # Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)
+
+# Route every panic through __wrap_panic, so the reason survives the crash.
+# See kernel/crashlog.c.
+target_link_options(os_kernel PRIVATE -Wl,--wrap=panic)
 
 # Produce the uf2 file and friends for loading onto the Fruit Jam
 pico_add_extra_outputs(os_kernel)
@@ -468,3 +473,4 @@ add_custom_command(
 
 add_custom_target(flashimage ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin)
 add_dependencies(flashimage modules)
+

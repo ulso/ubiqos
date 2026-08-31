@@ -9,6 +9,7 @@
 #include "fat32.h"
 #include "moddir.h"
 #include "tlsf.h"
+#include "crashlog.h"
 
 void myrtos_print(const char *s);
 void myrtos_putc(char c);
@@ -439,7 +440,16 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         return sp;
     }
 
+    // Write it down before saying anything, because saying it goes through the
+    // console -- and a fault this early is usually a fault on the way to having
+    // one. What the probe reads must not depend on the screen ever working.
+    myrtos_crash_note(MYRTOS_CRASH_TRAP, frame->mepc, frame->mcause, frame->mtval);
+
     myrtos_print("\n*** MYRTOS TRAP: unhandled exception ***\n");
+    myrtos_print("  mepc ");   myrtos_print_u32(frame->mepc);
+    myrtos_print("  mcause "); myrtos_print_u32(frame->mcause);
+    myrtos_print("  mtval ");  myrtos_print_u32(frame->mtval);
+    myrtos_print("\n");
     for (;;) {
         __asm__ volatile("wfi");
     }
