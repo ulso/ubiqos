@@ -69,6 +69,28 @@ static bool select_chip(void) {
     return wait_ack(true, 100);                  // selected and ready
 }
 
+// The same, but prepared to wait a long time for the chip to become ready.
+//
+// nina-fw's handler for SCAN_NETWORKS is not a request to start anything: it
+// calls WiFi.scanNetworks() -- the blocking one -- and only builds its reply
+// when the radio has finished, which is seconds. So the chip holds READY for
+// that whole time and a hundred milliseconds was never going to see the end of
+// it. The reference does not time out here at all.
+//
+// It has to yield rather than spin. This runs in the wifi server at priority
+// 21, above the shell, and seconds of spinning is exactly what froze the
+// machine when sleep_ms was used instead of myrtos_sleep.
+static bool select_chip_slow(uint32_t ms) {
+    for (uint32_t waited = 0; waited < ms; waited += 4) {
+        if (!gpio_get(WIFI_ACK)) {               // ready is ACK low
+            gpio_put(WIFI_CS, 0);
+            return wait_ack(true, 100);
+        }
+        myrtos_sleep(4);
+    }
+    return false;
+}
+
 static void deselect_chip(void) {
     gpio_put(WIFI_CS, 1);
     busy_wait_us(100);                           // let the line settle
@@ -385,14 +407,15 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
             // preempted where it makes a system call. Two seconds of spinning
             // froze the whole machine, which is what the serial shell going
             // quiet alongside the keyboard was saying.
-            myrtos_sleep(2000);
+            // No delay before asking. The wait is not ours to do -- the chip
+            // scans inside the command and answers when it is done.
             // As the reference does it, because reading the reference settled
             // that there is no alternative: GET_IDX_SSID_CMD = 0x31 is
             // commented out in wifi_spi.h, so the command does not exist and
             // the ERR the chip answered it with was correct. The list is the
             // only way to get names, and the chip refuses that too.
             if (!simple_cmd(SCAN_NETWORKS_CMD)) continue;
-            if (!select_chip()) continue;
+            if (!select_chip_slow(15000)) { trace_ch('T'); continue; }
             int32_t n = read_list(SCAN_NETWORKS_CMD);
             deselect_chip();
             if (n > 0) scan_count = (uint32_t)n;
