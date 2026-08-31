@@ -30,8 +30,14 @@
 // a BleuIO dongle echoed everything typed at it and answered nothing at all
 // until this was set. There is no wire and no modem; the line is a convention,
 // and the convention is that the host raises it.
-#define CFG_TUH_CDC_LINE_CONTROL_ON_ENUM  (CDC_CONTROL_LINE_STATE_DTR | \
-                                           CDC_CONTROL_LINE_STATE_RTS)
+// Bit 0 is DTR, bit 1 is RTS. Written as a number on purpose: the class driver
+// guards this with #if, and CDC_CONTROL_LINE_STATE_DTR is an enum constant
+// rather than a macro -- so the preprocessor reads it as an undefined name,
+// evaluates it to zero, and compiles the whole request away. Symbolic, readable
+// and silently nothing, which cost an afternoon: the dongle echoed everything
+// typed at it and answered nothing, because a CDC-ACM device reads DTR as "the
+// host has opened the port" and ours never said so.
+#define CFG_TUH_CDC_LINE_CONTROL_ON_ENUM  3
 
 // Ask for 115200 8N1 as the device is enumerated. ACM over USB does not care --
 // there is no wire to run at that rate -- but a device that reports a line

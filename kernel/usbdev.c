@@ -51,16 +51,24 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
     // trap handler with interrupts off, so the transfer that would drain the
     // buffer can never complete, and the USB process may be inside tud_task at
     // the same moment. The text was simply cut off at 256 bytes.
+    static char last_out;       // the byte before this one, for the CR above
     uint32_t written = 0;
     while (written < len) {
-        // The same translation the UART driver does: a lone line feed is
+        // The same translation the UART driver does: a LONE line feed is
         // preceded by a carriage return. Without it the output staircases to
         // the right, and every utility would have to write \r\n itself. The
         // pair goes in together or not at all, so a retry cannot repeat the CR.
-        uint32_t need = (buf[written] == '\n') ? 2u : 1u;
+        //
+        // Lone is the point. It used to add one to every line feed, so a stream
+        // that already had its own came out as \r\r\n -- which a terminal
+        // forgives and a program passing bytes through should not be doing at
+        // all. Remembered across calls, because a write may end on the CR.
+        bool lone = (buf[written] == '\n') && (last_out != '\r');
+        uint32_t need = lone ? 2u : 1u;
         if (tud_cdc_write_available() < need) break;
-        if (need == 2) { char cr = '\r'; tud_cdc_write(&cr, 1); }
+        if (lone) { char cr = '\r'; tud_cdc_write(&cr, 1); }
         tud_cdc_write(buf + written, 1);
+        last_out = (char)buf[written];
         written++;
     }
     if (written) tud_cdc_write_flush();

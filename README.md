@@ -164,10 +164,26 @@ other end of the cable to the Mac — a BLE dongle, a modem, a sensor. It is a
 character device like the others, so `cu acm` is all it takes:
 
 ```
-myrtos:/> cu acm
+myrtos:/> cu acm ATI
 connected; ctrl-C to stop
-AT+CENTRAL
+ATI
+Smart Sensor Devices AB
+DA14695
+BleuIO Pro
+Firmware Version: 1.0.5.6
 ```
+
+Anything after the device name is sent as one line first, which saves typing a
+command that is always the same. `ctrl-C` stops it — `cu` has no escape
+sequence of its own and does not need one.
+
+One warning that cost an afternoon. TinyUSB leaves DTR and RTS low unless
+`CFG_TUH_CDC_LINE_CONTROL_ON_ENUM` says otherwise, and a CDC-ACM device reads
+DTR as "the host has opened the port": ours echoed everything typed at it and
+answered nothing. Write that constant as a **number**. The class driver guards
+it with `#if`, and `CDC_CONTROL_LINE_STATE_DTR` is an enum rather than a macro
+— so the preprocessor reads it as an undefined name, evaluates it to zero, and
+compiles the request away. Symbolic, readable, and silently nothing.
 
 Nothing is buffered on our side. TinyUSB keeps a packet each way and the USB
 thread empties it every millisecond, which is quicker than a shell reads.
