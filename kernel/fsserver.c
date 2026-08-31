@@ -176,6 +176,14 @@ static void register_card_modules(void) {
     myrtos_tlsf_free(pool, staging);
 }
 
+// BISECT, 31 Aug: the screen went black the moment the SDIO attempt moved into
+// every boot. The video DMA chain is stopped -- all three channels idle, the
+// data channel's read pointer halfway through a frame, HSTX still enabled and
+// starving. The SDIO attempt configures DMA channels 8-11 by hardcoded number
+// and reprograms PIO1, and it is the only thing that now happens at boot and
+// did not before. This proves or clears that in one flash.
+#define CARD_TRY_SDIO_AT_BOOT 0
+
 static bool card_bring_up(void) {
     if (!myrtos_fat_remount()) {
         myrtos_print("SD: no card, or not FAT32\n");
@@ -188,7 +196,16 @@ static bool card_bring_up(void) {
 
 static void fs_thread(void) {
     // Before serving anything, and before anything else has touched the card.
+#if CARD_TRY_SDIO_AT_BOOT
     card_bring_up();
+#else
+    if (myrtos_sd_init() && myrtos_fat_mount()) {
+        myrtos_print("SD: SPI\n");
+        register_card_modules();
+    } else {
+        myrtos_print("SD: no card, or not FAT32\n");
+    }
+#endif
 
     for (;;) {
         myrtos_msg_t m;

@@ -128,3 +128,31 @@ The ACMD41 ready loop is bounded too, at a thousand asks. Upstream spins there
 until the card answers, and this now runs in the filesystem server -- a process
 at priority 22, above the shell. Spinning for ever there starves the very thing
 you would use to look at the problem.
+
+## The SDIO attempt kills the video
+
+Bisected, not guessed. Moving the SDIO attempt into every boot turned the screen
+black while the machine stayed perfectly alive -- serial answered, eight
+processes, both shells, the console server draining its ring. Taking the attempt
+back out of boot brought the picture back.
+
+What the video hardware looked like while it was black:
+
+    ch_data=1  ch_count=2  ch_addr=3     the three channels video claims
+    ch1: count 0, BUSY 0, read 0x20067348    stopped mid-framebuffer
+    ch2: count 0, BUSY 0
+    ch3: count 1, BUSY 0
+    HSTX CSR 0x50050203                      still enabled, and starving
+
+So the DMA chain stops and HSTX runs dry. Candidates, all in this driver and all
+things it does that nothing else does: it hardcodes DMA channels 8 to 11 by
+number and never claims them, it reprograms PIO1, and it writes GPIO 0 directly
+with `gpio_set_mask(1)` and `gpio_clr_mask(1)` -- a debugging leftover around
+every transfer.
+
+This also reframes a day of it: "helt svart i displayen" after an SDIO attempt
+was read as a locked-up board and answered with three blind reflashes and three
+locked boards. The board may well have been alive the whole time, with only its
+picture gone.
+
+`CARD_TRY_SDIO_AT_BOOT` in fsserver.c is 0 until this is understood.
