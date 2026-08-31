@@ -30,7 +30,12 @@ set(PICO_PLATFORM rp2350-riscv CACHE STRING "Pico platform")
 
 cmake_minimum_required(VERSION 3.16)
 
-# Ladda Pico SDK
+# The compile database, which is what an editor should read rather than being
+# told the include paths a second time by hand. It gets the exact flags each
+# file was built with -- every -I, every -D, the right architecture -- and it
+# cannot drift out of step with the build, because it is the build.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 include(pico_sdk_import.cmake)
 
 project(myrtos C CXX ASM)
