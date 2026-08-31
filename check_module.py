@@ -98,14 +98,32 @@ for obj in obj_files:
             problems.append(f"{obj}: {kind} in {hint}")
 
 out = readelf_or_die(readelf, ["-S"], elf)
+# By the W flag, not by a list of names. The list said .data, .bss, .sdata and
+# .sbss, and it was wrong in both directions: it refused a const array that GCC
+# had put in .sdata read-only -- flags "A", not "WA", because eight bytes fits
+# under -msmall-data-limit -- and it would have missed a writable section under
+# any name not on it. Writable is a flag; it should be read as one.
+#
+# .tdata and .tbss are the exception and are meant to be. They are writable, but
+# one copy per process rather than one shared between them, which is exactly
+# what a module needs.
+SECTION = re.compile(
+    r"^\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+"
+    r"([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+(\S*)\s+\d+\s+\d+\s+\d+\s*$")
+
 for line in out.splitlines():
-    m = re.search(r"\]\s+(\.\S+)\s+\S+\s+\S+\s+\S+\s+(\S+)", line)
-    # .tdata and .tbss are deliberately not in this list. They are writable, but
-    # one copy per process rather than one shared between them, which is exactly
-    # what a module needs. Everything else writable would be shared.
-    if m and not single and m.group(1) in (".data", ".bss", ".sdata", ".sbss"):
-        if m.group(2) != "000000":
-            problems.append(f"{elf}: writable section {m.group(1)} is present")
+    m = SECTION.match(line)
+    if not m or single:
+        continue
+    name, size, flags = m.group(1), m.group(2), m.group(3)
+    if name in (".tdata", ".tbss"):
+        continue
+    # Allocated, writable, and not code. .text comes out WAX because a module
+    # is linked -N, which is what the RWX warning at every link is about -- it
+    # is one loadable segment by design, not a writable variable. Data sections
+    # are WA without the X, and those are the ones two processes would share.
+    if "W" in flags and "A" in flags and "X" not in flags and int(size, 16) != 0:
+        problems.append(f"{elf}: writable section {name} is present")
 
 if problems:
     print("MODULE IS NOT POSITION INDEPENDENT:", file=sys.stderr)

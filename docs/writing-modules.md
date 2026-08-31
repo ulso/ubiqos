@@ -393,6 +393,26 @@ target, which is why the check looks at all four.
     MODULE IS NOT POSITION INDEPENDENT:
       badtest_app.elf: writable section .sbss is present
 
+### File-scope variables
+
+`static` or not makes no difference. It changes linkage, not storage, and what
+the module format cares about is storage. Measured, both compilers agreeing:
+
+| At file scope | Verdict | Why |
+|---|---|---|
+| `int g;` | refused | `.bss`, writable and shared |
+| `int g = 7;` | refused | `.data`, the same |
+| `const int t[] = {...}` | fine | `.rodata`, shared deliberately |
+| `const char *n[] = {...}` | refused | a table of addresses |
+| `const char n[2][4] = {...}` | fine | characters, no addresses |
+| `__thread int g;` | fine | one per process, through `tp` |
+
+The refusals are for two different reasons and it is worth keeping them apart. A
+pointer table is refused because its contents are addresses that are not known
+until the module is loaded. A writable variable is refused because the module is
+**shared**: two processes running it would be writing to one another's state.
+No compiler flag fixes the second, because it is not a compiler question.
+
 ### Statics under clang
 
 The same, which is the answer worth having. Measured on a `static const` array,
