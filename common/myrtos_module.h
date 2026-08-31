@@ -27,12 +27,13 @@
 //   No global instances. A constructor at file scope puts a pointer in
 //   .init_array, which is the same kind of table.
 
-template <class Derived>
-struct MyrtosModule {
+template <class Derived> struct MyrtosModule
+{
     // How much raw area exists after the thread-local block. The stack grows
     // down into the same span, so this is what is there rather than what is safe
     // to fill. Most modules never need it: put the variables in the class.
-    static uint32_t room() {
+    static uint32_t room()
+    {
         uint32_t n = 0;
         (void)myrtos_data_area(&n);
         return n;
@@ -45,8 +46,9 @@ struct MyrtosModule {
 // and the kernel gives every process its own zeroed copy. Reaching a member is
 // one instruction from tp -- no system call, and nothing to fetch or carry. The
 // class must not need a constructor to have run: the block arrives zeroed.
-#define MYRTOS_MODULE(Class)                                        \
-    static __thread Class myrtos_instance;                          \
-    extern "C" void module_main(int argc, char **argv) {            \
-        myrtos_instance.run(argc, argv);                            \
+#define MYRTOS_MODULE(Class)                                                                                           \
+    static __thread Class myrtos_instance;                                                                             \
+    extern "C" void module_main(int argc, char **argv)                                                                 \
+    {                                                                                                                  \
+        myrtos_instance.run(argc, argv);                                                                               \
     }
