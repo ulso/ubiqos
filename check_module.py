@@ -45,7 +45,20 @@ POSITION_INDEPENDENT = {
     "R_RISCV_SUB6", "R_RISCV_SUB8", "R_RISCV_SUB16", "R_RISCV_SUB32",
     "R_RISCV_SUB64", "R_RISCV_SET6", "R_RISCV_SET8", "R_RISCV_SET16",
     "R_RISCV_SET32", "R_RISCV_SET_ULEB128", "R_RISCV_SUB_ULEB128",
+    # What clang's -fexperimental-relative-c++-abi-vtables emits. The vtable
+    # slot holds S + A - P, the distance from the slot to the function, so the
+    # table is correct wherever the module lands. Verified rather than assumed:
+    # linked with lld, the three slots read 0x62, 0x66, 0x6a where the absolute
+    # build has 0x000100f8, 0x000100fc, 0x00010100.
+    "R_RISCV_PLT32",
 }
+
+# Types this readelf cannot name, by number. Binutils prints "unrecognized: 3b"
+# where the name belongs, and refusing everything it cannot name would refuse a
+# relocation that is perfectly position independent. llvm-readelf names PLT32
+# and binutils does not, and which readelf happens to be installed is no basis
+# for deciding whether a module may be loaded.
+BY_NUMBER = {"3b": "R_RISCV_PLT32"}
 
 # Never conclude anything from output that was not produced. readelf on a file
 # that is not there prints an error and exits non-zero, and reading its empty
@@ -86,13 +99,15 @@ for obj in obj_files:
         # which is 0x3b, and sailed through a check written to refuse exactly
         # that sort of thing. A checker that ignores what it does not
         # understand is worse than no checker: it says yes with authority.
-        m = re.match(r"\s*[0-9a-fA-F]{8,16}\s+[0-9a-fA-F]{8,16}\s+(\S+)", line)
+        m = re.match(r"\s*[0-9a-fA-F]{8,16}\s+[0-9a-fA-F]{8,16}\s+(\S+)\s*(\S+)?", line)
         if not m or not section:
             continue
 # Debug information is never loaded.
         if section.startswith(".rela.debug") or section.startswith(".rela.eh_frame"):
             continue
         kind = m.group(1)
+        if kind == "unrecognized:" and m.group(2) in BY_NUMBER:
+            kind = BY_NUMBER[m.group(2)]
         if kind not in POSITION_INDEPENDENT:
 # C++ puts the vtable in a section of its own whose name carries the mangled
 # class name. Demangled, the error is understandable without ABI knowledge.
