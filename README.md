@@ -166,6 +166,51 @@ console, so the system never goes mute.
 6. With no shell, everything found is started, so the system still shows signs of life
 7. The timer starts and pre-emption begins
 
+## The display
+
+DVI out of the HSTX peripheral at 640x480, one byte per pixel, RGB332. The
+peripheral's command expander does the TMDS encoding, so the processor never
+touches a pixel: three DMA channels walk a table of scanline addresses into the
+HSTX FIFO and there is no interrupt at all. The pixel clock is fixed at
+`clk_hstx/5`, which is why the system runs at 125 MHz.
+
+Scrolling rotates that table rather than moving pixels, so the framebuffer is a
+ring and the console's origin is a line number in it.
+
+Two fonts, both Terminus, both drawn by hand on their own grid rather than
+scaled from each other:
+
+```
+myrtos> font
+* 8x16, 80 by 30
+  6x12, 106 by 40
+myrtos> font 6x12
+```
+
+Switching clears the screen -- eighty columns do not reflow into a hundred and
+six -- so what comes back is the next prompt.
+
+### Why not a higher resolution
+
+Memory, before anything else. A byte per pixel puts 640x480 at 307200 bytes of
+the 520 kB of SRAM, and the kernel is linked `copy_to_ram`, so its code, its
+64 kB heap and every process stack come out of what is left. 800x600 would want
+480000, which does not fit at any clock. The glyph tables are the reason
+`.flashdata` appears in the generated font files: six kilobytes that would
+otherwise be copied into RAM for no reason, since nothing writes flash while
+myrtos is running.
+
+The way up is therefore fewer bits per pixel rather than more SRAM. The HSTX
+expander takes each colour channel out of a bit field of a width it is told, and
+the narrowest field it accepts is one bit, so a mono mode should be a matter of
+the `EXPAND_TMDS` register and a packed framebuffer -- 800x600 in 60000 bytes,
+which is less than the 640x480 costs now. A text console does not need 256
+colours. This is read off the field widths and has not been tried; two things
+would also have to be dealt with. The pixel clock becomes 40 MHz, so `clk_sys`
+goes to 200 MHz. And the scanline table is currently 1024 entries aligned to its
+own size, which is what makes the DMA ring work -- 600 active lines will not fit
+in it and it would have to double.
+
 ## The console
 
 The board appears as a USB serial port:
@@ -189,9 +234,17 @@ Type a module name to run it. Built in:
   help     this text
   lsmod    list modules
   ps       list processes
+  keys     read the USB keyboard
   free     memory and processes
   echo     print its arguments
-  ls       list the SD card
+  ls       list a directory
+  cd       change directory (built in)
+  pwd      where you are
+  mkdir    make a directory
+  rmdir    remove an empty directory
+  mount    take the SD card again
+  wifi     firmware, or 'wifi scan' for networks
+  font     screen font, or 'font 6x12' to change it
   cat      show a file
   cp       copy a file
   rm       delete a file
@@ -242,6 +295,19 @@ result. Inline wrappers for all of them are in the ABI header.
 | 23 | `SYS_REALLOC` | pointer, bytes → pointer |
 | 24 | `SYS_DATAAREA` | &size → this process's data area and its size |
 | 25 | `SYS_ALLOCBULK` | bytes → pointer, from PSRAM when there is any |
+| 26 | `SYS_SEND` | pid, &message → the reply status |
+| 27 | `SYS_RECEIVE` | &message out → the sender's pid |
+| 28 | `SYS_REPLY` | status → 0, or -1 if nobody is being served |
+| 29 | `SYS_PIDOF` | module name → pid, or -1 if not running |
+| 30 | `SYS_MKDIR` | path → 0, or -1 |
+| 31 | `SYS_CHDIR` | path → 0, or -1 if there is no such directory |
+| 32 | `SYS_GETCWD` | buffer, length → characters copied |
+| 33 | `SYS_RMDIR` | path → 0, or -1 if not there or not empty |
+| 34 | `SYS_MOUNT` | — → 0, or -1 if there is no card |
+| 35 | `SYS_REPLYTO` | pid, status → 0, or -1 if that one is not waiting on us |
+| 36 | `SYS_WIFIVER` | buffer, length → 0, or -1 if the chip does not answer |
+| 37 | `SYS_WIFISCAN` | -1 to look → count; an index → that network's signal |
+| 38 | `SYS_CONFONT` | font or -1, &out, 1 to only look → 0, or -1 |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
