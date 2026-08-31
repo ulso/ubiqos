@@ -36,9 +36,18 @@ void module_main(int argc, char **argv) {
         if (attr < 0) {
             if (i == 0) {
                 myrtos_line_reset(&line);
-                myrtos_line_str(&line, "ls: no such directory: ");
-                myrtos_line_str(&line, path[0] ? path : "/");
-                myrtos_line_str(&line, "\n");
+                // Nothing is mounted at startup any more, so the root failing
+                // is now the ordinary case rather than a typo. A mounted card
+                // always has a root -- even an empty directory answers with
+                // "." -- so the root is the one path whose absence says which
+                // of the two it was.
+                if (!path[0] || (path[0] == '/' && !path[1])) {
+                    myrtos_line_str(&line, "ls: nothing is mounted -- try: mount\n");
+                } else {
+                    myrtos_line_str(&line, "ls: no such directory: ");
+                    myrtos_line_str(&line, path);
+                    myrtos_line_str(&line, "\n");
+                }
                 myrtos_line_flush(MYRTOS_STDOUT, &line);
                 return;
             }
