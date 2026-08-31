@@ -50,6 +50,7 @@ static void help(int32_t c) {
         "  rmdir    remove an empty directory\r\n"
         "  mount    take the SD card again\r\n"
         "  wifi     firmware, or 'wifi scan' for networks\r\n"
+        "  font     screen font, or 'font 6x12' to change it\r\n"
         "  cat      show a file\r\n"
         "  cp       copy a file\r\n"
         "  rm       delete a file\r\n"
