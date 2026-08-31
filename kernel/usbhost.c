@@ -147,12 +147,56 @@ static uint32_t repeat_due;
 
 static uint8_t translate(uint8_t k, uint8_t mods);
 
+// The arrows and their neighbours, as the escape sequences every terminal has
+// sent for them since the VT100. They are not in the keymap and should not be:
+// a layout says which letter is on a key, and an arrow is an arrow on every
+// keyboard in the world. Putting them here also means the serial port and the
+// screen deliver the same bytes for the same key, which is what lets the shell
+// have one idea of how to edit a line rather than two.
+//
+// HID usages: 0x4a Home, 0x4b PgUp, 0x4c Delete, 0x4d End, 0x4e PgDn,
+// 0x4f right, 0x50 left, 0x51 down, 0x52 up.
+static const char *nav_sequence(uint8_t k) {
+    switch (k) {
+    case 0x4a: return "\x1b[H";
+    case 0x4b: return "\x1b[5~";
+    case 0x4c: return "\x1b[3~";
+    case 0x4d: return "\x1b[F";
+    case 0x4e: return "\x1b[6~";
+    case 0x4f: return "\x1b[C";
+    case 0x50: return "\x1b[D";
+    case 0x51: return "\x1b[B";
+    case 0x52: return "\x1b[A";
+    default:   return 0;
+    }
+}
+
+// A whole sequence or none of it. Half an escape sequence in the queue is worse
+// than a dropped keystroke: the reader would take the tail for text.
+//
+// Not static: the console answers a cursor-position report through here. That
+// looks like a strange direction until you remember what a terminal is -- the
+// screen's reply to the program goes to the program's input, and on this
+// machine the console's input is the keyboard.
+void myrtos_usbhost_push_str(const char *sq) {
+    uint32_t n = 0;
+    while (sq[n]) n++;
+    uint32_t free_slots = (tail - head - 1 + sizeof(keys)) % sizeof(keys);
+    if (free_slots < n) return;
+    for (uint32_t i = 0; i < n; i++) push((uint8_t)sq[i]);
+}
+
 void myrtos_usbhost_repeat(void) {
     if (!repeat_key) return;
     uint32_t now = tusb_time_millis_api();
     if ((int32_t)(now - repeat_due) < 0) return;
-    uint8_t c = translate(repeat_key, repeat_mods);
-    if (c) push(c);
+    const char *sq = nav_sequence(repeat_key);
+    if (sq) {
+        myrtos_usbhost_push_str(sq);
+    } else {
+        uint8_t c = translate(repeat_key, repeat_mods);
+        if (c) push(c);
+    }
     repeat_due = now + REPEAT_RATE_MS;
 }
 
@@ -197,8 +241,13 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
             for (int j = 0; j < 6; j++) if (was[j] == k) held = true;
             if (held) continue;
 
-            uint8_t c = translate(k, report[0]);
-            if (c) push(c);
+            const char *sq = nav_sequence(k);
+            if (sq) {
+                myrtos_usbhost_push_str(sq);
+            } else {
+                uint8_t c = translate(k, report[0]);
+                if (c) push(c);
+            }
 
             // The newest key down is the one that repeats, as it is everywhere:
             // hold a, then hold b, and it is b that runs away.
