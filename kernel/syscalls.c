@@ -279,6 +279,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_READABLE:
+            frame->a0 = (uint32_t)myrtos_io_readable_count((int32_t)frame->a0,
+                                                           myrtos_current_pid());
+            break;
         case SYS_CONFONT:
             // Cheap enough to serve here: it records which font is wanted and
             // fills in a struct of six bytes. The console's own thread does the

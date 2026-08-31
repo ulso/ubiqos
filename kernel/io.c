@@ -310,9 +310,16 @@ int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t 
 }
 
 bool myrtos_io_readable(int32_t path, int32_t owner_pid) {
+    return myrtos_io_readable_count(path, owner_pid) > 0;
+}
+
+// How much, rather than whether. A device with no readable entry point is not
+// an error: it has nothing waiting, which is what zero says.
+int32_t myrtos_io_readable_count(int32_t path, int32_t owner_pid) {
     myrtos_path_t *p = path_of(path, owner_pid);
-    if (!p || !p->device->driver->readable) return false;
-    return p->device->driver->readable() > 0;
+    if (!p) return -1;
+    if (!p->device->driver->readable) return 0;
+    return p->device->driver->readable();
 }
 
 bool myrtos_io_writable(int32_t path, int32_t owner_pid) {

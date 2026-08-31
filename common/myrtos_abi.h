@@ -167,6 +167,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_WIFIVER  36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
 #define SYS_WIFISCAN 37u   // a0 = -1 to look -> a0 = count; a0 = index -> a0 = rssi
 #define SYS_CONFONT  38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
+#define SYS_READABLE 39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -438,6 +439,15 @@ static inline int32_t myrtos_console_font(int32_t index, myrtos_confont_t *out) 
 // is current, or an index to find out what that one would give.
 static inline int32_t myrtos_console_font_info(int32_t index, myrtos_confont_t *out) {
     return myrtos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 1);
+}
+
+// Is there anything to read? myrtos_read blocks when there is not -- the caller
+// is put on WAIT_READ and its ecall re-executed when a byte turns up -- which is
+// what you want in a loop that has nothing else to do, and exactly what you do
+// not want in one that is waiting for an answer that may never come. Ask first
+// and a program can give up.
+static inline int32_t myrtos_readable(int32_t path) {
+    return myrtos_syscall(SYS_READABLE, (uint32_t)path, 0, 0);
 }
 
 static inline int32_t myrtos_mkdir(const char *path) {

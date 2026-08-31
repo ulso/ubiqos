@@ -54,6 +54,7 @@ void    myrtos_io_inherit(int32_t parent_pid, int32_t child_pid);
 // Whether a read on this path would return something. False also for a device
 // whose driver cannot answer, so that such a path is never blocked on.
 bool     myrtos_io_readable(int32_t path, int32_t owner_pid);
+int32_t  myrtos_io_readable_count(int32_t path, int32_t owner_pid);
 
 // Whether a write would take anything. True for a driver that cannot say.
 bool     myrtos_io_writable(int32_t path, int32_t owner_pid);
