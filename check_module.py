@@ -57,7 +57,14 @@ for obj in obj_files:
         if m:
             section = m.group(1)
             continue
-        m = re.search(r"(R_RISCV_\w+)", line)
+        # The type is the third field, whatever it says. Searching for
+        # R_RISCV_\w+ instead meant that a type this readelf cannot name --
+        # it prints "unrecognized: 3b" -- matched nothing and the line was
+        # skipped in silence. Clang's relative vtables emit R_RISCV_PLT32,
+        # which is 0x3b, and sailed through a check written to refuse exactly
+        # that sort of thing. A checker that ignores what it does not
+        # understand is worse than no checker: it says yes with authority.
+        m = re.match(r"\s*[0-9a-fA-F]{8,16}\s+[0-9a-fA-F]{8,16}\s+(\S+)", line)
         if not m or not section:
             continue
 # Debug information is never loaded.

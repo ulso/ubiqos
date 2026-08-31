@@ -422,10 +422,23 @@ devirtualise:
 slot to the function, so the table needs no fixing up wherever it lands. It is
 `MYRTOS_RELTAB_*` in the ABI header, done by the compiler instead of by hand.
 
-**But GNU ld cannot link it** -- "internal error: unsupported relocation error",
-and this readelf prints the type as `unrecognized: 3b`. So it is clang *and*
-lld, a second toolchain for modules, and `R_RISCV_PLT32` added to the checker's
-allowed list. Not a flag; a decision.
+**GNU ld cannot link it** -- "internal error: unsupported relocation error".
+`ld.lld` links it without complaint, and the result is what it claims to be: no
+relocations left in the module at all, and the vtable holding 0x7a, 0x92, 0x82
+where absolute addresses would have been around 0x100xx. Distances, not
+addresses.
+
+So it works, and the price is a second toolchain for modules: clang to compile,
+lld to link. Not a flag; a decision.
+
+**It also found a hole in `check_module.py`, which is the better prize.** The
+first run passed. It should not have -- and it did not pass because the
+relocations were acceptable, but because the checker looked for `R_RISCV_\w+`
+in each line, and this readelf prints an unknown type as `unrecognized: 3b`.
+Nothing matched, so the lines were skipped in silence. A tool written to refuse
+absolute addresses was quietly ignoring every kind it could not name. It now
+reads the type as the third field whatever it says, and refuses anything not on
+the list, which is how it should always have worked.
 
 (The flag is Clang's alone. GCC has never had it, in any version -- a confident
 web answer says otherwise and is wrong about which compiler.)
