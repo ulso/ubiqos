@@ -436,7 +436,12 @@ int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out,
 // process writes from inside a trap, so both could once be halfway through a
 // glyph at the same time. Only the server draws now, so cur_col and cur_row have
 // exactly one writer.
-#define RING_SIZE 4096u
+// Two kilobytes, down from four. The ring is there so a writer need not wait
+// for pixels, not so that a whole screen fits in it -- and a whole screen has
+// not fitted since the grid became 106 by 40, which is 4240 characters. What a
+// short ring costs is that a process printing faster than the server draws
+// blocks for a millisecond at a time, which is what WAIT_WRITE is for.
+#define RING_SIZE 2048u
 #define RING_MASK (RING_SIZE - 1u)
 
 static uint8_t ring[RING_SIZE];
