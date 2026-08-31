@@ -1,0 +1,43 @@
+# Format Style Options - Created with Clang Power Tools
+---
+BasedOnStyle: WebKit
+AlignConsecutiveMacros: AcrossEmptyLinesAndComments
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+AlignArrayOfStructures: Left
+AlignConsecutiveBitFields: AcrossEmptyLinesAndComments
+AllowShortFunctionsOnASingleLine: false
+BreakBeforeBinaryOperators: None
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass:      true
+  AfterCaseLabel:  true
+  AfterControlStatement: false
+  AfterEnum:       true # <-- You need this
+  AfterFunction:   true
+  AfterNamespace:  true
+  AfterObjCDeclaration: true
+  AfterStruct:     true
+  AfterUnion:      true
+  AfterExternBlock: false # <-- And this
+  BeforeCatch:     true
+  BeforeElse:      false
+  BeforeWhile:     false
+  IndentBraces:    false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+ColumnLimit: 120
+Cpp11BracedListStyle: true
+IndentCaseLabels: false
+IndentGotoLabels: false
+IndentPPDirectives: None
+IndentWidth: 4
+PointerAlignment: Right
+ReflowComments: false
+SortIncludes: false
+SpaceBeforeParens: true
+SpacesBeforeTrailingComments: 3
+SpacesInParentheses: false
+...
