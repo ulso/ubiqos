@@ -301,6 +301,7 @@ myrtos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
 myrtos_add_module(msgcli modules/msgcli/msgcli.c)
 myrtos_add_module(font modules/font/font.c)
 myrtos_add_module(color modules/color/color.c)
+myrtos_add_module(kill modules/kill/kill.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
@@ -339,6 +340,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod
@@ -358,6 +360,14 @@ add_custom_target(modules ALL
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
 set(MYRTOS_RESIDENT
+    # Descriptors first. They are what the devices are made of, and a directory
+    # that fills up turns away whatever comes last -- which twice now has been
+    # these, leaving a machine with no console to print the complaint on.
+    termdesc
+    usbdesc
+    kbddesc
+    condesc
+
     sh
     ls
     cat
@@ -372,6 +382,7 @@ set(MYRTOS_RESIDENT
     wifi
     font
     color
+    kill
     sleep
     spin
     spinrt
@@ -386,11 +397,7 @@ set(MYRTOS_RESIDENT
     free
     msgtest
     msgcli
-    termdesc
-    usbdesc
-    kbddesc
-    condesc)
-
+)
 set(resident_mods "")
 foreach(m ${MYRTOS_RESIDENT})
     list(APPEND resident_mods ${CMAKE_CURRENT_BINARY_DIR}/${m}.mod)
