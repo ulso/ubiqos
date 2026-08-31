@@ -41,6 +41,25 @@ The toolchain above is the one the SDK 2.2.0 installer left behind, and it
 works. SDK 2.3.0 prefers `gcc-riscv32-pico-elf`, which can target the core the
 board actually has with `-mcpu=hazard3-rp2350`; that is not in use yet.
 
+The exports matter every time, not just the first. `pico_sdk_import.cmake` reads
+the environment **only when the cache has no value**:
+
+```cmake
+if (DEFINED ENV{PICO_SDK_PATH} AND (NOT PICO_SDK_PATH))
+```
+
+So a cache that once got the wrong path keeps it, and a later `cmake -S . -B
+build` faithfully preserves it. VS Code re-running configure — after an
+extension update, say — is enough to put one there. The symptom is
+
+```
+rp2350-riscv.cmake does not exist. Either specify a valid PICO_PLATFORM
+```
+
+which reads like a broken SDK and is a stale cache. Delete
+`build/CMakeCache.txt` and configure again with the exports set. Nothing is lost:
+`build` is not in the repository, and everything in `.vscode` is.
+
 ## Flashing
 
 Hold **BOOTSEL**, press **RESET**, then:
