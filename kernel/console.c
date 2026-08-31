@@ -39,8 +39,30 @@ static const console_font_t fonts[] = {
 // would leave a partial row straddling the join.
 #define ROWS_MAX (MYRTOS_V_ACTIVE / 12)    // 40
 
-#define FG 0xff     // white
-#define BG 0x00     // black
+// The framebuffer is RGB332 -- red in bits 7-5, green in 4-2, blue in 1-0 --
+// which is not guesswork: video.c's test card draws its bars from these very
+// values and the pattern was checked against a monitor. The bright half is
+// those same eight bars; the normal half is the same hues at about half
+// intensity, and colour 8 is a grey rather than a second black.
+static const uint8_t ansi_colour[16] = {
+    0x00, 0x80, 0x10, 0x90, 0x02, 0x82, 0x12, 0x92,
+    0x49, 0xe0, 0x1c, 0xfc, 0x03, 0xe3, 0x1f, 0xff,
+};
+
+#define COL_DEFAULT_FG 15   // white
+#define COL_DEFAULT_BG 0    // black
+
+static uint8_t fg_index = COL_DEFAULT_FG, bg_index = COL_DEFAULT_BG;
+static bool    reverse_video;
+
+// Reverse swaps the two everywhere rather than at each use, so nothing has to
+// remember to honour it.
+static inline uint8_t eff_fg(void) {
+    return ansi_colour[reverse_video ? bg_index : fg_index];
+}
+static inline uint8_t eff_bg(void) {
+    return ansi_colour[reverse_video ? fg_index : bg_index];
+}
 
 static const console_font_t *font = &fonts[0];
 static uint32_t cell_w = 8, cell_h = 16;
@@ -87,8 +109,8 @@ static inline uint8_t *cell_line(uint32_t row, uint32_t y) {
     return &myrtos_framebuf[fb * MYRTOS_H_ACTIVE];
 }
 
-// A word of four background pixels, for clearing.
-#define BG_WORD ((uint32_t)BG * 0x01010101u)
+// Four background pixels in a word, for clearing.
+static inline uint32_t bg_word(void) { return (uint32_t)eff_bg() * 0x01010101u; }
 
 static void draw_glyph(uint32_t col, uint32_t row, char c) {
     // Latin-1, not ASCII: a Swedish keyboard produces letters above 126 and
@@ -96,6 +118,7 @@ static void draw_glyph(uint32_t col, uint32_t row, char c) {
     uint8_t b = (uint8_t)c;
     uint32_t idx = (b < 32) ? 0 : (uint32_t)(b - 32);
     const uint8_t *g = font->bits + idx * cell_h;
+    uint8_t on = eff_fg(), off = eff_bg();
     // A byte per pixel. The eight pixel cell used to go out as two words, four
     // pixels at a time through a nibble table; six pixels do not divide into
     // words and the trick went with the cell. It costs a few dozen stores per
@@ -105,14 +128,15 @@ static void draw_glyph(uint32_t col, uint32_t row, char c) {
         uint8_t bits = g[y];
         uint8_t *p = cell_line(row, y) + x_margin + col * cell_w;
         for (uint32_t x = 0; x < cell_w; x++)
-            p[x] = (bits & (0x80u >> x)) ? FG : BG;
+            p[x] = (bits & (0x80u >> x)) ? on : off;
     }
 }
 
 static void clear_row(uint32_t row) {
+    uint32_t w = bg_word();
     for (uint32_t y = 0; y < cell_h; y++) {
         uint32_t *p = (uint32_t*)cell_line(row, y);
-        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = BG_WORD;
+        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = w;
     }
     row_wrapped[row] = false;
 }
@@ -140,8 +164,6 @@ static void newline(void) {
 }
 
 static void draw_char(char c) {
-    if (!ready) return;
-    cursor(false);
     switch (c) {
     case '\n':
         wrap_pending = false;
@@ -186,6 +208,170 @@ static void draw_char(char c) {
     // across a screen of output.
 }
 
+// --- ESCAPE SEQUENCES -----------------------------------------------------
+// Enough ANSI to edit a command line on: move the cursor, erase part of a line
+// or the screen, and set colours. The shell needs it because it has two very
+// different terminals to talk to -- a real emulator over the serial port and
+// this console on the monitor -- and it can only have one idea of how to redraw
+// a line. Teaching this end the same language the other end already speaks is
+// what makes one idea enough.
+//
+// Unknown sequences are dropped rather than drawn. A terminal that prints the
+// escapes it does not understand turns one unsupported sequence into a screen
+// of rubbish.
+
+#define MAX_PARAMS 8
+
+static enum { ST_NORMAL, ST_ESC, ST_CSI } esc_state;
+static uint32_t params[MAX_PARAMS];
+static uint32_t nparams;
+static uint32_t saved_col, saved_row;
+
+// Inclusive, and clamped, because a parameter arrives from whoever is writing.
+static void erase_cells(uint32_t row, uint32_t from, uint32_t to) {
+    if (row >= rows || from > to) return;
+    if (to >= cols) to = cols - 1;
+    uint8_t b = eff_bg();
+    for (uint32_t y = 0; y < cell_h; y++) {
+        uint8_t *p = cell_line(row, y) + x_margin + from * cell_w;
+        for (uint32_t x = 0; x < (to - from + 1) * cell_w; x++) p[x] = b;
+    }
+}
+
+static uint32_t param(uint32_t i, uint32_t dflt) {
+    return (i < nparams && params[i]) ? params[i] : dflt;
+}
+
+// 30-37 and 40-47 are the eight colours, 90-97 and 100-107 the bright ones,
+// which is the whole of the sixteen the framebuffer table holds.
+static void set_graphics(void) {
+    if (!nparams) { params[0] = 0; nparams = 1; }
+    for (uint32_t i = 0; i < nparams; i++) {
+        uint32_t v = params[i];
+        if (v == 0) { fg_index = COL_DEFAULT_FG; bg_index = COL_DEFAULT_BG;
+                      reverse_video = false; }
+        else if (v == 1)  fg_index |= 8;          // bold is bright here
+        else if (v == 7)  reverse_video = true;
+        else if (v == 22) fg_index &= 7;
+        else if (v == 27) reverse_video = false;
+        else if (v >= 30  && v <= 37)   fg_index = (uint8_t)(v - 30);
+        else if (v == 39) fg_index = COL_DEFAULT_FG;
+        else if (v >= 40  && v <= 47)   bg_index = (uint8_t)(v - 40);
+        else if (v == 49) bg_index = COL_DEFAULT_BG;
+        else if (v >= 90  && v <= 97)   fg_index = (uint8_t)(v - 90 + 8);
+        else if (v >= 100 && v <= 107)  bg_index = (uint8_t)(v - 100 + 8);
+    }
+}
+
+// ESC [ row ; col R, back to whoever is reading this console -- which is the
+// keyboard, because that is what the console reads.
+void myrtos_usbhost_push_str(const char *s);
+
+static void report_position(void) {
+    char buf[16], *p = buf;
+    uint32_t v[2] = { cur_row + 1, cur_col + 1 };
+    *p++ = 0x1b; *p++ = '[';
+    for (uint32_t i = 0; i < 2; i++) {
+        char tmp[6];
+        uint32_t n = 0, x = v[i];
+        do { tmp[n++] = (char)('0' + x % 10); x /= 10; } while (x);
+        while (n) *p++ = tmp[--n];
+        *p++ = i ? 'R' : ';';
+    }
+    *p = 0;
+    myrtos_usbhost_push_str(buf);
+}
+
+static void do_csi(uint8_t final) {
+    uint32_t n;
+    switch (final) {
+    case 'A': n = param(0, 1); cur_row = (n > cur_row) ? 0 : cur_row - n; break;
+    case 'B': n = param(0, 1); cur_row = (cur_row + n >= rows) ? rows - 1 : cur_row + n; break;
+    case 'C': n = param(0, 1); cur_col = (cur_col + n >= cols) ? cols - 1 : cur_col + n; break;
+    case 'D': n = param(0, 1); cur_col = (n > cur_col) ? 0 : cur_col - n; break;
+    case 'G': n = param(0, 1); cur_col = (n - 1 >= cols) ? cols - 1 : n - 1; break;
+    case 'H': case 'f':
+        n = param(0, 1); cur_row = (n - 1 >= rows) ? rows - 1 : n - 1;
+        n = param(1, 1); cur_col = (n - 1 >= cols) ? cols - 1 : n - 1;
+        break;
+    case 'J':                                    // erase in display
+        n = param(0, 0);
+        if (n == 0) {
+            erase_cells(cur_row, cur_col, cols - 1);
+            for (uint32_t r = cur_row + 1; r < rows; r++) clear_row(r);
+        } else if (n == 1) {
+            for (uint32_t r = 0; r < cur_row; r++) clear_row(r);
+            erase_cells(cur_row, 0, cur_col);
+        } else {
+            for (uint32_t r = 0; r < rows; r++) clear_row(r);
+        }
+        break;
+    case 'K':                                    // erase in line
+        n = param(0, 0);
+        if (n == 0)      erase_cells(cur_row, cur_col, cols - 1);
+        else if (n == 1) erase_cells(cur_row, 0, cur_col);
+        else             erase_cells(cur_row, 0, cols - 1);
+        break;
+    case 'm': set_graphics(); break;
+    case 'n':
+        // Device status report. Only the cursor position is asked for in
+        // practice, and it is asked for because "move a long way right, then
+        // tell me where you are" is how a program finds out how wide the
+        // terminal is without being told.
+        if (param(0, 0) == 6) report_position();
+        break;
+    case 's': saved_col = cur_col; saved_row = cur_row; break;
+    case 'u':
+        cur_col = saved_col < cols ? saved_col : cols - 1;
+        cur_row = saved_row < rows ? saved_row : rows - 1;
+        break;
+    default: break;                              // dropped, not drawn
+    }
+    // Moving the cursor by hand ends any wrap that was being held back: the
+    // column it was waiting on is not where we are any more.
+    if (final != 'm' && final != 's') wrap_pending = false;
+}
+
+// One byte into the terminal. The cursor is lifted here rather than in
+// draw_char so that an escape that moves or erases lifts it too -- otherwise it
+// would be left behind, inverted, wherever it happened to be standing.
+static void console_feed(uint8_t c) {
+    if (!ready) return;
+    cursor(false);
+
+    switch (esc_state) {
+    case ST_NORMAL:
+        if (c == 0x1b) esc_state = ST_ESC;
+        else           draw_char((char)c);
+        return;
+    case ST_ESC:
+        if (c == '[') {
+            esc_state = ST_CSI;
+            nparams = 0;
+            params[0] = 0;
+        } else {
+            esc_state = ST_NORMAL;               // not ours; both bytes go
+        }
+        return;
+    case ST_CSI:
+        if (c >= '0' && c <= '9') {
+            if (!nparams) nparams = 1;
+            params[nparams - 1] = params[nparams - 1] * 10 + (uint32_t)(c - '0');
+        } else if (c == ';') {
+            if (nparams < MAX_PARAMS) params[nparams++] = 0;
+            else                      params[MAX_PARAMS - 1] = 0;
+        } else if (c >= '@' && c <= '~') {
+            do_csi(c);
+            esc_state = ST_NORMAL;
+        } else if (c < '0') {
+            /* an intermediate byte, or a private marker like '?'; keep reading */
+        } else {
+            esc_state = ST_NORMAL;
+        }
+        return;
+    }
+}
+
 // --- THE GRID -------------------------------------------------------------
 // Changing font changes how many characters fit, so it cannot be done under the
 // feet of whatever is drawing. The request is left here and the server picks it
@@ -206,8 +392,9 @@ static void set_grid(const console_font_t *f) {
     // The origin is a multiple of the old cell height and need not be one of the
     // new. Start the ring over rather than leave a row straddling the join.
     myrtos_video_set_origin(0);
+    uint8_t b = eff_bg();
     for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
-        myrtos_framebuf[i] = BG;
+        myrtos_framebuf[i] = b;
     for (uint32_t r = 0; r < rows; r++) row_wrapped[r] = false;
     cur_col = cur_row = 0;
     wrap_pending = false;
@@ -278,7 +465,7 @@ uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len) {
 // server and cannot interleave with a module's output mid-character. Before the
 // server exists there is nothing else running, so drawing directly is safe.
 void myrtos_console_putc(char c) {
-    if (!server_up) { draw_char(c); cursor(true); return; }
+    if (!server_up) { console_feed((uint8_t)c); cursor(true); return; }
     uint8_t b = (uint8_t)c;
     while (myrtos_console_put(&b, 1) == 0) { /* the kernel waits; it is rare */ }
 }
@@ -287,7 +474,7 @@ static void console_thread(void) {
     server_up = true;
     for (;;) {
         while (ring_tail != ring_head) {
-            draw_char((char)ring[ring_tail]);
+            console_feed(ring[ring_tail]);
             ring_tail = (ring_tail + 1) & RING_MASK;
         }
         cursor(true);
