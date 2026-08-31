@@ -60,8 +60,7 @@
 
 #define MYRTOS_KEYMAP_KEYS    104
 
-typedef struct
-{
+typedef struct {
     uint8_t plain[MYRTOS_KEYMAP_KEYS];
     uint8_t shift[MYRTOS_KEYMAP_KEYS];
     uint8_t altgr[MYRTOS_KEYMAP_KEYS];
@@ -71,8 +70,7 @@ typedef struct
 // property of the screen rather than of whoever writes to it: a process asks
 // for one and every process sees the change, in the way that changing the
 // keyboard layout above changes it for everyone reading the keyboard.
-typedef struct
-{
+typedef struct {
     uint8_t index;   // which font is current
     uint8_t cell_w, cell_h;
     uint8_t count;         // how many the kernel has
@@ -82,8 +80,7 @@ typedef struct
 #define MYRTOS_CLASS_CHAR  1   // character stream: terminal, serial port
 #define MYRTOS_CLASS_BLOCK 2   // block oriented: SD, disk
 
-typedef struct __attribute__((packed, aligned(4)))
-{
+typedef struct __attribute__((packed, aligned(4))) {
     char device_name[MYRTOS_NAME_LEN];   // what a process opens: "term"
     char driver_name[MYRTOS_NAME_LEN];   // the module handling it: "UART    MOD"
     uint16_t device_class;               // MYRTOS_CLASS_*
@@ -94,16 +91,14 @@ typedef struct __attribute__((packed, aligned(4)))
 
 // The tail for the UART driver. Its layout is the driver's business alone; the
 // I/O manager passes it on without interpreting it.
-typedef struct __attribute__((packed, aligned(4)))
-{
+typedef struct __attribute__((packed, aligned(4))) {
     uint32_t uart_base;   // 0x40070000 for UART0 on the RP2350
     uint32_t tx_pin;
     uint32_t rx_pin;   // 0xffffffff if send-only
     uint32_t baud_rate;
 } myrtos_uart_config_t;
 
-typedef struct __attribute__((packed, aligned(4)))
-{
+typedef struct __attribute__((packed, aligned(4))) {
     uint32_t sync_code;     // MYRTOS_SYNC_CODE
     uint32_t module_size;   // the whole module, header included
     uint32_t name_offset;   // to the name string
@@ -190,8 +185,7 @@ typedef struct __attribute__((packed, aligned(4)))
 // there is no filter on receive: the usual argument against selective receive is
 // the cost of scanning an unbounded mailbox, and this one is bounded at thirty
 // two. Receive takes whatever comes and the receiver dispatches on type.
-typedef struct
-{
+typedef struct {
     uint32_t type;    // what this is; the receiver switches on it
     uint32_t len;     // how much data points at
     void *data;       // the sender's own memory, valid until the reply
@@ -221,8 +215,7 @@ typedef struct
 #define MYRTOS_MSG_WIFI_JOIN 12u
 #define MYRTOS_MSG_WIFI_ADDR 13u
 
-typedef struct
-{
+typedef struct {
     int32_t index;   // scan: -1 to look, otherwise which entry
     char *buf;
     uint32_t len;
@@ -394,8 +387,7 @@ static inline int32_t myrtos_args(char *buf, uint32_t len)
 // and an empty path or "/" is the root. Four things have to cross into the
 // kernel, one more than there are argument registers, so they travel as a
 // struct like reads and writes already do.
-typedef struct
-{
+typedef struct {
     const char *path;
     uint32_t index;   // starts at zero
     char *name;       // twelve bytes out: eleven characters and a NUL
@@ -532,8 +524,7 @@ static inline int32_t myrtos_mkdir(const char *path)
 // Four arguments do not fit in a0-a2, so the request travels as a struct. Reads
 // and writes take the same one -- they differ in direction, not in shape -- and
 // it leaves room to grow without disturbing the calling convention.
-typedef struct
-{
+typedef struct {
     const char *name;
     uint32_t offset;
     uint8_t *buf;
@@ -616,8 +607,7 @@ static inline uint32_t myrtos_ticks_now(void)
 #define MYRTOS_PS_SLEEPING   5
 #define MYRTOS_PS_ZOMBIE     9   // killed, waiting for a server to let go
 
-typedef struct
-{
+typedef struct {
     uint32_t pid;
     uint32_t state;   // MYRTOS_PS_*
     uint32_t priority;
@@ -761,8 +751,7 @@ static inline void myrtos_exit(void)
 // utility builds its line from several writes, other processes get in between,
 // and the output is unreadable as soon as more than one process speaks. Hence
 // this: gather the line, send it once.
-typedef struct
-{
+typedef struct {
     char buf[96];
     uint32_t len;
 } myrtos_line_t;
@@ -816,8 +805,7 @@ static inline int32_t myrtos_write_u32(int32_t path, uint32_t v)
 
 // One entry of the module directory. The revision is what decides which copy of
 // a name the system keeps, so it belongs in any listing of them.
-typedef struct
-{
+typedef struct {
     char name[MYRTOS_NAME_LEN];
     uint32_t links;      // processes running it right now
     uint32_t revision;   // the highest of this name won

@@ -11,17 +11,17 @@ AllowShortFunctionsOnASingleLine: false
 BreakBeforeBinaryOperators: None
 BreakBeforeBraces: Custom
 BraceWrapping:
-  AfterClass:      true
+  AfterClass:      false
   AfterCaseLabel:  true
   AfterControlStatement: false
   AfterEnum:       true # <-- You need this
   AfterFunction:   true
   AfterNamespace:  true
   AfterObjCDeclaration: true
-  AfterStruct:     true
-  AfterUnion:      true
+  AfterStruct:     false
+  AfterUnion:      false
   AfterExternBlock: false # <-- And this
-  BeforeCatch:     true
+  BeforeCatch:     false
   BeforeElse:      false
   BeforeWhile:     false
   IndentBraces:    false
