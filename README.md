@@ -117,25 +117,28 @@ allocation, and nothing to free.
 
 ## Getting modules into the system
 
-**From the SD card.** Copy the `.mod` files to the root of the card. The
-filesystem support is FAT32 and read-only; the kernel looks for files with the
-extension `MOD` and registers them at startup. Note the 8.3 names — `sh.mod`
-goes on the card as `SH.MOD`.
-
-**Resident in flash.** Concatenate the modules into an image and place it in the
+**Resident in flash.** This is where the system lives. The build concatenates
+`MYRTOS_RESIDENT` from `CMakeLists.txt` into an image and it goes into the
 module region, `0x10100000`–`0x11000000`. There is no directory there: the
 kernel searches for the sync word, exactly as OS-9 did with ROM — the module
 *is* its own directory entry.
 
 ```bash
-python3 make_flash_image.py build/modules.bin \
-        build/sh.mod build/ls.mod build/cat.mod build/echo.mod \
-        build/lsmod.mod build/free.mod build/termdesc.mod build/usbdesc.mod
 picotool load build/modules.bin -t bin -o 0x10100000
 ```
 
 The filename comes before `-t` and `-o`; picotool rejects them the other way
-round.
+round. The image is written whole, so a module is added by adding it to
+`MYRTOS_RESIDENT` and loading the image again, never by loading one module.
+
+**From the SD card.** Copy the `.mod` files to the root of the card. The
+filesystem support is FAT32 and read-only; the kernel looks for files with the
+extension `MOD` and registers them at startup. Note the 8.3 names — `sh.mod`
+goes on the card as `SH.MOD`.
+
+The two are not equivalent. A module in flash runs where it lies; one on the
+card is read into RAM at startup and stays there for as long as the machine is
+up, whether or not anything runs it. The card is for what is being worked on.
 
 Flash is searched before the card. A module of the same name on the card is
 registered alongside it, and whichever was registered first wins the lookup.

@@ -23,4 +23,4 @@ for m in mods:
 blob += b"\x00\x00\x00\x00"
 
 open(out, "wb").write(blob)
-print(f"  {out}: {len(mods)} moduler, {len(blob)} byte")
+print(f"  {out}: {len(mods)} modules, {len(blob)} bytes")

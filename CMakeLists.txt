@@ -345,3 +345,60 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod)
+
+# What lives in flash rather than on the card.
+#
+# A module in flash runs where it lies. One read from the card is copied into
+# RAM at startup and stays there, so the card is for what is being worked on,
+# and this is for the system. The order is the order of the image, which is the
+# order lsmod reports; it has no other meaning.
+#
+# lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
+# and belongs nowhere near a concatenated image.
+set(MYRTOS_RESIDENT
+    sh
+    ls
+    cat
+    cp
+    rm
+    write
+    fill
+    mkdir
+    rmdir
+    pwd
+    mount
+    wifi
+    font
+    sleep
+    spin
+    spinrt
+    nice
+    ps
+    keys
+    bootsel
+    memtest
+    pimpl
+    echo
+    lsmod
+    free
+    msgtest
+    msgcli
+    termdesc
+    usbdesc
+    kbddesc
+    condesc)
+
+set(resident_mods "")
+foreach(m ${MYRTOS_RESIDENT})
+    list(APPEND resident_mods ${CMAKE_CURRENT_BINARY_DIR}/${m}.mod)
+endforeach()
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/modules.bin
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_flash_image.py
+            ${CMAKE_CURRENT_BINARY_DIR}/modules.bin ${resident_mods}
+    DEPENDS ${resident_mods} ${CMAKE_CURRENT_SOURCE_DIR}/make_flash_image.py
+    COMMENT "Building the resident module image")
+
+add_custom_target(flashimage ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin)
+add_dependencies(flashimage modules)
