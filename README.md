@@ -229,6 +229,28 @@ baud, but output only — the descriptor sets `rx_pin` to `0xffffffff`, so it
 accepts no input. Kernel startup messages can be followed there, but the shell
 can only be driven over USB.
 
+## Escape sequences
+
+The console understands enough ANSI to edit a command line on: `A`–`D` and `G`
+and `H` to move the cursor, `J` and `K` to erase, `m` for colour, `s` and `u` to
+save and restore where the cursor was, and `n` to say where it is. Anything else
+is dropped rather than drawn.
+
+Colour is the framebuffer's own RGB332. `30`–`37` and `40`–`47` are the eight,
+`90`–`97` and `100`–`107` the bright ones; the bright eight are the values the
+test card draws its bars from.
+
+The keyboard sends the other half of the same language: the arrows, Home, End,
+Delete and the page keys arrive as the sequences they have been since the
+VT100, from `nav_sequence` in `kernel/usbhost.c`. They are not in the keymap on
+purpose — a layout says which letter is on a key, and an arrow is an arrow
+everywhere. The point is that the serial port and the screen deliver the same
+bytes, so a program that reads a line needs one idea of how to edit it.
+
+`ESC[999C ESC[6n` — move a long way right, then ask where you are — is how a
+program finds the width of its terminal. Our console answers it by pushing the
+report into the keyboard queue, because the console's input is the keyboard.
+
 ## The shell
 
 ```
@@ -257,7 +279,14 @@ Type a module name to run it. Built in:
   bootsel  reboot into the bootloader
 
 A trailing & runs a command without waiting for it.
+Arrows move along the line and up and down the history; ctrl-A and
+ctrl-E jump to its ends; ctrl-L clears the screen when it is empty.
 ```
+
+The line editor keeps sixteen lines of history and refuses to take a character
+that would push the line past the right edge — a wrapped line cannot be redrawn
+from a carriage return, so it stops rather than draw it wrong. A long path
+therefore wants a `cd` first, which is what one would do anyway.
 
 `help` is the only thing the shell does itself. Everything else is a module
 looked up in the directory and started — `lsmod`, `free`, `echo`, `counter`,
@@ -311,6 +340,7 @@ result. Inline wrappers for all of them are in the ABI header.
 | 36 | `SYS_WIFIVER` | buffer, length → 0, or -1 if the chip does not answer |
 | 37 | `SYS_WIFISCAN` | -1 to look → count; an index → that network's signal |
 | 38 | `SYS_CONFONT` | font or -1, &out, 1 to only look → 0, or -1 |
+| 39 | `SYS_READABLE` | path → bytes waiting, 0 for none, -1 for no such path |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was
