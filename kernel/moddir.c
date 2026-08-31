@@ -1,6 +1,7 @@
 #include "moddir.h"
 #include "flashmod.h"
 #include "tlsf.h"
+#include "hardware/sync.h"
 
 extern tlsf_pool_t myrtos_mem_pool;
 void myrtos_print(const char *s);
@@ -74,16 +75,39 @@ static bool supersedes(const myrtos_module_header_t *fresh, const char *name) {
 
     extern tlsf_pool_t myrtos_pool_of_address(void *p);
     if (old->owned) myrtos_tlsf_free(myrtos_pool_of_address(old->owned), old->owned);
+    // Closing the gap overwrites an entry a reader may be standing on, so the
+    // move and the count go together or a walk sees half of each.
+    uint32_t st = save_and_disable_interrupts();
     *old = modules[--module_count];       // close the gap
+    restore_interrupts(st);
     return true;
 }
 
+// A slot past the end, which no reader can see: every walk of the directory
+// stops at module_count. The caller fills it and then calls commit_entry, and
+// only that makes it exist.
+//
+// The order matters now in a way it did not when every module was registered
+// from main before the scheduler started. The filesystem server registers what
+// it finds on the card from a kernel thread, with interrupts on, so a system
+// call can land in the middle of it -- and a directory that counted the slot
+// before it was filled would hand that caller an entry holding whatever the
+// last module to occupy it left behind. A stale header pointer is a jump into
+// nothing, arriving whenever the timer happens to fall between two lines.
 static myrtos_module_entry_t *alloc_entry(void) {
     if (module_count >= MYRTOS_MAX_MODULES) {
         myrtos_print("  module directory full\n");
         return 0;
     }
-    return &modules[module_count++];
+    return &modules[module_count];
+}
+
+// Publishing is the one store that must not be reordered before the fills, and
+// the critical section is what stops both the compiler and the timer.
+static void commit_entry(void) {
+    uint32_t st = save_and_disable_interrupts();
+    module_count++;
+    restore_interrupts(st);
 }
 
 bool myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char *name) {
@@ -96,6 +120,7 @@ bool myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char
     e->owned = 0;
     e->transient = false;
     name_copy(e->name, name);
+    commit_entry();
     return true;
 }
 
@@ -119,6 +144,7 @@ bool myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name) 
     e->owned = space;
     e->transient = false;
     name_copy(e->name, name);
+    commit_entry();
     return true;
 }
 
@@ -171,13 +197,16 @@ static myrtos_module_entry_t *adopt_from_flash(const char *name) {
     e->owned = 0;
     e->transient = true;
     name_copy(e->name, name);
+    commit_entry();
     return e;
 }
 
 const myrtos_module_header_t *myrtos_moddir_link(const char *name) {
     for (uint32_t i = 0; i < module_count; i++) {
         if (!name_eq(modules[i].name, name)) continue;
+        uint32_t st = save_and_disable_interrupts();
         modules[i].links++;
+        restore_interrupts(st);
         return modules[i].header;
     }
     myrtos_module_entry_t *e = adopt_from_flash(name);
@@ -189,6 +218,7 @@ const myrtos_module_header_t *myrtos_moddir_link(const char *name) {
 void myrtos_moddir_unlink(const myrtos_module_header_t *header) {
     for (uint32_t i = 0; i < module_count; i++) {
         if (modules[i].header != header) continue;
+        uint32_t st = save_and_disable_interrupts();
         if (modules[i].links) modules[i].links--;
         // The copy stays even at zero links. OS-9 did the same until the memory
         // was needed: the next start of the same utility is then immediate.
@@ -198,6 +228,7 @@ void myrtos_moddir_unlink(const myrtos_module_header_t *header) {
         // Keeping them would fill the directory with everything ever run.
         if (modules[i].transient && !modules[i].links)
             modules[i] = modules[--module_count];
+        restore_interrupts(st);
         return;
     }
 }
