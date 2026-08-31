@@ -37,3 +37,15 @@ whether the DAT state machine's `in` pins are configured for the right window,
 whether the four data pins really are driven (a scope on GP36-39 would say), and
 whether DMA channels 8-11, which this driver hardcodes rather than claiming,
 collide with anything by the time SD init runs.
+
+## The four-pin binary info mask
+
+`sd_init_4pins` declared its pins as `0xfu << PICO_SD_DAT0_PIN`. The data pins
+start at **36** on this board and `0xfu` is a 32-bit unsigned, so the shift was
+undefined and the mask came out wrong. `0xfull` now.
+
+The macro is not at fault: on a chip with more than thirty-two pins
+`bi_pin_mask_with_names` does cast to `uint64_t` -- but it casts the result, and
+by then the shift has already happened. It matters only to what picotool prints
+about the image, which is why it went unseen; it is undefined behaviour either
+way, and the compiler had been saying so on every build.

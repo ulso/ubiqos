@@ -5,6 +5,18 @@
 // own BSP, but we do not use it -- the kernel sets up USB itself.
 // The RP2350 uses the same port as the RP2040.
 #define CFG_TUSB_MCU            OPT_MCU_RP2040
+
+// The SDK's CMake puts CFG_TUSB_OS=OPT_OS_PICO on the command line, and this
+// deliberately disagrees: OPT_OS_PICO makes TinyUSB reach for the SDK's mutexes
+// and semaphores, which block, and every tud_task and tuh_task here runs in a
+// myrtos kernel thread whose blocking is the scheduler's business. OPT_OS_NONE
+// leaves it polling, which is what it is being called from a thread to do.
+//
+// The undef is not cosmetic. Without it the compiler warns on every TinyUSB
+// source, and which value wins depends on include order -- so a file that
+// somehow missed this header would build its osal structures the other way and
+// disagree with everything else about their size.
+#undef  CFG_TUSB_OS
 #define CFG_TUSB_OS             OPT_OS_NONE
 #define CFG_TUSB_MEM_ALIGN      __attribute__((aligned(4)))
 

@@ -179,7 +179,14 @@ function(myrtos_add_module name source)
     # -N keeps the linker from page-aligning the writable sections. Without it
     # .tdata landed a page beyond the code and objcopy padded the gap, which put
     # four kilobytes of zeroes in every module that had a thread-local variable.
-    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-N ${single_link})
+    # -e,0 and --no-warn-rwx-segments say nothing about the code; they say that
+    # two warnings do not apply to a module. It has no _start, because the
+    # kernel enters it at exec_offset -- which make_module.py finds with nm, not
+    # from the ELF entry -- and its one loadable segment is read, write and
+    # execute together, because that is what a module is. Sixty-six lines of
+    # them per clean build is how a real warning goes unnoticed.
+    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-N
+                        -Wl,-e,0 -Wl,--no-warn-rwx-segments ${single_link})
     if(single_flag)
         target_compile_options(${name}_app PRIVATE -fno-zero-initialized-in-bss)
     endif()
@@ -226,7 +233,8 @@ function(myrtos_add_data_module name source)
     add_executable(${name}_app ${source})
     target_compile_options(${name}_app PRIVATE
         -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2)
-    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-e,0)
+    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-e,0
+                        -Wl,--no-warn-rwx-segments)
 
     add_custom_command(TARGET ${name}_app POST_BUILD
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py

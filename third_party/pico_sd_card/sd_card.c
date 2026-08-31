@@ -666,7 +666,11 @@ int sd_init_1pin() {
 
 int sd_init_4pins() {
     // note names are | separated, and repeat if not specified; i.e. this names all pins the same
-    bi_decl_if_func_used(bi_pin_mask_with_names(0xfu << PICO_SD_DAT0_PIN, "SDIO data 0-3"));
+    // 0xfull, not 0xfu. The data pins start at 36 on this board and 0xfu is a
+    // 32-bit unsigned, so the shift was undefined and the mask came out wrong.
+    // The macro does cast to uint64_t on a chip with more than thirty-two pins
+    // -- but it casts the result, and by then the shift has already happened.
+    bi_decl_if_func_used(bi_pin_mask_with_names(0xfull << PICO_SD_DAT0_PIN, "SDIO data 0-3"));
     return sd_init(true);
 }
 
