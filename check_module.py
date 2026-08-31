@@ -61,7 +61,15 @@ def readelf_or_die(readelf, args, path):
         sys.exit(1)
     return r.stdout
 
-problems = []
+# Two properties, and they are not the same one. A module is POSITION
+# INDEPENDENT when it holds no absolute addresses, so it runs wherever it is
+# loaded -- that is about relocations. It is SHAREABLE when it holds no writable
+# data, so one copy can serve many processes -- that is about sections. A module
+# with a writable static is perfectly position independent and simply cannot be
+# shared, and saying "not position independent" about it sends the reader
+# looking for the wrong thing.
+not_pic = []
+not_shared = []
 
 for obj in obj_files:
     out = readelf_or_die(readelf, ["-r"], obj)
@@ -95,7 +103,7 @@ for obj in obj_files:
                                      capture_output=True, text=True).stdout.strip()
                 if dem and dem != m2.group(1):
                     hint = f"{section}  ({dem})"
-            problems.append(f"{obj}: {kind} in {hint}")
+            not_pic.append(f"{obj}: {kind} in {hint}")
 
 out = readelf_or_die(readelf, ["-S"], elf)
 # By the W flag, not by a list of names. The list said .data, .bss, .sdata and
@@ -123,23 +131,32 @@ for line in out.splitlines():
     # is one loadable segment by design, not a writable variable. Data sections
     # are WA without the X, and those are the ones two processes would share.
     if "W" in flags and "A" in flags and "X" not in flags and int(size, 16) != 0:
-        problems.append(f"{elf}: writable section {name} is present")
+        not_shared.append(f"{elf}: writable section {name} is present")
 
-if problems:
-    print("MODULE IS NOT POSITION INDEPENDENT:", file=sys.stderr)
+def report(title, items, why):
+    print(title, file=sys.stderr)
     seen = set()
-    for p in problems:
+    for p in items:
         if p in seen: continue
         seen.add(p)
         print(f"  {p}", file=sys.stderr)
-    print("\nAn absolute address in an allocated section is usually a table of",
-          file=sys.stderr)
-    print("pointers -- a switch or if-chain returning string literals, a static",
-          file=sys.stderr)
-    print("function pointer, or a C++ vtable. A writable section is a variable",
-          file=sys.stderr)
-    print("that two processes sharing this code would both write to.",
-          file=sys.stderr)
+    print("\n" + why, file=sys.stderr)
+
+if not_pic:
+    report("MODULE IS NOT POSITION INDEPENDENT:", not_pic,
+           "An absolute address in an allocated section is not known until the\n"
+           "module is loaded. It is usually a table of pointers -- a switch or\n"
+           "if-chain returning string literals, a static function pointer, or a\n"
+           "C++ vtable.")
+
+if not_shared:
+    report("MODULE IS NOT SHAREABLE:", not_shared,
+           "A writable section is a variable, and one copy of this code serves\n"
+           "every process running it -- so they would all be writing to the same\n"
+           "one. This is not a relocation problem and no compiler flag fixes it.\n"
+           "Use __thread for per-process state, or the data area.")
+
+if not_pic or not_shared:
     print("See docs/writing-modules.md.", file=sys.stderr)
     sys.exit(1)
 

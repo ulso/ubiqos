@@ -407,11 +407,22 @@ the module format cares about is storage. Measured, both compilers agreeing:
 | `const char n[2][4] = {...}` | fine | characters, no addresses |
 | `__thread int g;` | fine | one per process, through `tp` |
 
-The refusals are for two different reasons and it is worth keeping them apart. A
-pointer table is refused because its contents are addresses that are not known
-until the module is loaded. A writable variable is refused because the module is
-**shared**: two processes running it would be writing to one another's state.
-No compiler flag fixes the second, because it is not a compiler question.
+The refusals are for two different reasons, and they are different *properties*:
+
+**Position independent** means the module holds no absolute addresses, so it
+runs wherever it is loaded. That is about relocations, and it is what
+`-mcmodel=medany` buys -- PC-relative addressing with no table to fix up. Note
+that the build passes `-fno-pic`: real PIC would reach globals through a GOT,
+which is a table of addresses filled in at load time, and that is precisely what
+is not wanted here.
+
+**Shareable** means the module holds no writable data, so one copy can serve
+every process running it. That is about sections, and no compiler flag has
+anything to do with it.
+
+A module with `static int counter;` is perfectly position independent and simply
+cannot be shared. `check_module.py` says so in those words, because calling that
+"not position independent" sends the reader looking for the wrong thing.
 
 ### Statics under clang
 
