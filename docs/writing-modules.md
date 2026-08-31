@@ -281,6 +281,20 @@ reaches different memory. Data at `0x0` does *not* work: the linker relaxes to
 2 kB window. And gp reaches +/-2 kB, so a module's whole writable state has to
 fit in about four kilobytes -- which is what `mem_size` is anyway.
 
+**But it would be a downgrade, and the reason is the reach.** `gp` puts the
+offset in one instruction's twelve bits, so it covers 2 kB either side and no
+more. `__thread` has no such limit: TPREL is `HI20`/`LO12`/`ADD`, a full 32-bit
+offset, and a sixty-kilobyte thread-local array compiles without complaint.
+
+    gp-relative   one instruction    +/-2 kB      static int x;
+    tp-relative   one to three       32 bits      static __thread int x;
+
+So the mechanism already in use is the more capable one. `gp` would buy the
+convenience of writing plain `static` and cost the range -- and it would fail
+badly rather than gracefully: data past 2 kB simply does not get relaxed, and
+the linker leaves a PC-relative reference pointing into the module image. Only
+the writable-section check would catch it.
+
 What stands in the way is one thing, and it is written down at `kernel_gp` in
 scheduler.c: the trap vector restores the process's `gp` on the way in, and the
 kernel's own C code needs its own. The vector would have to swap to `kernel_gp`
