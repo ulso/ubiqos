@@ -470,6 +470,23 @@ void myrtos_console_putc(char c) {
     while (myrtos_console_put(&b, 1) == 0) { /* the kernel waits; it is rare */ }
 }
 
+// A whole run at once. The ring copy is already atomic -- it is one memcpy with
+// interrupts off -- so a line put in this way cannot be split by another writer.
+// One that is fed a byte at a time can, and was: the shell greeted the user in
+// the middle of "Kernel is now the idle process."
+void myrtos_console_write(const char *p, uint32_t n) {
+    if (!server_up) {
+        for (uint32_t i = 0; i < n; i++) console_feed((uint8_t)p[i]);
+        cursor(true);
+        return;
+    }
+    while (n) {
+        uint32_t took = myrtos_console_put((const uint8_t*)p, n);
+        p += took;
+        n -= took;      // nothing taken means full; the server is draining it
+    }
+}
+
 static void console_thread(void) {
     server_up = true;
     for (;;) {

@@ -27,6 +27,7 @@ void myrtos_console_putc(char c);
 void myrtos_console_start_server(void);
 uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len);
 uint32_t myrtos_console_room(void);
+void     myrtos_console_write(const char *p, uint32_t n);
 
 // Which font the console draws in. The switch is applied by the console's own
 // server thread once it has drawn everything already queued, so this only

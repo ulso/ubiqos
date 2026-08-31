@@ -59,9 +59,28 @@ void myrtos_print(const char *s) {
     // It ran for a third of a second and stopped, every boot, and the counter
     // that found it was the only way it was ever going to be found. Interleaved
     // diagnostics are cosmetic; a picture is not.
+    // The console is a different matter, and this is where the two sinks part
+    // company. Its ring takes a whole run of bytes in one copy, with interrupts
+    // off for the copy alone and no UART in sight, so a line can go in whole --
+    // and a line is the right unit: two writers may interleave between lines,
+    // which nobody minds, but not within one. The shell used to greet the user
+    // in the middle of "Kernel is now the idle process."
+    //
+    // The UART still gets its bytes one at a time, with interrupts on.
     while (*s) {
-        if (*s == '\n') myrtos_putc('\r');
-        myrtos_putc(*s++);
+        const char *run = s;
+        while (*s && *s != '\n') s++;
+        uint32_t n = (uint32_t)(s - run);
+        if (n) {
+            myrtos_console_write(run, n);
+            for (uint32_t i = 0; i < n; i++) uart_putc_raw(MYRTOS_UART, run[i]);
+        }
+        if (*s == '\n') {
+            myrtos_console_write("\r\n", 2);
+            uart_putc_raw(MYRTOS_UART, '\r');
+            uart_putc_raw(MYRTOS_UART, '\n');
+            s++;
+        }
     }
 }
 
