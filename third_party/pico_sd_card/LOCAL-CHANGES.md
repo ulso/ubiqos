@@ -70,3 +70,40 @@ Nothing collides today -- Pico-PIO-USB takes channel 0 by a hardcoded mask and
 video claims three more dynamically, so the low channels are all that are in use
 -- but nothing reserves 8 to 11 either, and the next driver that claims
 dynamically will be handed them silently.
+
+## It was the order, and the driver was never the problem
+
+SDIO works. Four-bit wide bus, full clock. What was wrong was that it was asked
+second.
+
+A card latches into SPI mode the moment it is addressed that way and stays there
+until the power is cut. `myrtos_fat_remount` called `myrtos_sd_init` -- which is
+SPI -- and then asked for SDIO, so every attempt for two days was made to a card
+that no longer spoke it. No amount of pin fixing could have helped.
+
+Measured, on a card pulled and reinserted so it had never been spoken to:
+
+    sdio_refused = 0        SPI never used this power cycle
+    use_sdio     = 1
+    bus_width    = 2        bw_wide, four bits
+    dbg_padoe    = 0x000C0000   CLK and CMD driven, DAT0-3 released
+    sm[2].clkdiv = 0x00010000   divisor 1, raised from 50 after init
+
+And what it looked like while it was failing, from the same registers:
+
+    dbg_padout toggling         the clock was running
+    dbg_padoe  = 0x00F40000     CMD released, DAT0-3 held as outputs
+    FSTAT RXEMPTY all four      nothing ever received
+    DMA ch11 count = 2, frozen  the command response never came
+
+The card was being clocked and asked correctly and said nothing at all, which is
+what a card in SPI mode does. `dbg_padout` and `dbg_padoe` are how you take a
+scope reading on pads that sit under the card holder.
+
+**What is left.** Boot still runs `spi_init_card`, so SDIO is only reachable if
+there is no card in the socket at boot -- put one in afterwards and run `mount`.
+That is not a usable system. The card's bring-up belongs in the filesystem
+server, where it is already safe to hang, so that SDIO gets first refusal on
+every boot. Until then the driver's unbounded waits, which upstream marks "todo
+not forever", must stay out of anything that runs before the scheduler: trying
+it there cost a boot and needed the BOOTSEL button.

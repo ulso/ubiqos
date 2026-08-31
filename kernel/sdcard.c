@@ -206,18 +206,48 @@ static bool spi_write_block(uint32_t lba, const uint8_t *buf) {
 
 static bool use_sdio;
 
+// Once SPI has been spoken to the card, SDIO is not worth asking for again --
+// see below. This says so, so that the mount command's retry does not hang.
+static bool sdio_refused;
+
 bool myrtos_sd_init(void) {
     use_sdio = false;
+    sdio_refused = false;
 
-    // SPI at boot. SDIO gets as far as a data read and then the DMA never
-    // finishes -- see the note in sdcard.c history and LOCAL-CHANGES.md.
-    return spi_init_card();
+    // SDIO first, and the order is the whole point. A card latches into SPI
+    // mode the moment it is addressed that way and stays there until the power
+    // is cut -- so asking for SDIO after spi_init_card has run is asking a card
+    // that does not speak it any more.
+    //
+    // That is what was wrong, and it was measured rather than guessed. Halted on
+    // the debugger while mount hung: PIO1's dbg_padout showed the clock
+    // toggling, dbg_padoe showed CMD released to an input, every RX FIFO was
+    // empty, and the command DMA sat with two words remaining and never moved.
+    // The card was being clocked and asked, correctly, and said nothing at all
+    // -- which is what a card in SPI mode does when spoken to in SDIO.
+    // ...and it cannot be done here. This runs before the scheduler starts, so
+    // before the USB process has ever run, and the driver is full of loops that
+    // upstream itself marks "todo not forever" -- an unbounded wait on a FIFO at
+    // 323 and 327, and the ACMD41 busy-wait at 645, which spins for ever if the
+    // card does not answer. Trying it here cost a boot: no console, no USB, and
+    // the BOOTSEL button the only way back.
+    //
+    // Removing __breakpoint() was not enough and could not be: the driver gives
+    // up on the DMA and then hangs on the next loop instead. The place for this
+    // is a process, where a hang costs one process. That is the next change.
+    // The flag goes up only if SPI actually took. A failed attempt -- no card in
+    // the socket at boot, say -- leaves the card untouched and still able to
+    // speak SDIO when one is put in and mount is run.
+    bool ok = spi_init_card();
+    if (ok) sdio_refused = true;
+    return ok;
 }
 
 // Try to move the card to four-bit SDIO. Returns false and leaves SPI in place
 // if the card will not have it.
 bool myrtos_sd_try_sdio(void) {
     if (use_sdio) return true;
+    if (sdio_refused) return false;     // the card is in SPI mode now
 
     // The card is on GP34 to GP39, and on RP2350 one PIO reaches either GPIO
     // 0-31 or 16-47, never both. The default window is the low one, so without

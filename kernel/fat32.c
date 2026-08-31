@@ -652,10 +652,20 @@ bool myrtos_fat_rmdir(const char *path) {
 // needs the whole conversation repeated, not just the boot sector reread, since
 // a fresh card comes up idle and knows nothing of what was asked before.
 bool myrtos_fat_remount(void) {
-    // Ask for SDIO here rather than at startup. If the card will not have it,
-    // or the driver hangs trying, the cost is this one process rather than a
-    // board that never reaches its console. See the note in sdcard.c.
+    // SDIO first, and the order is the whole point. A card latches into SPI mode
+    // the moment it is addressed that way and stays there until the power is
+    // cut, so asking afterwards -- as this did -- asks a card that does not
+    // speak it any more. Measured on the debugger while this hung: PIO1's clock
+    // was toggling, CMD was released to an input, every RX FIFO was empty and
+    // the command DMA sat with two words remaining and never moved. The card
+    // was being asked correctly and said nothing, which is what a card in SPI
+    // mode does.
+    //
+    // Still here rather than at startup, and now for a second reason as well as
+    // the first: the driver has unbounded waits that upstream itself marks
+    // "todo not forever". In this process a hang costs one process. Before the
+    // scheduler it costs the board, which is what it did.
+    if (myrtos_sd_try_sdio() && myrtos_fat_mount()) return true;
     if (!myrtos_sd_init()) return false;
-    myrtos_sd_try_sdio();
     return myrtos_fat_mount();
 }

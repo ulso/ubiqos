@@ -130,7 +130,11 @@ inline static int safe_dma_wait_for_finish(pio_hw_t *pio, uint sm, uint chan) {
         if (wooble > 8000000) {
             check_pio_debug("stuck dma");
             printf("stuck dma channel %d rem %08x %d @ %d\n", chan, (uint)dma_hw->ch[chan].transfer_count, sm, (int)pio->sm[sm].addr);
-            __breakpoint();
+            // LOCAL CHANGE, not upstream. __breakpoint() was here. With a probe
+            // attached it is a gift; without one it is an ebreak that our trap
+            // handler answers by spinning in wfi -- so a driver that had just
+            // decided to give up and return an error hung the machine instead.
+            // The error return below is what the caller is written to expect.
             return SD_ERR_STUCK;
         }
     }
