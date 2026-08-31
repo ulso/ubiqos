@@ -66,6 +66,17 @@ typedef struct {
     uint8_t altgr[MYRTOS_KEYMAP_KEYS];
 } myrtos_keymap_t;
 
+// Which font the console draws in, and the grid that results. The font is a
+// property of the screen rather than of whoever writes to it: a process asks
+// for one and every process sees the change, in the way that changing the
+// keyboard layout above changes it for everyone reading the keyboard.
+typedef struct {
+    uint8_t  index;         // which font is current
+    uint8_t  cell_w, cell_h;
+    uint8_t  count;         // how many the kernel has
+    uint16_t cols, rows;    // the grid that cell gives on this display
+} myrtos_confont_t;
+
 #define MYRTOS_CLASS_CHAR   1   // character stream: terminal, serial port
 #define MYRTOS_CLASS_BLOCK  2   // block oriented: SD, disk
 
@@ -155,6 +166,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_REPLYTO  35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
 #define SYS_WIFIVER  36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
 #define SYS_WIFISCAN 37u   // a0 = -1 to look -> a0 = count; a0 = index -> a0 = rssi
+#define SYS_CONFONT  38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -415,6 +427,17 @@ static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t le
 
 static inline int32_t myrtos_mount(void) {
     return myrtos_syscall(SYS_MOUNT, 0, 0, 0);
+}
+
+// Set the console font. The grid reported back is the one that font gives.
+static inline int32_t myrtos_console_font(int32_t index, myrtos_confont_t *out) {
+    return myrtos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 0);
+}
+
+// The same question without the answer taking effect. Pass -1 for whichever font
+// is current, or an index to find out what that one would give.
+static inline int32_t myrtos_console_font_info(int32_t index, myrtos_confont_t *out) {
+    return myrtos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 1);
 }
 
 static inline int32_t myrtos_mkdir(const char *path) {

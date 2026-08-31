@@ -23,6 +23,7 @@ int32_t myrtos_msg_receive(myrtos_msg_t *out);
 int32_t myrtos_msg_reply(int32_t status);
 int32_t myrtos_msg_reply_to(int32_t pid, int32_t status);
 int32_t myrtos_find_pid(const char *name);
+int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out, bool look_only);
 const char *myrtos_cwd_get(void);
 int32_t myrtos_fs_server_pid(void);
 int32_t myrtos_wifi_server_pid(void);
@@ -278,6 +279,14 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_CONFONT:
+            // Cheap enough to serve here: it records which font is wanted and
+            // fills in a struct of six bytes. The console's own thread does the
+            // work, on its own time, once it has drawn what was already queued.
+            frame->a0 = (uint32_t)myrtos_console_select_font(
+                (int32_t)frame->a0, (myrtos_confont_t*)(uintptr_t)frame->a1,
+                frame->a2 != 0);
+            break;
         case SYS_FSREAD:
             if (!fs_request(MYRTOS_MSG_FS_READ, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;

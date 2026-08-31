@@ -3,6 +3,8 @@
 #define MYRTOS_VIDEO_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include "../common/modules.h"   // myrtos_confont_t, through the shared ABI
 
 #define MYRTOS_H_ACTIVE 640
 #define MYRTOS_V_ACTIVE 480
@@ -25,6 +27,12 @@ void myrtos_console_putc(char c);
 void myrtos_console_start_server(void);
 uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len);
 uint32_t myrtos_console_room(void);
+
+// Which font the console draws in. The switch is applied by the console's own
+// server thread once it has drawn everything already queued, so this only
+// records the wish -- see console.c.
+int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out,
+                                   bool look_only);
 
 // Below the USB task: the keyboard must never wait behind pixels. Above a shell,
 // so what has been printed reaches the screen rather than queuing behind the

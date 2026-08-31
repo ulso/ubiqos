@@ -39,6 +39,7 @@ add_executable(os_kernel
     kernel/wifi.c
     third_party/pico_sd_card/sd_card.c
     kernel/font8x16.c
+    kernel/font6x12.c
 
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
     # as a submodule so the version is written down: the copy that was lying
@@ -298,6 +299,7 @@ myrtos_add_module(rmdir modules/rmdir/rmdir.c)
 myrtos_add_module(mount modules/mount/mount.c)
 myrtos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
 myrtos_add_module(msgcli modules/msgcli/msgcli.c)
+myrtos_add_module(font modules/font/font.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
@@ -334,6 +336,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/mount.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod

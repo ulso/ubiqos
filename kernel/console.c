@@ -1,4 +1,5 @@
-// A text console on the framebuffer: 80 columns by 30 rows of 8x16 glyphs.
+// A text console on the framebuffer, in whichever of the kernel's fonts is
+// current: 80 columns by 30 rows of 8x16 glyphs, or 106 by 40 of 6x12.
 //
 // Scrolling does not move pixels. The display is played from a table of line
 // addresses, so the framebuffer is treated as a ring and scrolling advances the
@@ -14,19 +15,44 @@
 
 void myrtos_print(const char *s);
 
-#define CELL_W 8
-#define CELL_H 16
-// No margin. There was one for a while, on the theory that the monitor cut a few
-// pixels off the left -- every line was missing its first character. It was not
-// overscan; it was the cursor eating them, see below. With that fixed the screen
-// divides exactly: 640 by 8 and 480 by 16, with nothing left over.
-#define COLS   (MYRTOS_H_ACTIVE / CELL_W)   // 80
-#define ROWS   (MYRTOS_V_ACTIVE / CELL_H)   // 30
+// Both tables have the same shape: one byte per scanline, leftmost pixel in bit
+// 7, so a six pixel cell leaves the low two bits clear. That is what lets one
+// piece of drawing code serve both -- see tools/make_font.py.
+extern const uint8_t myrtos_font8x16[224][16];
+extern const uint8_t myrtos_font6x12[224][12];
+
+typedef struct {
+    const uint8_t *bits;
+    uint8_t        w, h;
+} console_font_t;
+
+// A font has no name beyond its cell: "6x12" is what the two numbers say, and
+// leaving it at that means nothing has to be kept in step with anything.
+static const console_font_t fonts[] = {
+    { &myrtos_font8x16[0][0], 8, 16 },
+    { &myrtos_font6x12[0][0], 6, 12 },
+};
+#define NFONTS (sizeof(fonts) / sizeof(fonts[0]))
+
+// The most rows the smallest cell gives. Both cell heights divide 480 exactly,
+// which matters: the framebuffer is a ring and a height that did not divide
+// would leave a partial row straddling the join.
+#define ROWS_MAX (MYRTOS_V_ACTIVE / 12)    // 40
 
 #define FG 0xff     // white
 #define BG 0x00     // black
 
-extern const uint8_t myrtos_font8x16[224][16];
+static const console_font_t *font = &fonts[0];
+static uint32_t cell_w = 8, cell_h = 16;
+static uint32_t cols = MYRTOS_H_ACTIVE / 8, rows = MYRTOS_V_ACTIVE / 16;
+// 106 columns of six pixels come to 636, four short of the line. Split them, so
+// what is left over sits as two pixels at each edge rather than four at one.
+// Eight divides 640 exactly and leaves none.
+//
+// There was once a margin of whole characters, added on the theory that the
+// monitor was cutting the first one off every line. It was not the monitor; it
+// was the cursor, see below, and the margin came out again when that was fixed.
+static uint32_t x_margin;
 
 static uint32_t cur_col, cur_row;
 
@@ -37,8 +63,8 @@ static uint32_t cur_col, cur_row;
 // destroyed whatever it had covered. myrtos_print emits a carriage return
 // before every newline, so the cursor landed on column zero of the line just
 // written and ate its first character, on every line. The fix then was to keep
-// a copy of the text; inverting is the fix that needs no copy, and two
-// kilobytes of screen buffer go back to the processes.
+// a copy of the text; inverting is the fix that needs no copy, and four
+// kilobytes of screen buffer went back to the processes.
 static bool cursor_shown;
 
 // A line of exactly eighty characters used to break twice: once when the
@@ -52,46 +78,41 @@ static bool wrap_pending;
 // newline arrived. Backspace may walk back up through the first kind and must
 // not walk up through the second: what is above an explicit newline is a line
 // that was finished, and nobody is editing it any more.
-static bool row_wrapped[ROWS];
+static bool row_wrapped[ROWS_MAX];
 static bool ready;
 
 // Row and glyph-line to a scanline in the framebuffer, through the origin.
 static inline uint8_t *cell_line(uint32_t row, uint32_t y) {
-    uint32_t fb = (myrtos_video_origin + row * CELL_H + y) % MYRTOS_V_ACTIVE;
+    uint32_t fb = (myrtos_video_origin + row * cell_h + y) % MYRTOS_V_ACTIVE;
     return &myrtos_framebuf[fb * MYRTOS_H_ACTIVE];
 }
 
-// Four pixels per word, looked up a nibble at a time: two stores per scanline
-// instead of eight. A cell is eight pixels wide and every line of the
-// framebuffer is a multiple of four bytes, so the alignment always works out.
-static uint32_t nibble[16];
-
-static void build_nibbles(void) {
-    for (uint32_t n = 0; n < 16; n++) {
-        uint32_t w = 0;
-        for (uint32_t b = 0; b < 4; b++)
-            w |= (uint32_t)(((n >> (3 - b)) & 1) ? FG : BG) << (b * 8);
-        nibble[n] = w;
-    }
-}
+// A word of four background pixels, for clearing.
+#define BG_WORD ((uint32_t)BG * 0x01010101u)
 
 static void draw_glyph(uint32_t col, uint32_t row, char c) {
     // Latin-1, not ASCII: a Swedish keyboard produces letters above 126 and
     // they have to land somewhere. Anything below space is drawn as one.
     uint8_t b = (uint8_t)c;
     uint32_t idx = (b < 32) ? 0 : (uint32_t)(b - 32);
-    for (uint32_t y = 0; y < CELL_H; y++) {
-        uint8_t bits = myrtos_font8x16[idx][y];
-        uint32_t *p = (uint32_t*)(cell_line(row, y) + col * CELL_W);
-        p[0] = nibble[bits >> 4];
-        p[1] = nibble[bits & 0x0f];
+    const uint8_t *g = font->bits + idx * cell_h;
+    // A byte per pixel. The eight pixel cell used to go out as two words, four
+    // pixels at a time through a nibble table; six pixels do not divide into
+    // words and the trick went with the cell. It costs a few dozen stores per
+    // character in a kernel thread that draws with interrupts on, which is not
+    // where the console's time goes.
+    for (uint32_t y = 0; y < cell_h; y++) {
+        uint8_t bits = g[y];
+        uint8_t *p = cell_line(row, y) + x_margin + col * cell_w;
+        for (uint32_t x = 0; x < cell_w; x++)
+            p[x] = (bits & (0x80u >> x)) ? FG : BG;
     }
 }
 
 static void clear_row(uint32_t row) {
-    for (uint32_t y = 0; y < CELL_H; y++) {
+    for (uint32_t y = 0; y < cell_h; y++) {
         uint32_t *p = (uint32_t*)cell_line(row, y);
-        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = nibble[0];
+        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = BG_WORD;
     }
     row_wrapped[row] = false;
 }
@@ -100,21 +121,21 @@ static void clear_row(uint32_t row) {
 // cell wrong side out with nothing to say so.
 static void cursor(bool on) {
     if (on == cursor_shown) return;
-    for (uint32_t y = 0; y < CELL_H; y++) {
-        uint8_t *p = cell_line(cur_row, y) + cur_col * CELL_W;
-        for (uint32_t x = 0; x < CELL_W; x++) p[x] = (uint8_t)~p[x];
+    for (uint32_t y = 0; y < cell_h; y++) {
+        uint8_t *p = cell_line(cur_row, y) + x_margin + cur_col * cell_w;
+        for (uint32_t x = 0; x < cell_w; x++) p[x] = (uint8_t)~p[x];
     }
     cursor_shown = on;
 }
 
 static void newline(void) {
     cur_col = 0;
-    if (++cur_row >= ROWS) {
-        cur_row = ROWS - 1;
-        myrtos_video_set_origin(myrtos_video_origin + CELL_H);
-        for (uint32_t r = 1; r < ROWS; r++)          // the flags move up with it
+    if (++cur_row >= rows) {
+        cur_row = rows - 1;
+        myrtos_video_set_origin(myrtos_video_origin + cell_h);
+        for (uint32_t r = 1; r < rows; r++)          // the flags move up with it
             row_wrapped[r - 1] = row_wrapped[r];
-        clear_row(ROWS - 1);            // the row that just came round
+        clear_row(rows - 1);            // the row that just came round
     }
 }
 
@@ -140,7 +161,7 @@ static void draw_char(char c) {
             draw_glyph(cur_col, cur_row, ' ');
         } else if (cur_row && row_wrapped[cur_row - 1]) {
             cur_row--;
-            cur_col = COLS - 1;
+            cur_col = cols - 1;
             row_wrapped[cur_row] = false;
             draw_glyph(cur_col, cur_row, ' ');
         }
@@ -149,20 +170,67 @@ static void draw_char(char c) {
         do {
             if (wrap_pending) { wrap_pending = false; row_wrapped[cur_row] = true; newline(); }
             draw_glyph(cur_col, cur_row, ' ');
-            if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
+            if (++cur_col >= cols) { cur_col = cols - 1; wrap_pending = true; }
         } while (cur_col % 8);
         break;
     default:
         if ((unsigned char)c < 32) break;
         if (wrap_pending) { wrap_pending = false; row_wrapped[cur_row] = true; newline(); }
         draw_glyph(cur_col, cur_row, c);
-        if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
+        if (++cur_col >= cols) { cur_col = cols - 1; wrap_pending = true; }
         break;
     }
     // The cursor is not put back here. It goes back once the run of characters
     // is done -- see the server -- because putting it back after every one of
     // them means drawing it twice per character and watching it flicker its way
     // across a screen of output.
+}
+
+// --- THE GRID -------------------------------------------------------------
+// Changing font changes how many characters fit, so it cannot be done under the
+// feet of whatever is drawing. The request is left here and the server picks it
+// up when the ring is empty: everything written before the switch is drawn on
+// the old grid first, and the switch then clears the screen. Doing it the other
+// way round would drop the last few lines of output.
+static volatile int32_t font_request = -1;
+
+static void set_grid(const console_font_t *f) {
+    font   = f;
+    cell_w = f->w;
+    cell_h = f->h;
+    cols   = MYRTOS_H_ACTIVE / cell_w;
+    rows   = MYRTOS_V_ACTIVE / cell_h;
+    if (rows > ROWS_MAX) rows = ROWS_MAX;   // row_wrapped is sized for this
+    x_margin = (MYRTOS_H_ACTIVE - cols * cell_w) / 2;
+
+    // The origin is a multiple of the old cell height and need not be one of the
+    // new. Start the ring over rather than leave a row straddling the join.
+    myrtos_video_set_origin(0);
+    for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
+        myrtos_framebuf[i] = BG;
+    for (uint32_t r = 0; r < rows; r++) row_wrapped[r] = false;
+    cur_col = cur_row = 0;
+    wrap_pending = false;
+    cursor_shown = false;        // the clear took it with the rest of the pixels
+}
+
+// Asked from a process, applied by the server. Reports the grid that font
+// gives, whether or not it was asked to switch to it -- which is what lets a
+// caller find out what it would get before deciding.
+int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out,
+                                   bool look_only) {
+    if (index >= (int32_t)NFONTS) return -1;
+    uint32_t i = (index >= 0) ? (uint32_t)index : (uint32_t)(font - fonts);
+    if (index >= 0 && !look_only) font_request = index;
+    if (out) {
+        out->index  = (uint8_t)i;
+        out->cell_w = fonts[i].w;
+        out->cell_h = fonts[i].h;
+        out->count  = (uint8_t)NFONTS;
+        out->cols   = (uint16_t)(MYRTOS_H_ACTIVE / fonts[i].w);
+        out->rows   = (uint16_t)(MYRTOS_V_ACTIVE / fonts[i].h);
+    }
+    return 0;
 }
 
 // --- THE RING -------------------------------------------------------------
@@ -223,6 +291,11 @@ static void console_thread(void) {
             ring_tail = (ring_tail + 1) & RING_MASK;
         }
         cursor(true);
+        if (font_request >= 0) {
+            set_grid(&fonts[font_request]);
+            font_request = -1;
+            cursor(true);
+        }
         myrtos_sleep(1);
     }
 }
@@ -237,13 +310,7 @@ void myrtos_console_start_server(void) {
 }
 
 void myrtos_console_init(void) {
-    build_nibbles();
-    myrtos_video_set_origin(0);
-    for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
-        myrtos_framebuf[i] = BG;                 // margins included
-    cur_col = cur_row = 0;
-    wrap_pending = false;
-    for (uint32_t r = 0; r < ROWS; r++) row_wrapped[r] = false;
+    set_grid(&fonts[0]);
     ready = true;
     cursor(true);
 }
