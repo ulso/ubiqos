@@ -18,7 +18,17 @@
 // because they come last in the flash image -- were the ones turned away. The
 // console then had no USB device to open and the shell fell back to the
 // write-only UART, which looks exactly like a kernel that failed to boot.
-#define MYRTOS_MAX_MODULES 32
+//
+// It happened again at thirty-two, and in the same way: adding a thirty-third
+// module pushed condesc out, so there was no "con" device, no shell on the
+// screen and a keyboard that did nothing. The kernel said "module directory
+// full" and the line scrolled past.
+//
+// So two changes. Sixty-four entries is 1536 bytes, which the machine has. And
+// the descriptors now come first in the resident image rather than last -- see
+// MYRTOS_RESIDENT in CMakeLists.txt -- because the thing a system cannot boot
+// without should not be the thing that a full directory turns away.
+#define MYRTOS_MAX_MODULES 64
 
 typedef struct {
     const myrtos_module_header_t *header;
