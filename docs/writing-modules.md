@@ -254,6 +254,45 @@ worked and was private per process. RISC-V has `gp` for the same purpose, and
 the trap frame already saves and restores it per process. Making modules use it
 would remove both the system call and the struct.
 
+**It works, and here is the recipe.** `gp`-relative addressing on RISC-V is not
+a compiler mode -- the compiler emits PC-relative and the *linker* rewrites it,
+when the target is within gp's reach of `__global_pointer$`. So it takes a
+linker script rather than a flag:
+
+```ld
+. = 0x1000;                 /* out of x0's reach, or the linker uses x0 */
+__global_pointer$ = 0x1000;
+.sdata : { *(.sdata .sdata.*) }
+.sbss  : { *(.sbss .sbss.* .bss .bss.*) }
+. = 0x10000;
+.text   : { *(.text .text.*) }
+.rodata : { *(.rodata .rodata.*) }
+```
+
+`static int counter; int bump(void){return ++counter;}` then links to
+
+    lw   a0,0(gp)
+    addi a0,a0,1
+    sw   a0,0(gp)
+
+with no relocations left at all. Set `gp` per process and the same shared code
+reaches different memory. Data at `0x0` does *not* work: the linker relaxes to
+`0(zero)` because the address is directly encodable, so it must sit above x0's
+2 kB window. And gp reaches +/-2 kB, so a module's whole writable state has to
+fit in about four kilobytes -- which is what `mem_size` is anyway.
+
+What stands in the way is one thing, and it is written down at `kernel_gp` in
+scheduler.c: the trap vector restores the process's `gp` on the way in, and the
+kernel's own C code needs its own. The vector would have to swap to `kernel_gp`
+on entry, which is a few instructions.
+
+**`lwipd` is proof that the mechanism works and a warning that the last step is
+missing.** It is linked with `__global_pointer$` at 0x11793994, its own data in
+PSRAM, and has 421 `gp`-relative accesses. The kernel starts every process with
+`frame->gp = kernel_gp`, which is 0x2007f633 in SRAM -- so every one of those
+accesses would land in the kernel's small-data area. It has never been run
+successfully, so nobody found out.
+
 The data area sits inside the block `mem_size` asked for, after the command
 line and its argv vector. `myrtos_data_area(&size)` reports what is there --
 but the stack grows down into the same span, so that is what exists, not what
