@@ -30,6 +30,19 @@ set(PICO_PLATFORM rp2350-riscv CACHE STRING "Pico platform")
 
 cmake_minimum_required(VERSION 3.16)
 
+# Release, forced, and not by preference. A debug build of the kernel wants
+# about eight kilobytes more RAM than the machine has -- the framebuffer is
+# 307200 bytes of a 520 kB part and this is linked copy_to_ram, so -Og -g does
+# not fit. It fails at the link with "region RAM overflowed" and nothing to say
+# the build type was the cause, which is a poor thing to leave lying around for
+# whoever presses the wrong button in an IDE.
+#
+# FORCE because a tool that asks for Debug is asking for something that cannot
+# link, and it is better to give it the build that works than the error that
+# does not explain itself. When the display stops being one fixed mode and gives
+# back a quarter megabyte, this comes out.
+set(CMAKE_BUILD_TYPE Release CACHE STRING "the only one that fits" FORCE)
+
 # The compile database, which is what an editor should read rather than being
 # told the include paths a second time by hand. It gets the exact flags each
 # file was built with -- every -I, every -D, the right architecture -- and it
