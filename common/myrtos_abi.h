@@ -168,6 +168,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_WIFISCAN 37u   // a0 = -1 to look -> a0 = count; a0 = index -> a0 = rssi
 #define SYS_CONFONT  38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
 #define SYS_READABLE 39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
+#define SYS_KILL     40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -450,6 +451,16 @@ static inline int32_t myrtos_readable(int32_t path) {
     return myrtos_syscall(SYS_READABLE, (uint32_t)path, 0, 0);
 }
 
+// End another process. Refused for the kernel's own service threads, which the
+// machine needs and nobody chose to start.
+//
+// A process blocked on a server does not go away at once: the server is holding
+// a pointer into its memory, so it stops running immediately and is taken apart
+// when the reply comes. It shows as "zomb" in ps until then.
+static inline int32_t myrtos_kill(int32_t pid) {
+    return myrtos_syscall(SYS_KILL, (uint32_t)pid, 0, 0);
+}
+
 static inline int32_t myrtos_mkdir(const char *path) {
     return myrtos_syscall(SYS_MKDIR, (uint32_t)(uintptr_t)path, 0, 0);
 }
@@ -532,6 +543,7 @@ static inline uint32_t myrtos_ticks_now(void) {
 #define MYRTOS_PS_WAIT_REPLY  8
 #define MYRTOS_PS_WAIT_CHILD  4
 #define MYRTOS_PS_SLEEPING    5
+#define MYRTOS_PS_ZOMBIE      9   // killed, waiting for a server to let go
 
 typedef struct {
     uint32_t pid;

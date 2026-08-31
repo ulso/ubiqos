@@ -22,7 +22,12 @@ typedef enum {
     PROC_STATE_WAIT_CHILD,      // waiting for another process to exit
     PROC_STATE_SLEEPING,        // waiting for a length of time
     PROC_STATE_WAIT_RECV,       // a server with nothing to serve
-    PROC_STATE_WAIT_REPLY       // a sender whose message has not been answered
+    PROC_STATE_WAIT_REPLY,      // a sender whose message has not been answered
+
+    // Killed, but a server still holds a pointer into its memory. It is gone as
+    // far as scheduling and waiting are concerned; what is left is the block,
+    // and that goes when the reply comes. See myrtos_process_kill.
+    PROC_STATE_ZOMBIE
 } proc_state_t;
 
 typedef struct {
@@ -117,6 +122,27 @@ static void ready_enqueue(int32_t pid) {
     else process_table[ready_tail[p]].next_ready = pid;
     ready_tail[p] = pid;
     ready_bitmap |= (1u << p);
+}
+
+// Out of the queue it is standing in. Only killing needs this -- a process that
+// blocks is simply not put back, which is why nothing else ever had to remove
+// one. Leaving a dead process linked would hand the processor to a free slot.
+static void ready_remove(int32_t pid) {
+    uint32_t p = process_table[pid].priority;
+    int32_t cur = ready_head[p], prev = -1;
+    while (cur >= 0) {
+        if (cur == pid) {
+            int32_t next = process_table[cur].next_ready;
+            if (prev < 0) ready_head[p] = next;
+            else          process_table[prev].next_ready = next;
+            if (ready_tail[p] == pid) ready_tail[p] = prev;
+            if (ready_head[p] < 0) ready_bitmap &= ~(1u << p);
+            process_table[pid].next_ready = -1;
+            return;
+        }
+        prev = cur;
+        cur = process_table[cur].next_ready;
+    }
 }
 
 // The highest priority with anyone in it. The idle process is always ready, so
@@ -470,6 +496,7 @@ int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
         case PROC_STATE_SLEEPING:   out->state = MYRTOS_PS_SLEEPING; break;
         case PROC_STATE_WAIT_RECV:  out->state = MYRTOS_PS_WAIT_RECV; break;
         case PROC_STATE_WAIT_REPLY: out->state = MYRTOS_PS_WAIT_REPLY; break;
+        case PROC_STATE_ZOMBIE:     out->state = MYRTOS_PS_ZOMBIE; break;
         default:                    out->state = MYRTOS_PS_FREE; break;
     }
 
@@ -716,6 +743,7 @@ void myrtos_wake_readers(void) {
 // twelve-byte descriptor, and nothing is allocated at all.
 
 static void msg_unlink_all(int32_t pid);
+static void reap(uint32_t pid);
 
 // True when the sender has been queued and must now block.
 bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
@@ -772,6 +800,9 @@ int32_t myrtos_msg_reply(int32_t status) {
     int32_t s = me->msg_serving;
     if (s < 0) return -1;
     me->msg_serving = -1;
+    // Killed while we were serving it. The answer has nowhere to go, but this
+    // is the moment its memory stops being ours to write to.
+    if (process_table[s].state == PROC_STATE_ZOMBIE) { reap((uint32_t)s); return 0; }
     if (process_table[s].state == PROC_STATE_WAIT_REPLY) {
         ((myrtos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)status;
         process_table[s].state = PROC_STATE_READY;
@@ -787,6 +818,12 @@ int32_t myrtos_msg_reply(int32_t status) {
 int32_t myrtos_msg_reply_to(int32_t pid, int32_t status) {
     if (pid <= 0 || pid >= MAX_PROCESSES) return -1;
     pcb_t *p = &process_table[pid];
+    if (p->state == PROC_STATE_ZOMBIE) {        // killed while we held it
+        if (process_table[current_pid].msg_serving == pid)
+            process_table[current_pid].msg_serving = -1;
+        reap((uint32_t)pid);
+        return 0;
+    }
     if (p->state != PROC_STATE_WAIT_REPLY) return -1;
     if (p->msg_dest != (int32_t)current_pid) return -1;
 
@@ -893,33 +930,77 @@ bool myrtos_cwd_set(const char *abs) {
     return true;
 }
 
-void myrtos_process_exit(void) {
-    if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
-    sleep_remove(current_pid);                  // harmless if it was not asleep
-    msg_unlink_all((int32_t)current_pid);       // release anyone waiting on us
-    myrtos_io_close_all(current_pid);
-    if (process_table[current_pid].module) {    // a kernel thread has none
-        myrtos_moddir_unlink(process_table[current_pid].module);
-    }
-    // Everything this process was given goes back, whether it freed it or not.
-    alloc_hdr_t *h = process_table[current_pid].allocs;
-    while (h) { alloc_hdr_t *next = h->next; h->magic = 0;
-                myrtos_tlsf_free(pool_of(h), h); h = next; }
-    process_table[current_pid].allocs = NULL;
-
-    myrtos_tlsf_free(pool_of(process_table[current_pid].mem_base),
-                     process_table[current_pid].mem_base);
-    process_table[current_pid].state = PROC_STATE_FREE;
-    process_table[current_pid].mem_base = NULL;
-
-    // Whoever was waiting for this one can run again. Exact, unlike the read
-    // wake-up: the event is this line, and nothing has to be polled to see it.
+// Whoever was waiting for this one can run again. Exact, unlike the read
+// wake-up: the event is this call, and nothing has to be polled to see it.
+static void wake_waiters(uint32_t pid) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (process_table[i].state != PROC_STATE_WAIT_CHILD) continue;
-        if (process_table[i].wait_pid != current_pid) continue;
+        if (process_table[i].wait_pid != (int32_t)pid) continue;
         process_table[i].state = PROC_STATE_READY;
         ready_enqueue(i);
     }
+}
+
+// Take a process apart. Written for the one ending itself, and now also used by
+// the one being killed and by the reply that releases a zombie, so it names the
+// process it is working on rather than assuming it is the current one.
+static void reap(uint32_t pid) {
+    sleep_remove((int32_t)pid);                 // harmless if it was not asleep
+    msg_unlink_all((int32_t)pid);               // release anyone waiting on us
+    myrtos_io_close_all(pid);
+    if (process_table[pid].module) {            // a kernel thread has none
+        myrtos_moddir_unlink(process_table[pid].module);
+    }
+    // Everything this process was given goes back, whether it freed it or not.
+    alloc_hdr_t *h = process_table[pid].allocs;
+    while (h) { alloc_hdr_t *next = h->next; h->magic = 0;
+                myrtos_tlsf_free(pool_of(h), h); h = next; }
+    process_table[pid].allocs = NULL;
+
+    myrtos_tlsf_free(pool_of(process_table[pid].mem_base),
+                     process_table[pid].mem_base);
+    process_table[pid].state = PROC_STATE_FREE;
+    process_table[pid].mem_base = NULL;
+
+    wake_waiters(pid);
+}
+
+void myrtos_process_exit(void) {
+    if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
+    reap(current_pid);
+}
+
+// End somebody else.
+//
+// The hard case is a process blocked on a server. Its message carries a pointer
+// to a buffer of its own -- the wifi request is a local of the system call, so
+// it is on that process's stack -- and the server is holding it. Freeing the
+// block now would leave the server writing its answer into memory that has been
+// given to someone else, seconds later and with nothing to connect the two.
+//
+// So it stops being a process immediately, which is what the person who typed
+// ctrl-C asked for, and is not taken apart until the reply arrives. Everything
+// that would look at it -- the scheduler, wait, a later reply -- can tell.
+int32_t myrtos_process_kill(int32_t pid) {
+    if (pid <= 0 || pid >= MAX_PROCESSES) return -1;
+    pcb_t *p = &process_table[pid];
+    if (p->state == PROC_STATE_FREE || p->state == PROC_STATE_ZOMBIE) return -1;
+
+    // A kernel thread is the console, the filesystem or the radio. The machine
+    // needs all three, and none of them was started by anyone who could be
+    // asked whether they meant it.
+    if (!p->module) return -1;
+
+    if (p->state == PROC_STATE_WAIT_REPLY) {
+        sleep_remove(pid);
+        p->state = PROC_STATE_ZOMBIE;
+        wake_waiters((uint32_t)pid);
+        return 0;
+    }
+
+    if (p->state == PROC_STATE_READY) ready_remove(pid);
+    reap((uint32_t)pid);
+    return 0;
 }
 
 // --- THE MACHINE TIMER ----------------------------------------------------

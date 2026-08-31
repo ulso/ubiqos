@@ -24,6 +24,7 @@ int32_t myrtos_msg_reply(int32_t status);
 int32_t myrtos_msg_reply_to(int32_t pid, int32_t status);
 int32_t myrtos_find_pid(const char *name);
 int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out, bool look_only);
+int32_t myrtos_process_kill(int32_t pid);
 const char *myrtos_cwd_get(void);
 int32_t myrtos_fs_server_pid(void);
 int32_t myrtos_wifi_server_pid(void);
@@ -279,6 +280,16 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_KILL: {
+            int32_t victim = (int32_t)frame->a0;
+            // Killing yourself is exiting, and exiting never returns.
+            if (victim == myrtos_current_pid()) {
+                myrtos_process_exit();
+                return myrtos_switch(sp);
+            }
+            frame->a0 = (uint32_t)myrtos_process_kill(victim);
+            break;
+        }
         case SYS_READABLE:
             frame->a0 = (uint32_t)myrtos_io_readable_count((int32_t)frame->a0,
                                                            myrtos_current_pid());

@@ -16,11 +16,11 @@
 // which is why it sits out of sequence here. Getting it wrong is silent -- the
 // first version had run and ready swapped and simply reported the wrong thing,
 // and for a while a process waiting to write showed up as a question mark.
-static const char STATE_NAMES[] = "?\0ready\0run\0read\0child\0sleep\0write\0recv\0reply";
+static const char STATE_NAMES[] = "?\0ready\0run\0read\0child\0sleep\0write\0recv\0reply\0zomb";
 
 static const char *state_name(uint32_t s) {
     const char *p = STATE_NAMES;
-    if (s > MYRTOS_PS_WAIT_REPLY) return p;
+    if (s > MYRTOS_PS_ZOMBIE) return p;
     while (s--) { while (*p) p++; p++; }
     return p;
 }
