@@ -9,6 +9,7 @@
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
+void myrtos_print_hex(uint32_t v);
 
 // A USB host on two PIO state machines, so a keyboard can be plugged in while
 // the hardware controller stays busy being our console.
@@ -265,7 +266,19 @@ int32_t myrtos_usbhost_cdc_index(void) { return cdc_index; }
 
 void tuh_cdc_mount_cb(uint8_t idx) {
     cdc_index = (int32_t)idx;
-    myrtos_print("USB host: CDC-ACM device ready as 'acm'\n");
+
+    // Say which device, because "it is connected but does not answer" is a
+    // question about what the device is, and nothing else here can answer it.
+    tuh_itf_info_t info;
+    uint16_t vid = 0, pid = 0;
+    if (tuh_cdc_itf_get_info(idx, &info))
+        tuh_vid_pid_get(info.daddr, &vid, &pid);
+
+    myrtos_print("USB host: CDC-ACM ready as 'acm', ");
+    myrtos_print_hex(vid);
+    myrtos_print(":");
+    myrtos_print_hex(pid);
+    myrtos_print(tuh_cdc_get_dtr(idx) ? ", DTR high\n" : ", DTR low\n");
 }
 
 void tuh_cdc_umount_cb(uint8_t idx) {

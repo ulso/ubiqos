@@ -25,6 +25,14 @@
 #define CFG_TUH_CDC_RX_BUFSIZE  64
 #define CFG_TUH_CDC_TX_BUFSIZE  64
 
+// DTR and RTS, asserted as the device is enumerated. TinyUSB leaves them low by
+// default, and a CDC-ACM device reads DTR as "the host has opened the port" --
+// a BleuIO dongle echoed everything typed at it and answered nothing at all
+// until this was set. There is no wire and no modem; the line is a convention,
+// and the convention is that the host raises it.
+#define CFG_TUH_CDC_LINE_CONTROL_ON_ENUM  (CDC_CONTROL_LINE_STATE_DTR | \
+                                           CDC_CONTROL_LINE_STATE_RTS)
+
 // Ask for 115200 8N1 as the device is enumerated. ACM over USB does not care --
 // there is no wire to run at that rate -- but a device that reports a line
 // coding likes to be told one, and doing it here saves every user of the port

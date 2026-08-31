@@ -15,17 +15,19 @@
 
 #define CHUNK 64
 
-static void pump(int32_t from, int32_t to) {
+static int32_t pump(int32_t from, int32_t to) {
     uint8_t buf[CHUNK];
     while (myrtos_readable(from) > 0) {
         int32_t n = myrtos_read(from, buf, sizeof(buf));
-        if (n <= 0) return;
+        if (n <= 0) return 0;
         for (int32_t off = 0; off < n; ) {
             int32_t w = myrtos_write(to, buf + off, (uint32_t)(n - off));
-            if (w <= 0) { myrtos_sleep(1); continue; }
+            if (w < 0) return -1;                  // the device is gone
+            if (w == 0) { myrtos_sleep(1); continue; }
             off += w;
         }
     }
+    return 0;
 }
 
 void module_main(int argc, char **argv) {
@@ -61,7 +63,10 @@ void module_main(int argc, char **argv) {
     // blocking on the keyboard would mean the dongle's answer waits for a
     // keystroke that may never come. So both are asked before either is read.
     for (;;) {
-        pump(MYRTOS_STDIN, dev);
+        if (pump(MYRTOS_STDIN, dev) < 0) {
+            myrtos_write_str(MYRTOS_STDOUT, "\r\ncu: nothing on that device\r\n");
+            return;
+        }
         pump(dev, MYRTOS_STDOUT);
         myrtos_sleep(2);
     }

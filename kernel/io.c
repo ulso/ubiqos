@@ -137,12 +137,14 @@ static int32_t acm_configure(const void *config, uint32_t size) {
 static int32_t acm_open(void)  { return 0; }
 static int32_t acm_close(void) { return 0; }
 
-// Absent is not an error, for the same reason a write to a terminal nobody is
-// watching is not: opening a port before the dongle is in should work, and the
-// bytes go nowhere until it is.
+// Absent is an error, and saying so is worth the small inconvenience. It used to
+// claim the write had gone out, on the theory that a port with nothing plugged
+// in is like a terminal nobody is watching -- but a terminal nobody is watching
+// still exists, and this does not. What it bought was an afternoon of a program
+// that said "connected" and swallowed everything in silence.
 static int32_t acm_write(const uint8_t *buf, uint32_t len) {
     int32_t idx = myrtos_usbhost_cdc_index();
-    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return (int32_t)len;
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return -1;
     uint32_t room = tuh_cdc_write_available((uint8_t)idx);
     if (len > room) len = room;
     if (!len) return 0;
