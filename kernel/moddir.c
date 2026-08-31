@@ -1,4 +1,5 @@
 #include "moddir.h"
+#include "flashmod.h"
 #include "tlsf.h"
 
 extern tlsf_pool_t myrtos_mem_pool;
@@ -93,6 +94,7 @@ bool myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char
     e->header = header;
     e->links = 0;
     e->owned = 0;
+    e->transient = false;
     name_copy(e->name, name);
     return true;
 }
@@ -115,11 +117,14 @@ bool myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name) 
     e->header = (const myrtos_module_header_t*)space;
     e->links = 0;
     e->owned = space;
+    e->transient = false;
     name_copy(e->name, name);
     return true;
 }
 
 static char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
+
+static myrtos_module_entry_t *adopt_from_flash(const char *name);
 
 const char *myrtos_moddir_match(const char *user_name) {
     for (uint32_t i = 0; i < module_count; i++) {
@@ -133,7 +138,40 @@ const char *myrtos_moddir_match(const char *user_name) {
         for (int j = k; j < 8; j++) if (stored[j] != ' ') rest_blank = false;
         if (rest_blank) return modules[i].name;
     }
+
+    // Not registered, so try the image. Adopting it here rather than returning
+    // a pointer into a scratch buffer keeps the promise this function has
+    // always made: the name it returns stays put, and link can be called with
+    // it. Every caller does exactly that.
+    char name[12];
+    for (uint32_t i = 0; myrtos_flash_nth(i, name); i++) {
+        int k = 0;
+        while (k < 8 && user_name[k] && lower(name[k]) == lower(user_name[k])) k++;
+        if (user_name[k]) continue;
+        bool rest_blank = true;
+        for (int j = k; j < 8; j++) if (name[j] != ' ') rest_blank = false;
+        if (!rest_blank) continue;
+        myrtos_module_entry_t *e = adopt_from_flash(name);
+        return e ? e->name : 0;
+    }
     return 0;
+}
+
+// Give a flash module an entry, for as long as something is running it. The
+// entry is the bookkeeping -- a link count, and somewhere for a newer revision
+// off the card to be compared against -- not a copy of anything: the header
+// still points into flash and the code still runs where it lies.
+static myrtos_module_entry_t *adopt_from_flash(const char *name) {
+    const myrtos_module_header_t *m = myrtos_flash_lookup(name);
+    if (!m) return 0;
+    myrtos_module_entry_t *e = alloc_entry();
+    if (!e) return 0;
+    e->header = m;
+    e->links = 0;
+    e->owned = 0;
+    e->transient = true;
+    name_copy(e->name, name);
+    return e;
 }
 
 const myrtos_module_header_t *myrtos_moddir_link(const char *name) {
@@ -142,21 +180,59 @@ const myrtos_module_header_t *myrtos_moddir_link(const char *name) {
         modules[i].links++;
         return modules[i].header;
     }
-    return 0;
+    myrtos_module_entry_t *e = adopt_from_flash(name);
+    if (!e) return 0;
+    e->links++;
+    return e->header;
 }
 
 void myrtos_moddir_unlink(const myrtos_module_header_t *header) {
     for (uint32_t i = 0; i < module_count; i++) {
         if (modules[i].header != header) continue;
         if (modules[i].links) modules[i].links--;
-// The copy stays even at zero links. OS-9 did the same until the memory was
-// needed: the next start of the same utility is then immediate.
+        // The copy stays even at zero links. OS-9 did the same until the memory
+        // was needed: the next start of the same utility is then immediate.
+        //
+        // An adopted one goes, because there is nothing to keep: the module is
+        // in flash either way, and the entry existed only to count the links.
+        // Keeping them would fill the directory with everything ever run.
+        if (modules[i].transient && !modules[i].links)
+            modules[i] = modules[--module_count];
         return;
     }
 }
 
-uint32_t myrtos_moddir_count(void) { return module_count; }
+// How many modules there are, which is not how many have entries. What is not
+// registered is in flash, and flash is a directory -- so the count is both,
+// with anything registered from the card not counted twice.
+uint32_t myrtos_moddir_count(void) {
+    uint32_t n = module_count;
+    char name[12];
+    for (uint32_t i = 0; myrtos_flash_nth(i, name); i++)
+        if (!entry_named(name)) n++;
+    return n;
+}
 
 const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index) {
-    return index < module_count ? &modules[index] : 0;
+    if (index < module_count) return &modules[index];
+
+    // Past the registered ones, the image itself. Made up on the spot, because
+    // there is nothing to point at: the entry is what a registered module has,
+    // and these have not needed one. The caller reads it and is done with it
+    // before asking for the next, which is why one of them is enough.
+    static myrtos_module_entry_t made_up;
+    uint32_t want = index - module_count;
+    char name[12];
+    for (uint32_t i = 0; ; i++) {
+        const myrtos_module_header_t *m = myrtos_flash_nth(i, name);
+        if (!m) return 0;
+        if (entry_named(name)) continue;
+        if (want--) continue;
+        made_up.header = m;
+        made_up.links = 0;
+        made_up.owned = 0;
+        made_up.transient = false;
+        name_copy(made_up.name, name);
+        return &made_up;
+    }
 }

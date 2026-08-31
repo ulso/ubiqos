@@ -24,17 +24,25 @@
 // screen and a keyboard that did nothing. The kernel said "module directory
 // full" and the line scrolled past.
 //
-// So two changes. Sixty-four entries is 1536 bytes, which the machine has. And
-// the descriptors now come first in the resident image rather than last -- see
-// MYRTOS_RESIDENT in CMakeLists.txt -- because the thing a system cannot boot
-// without should not be the thing that a full directory turns away.
-#define MYRTOS_MAX_MODULES 64
+// Twice was enough to ask why a module in flash needed an entry here at all.
+// It does not: the image is its own directory, which is the whole point of the
+// sync word, and a program is now found where it lies when somebody asks to run
+// it. What this holds is the descriptors, whatever came off the card, and the
+// flash modules that are running right now -- so thirty-two is roomier than
+// sixty-four was, and the number of modules the system may have is bounded by
+// flash rather than by this.
+//
+// The descriptors still come first in the resident image, and still should:
+// they are registered eagerly, and the thing a system cannot boot without
+// should not be what a full directory turns away.
+#define MYRTOS_MAX_MODULES 32
 
 typedef struct {
     const myrtos_module_header_t *header;
     uint32_t links;             // how many processes are running it
     void    *owned;             // heap memory to give back, NULL if resident
     char     name[12];
+    bool     transient;         // adopted from flash for as long as it is in use
 } myrtos_module_entry_t;
 
 void  myrtos_moddir_init(void);

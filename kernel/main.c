@@ -329,7 +329,8 @@ void myrtos_kernel_main(void) {
 
     // Descriptors first: the devices must exist before any process tries to
     // open them. A data module has no entry point and is not started.
-    for (uint32_t i = 0; i < myrtos_moddir_count(); i++) {
+    const uint32_t nmodules = myrtos_moddir_count();   // a walk of flash; ask once
+    for (uint32_t i = 0; i < nmodules; i++) {
         const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
         if ((e->header->type_lang >> 8) != MYRTOS_TYPE_DATA) continue;
         myrtos_print("Descriptor ");
@@ -405,7 +406,8 @@ void myrtos_kernel_main(void) {
     // With no shell, start the first runnable module so the system still shows
     // a sign of life. Only the first: !started ends the loop as soon as one
     // takes, and a board with no shell is being diagnosed, not used.
-    for (uint32_t i = 0; !started && i < myrtos_moddir_count(); i++) {
+    const uint32_t nmods = myrtos_moddir_count();
+    for (uint32_t i = 0; !started && i < nmods; i++) {
         const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
         if ((e->header->type_lang >> 8) == MYRTOS_TYPE_DATA) continue;
         myrtos_print("Starting ");
