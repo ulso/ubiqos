@@ -144,15 +144,28 @@ What the video hardware looked like while it was black:
     ch3: count 1, BUSY 0
     HSTX CSR 0x50050203                      still enabled, and starving
 
-So the DMA chain stops and HSTX runs dry. Candidates, all in this driver and all
-things it does that nothing else does: it hardcodes DMA channels 8 to 11 by
-number and never claims them, it reprograms PIO1, and it writes GPIO 0 directly
-with `gpio_set_mask(1)` and `gpio_clr_mask(1)` -- a debugging leftover around
-every transfer.
+So the DMA chain stops and HSTX runs dry.
+
+**Found, 31 Aug 2026, and it was none of the obvious three.** The hardcoded
+channels 8 to 11 do not collide -- video has 1, 2 and 3. What collides is
+`spoop()`, a function that ran at the top of every `start_read`, reconfigured
+DMA channel 3 by number and wrote a constant into `CH3_AL1_CTRL`, and never
+started it. Leftover scaffolding, right down to the name; nothing in the driver
+reads that channel afterwards.
+
+Channel 3 is the one that writes `al3_read_addr_trig` and restarts the video
+chain. Overwrite it and the chain runs once more and stops -- which is precisely
+the `ch3: count 1, BUSY 0` above. The reading was already here; what was missing
+was the single line that touches a channel this driver does not own.
+
+Still in the file and still ugly, but cleared: the hardcoded channels 8 to 11,
+the PIO1 reprogramming, and `gpio_set_mask(1)` / `gpio_clr_mask(1)` on GPIO 0
+around every transfer.
 
 This also reframes a day of it: "helt svart i displayen" after an SDIO attempt
 was read as a locked-up board and answered with three blind reflashes and three
 locked boards. The board may well have been alive the whole time, with only its
 picture gone.
 
-`CARD_TRY_SDIO_AT_BOOT` in fsserver.c is 0 until this is understood.
+The `CARD_TRY_SDIO_AT_BOOT` scaffold is gone. Nothing mounts the card at
+startup at all now, and SDIO is asked for by name with `mount sdio`.

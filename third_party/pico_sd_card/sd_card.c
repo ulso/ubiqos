@@ -259,20 +259,25 @@ static void __time_critical_func(start_chain_dma_read_with_full_cb)(uint sm, uin
     dma_channel_start(sd_chain_dma_channel);
     gpio_clr_mask(1);
 }
-static __attribute__((used)) __noinline void spoop() {
-    int dma_channel = 3;
-    dma_channel_config config = dma_channel_get_default_config(dma_channel);
-    channel_config_set_read_increment(&config, true);
-    channel_config_set_write_increment(&config, true);
-    channel_config_set_dreq(&config, DREQ_SPI0_RX);
-    channel_config_set_transfer_data_size(&config, DMA_SIZE_8);
-    dma_channel_set_config(dma_channel, &config, false);
-
-    *(volatile uint32_t *)(DMA_BASE + DMA_CH3_AL1_CTRL_OFFSET) = 0x00089831;
-}
+// LOCAL: spoop() removed, and it was what turned the screen black.
+//
+// It ran at the top of every start_read and reconfigured DMA channel 3 by
+// number -- set a config, then wrote 0x00089831 straight into CH3_AL1_CTRL --
+// and never started it. Nothing in this driver reads channel 3 afterwards. It
+// is leftover scaffolding, right down to the name.
+//
+// Channel 3 is the video's. The HSTX chain claims three channels properly with
+// dma_claim_unused_channel and gets 1, 2 and 3 on this board: 1 feeds the FIFO,
+// 2 writes the next length, and 3 writes al3_read_addr_trig, which is the write
+// that restarts the whole chain. Overwrite 3 and the chain runs once more and
+// stops -- which is exactly the state that was measured while the screen was
+// black: ch1 stopped mid-framebuffer, ch3 with count 1 and not busy, and HSTX
+// still enabled and starving.
+//
+// The measurement was right there in LOCAL-CHANGES.md; what was missing was the
+// one line of this driver that touches a channel it does not own.
 static int __time_critical_func(start_read)(int sm, uint32_t *buf, uint byte_length, bool enable)
 {
-    spoop();
     int rc;
     gpio_set_mask(1);
     assert(!(3u & (uintptr_t)buf)); // in all fairness we should receive into a buffer from the pool
