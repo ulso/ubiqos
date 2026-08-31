@@ -15,6 +15,9 @@
 // decode a return address or trust a stack that may be the reason we are here.
 myrtos_crash_t myrtos_crash;
 
+uint32_t myrtos_asserts_seen;
+uint32_t myrtos_assert_last;
+
 void panic(const char *fmt, ...);   // the real one, reached through --wrap
 
 void __real_panic(const char *fmt, ...);

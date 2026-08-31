@@ -76,6 +76,7 @@ extern tlsf_pool_t myrtos_mem_pool;
 #define MCAUSE_INTERRUPT_BIT    0x80000000u
 #define MCAUSE_CODE_MASK        0x7fffffffu
 #define MCAUSE_ECALL_M          11u
+#define MCAUSE_BREAKPOINT        3u
 #define MCAUSE_MACHINE_TIMER     7u
 #define MCAUSE_MACHINE_EXTERNAL 11u
 
@@ -437,6 +438,38 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = (uint32_t)-1;
             break;
         }
+        return sp;
+    }
+
+    // An ebreak is an assertion, not a fault, and stepping over it is what the
+    // code that executed it expects.
+    //
+    // TinyUSB ends every failed TU_ASSERT in TU_BREAKPOINT. On ARM that macro
+    // reads DHCSR and halts *only if a debugger is attached*; on RISC-V it is an
+    // unconditional ebreak. So the same failed assertion returns false and lets
+    // the stack carry on for most of TinyUSB's users, and stops this machine
+    // dead. That is how the keyboard died: an assertion in cdch_xfer_cb, the
+    // core parked on the ebreak, USB host gone, and nothing said anything. The
+    // SD driver's __breakpoint() had already cost a boot for exactly this.
+    //
+    // Past the ebreak is `li a0, 0; ret` -- TU_ASSERT's own false. So step over
+    // it. Compressed ebreak is two bytes and the wide one is four; the low two
+    // bits of the instruction say which.
+    //
+    // The tally matters as much as the step. A stack that asserts on every poll
+    // would otherwise look like a machine that works, so the first one is
+    // printed and all of them are counted.
+    if (frame->mcause == MCAUSE_BREAKPOINT) {
+        if (!myrtos_asserts_seen) {
+            myrtos_crash_note(MYRTOS_CRASH_ASSERT, frame->mepc, 0, 0);
+            myrtos_print("\n*** MYRTOS: assertion at ");
+            myrtos_print_u32(frame->mepc);
+            myrtos_print(", stepped over ***\n");
+        }
+        myrtos_asserts_seen++;
+        myrtos_assert_last = frame->mepc;
+        uint16_t insn = *(const uint16_t *)(uintptr_t)frame->mepc;
+        frame->mepc += ((insn & 3u) == 3u) ? 4u : 2u;
         return sp;
     }
 
