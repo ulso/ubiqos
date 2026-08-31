@@ -571,3 +571,36 @@ the list, which is how it should always have worked.
 
 (The flag is Clang's alone. GCC has never had it, in any version -- a confident
 web answer says otherwise and is wrong about which compiler.)
+
+### And now it is allowed through
+
+Closing that hole closed the door on the thing that prompted it: the checker
+refused what it could not name, and what it could not name was `R_RISCV_PLT32`.
+Both halves were right and the result was wrong.
+
+So `R_RISCV_PLT32` is on the position-independent list, and the checker maps
+type `0x3b` to that name itself rather than relying on the reader. `llvm-readelf`
+names it; binutils `readelf` does not; which one happens to be installed is no
+basis for deciding whether a module may be loaded.
+
+A class with three virtual methods and no static instance now gets:
+
+    clang++ --target=riscv32-unknown-elf \
+        -march=rv32imac_zicsr_zifencei_zba_zbb_zbs_zbkb -mabi=ilp32 \
+        -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2 \
+        -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+        -fexperimental-relative-c++-abi-vtables -c vt.cpp -o vt.o
+    ld.lld -m elf32lriscv -N -e 0 -o vt.elf vt.o
+
+    vt.elf: position independent and shareable
+
+The same source through gcc is refused on `.rela.rodata._ZTV4Base`. **That is
+the first C++ with virtual functions this module format can accept at all.**
+Every existing module still passes unchanged.
+
+One caution that has nothing to do with vtables: a **static instance** of such a
+class puts an absolute vtable pointer in its own `.data`, and is writable data
+besides. Relative vtables fix the table, not the object.
+
+The C flags are unchanged and still both needed. Re-measured on `sh`: 97
+`R_RISCV_32` without `-fno-jump-tables`, none with it.
