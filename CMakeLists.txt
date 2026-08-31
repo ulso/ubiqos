@@ -300,6 +300,7 @@ myrtos_add_module(mount modules/mount/mount.c)
 myrtos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
 myrtos_add_module(msgcli modules/msgcli/msgcli.c)
 myrtos_add_module(font modules/font/font.c)
+myrtos_add_module(color modules/color/color.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
@@ -337,6 +338,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/msgtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod
@@ -369,6 +371,7 @@ set(MYRTOS_RESIDENT
     mount
     wifi
     font
+    color
     sleep
     spin
     spinrt

@@ -247,6 +247,14 @@ purpose — a layout says which letter is on a key, and an arrow is an arrow
 everywhere. The point is that the serial port and the screen deliver the same
 bytes, so a program that reads a line needs one idea of how to edit it.
 
+A program changes colour by writing the codes; there is nothing to open and no
+call to make, and everything written after one comes out in the new colour.
+The ABI has `myrtos_line_colour` for building the escape into the same
+`myrtos_line_t` as the text, which matters for the same reason the line buffer
+exists at all: a write is atomic and a pair of them is not, so a colour set in
+one write and the text printed in the next colours whatever another process
+printed in between. `color` is the command, and its source is the example.
+
 `ESC[999C ESC[6n` — move a long way right, then ask where you are — is how a
 program finds the width of its terminal. Our console answers it by pushing the
 report into the keyboard queue, because the console's input is the keyboard.
