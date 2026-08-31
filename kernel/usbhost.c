@@ -107,17 +107,71 @@ void tuh_umount_cb(uint8_t addr) {
     myrtos_print(" removed\n");
 }
 
+// Asking for the next report is the only thing that keeps a keyboard alive, and
+// the ask can be refused: tuh_hid_receive_report returns false when the endpoint
+// is already busy or the device has gone. Both call sites used to throw that
+// answer away -- and a single refused re-arm ends all keyboard input for good,
+// without a word, because nothing ever asks again.
+//
+// That is indistinguishable from the outside from a keyboard that was never
+// there: the HID interface stays claimed, the device stays enumerated, and the
+// endpoint buffer stays empty for ever. It cost an evening on 31 Aug 2026, when
+// a dead keyboard turned out to have a complete and healthy chain behind it.
+//
+// So what wants a report is remembered, and the ask is repeated until it takes.
+#define HID_SLOTS 8
+static struct {
+    uint8_t addr, instance;
+    bool wanted, armed;
+} hid_poll[HID_SLOTS];
+
+uint32_t myrtos_hid_rearms;      // how many times the ask had to be repeated
+
+static void hid_want(uint8_t addr, uint8_t instance) {
+    for (int i = 0; i < HID_SLOTS; i++) {
+        if (hid_poll[i].wanted && hid_poll[i].addr == addr && hid_poll[i].instance == instance) {
+            hid_poll[i].armed = tuh_hid_receive_report(addr, instance);
+            return;
+        }
+    }
+    for (int i = 0; i < HID_SLOTS; i++) {
+        if (!hid_poll[i].wanted) {
+            hid_poll[i].addr = addr;
+            hid_poll[i].instance = instance;
+            hid_poll[i].wanted = true;
+            hid_poll[i].armed = tuh_hid_receive_report(addr, instance);
+            return;
+        }
+    }
+}
+
+// Called from the USB process, once round every pass. A refused ask costs one
+// more attempt a millisecond later rather than the keyboard.
+void myrtos_usbhost_rearm(void) {
+    for (int i = 0; i < HID_SLOTS; i++) {
+        if (hid_poll[i].wanted && !hid_poll[i].armed) {
+            hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr, hid_poll[i].instance);
+            myrtos_hid_rearms++;
+        }
+    }
+}
+
 void tuh_hid_mount_cb(uint8_t addr, uint8_t instance,
                       uint8_t const *desc, uint16_t len) {
     (void)desc; (void)len;
     uint8_t proto = tuh_hid_interface_protocol(addr, instance);
     myrtos_print(proto == HID_ITF_PROTOCOL_KEYBOARD
                  ? "USB host: keyboard ready\n" : "USB host: HID device, not a keyboard\n");
-    tuh_hid_receive_report(addr, instance);
+    hid_want(addr, instance);
 }
 
 void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
-    (void)addr; (void)instance;
+    for (int i = 0; i < HID_SLOTS; i++) {
+        if (hid_poll[i].wanted && hid_poll[i].addr == addr && hid_poll[i].instance == instance) {
+            hid_poll[i].wanted = false;
+            hid_poll[i].armed = false;
+        }
+    }
     myrtos_print("USB host: HID gone\n");
 }
 
@@ -333,5 +387,5 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
 
         for (int i = 0; i < 6; i++) was[i] = report[i + 2];
     }
-    tuh_hid_receive_report(addr, instance);
+    hid_want(addr, instance);
 }
