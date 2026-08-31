@@ -474,3 +474,16 @@ add_custom_command(
 add_custom_target(flashimage ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin)
 add_dependencies(flashimage modules)
 
+# The C library's heap is whatever is left of SRAM once this copy_to_ram build
+# has been laid down, and nothing in the toolchain complains when that is
+# nothing: the SDK's linker script asserts only that the stack and the heap do
+# not overlap, which zero bytes of heap satisfies. The kernel then panics during
+# pre-init, before the console exists to say so.
+#
+# So the build says it instead. See the note above MYRTOS_HEAP_SIZE in main.c.
+add_custom_command(TARGET os_kernel POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+            -DELF=$<TARGET_FILE:os_kernel>
+            -DNM=${CMAKE_NM}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_heap.cmake
+    VERBATIM)

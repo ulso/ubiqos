@@ -157,7 +157,21 @@ static void myrtos_bulk_pool_init(void) {
 // The eight kilobytes went to the USB host's CDC class, which had nowhere else
 // to come from -- the framebuffer is 307200 bytes of the machine and that is
 // the real answer, when the display stops being one fixed mode.
-#define MYRTOS_HEAP_SIZE (56 * 1024)
+//
+// Eight kilobytes came back off this in Aug 2026, and the reason is worth
+// keeping. The kernel is a copy_to_ram build, so code, data and this array all
+// live in the same 512 KB -- and the C library's heap is only what is left over
+// afterwards. Two hundred lines of new wifi code pushed .bss to end at exactly
+// 0x20080000, the top of the region, leaving sbrk nothing. The link succeeded:
+// the SDK asserts that the stack does not collide with the heap, and zero bytes
+// of heap does not collide with anything.
+//
+// The machine then stopped booting, before the console and before USB, with a
+// black screen and no serial port. The SDK creates its alarm pool from the C
+// heap during pre-init, got NULL, and panicked into the ebreak in _exit. Days
+// went into it. See the size check at the end of CMakeLists.txt, which now
+// fails the build instead.
+#define MYRTOS_HEAP_SIZE (48 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
