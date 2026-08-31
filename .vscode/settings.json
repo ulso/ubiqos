@@ -16,6 +16,15 @@
     "cmake.automaticReconfigure": true,
     "cmake.configureOnOpen": true,
     "cmake.generator": "Ninja",
+    // Release, and not by preference. A debug build of the kernel wants about
+    // eight kilobytes more RAM than the machine has: the framebuffer is 307200
+    // bytes of a 520 kB part and the kernel is linked copy_to_ram, so -Og -g
+    // simply does not fit. CMake Tools defaults to Debug and its clean rebuild
+    // passes --config Debug, which fails at the link with "region RAM
+    // overflowed" and no hint as to why.
+    "cmake.configureSettings": {
+        "CMAKE_BUILD_TYPE": "Release"
+    },
     "cmake.cmakePath": "cmake",
     "C_Cpp.debugShortcut": false,
     "terminal.integrated.env.windows": {

@@ -37,6 +37,18 @@ cmake -S . -B build -G Ninja && ninja -C build
 
 This produces `build/os_kernel.uf2` and one `.mod` file per module.
 
+**Release, and not by preference.** A debug build wants about eight kilobytes
+more RAM than the machine has — the framebuffer is 307200 bytes of a 520 kB part
+and the kernel is linked `copy_to_ram`, so `-Og -g` does not fit. The failure is
+
+```
+region `RAM' overflowed by 8132 bytes
+```
+
+at the link, with nothing to say the build type was the cause. `.vscode` pins
+`CMAKE_BUILD_TYPE` to Release for that reason; from the command line, pass it or
+let it default.
+
 The toolchain above is the one the SDK 2.2.0 installer left behind, and it
 works. SDK 2.3.0 prefers `gcc-riscv32-pico-elf`, which can target the core the
 board actually has with `-mcpu=hazard3-rp2350`; that is not in use yet.
