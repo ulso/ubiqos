@@ -49,3 +49,24 @@ The macro is not at fault: on a chip with more than thirty-two pins
 by then the shift has already happened. It matters only to what picotool prints
 about the image, which is why it went unseen; it is undefined behaviour either
 way, and the compiler had been saying so on every build.
+
+## Cleared by reading, before the next session with a scope
+
+The pin window was the first suspect and it is not the problem. `PICO_RP2350A`
+is 0 in the board header, so `NUM_BANK0_GPIOS` is 48 and the SDK's
+`PICO_PIO_USE_GPIO_BASE` evaluates to 1 -- which is what makes
+`sm_config_set_in_pins` and its siblings take real pin numbers. They are given
+`sd_dat_pin_base` = 36 with a count of four, `pio_set_gpio_base(pio1, 16)` runs
+before `sd_init_4pins`, and DAT1-3 do get `GPIO_FUNC_PIO1` a few lines after
+DAT0. The runtime masks are all 64 bits. There is nothing left to find there by
+reading.
+
+What is left is what a scope answers: whether GP36-39 actually move when the
+data read is issued.
+
+One thing worth fixing whatever the outcome: the driver **hardcodes DMA channels
+8, 9, 10 and 11 and never claims them** (`sd_cmd_dma_channel` and friends).
+Nothing collides today -- Pico-PIO-USB takes channel 0 by a hardcoded mask and
+video claims three more dynamically, so the low channels are all that are in use
+-- but nothing reserves 8 to 11 either, and the next driver that claims
+dynamically will be handed them silently.
