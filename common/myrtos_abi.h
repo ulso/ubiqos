@@ -730,6 +730,55 @@ static inline int32_t myrtos_line_flush(int32_t path, myrtos_line_t *l) {
     return r;
 }
 
+// --- COLOUR ---------------------------------------------------------------
+// Changing colour is writing the bytes for it. The console understands the
+// usual SGR codes, so everything written after one comes out in the new colour
+// until it is changed again or reset -- there is nothing to open and no call to
+// make:
+//
+//     myrtos_write_str(MYRTOS_STDOUT, "\x1b[33;44m");   // yellow on blue
+//
+// The catch is the one the line buffer above exists for. A write is atomic and
+// a pair of them is not, so a colour set in one write and the text printed in
+// the next will colour whatever another process printed in between. Build both
+// into one myrtos_line_t and the question does not arise.
+#define MYRTOS_BLACK    0u
+#define MYRTOS_RED      1u
+#define MYRTOS_GREEN    2u
+#define MYRTOS_YELLOW   3u
+#define MYRTOS_BLUE     4u
+#define MYRTOS_MAGENTA  5u
+#define MYRTOS_CYAN     6u
+#define MYRTOS_WHITE    7u
+#define MYRTOS_BRIGHT   8u    // add to any of the eight
+#define MYRTOS_KEEP    16u    // leave that half of it as it is
+
+static inline void myrtos_line_colour(myrtos_line_t *l, uint32_t fg, uint32_t bg) {
+    myrtos_line_str(l, "\x1b[");
+    if (fg < 16) myrtos_line_u32(l, ((fg & 8u) ? 90u : 30u) + (fg & 7u));
+    if (bg < 16) {
+        if (fg < 16) myrtos_line_str(l, ";");
+        myrtos_line_u32(l, ((bg & 8u) ? 100u : 40u) + (bg & 7u));
+    }
+    if (fg >= 16 && bg >= 16) myrtos_line_u32(l, 0);   // neither named: reset
+    myrtos_line_str(l, "m");
+}
+
+// Back to the colours the console started in.
+static inline void myrtos_line_plain(myrtos_line_t *l) {
+    myrtos_line_str(l, "\x1b[0m");
+}
+
+// When a whole write is one colour and nothing else is in flight. Two writes,
+// so it is the wrong tool for one line of coloured text -- use the two above.
+static inline int32_t myrtos_colour(int32_t path, uint32_t fg, uint32_t bg) {
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_colour(&l, fg, bg);
+    return myrtos_line_flush(path, &l);
+}
+
+
 static inline int32_t myrtos_write_str(int32_t path, const char *s) {
     uint32_t n = 0;
     while (s[n]) n++;
