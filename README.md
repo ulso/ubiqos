@@ -151,10 +151,26 @@ what the device is called, which driver handles it, and carrying a tail that
 only that driver understands. To change UART or baud rate you change the
 descriptor.
 
-| Descriptor | Device | Driver        |
-|------------|--------|---------------|
-| `termdesc` | `term` | `UART    MOD` |
-| `usbdesc`  | `usb`  | `USBCDC  MOD` |
+| Descriptor | Device | Driver        | What it is                            |
+|------------|--------|---------------|---------------------------------------|
+| `termdesc` | `term` | `UART    MOD` | the UART on GP44, send only           |
+| `usbdesc`  | `usb`  | `USBCDC  MOD` | the serial port to the host           |
+| `kbddesc`  | `kbd`  | `KEYBRD  MOD` | the USB keyboard, and the layout      |
+| `condesc`  | `con`  | `CONSOLE MOD` | the screen and the keyboard together  |
+| `acmdesc`  | `acm`  | `ACM     MOD` | a CDC-ACM device in the USB socket    |
+
+`acm` is the serial port at the other end of the USB socket rather than at the
+other end of the cable to the Mac — a BLE dongle, a modem, a sensor. It is a
+character device like the others, so `cu acm` is all it takes:
+
+```
+myrtos:/> cu acm
+connected; ctrl-C to stop
+AT+CENTRAL
+```
+
+Nothing is buffered on our side. TinyUSB keeps a packet each way and the USB
+thread empties it every millisecond, which is quicker than a shell reads.
 
 If no descriptors are found at all, the kernel registers a built-in UART
 console, so the system never goes mute.

@@ -250,6 +250,29 @@ static uint8_t translate(uint8_t k, uint8_t mods) {
     return 0;
 }
 
+// --- CDC-ACM ON THE HOST SIDE ---------------------------------------------
+// The serial port that is not a serial port: a BLE dongle, a modem, a sensor.
+// TinyUSB's class driver does the protocol; what is kept here is which
+// interface index turned up, because the myrtos device that a process opens has
+// to point at something.
+//
+// One at a time. The class is configured for one interface and a second would
+// need a device name of its own to be reachable, which is a descriptor question
+// rather than a driver one.
+static int32_t cdc_index = -1;
+
+int32_t myrtos_usbhost_cdc_index(void) { return cdc_index; }
+
+void tuh_cdc_mount_cb(uint8_t idx) {
+    cdc_index = (int32_t)idx;
+    myrtos_print("USB host: CDC-ACM device ready as 'acm'\n");
+}
+
+void tuh_cdc_umount_cb(uint8_t idx) {
+    if (cdc_index == (int32_t)idx) cdc_index = -1;
+    myrtos_print("USB host: CDC-ACM device gone\n");
+}
+
 void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
                                 uint8_t const *report, uint16_t len) {
     if (len >= 8 && tuh_hid_interface_protocol(addr, instance) == HID_ITF_PROTOCOL_KEYBOARD) {

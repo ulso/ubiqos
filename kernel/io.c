@@ -1,4 +1,5 @@
 #include "io.h"
+#include "tusb.h"          // the CDC host class, for the acm driver
 #include "hardware/sync.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
@@ -118,6 +119,63 @@ static int32_t kbd_readable(void) {
     return (int32_t)myrtos_usbhost_available();
 }
 
+// --- DRIVER: CDC-ACM ON THE HOST SIDE -------------------------------------
+// A serial port at the other end of the USB socket rather than at the other end
+// of the cable to the Mac. It behaves like every other character device here:
+// a process opens it by name and reads and writes it, and neither knows nor
+// cares that a class driver and a hub are in the way.
+//
+// Nothing is buffered on this side. TinyUSB keeps a packet each way and the USB
+// thread empties it every millisecond, which is far quicker than a shell reads.
+int32_t myrtos_usbhost_cdc_index(void);
+
+static int32_t acm_configure(const void *config, uint32_t size) {
+    (void)config; (void)size;
+    return 0;                       // which device is plugged in is not our choice
+}
+
+static int32_t acm_open(void)  { return 0; }
+static int32_t acm_close(void) { return 0; }
+
+// Absent is not an error, for the same reason a write to a terminal nobody is
+// watching is not: opening a port before the dongle is in should work, and the
+// bytes go nowhere until it is.
+static int32_t acm_write(const uint8_t *buf, uint32_t len) {
+    int32_t idx = myrtos_usbhost_cdc_index();
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return (int32_t)len;
+    uint32_t room = tuh_cdc_write_available((uint8_t)idx);
+    if (len > room) len = room;
+    if (!len) return 0;
+    uint32_t n = tuh_cdc_write((uint8_t)idx, buf, len);
+    tuh_cdc_write_flush((uint8_t)idx);
+    return (int32_t)n;
+}
+
+static int32_t acm_read(uint8_t *buf, uint32_t len) {
+    int32_t idx = myrtos_usbhost_cdc_index();
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return 0;
+    return (int32_t)tuh_cdc_read((uint8_t)idx, buf, len);
+}
+
+static int32_t acm_readable(void) {
+    int32_t idx = myrtos_usbhost_cdc_index();
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return 0;
+    return (int32_t)tuh_cdc_read_available((uint8_t)idx);
+}
+
+static int32_t acm_writable(void) {
+    int32_t idx = myrtos_usbhost_cdc_index();
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return 1;   // swallowed, not blocked
+    return (int32_t)tuh_cdc_write_available((uint8_t)idx);
+}
+
+static const myrtos_driver_t driver_acm = {
+    .module_name = "ACM     MOD",
+    .configure = acm_configure,
+    .open = acm_open, .write = acm_write, .read = acm_read, .close = acm_close,
+    .readable = acm_readable, .writable = acm_writable
+};
+
 // The console: the display to write to, the keyboard to read from. Output never
 // blocks -- a screen is always ready -- so writable reports plenty of room.
 void myrtos_console_putc(char c);
@@ -213,6 +271,7 @@ void myrtos_io_init(void) {
     drivers[driver_count++] = &driver_usb;
     drivers[driver_count++] = &driver_kbd;
     drivers[driver_count++] = &driver_console;
+    drivers[driver_count++] = &driver_acm;
     device_count = 0;
     for (int p = 0; p < MYRTOS_MAX_PROCS; p++)
         for (int i = 0; i < MYRTOS_MAX_PATHS; i++)

@@ -55,6 +55,7 @@ add_executable(os_kernel
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/usbh.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/hub.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/class/hid/hid_host.c
+    ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc/cdc_host.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
 )
 
@@ -302,6 +303,7 @@ myrtos_add_module(msgcli modules/msgcli/msgcli.c)
 myrtos_add_module(font modules/font/font.c)
 myrtos_add_module(color modules/color/color.c)
 myrtos_add_module(kill modules/kill/kill.c)
+myrtos_add_module(cu modules/cu/cu.c)
 myrtos_add_module(keys modules/keys/keys.c RT)
 myrtos_add_module(memtest modules/memtest/memtest.c)
 myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
@@ -310,6 +312,7 @@ myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
 myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
 myrtos_add_data_module(kbddesc modules/kbd_desc/kbd_desc.c)
 myrtos_add_data_module(condesc modules/con_desc/con_desc.c)
+myrtos_add_data_module(acmdesc modules/acm_desc/acm_desc.c)
 
 add_custom_target(modules ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
@@ -341,6 +344,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/cu.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod
@@ -348,7 +352,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/acmdesc.mod)
 
 # What lives in flash rather than on the card.
 #
@@ -367,6 +372,7 @@ set(MYRTOS_RESIDENT
     usbdesc
     kbddesc
     condesc
+    acmdesc
 
     sh
     ls
@@ -383,6 +389,7 @@ set(MYRTOS_RESIDENT
     font
     color
     kill
+    cu
     sleep
     spin
     spinrt

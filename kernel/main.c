@@ -148,7 +148,16 @@ static void myrtos_bulk_pool_init(void) {
 // PSRAM, so 320 kB became a reservation nobody was drawing on -- and SRAM is
 // what a framebuffer will want. Sixteen kilobytes are in use as this is
 // written, so 64 leaves room to be wrong by a factor of four.
-#define MYRTOS_HEAP_SIZE (64 * 1024)
+// Fifty-six, down from sixty-four. Most of what a process needs no longer comes
+// from here: a module that is not marked real-time takes its memory block from
+// PSRAM, so this holds the kernel threads' stacks, the two shells, and whatever
+// a module asks for by hand. Measured with nine processes running, thirty-six
+// kilobytes of it was free in one piece.
+//
+// The eight kilobytes went to the USB host's CDC class, which had nowhere else
+// to come from -- the framebuffer is 307200 bytes of the machine and that is
+// the real answer, when the display stops being one fixed mode.
+#define MYRTOS_HEAP_SIZE (56 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 

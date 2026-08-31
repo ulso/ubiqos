@@ -16,6 +16,21 @@
 #define CFG_TUH_RHPORT          1
 #define CFG_TUH_HUB             1
 #define CFG_TUH_HID             4      // a keyboard is often two or three
+
+// One CDC-ACM device on the host side: a BLE dongle, a sensor, a modem -- the
+// serial port that is not a serial port. Buffers are one bulk packet each,
+// which is what the class defaults to; anything more is buffering data the
+// device driver above will take within a millisecond anyway.
+#define CFG_TUH_CDC             1
+#define CFG_TUH_CDC_RX_BUFSIZE  64
+#define CFG_TUH_CDC_TX_BUFSIZE  64
+
+// Ask for 115200 8N1 as the device is enumerated. ACM over USB does not care --
+// there is no wire to run at that rate -- but a device that reports a line
+// coding likes to be told one, and doing it here saves every user of the port
+// from having to.
+#define CFG_TUH_CDC_LINE_CODING_ON_ENUM \
+    { 115200, CDC_LINE_CODING_STOP_BITS_1, CDC_LINE_CODING_PARITY_NONE, 8 }
 #define CFG_TUH_DEVICE_MAX      (CFG_TUH_HUB ? 5 : 1)
 #define CFG_TUH_ENUMERATION_BUFSIZE 256
 
