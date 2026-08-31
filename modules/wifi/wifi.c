@@ -16,6 +16,17 @@ void module_main(int argc, char **argv) {
 
     // "wifi scan" lists what is on the air. It needs no name and no password:
     // a scan is what the chip hears, not what it joins.
+    if (argc > 1 && is(argv[1], "ip")) {
+        char addr[48];
+        if (myrtos_wifi_address(addr, sizeof(addr)) == 0) {
+            myrtos_write_str(MYRTOS_STDOUT, addr);
+            myrtos_write_str(MYRTOS_STDOUT, "\r\n");
+        } else {
+            myrtos_write_str(MYRTOS_STDOUT, "wifi: no address -- not on a network\r\n");
+        }
+        return;
+    }
+
     if (argc > 2 && is(argv[1], "connect")) {
         // The name and the secret, back to back, in one buffer that gets wiped
         // before this returns. The secret is never an argument: argv lives in

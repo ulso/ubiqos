@@ -269,6 +269,7 @@ static bool simple_cmd(uint8_t cmd) {
 // The signal strength for one entry, a four-byte little-endian negative number.
 #define GET_MACADDR_CMD     0x22u
 #define SET_PASSPHRASE_CMD  0x11u
+#define GET_IPADDR_CMD      0x21u
 
 // One byte of parameter, padded to a multiple of four. The reference pads every
 // command and this code did not: START, cmd, nparam, len, value, END is six
@@ -313,6 +314,52 @@ static int32_t rssi_of(uint32_t index) {
 // four, which is the shape the reference sends and the shape that made the MAC
 // command work. Then the chip is asked what it thinks, until it says connected
 // or the patience runs out.
+// The address the network gave us, which is the only proof that joining it
+// achieved anything: associating is the chip's business, but an address means
+// DHCP answered. The reply carries three parameters -- address, mask, gateway --
+// so this reads all three and reports the first and the last.
+int32_t myrtos_wifi_ipaddr(char *out, uint32_t max) {
+    uint8_t p[3][4] = {{0}};
+    if (!param_cmd(GET_IPADDR_CMD, 0xff)) return -1;
+    if (!select_chip()) return -1;
+
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    bool ok = false;
+    if (b == START_CMD) {
+        uint8_t rc = xfer(0xff);
+        uint32_t np = xfer(0xff);
+        if (rc == (GET_IPADDR_CMD | REPLY_FLAG)) {
+            for (uint32_t k = 0; k < np; k++) {
+                uint32_t len = xfer(0xff);
+                for (uint32_t j = 0; j < len; j++) {
+                    uint8_t v = xfer(0xff);
+                    if (k < 3 && j < 4) p[k][j] = v;
+                }
+            }
+            ok = np >= 1;
+        }
+        xfer(0xff);
+    }
+    deselect_chip();
+    if (!ok) return -1;
+
+    uint32_t o = 0;
+    for (int k = 0; k < 3; k += 2) {                 // address, then gateway
+        const char *tag = k ? " gw " : "ip ";
+        for (const char *t = tag; *t && o < max - 1; t++) out[o++] = *t;
+        for (int j = 0; j < 4; j++) {
+            uint8_t v = p[k][j];
+            if (v >= 100 && o < max - 1) out[o++] = (char)('0' + v / 100);
+            if (v >= 10  && o < max - 1) out[o++] = (char)('0' + (v / 10) % 10);
+            if (o < max - 1) out[o++] = (char)('0' + v % 10);
+            if (j < 3 && o < max - 1) out[o++] = '.';
+        }
+    }
+    out[o] = 0;
+    return (p[0][0] || p[0][1] || p[0][2] || p[0][3]) ? 0 : -1;
+}
+
 int32_t myrtos_wifi_connect(const char *ssid, const char *pass) {
     uint32_t sl = 0, pl = 0;
     while (ssid[sl]) sl++;
@@ -507,6 +554,7 @@ static int32_t handle(const myrtos_msg_t *m) {
     switch (m->type) {
     case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
     case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
+    case MYRTOS_MSG_WIFI_ADDR: return myrtos_wifi_ipaddr(r->buf, r->len);
     case MYRTOS_MSG_WIFI_JOIN: {
         // name, NUL, secret, NUL -- in the caller's own memory, which is stable
         // because the caller is blocked in send.

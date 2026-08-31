@@ -224,7 +224,7 @@ static void help(int32_t c) {
         "  mount    take the SD card again\r\n"
         "  font     screen font, or 'font 6x12' to change it\r\n"
         "  color    text and background, or 'color' to see them\r\n"
-        "  wifi     firmware, 'wifi scan', or 'wifi connect <ssid>'\r\n"
+        "  wifi     firmware, scan, connect <ssid>, or ip\r\n"
         "  kill     end a process by number\r\n"
         "  cu       talk to a device, e.g. 'cu acm' for a USB serial dongle\r\n"
         "  cat      show a file\r\n"

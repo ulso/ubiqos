@@ -238,6 +238,17 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_WIFIADDR: {
+            myrtos_wifi_req_t req;
+            req.index = 0;
+            req.buf   = (char*)(uintptr_t)frame->a0;
+            req.len   = frame->a1;
+            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_ADDR, &req)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        }
         case SYS_WIFIJOIN: {
             // Through the service, like the others: joining waits seconds and
             // waiting inside a trap stops the machine. The request is built on

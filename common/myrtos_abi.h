@@ -167,6 +167,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_WIFIVER  36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
 #define SYS_WIFISCAN 37u   // a0 = -1 to look -> a0 = count; a0 = index -> a0 = rssi
 #define SYS_CONFONT  38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
+#define SYS_WIFIADDR 43u   // a0 = buffer, a1 = length -> a0 = 0 if there is one
 #define SYS_WIFIJOIN 42u   // a0 = "ssid\0pass" -> a0 = 0 joined, else the status
 #define SYS_READABLE 39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
 #define SYS_KILL     40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
@@ -212,6 +213,7 @@ typedef struct {
 #define MYRTOS_MSG_WIFI_VER   10u
 #define MYRTOS_MSG_WIFI_SCAN  11u
 #define MYRTOS_MSG_WIFI_JOIN  12u
+#define MYRTOS_MSG_WIFI_ADDR  13u
 
 typedef struct {
     int32_t   index;       // scan: -1 to look, otherwise which entry
@@ -429,6 +431,12 @@ static inline int32_t myrtos_wifi_look(void) {
 // Join a network. The buffer holds the name and the secret as two
 // NUL-terminated strings back to back -- one allocation, one thing for the
 // caller to wipe afterwards.
+// The address the network handed out, if any. Associating is not the same as
+// being on a network; this is the difference.
+static inline int32_t myrtos_wifi_address(char *buf, uint32_t len) {
+    return myrtos_syscall(SYS_WIFIADDR, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
 static inline int32_t myrtos_wifi_join(const char *ssid_then_pass) {
     return myrtos_syscall(SYS_WIFIJOIN, (uint32_t)(uintptr_t)ssid_then_pass, 0, 0);
 }
