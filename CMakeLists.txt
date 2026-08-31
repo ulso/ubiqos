@@ -1,3 +1,26 @@
+# The Pico VS Code extension wrote the block below when the project was imported,
+# and it is kept because it earns its place: pico-vscode.cmake sets PICO_SDK_PATH
+# and, seeing RISCV in the toolchain name, PICO_PLATFORM -- on every configure,
+# from a file that is in the repository. That is exactly what a stale cache
+# holding a wrong SDK path could not survive, and one of those cost an afternoon.
+#
+# One line is edited despite what the banner says. The import set toolchainVersion
+# to 15_2_Rel1, which is arm-none-eabi and cannot build this at all. If an
+# extension update ever writes it back, that is what to look for.
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.3.0)
+set(toolchainVersion RISCV_ZCB_RPI_2_2_0_3)   # NOT 15_2_Rel1: that one is arm-none-eabi
+set(picotoolVersion 2.3.0)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
 # ====================================================================================
 # Select the development board for your hardware
 set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Board type")
