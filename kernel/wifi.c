@@ -191,7 +191,7 @@ static uint8_t  conn_status = 0xfe;
 // What actually came back on the wire, so it can be reported instead of
 // inferred. Three attempts at this problem have been guesses about the
 // protocol; the bytes settle it.
-static char     trace[80];
+static char     trace[100];
 static uint32_t trace_n;
 static void trace_reset(void) { trace_n = 0; trace[0] = 0; }
 static void trace_ch(char c)  { if (trace_n < sizeof(trace) - 1) { trace[trace_n++] = c; trace[trace_n] = 0; } }
@@ -245,7 +245,7 @@ static bool simple_cmd(uint8_t cmd) {
 }
 
 // The signal strength for one entry, a four-byte little-endian negative number.
-#define GET_IDX_SSID_CMD    0x31u
+#define GET_MACADDR_CMD     0x22u
 
 // One byte of parameter, padded to a multiple of four. The reference pads every
 // command and this code did not: START, cmd, nparam, len, value, END is six
@@ -258,37 +258,6 @@ static bool param_cmd(uint8_t cmd, uint8_t value) {
     xfer(0xff); xfer(0xff);                      // pad 6 to 8
     deselect_chip();
     return true;
-}
-
-// The name of one network from the last scan. Asking per index avoids the list
-// command entirely, which this firmware answers with ERR.
-static int32_t ssid_of(uint32_t index, char *out, uint32_t max) {
-    if (!param_cmd(GET_IDX_SSID_CMD, (uint8_t)index)) return -1;
-    if (!select_chip()) return -1;
-
-    uint8_t b = 0;
-    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    if (index == 0) { trace_ch('I'); trace_hex(b); }
-    int32_t got = -1;
-    if (b == START_CMD) {
-        uint8_t rc = xfer(0xff);
-        uint8_t np = xfer(0xff);
-        if (index == 0) { trace_hex(rc); trace_hex(np); }
-        if (rc == (GET_IDX_SSID_CMD | REPLY_FLAG) && np == 1) {
-            uint32_t len = xfer(0xff);
-            if (index == 0) { trace_ch('.'); trace_hex((uint8_t)len); }
-            uint32_t k = 0;
-            for (uint32_t i = 0; i < len; i++) {
-                uint8_t v = xfer(0xff);
-                if (k < max - 1) out[k++] = (char)v;
-            }
-            out[k] = 0;
-            got = (int32_t)k;
-        }
-        xfer(0xff);
-    }
-    deselect_chip();
-    return got;
 }
 
 static int32_t rssi_of(uint32_t index) {
@@ -347,6 +316,32 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
             }
             deselect_chip();
         }
+        // Ask for the MAC first, because the reference example does. Its setup
+        // is status, then firmware version, then MAC, and only then scanning --
+        // and a question the working implementation asks before scanning is
+        // worth asking before scanning.
+        //
+        // It is also the first command with a parameter we will have got an
+        // answer to. getMacAddress sends one dummy byte and pads the frame to
+        // eight with two reads, which is what param_cmd now does.
+        trace_ch('M');
+        if (param_cmd(GET_MACADDR_CMD, 0xff) && select_chip()) {
+            uint8_t b = 0;
+            for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+            trace_hex(b);
+            if (b == START_CMD) {
+                trace_hex(xfer(0xff));                   // command | reply
+                uint32_t np = xfer(0xff); trace_hex((uint8_t)np);
+                for (uint32_t k = 0; k < np; k++) {
+                    uint32_t len = xfer(0xff); trace_ch('.'); trace_hex((uint8_t)len);
+                    for (uint32_t j = 0; j < len; j++) trace_hex(xfer(0xff));
+                }
+                trace_ch('|'); trace_hex(xfer(0xff));
+            }
+            deselect_chip();
+        }
+        myrtos_sleep(50);
+
         // Asking for the list without a scan running does not merely fail: the
         // chip stops raising READY afterwards and the next command times out.
         // Tried once, measured, and not again.
@@ -391,17 +386,16 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
             // froze the whole machine, which is what the serial shell going
             // quiet alongside the keyboard was saying.
             myrtos_sleep(2000);
-            // By index, not as a list. The chip answers SCAN_NETWORKS with ERR
-            // every time -- traced, seven attempts -- while the indexed queries
-            // are the same shape as the RSSI one. Walk until one comes back
-            // empty; that is the end of the list.
-            uint32_t n = 0;
-            for (uint32_t i = 0; i < WIFI_MAX_NETS; i++) {
-                int32_t k = ssid_of(i, scan->ssid[i], WIFI_SSID_MAX);
-                if (k <= 0) break;
-                n++;
-            }
-            if (n > 0) scan_count = n;
+            // As the reference does it, because reading the reference settled
+            // that there is no alternative: GET_IDX_SSID_CMD = 0x31 is
+            // commented out in wifi_spi.h, so the command does not exist and
+            // the ERR the chip answered it with was correct. The list is the
+            // only way to get names, and the chip refuses that too.
+            if (!simple_cmd(SCAN_NETWORKS_CMD)) continue;
+            if (!select_chip()) continue;
+            int32_t n = read_list(SCAN_NETWORKS_CMD);
+            deselect_chip();
+            if (n > 0) scan_count = (uint32_t)n;
         }
         for (uint32_t i = 0; i < scan_count; i++) scan->rssi[i] = rssi_of(i);
 
