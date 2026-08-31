@@ -30,7 +30,7 @@
 void myrtos_print(const char *s);
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 const char *myrtos_cwd_of(int32_t pid);
-static bool card_bring_up(void);
+static bool card_bring_up(bool try_sdio);
 bool myrtos_cwd_set_of(int32_t pid, const char *abs);
 
 static int32_t server_pid = -1;
@@ -108,9 +108,7 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
         // behind every failed listing.
-        // The same bring-up as at startup, so a swapped card brings its
-        // modules with it rather than only its files.
-        return card_bring_up() ? 0 : -1;
+        return card_bring_up((uintptr_t)m->data == MYRTOS_MOUNT_SDIO) ? 0 : -1;
     case MYRTOS_MSG_FS_DIR: {
         const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)m->data;
         make_abs(from, d->path, abs, sizeof(abs));
@@ -176,37 +174,41 @@ static void register_card_modules(void) {
     myrtos_tlsf_free(pool, staging);
 }
 
-// BISECT, 31 Aug: the screen went black the moment the SDIO attempt moved into
-// every boot. The video DMA chain is stopped -- all three channels idle, the
-// data channel's read pointer halfway through a frame, HSTX still enabled and
-// starving. The SDIO attempt configures DMA channels 8-11 by hardcoded number
-// and reprograms PIO1, and it is the only thing that now happens at boot and
-// did not before. This proves or clears that in one flash.
-#define CARD_TRY_SDIO_AT_BOOT 0
-
-static bool card_bring_up(void) {
-    if (!myrtos_fat_remount()) {
-        myrtos_print("SD: no card, or not FAT32\n");
-        return false;
+// Which bus, asked for by name. The two are not interchangeable and cannot be
+// tried in turn: the card latches into SPI as soon as it is addressed that way
+// and stays there until the power is cut, so a failed SDIO attempt after a
+// successful SPI mount is not a card that refused -- it is a card that can no
+// longer hear the question. Falling back automatically therefore spends the one
+// chance at SDIO on the first `ls` anyone types.
+//
+// And SDIO is not free to attempt. It configures DMA channels 8-11 by hardcoded
+// number without claiming them, and reprograms PIO1; both belong to the video
+// chain. The screen goes black on `mount` and stays black until a reset, every
+// time, and that is still not understood. So it is behind a word the user has
+// to type, and plain `mount` is the safe one.
+static bool card_bring_up(bool try_sdio) {
+    if (try_sdio) {
+        if (!myrtos_sd_try_sdio() || !myrtos_fat_mount()) {
+            myrtos_print("SD: no SDIO -- no card, or SPI was asked for first\n");
+            return false;
+        }
+        myrtos_print("SD: four-bit SDIO\n");
+    } else {
+        if (!myrtos_sd_init() || !myrtos_fat_mount()) {
+            myrtos_print("SD: no card, or not FAT32\n");
+            return false;
+        }
+        myrtos_print("SD: SPI\n");
     }
-    myrtos_print(myrtos_sd_is_sdio() ? "SD: four-bit SDIO\n" : "SD: SPI\n");
     register_card_modules();
     return true;
 }
 
 static void fs_thread(void) {
-    // Before serving anything, and before anything else has touched the card.
-#if CARD_TRY_SDIO_AT_BOOT
-    card_bring_up();
-#else
-    if (myrtos_sd_init() && myrtos_fat_mount()) {
-        myrtos_print("SD: SPI\n");
-        register_card_modules();
-    } else {
-        myrtos_print("SD: no card, or not FAT32\n");
-    }
-#endif
-
+    // Nothing touches the card here, and that is deliberate. Mounting it at
+    // startup would latch it into SPI before anyone could ask for SDIO, and it
+    // would spend the driver's unbounded waits on a machine that has just come
+    // up. The card is mounted when someone says `mount`, and not before.
     for (;;) {
         myrtos_msg_t m;
         int32_t from = myrtos_receive(&m);

@@ -465,9 +465,17 @@ static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t le
     return myrtos_syscall(SYS_WIFISCAN, (uint32_t)index, (uint32_t)(uintptr_t)ssid, len);
 }
 
-static inline int32_t myrtos_mount(void)
+// Which bus to ask the card for. The order is the card's rule and not ours: it
+// latches into SPI the moment it is addressed that way and stays there until
+// the power is cut. So SDIO has to be the first thing asked after power-up, or
+// it cannot be had at all -- which is why nothing touches the card at startup
+// any more, and why this is a choice the user makes rather than one we guess.
+#define MYRTOS_MOUNT_SPI  0u
+#define MYRTOS_MOUNT_SDIO 1u
+
+static inline int32_t myrtos_mount(uint32_t bus)
 {
-    return myrtos_syscall(SYS_MOUNT, 0, 0, 0);
+    return myrtos_syscall(SYS_MOUNT, bus, 0, 0);
 }
 
 // Set the console font. The grid reported back is the one that font gives.
