@@ -213,7 +213,7 @@ static uint8_t  conn_status = 0xfe;
 // What actually came back on the wire, so it can be reported instead of
 // inferred. Three attempts at this problem have been guesses about the
 // protocol; the bytes settle it.
-static char     trace[100];
+static char     trace[32];
 static uint32_t trace_n;
 static void trace_reset(void) { trace_n = 0; trace[0] = 0; }
 static void trace_ch(char c)  { if (trace_n < sizeof(trace) - 1) { trace[trace_n++] = c; trace[trace_n] = 0; } }
@@ -268,6 +268,7 @@ static bool simple_cmd(uint8_t cmd) {
 
 // The signal strength for one entry, a four-byte little-endian negative number.
 #define GET_MACADDR_CMD     0x22u
+#define SET_PASSPHRASE_CMD  0x11u
 
 // One byte of parameter, padded to a multiple of four. The reference pads every
 // command and this code did not: START, cmd, nparam, len, value, END is six
@@ -304,6 +305,68 @@ static int32_t rssi_of(uint32_t index) {
     return v;
 }
 
+// Join a network. The request carries the name and the secret as two
+// NUL-terminated strings back to back, so nothing has to be copied here: the
+// sender is blocked in send, and its buffer therefore cannot move.
+//
+// SET_PASSPHRASE takes two parameters and the frame is padded to a multiple of
+// four, which is the shape the reference sends and the shape that made the MAC
+// command work. Then the chip is asked what it thinks, until it says connected
+// or the patience runs out.
+int32_t myrtos_wifi_connect(const char *ssid, const char *pass) {
+    uint32_t sl = 0, pl = 0;
+    while (ssid[sl]) sl++;
+    while (pass[pl]) pl++;
+    if (!sl || sl > 32 || pl > 63) return -1;
+
+    if (!select_chip()) return -1;
+    xfer(START_CMD); xfer(SET_PASSPHRASE_CMD); xfer(2);
+    xfer((uint8_t)sl); for (uint32_t i = 0; i < sl; i++) xfer((uint8_t)ssid[i]);
+    xfer((uint8_t)pl); for (uint32_t i = 0; i < pl; i++) xfer((uint8_t)pass[i]);
+    xfer(END_CMD);
+    for (uint32_t n = 6 + sl + pl; n % 4; n++) xfer(0xff);      // pad
+    deselect_chip();
+
+    // Setting a passphrase makes the chip associate, which takes a while.
+    if (!select_chip_slow(15000)) return -1;
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    int32_t accepted = -1;
+    if (b == START_CMD) {
+        uint8_t rc = xfer(0xff);
+        uint8_t np = xfer(0xff);
+        if (rc == (SET_PASSPHRASE_CMD | REPLY_FLAG) && np == 1) {
+            uint32_t len = xfer(0xff);
+            for (uint32_t i = 0; i < len; i++) { uint8_t v = xfer(0xff); if (!i) accepted = v; }
+        }
+        xfer(0xff);
+    }
+    deselect_chip();
+    if (accepted < 0) return -1;
+
+    // WL_CONNECTED is 3. Ask until it says so, or for twenty seconds.
+    for (int i = 0; i < 40; i++) {
+        myrtos_sleep(500);
+        if (!simple_cmd(GET_CONN_STATUS_CMD) || !select_chip()) continue;
+        uint8_t c = 0;
+        for (int k = 0; k < 64; k++) { c = xfer(0xff); if (c == START_CMD || c == ERR_CMD) break; }
+        int32_t st = -1;
+        if (c == START_CMD) {
+            xfer(0xff);
+            uint32_t np = xfer(0xff);
+            for (uint32_t k = 0; k < np; k++) {
+                uint32_t len = xfer(0xff);
+                for (uint32_t j = 0; j < len; j++) { uint8_t v = xfer(0xff); if (!k && !j) st = v; }
+            }
+            xfer(0xff);
+        }
+        deselect_chip();
+        if (st == 3) return 0;                    // WL_CONNECTED
+        if (st == 4 || st == 6) return st;        // failed, or disconnected
+    }
+    return -2;                                    // still trying when we gave up
+}
+
 int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
     if (!scan_room()) return -1;
 
@@ -338,31 +401,9 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
             }
             deselect_chip();
         }
-        // Ask for the MAC first, because the reference example does. Its setup
-        // is status, then firmware version, then MAC, and only then scanning --
-        // and a question the working implementation asks before scanning is
-        // worth asking before scanning.
-        //
-        // It is also the first command with a parameter we will have got an
-        // answer to. getMacAddress sends one dummy byte and pads the frame to
-        // eight with two reads, which is what param_cmd now does.
-        trace_ch('M');
-        if (param_cmd(GET_MACADDR_CMD, 0xff) && select_chip()) {
-            uint8_t b = 0;
-            for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-            trace_hex(b);
-            if (b == START_CMD) {
-                trace_hex(xfer(0xff));                   // command | reply
-                uint32_t np = xfer(0xff); trace_hex((uint8_t)np);
-                for (uint32_t k = 0; k < np; k++) {
-                    uint32_t len = xfer(0xff); trace_ch('.'); trace_hex((uint8_t)len);
-                    for (uint32_t j = 0; j < len; j++) trace_hex(xfer(0xff));
-                }
-                trace_ch('|'); trace_hex(xfer(0xff));
-            }
-            deselect_chip();
-        }
-        myrtos_sleep(50);
+        // The MAC probe that used to be here is gone. It was a diagnostic, and
+        // what it proved -- that a parameterised command needs its frame padded
+        // to a multiple of four -- is now simply done.
 
         // Asking for the list without a scan running does not merely fail: the
         // chip stops raising READY afterwards and the next command times out.
@@ -466,6 +507,14 @@ static int32_t handle(const myrtos_msg_t *m) {
     switch (m->type) {
     case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
     case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
+    case MYRTOS_MSG_WIFI_JOIN: {
+        // name, NUL, secret, NUL -- in the caller's own memory, which is stable
+        // because the caller is blocked in send.
+        const char *ssid = r->buf;
+        const char *pass = ssid;
+        while (*pass) pass++;
+        return myrtos_wifi_connect(ssid, pass + 1);
+    }
     default:                   return -1;
     }
 }

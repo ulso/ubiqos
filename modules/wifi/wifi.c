@@ -16,8 +16,45 @@ void module_main(int argc, char **argv) {
 
     // "wifi scan" lists what is on the air. It needs no name and no password:
     // a scan is what the chip hears, not what it joins.
+    if (argc > 2 && is(argv[1], "connect")) {
+        // The name and the secret, back to back, in one buffer that gets wiped
+        // before this returns. The secret is never an argument: argv lives in
+        // the process's memory and the shell keeps sixteen lines of history.
+        char creds[100];
+        uint32_t n = 0;
+        for (const char *p = argv[2]; *p && n < 33; p++) creds[n++] = *p;
+        creds[n++] = 0;
+        uint32_t pass_at = n;
+
+        myrtos_write_str(MYRTOS_STDOUT, "password: ");
+        for (;;) {
+            uint8_t ch;
+            if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;
+            if (ch == '\r' || ch == '\n') break;
+            if (ch == 3) { n = pass_at; break; }          // ctrl-C: forget it
+            if (ch == 8 || ch == 127) { if (n > pass_at) n--; continue; }
+            // Not echoed, and not drawn. What is typed here should not survive
+            // on the screen, in a scrollback, or in anybody's terminal capture.
+            if (ch >= ' ' && n < sizeof(creds) - 1) creds[n++] = (char)ch;
+        }
+        creds[n] = 0;
+        myrtos_write_str(MYRTOS_STDOUT, "\r\n");
+
+        int32_t r = (n > pass_at) ? myrtos_wifi_join(creds) : -1;
+
+        // Gone from memory before this process is, rather than left lying in
+        // the block until something else is given it.
+        for (uint32_t i = 0; i < sizeof(creds); i++) creds[i] = 0;
+
+        if (r == 0)      myrtos_write_str(MYRTOS_STDOUT, "connected\r\n");
+        else if (r == 4) myrtos_write_str(MYRTOS_STDOUT, "wifi: wrong password, or the network refused\r\n");
+        else if (r == -2) myrtos_write_str(MYRTOS_STDOUT, "wifi: still trying after twenty seconds\r\n");
+        else             myrtos_write_str(MYRTOS_STDOUT, "wifi: could not join\r\n");
+        return;
+    }
+
     if (argc > 1 && is(argv[1], "scan")) {
-        char why[132];   // room for the raw bytes the chip answered with
+        char why[48];   // room for the raw bytes the chip answered with
         why[0] = 0;
         int32_t n = myrtos_wifi_network(-1, why, sizeof(why));
         if (n < 0) {
