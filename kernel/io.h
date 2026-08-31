@@ -56,6 +56,12 @@ void    myrtos_io_inherit(int32_t parent_pid, int32_t child_pid);
 bool     myrtos_io_readable(int32_t path, int32_t owner_pid);
 int32_t  myrtos_io_readable_count(int32_t path, int32_t owner_pid);
 
+// Which process the interrupt key on this path's device should end, and the
+// delivery of that key. See the note in io.c: it is caught where the byte
+// arrives because the process it is meant for is not reading anything.
+int32_t  myrtos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid);
+bool     myrtos_io_interrupt(const char *device_name);
+
 // Whether a write would take anything. True for a driver that cannot say.
 bool     myrtos_io_writable(int32_t path, int32_t owner_pid);
 

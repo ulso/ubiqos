@@ -280,6 +280,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_FOREGRND:
+            frame->a0 = (uint32_t)myrtos_io_set_foreground(
+                (int32_t)frame->a0, (int32_t)frame->a1, myrtos_current_pid());
+            break;
         case SYS_KILL: {
             int32_t victim = (int32_t)frame->a0;
             // Killing yourself is exiting, and exiting never returns.

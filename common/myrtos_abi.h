@@ -169,6 +169,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_CONFONT  38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
 #define SYS_READABLE 39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
 #define SYS_KILL     40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
+#define SYS_FOREGRND 41u   // a0 = path, a1 = pid or 0 -> a0 = 0 ok, -1 no path
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -459,6 +460,17 @@ static inline int32_t myrtos_readable(int32_t path) {
 // when the reply comes. It shows as "zomb" in ps until then.
 static inline int32_t myrtos_kill(int32_t pid) {
     return myrtos_syscall(SYS_KILL, (uint32_t)pid, 0, 0);
+}
+
+// Say which process the interrupt key on this path's terminal should end, and
+// pass 0 when it has finished. A shell does this around a command it waits for.
+//
+// It has to be said rather than worked out. Ctrl-C is caught where the byte
+// arrives -- the process it is meant for is usually blocked and reading nothing
+// -- and at that moment the kernel has no way of telling which of several
+// processes the person typing had in mind. The shell knows: it started it.
+static inline int32_t myrtos_foreground(int32_t path, int32_t pid) {
+    return myrtos_syscall(SYS_FOREGRND, (uint32_t)path, (uint32_t)pid, 0);
 }
 
 static inline int32_t myrtos_mkdir(const char *path) {

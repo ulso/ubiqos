@@ -14,8 +14,26 @@ void myrtos_usb_init(void) {
 
 // TinyUSB does its work here, not in the interrupt. The kernel's idle loop
 // calls it, which suffices: everything time critical happens in the handler.
+//
+// Ctrl-C is looked for here rather than in the read, because while a command is
+// running nobody is reading -- which is precisely when it is typed. Peeking
+// rather than draining: the head of the FIFO is all TinyUSB will show without
+// consuming, and everything behind it is type-ahead the shell is owed.
+//
+// So it is caught when it is the next byte, which it is unless something was
+// typed first and left unread. Draining into a buffer of our own would close
+// that gap and cost a quarter kilobyte, which this machine has not got.
+bool myrtos_io_interrupt(const char *device_name);
+
 void myrtos_usb_task(void) {
     tud_task();
+
+    uint8_t c;
+    if (tud_mounted() && tud_cdc_available() && tud_cdc_peek(&c) && c == 3) {
+        if (myrtos_io_interrupt("usb")) {
+            tud_cdc_read(&c, 1);        // consumed: it was never data
+        }
+    }
 }
 
 bool myrtos_usb_ready(void) {

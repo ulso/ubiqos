@@ -1,4 +1,5 @@
 #include "io.h"
+#include "hardware/sync.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "usbdev.h"
@@ -173,6 +174,12 @@ static uint32_t driver_count;
 typedef struct {
     char name[12];
     const myrtos_driver_t *driver;
+    // The process this device's interrupt key should end. A terminal has one:
+    // the command running in front of it, which is emphatically not the process
+    // reading the keyboard -- while a command runs, nobody is reading. The
+    // shell sets it, because the shell is the only thing that knows what it
+    // started and on which device.
+    int32_t foreground;
 } myrtos_device_t;
 
 // Path numbers are PER-PROCESS, as in OS-9. Being global meant a child could
@@ -249,6 +256,7 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
     for (int i = 0; i < 11; i++) d->name[i] = desc->device_name[i];
     d->name[11] = 0;
     d->driver = drv;
+    d->foreground = -1;
 
     myrtos_print("  device '");
     myrtos_print(d->name);
@@ -307,6 +315,53 @@ int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t 
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     return p->device->driver->write(buf, len);
+}
+
+// --- THE INTERRUPT KEY ----------------------------------------------------
+// Ctrl-C has to be caught where the byte arrives, not where it is read. The
+// process it is meant for is usually blocked in a rendezvous and reading
+// nothing at all -- wifi scan sits in WAIT_REPLY for eight seconds -- and the
+// only thing reading the keyboard at that moment is the other shell.
+//
+// So it never becomes data while a command is running: the driver hands it here
+// instead, and here it ends the process the shell said was in front.
+
+int32_t myrtos_process_kill(int32_t pid);
+
+int32_t myrtos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid) {
+    myrtos_path_t *p = path_of(path, owner_pid);
+    if (!p) return -1;
+    // Cast away const: the device is shared, and this is a property of the
+    // device rather than of the path that named it.
+    ((myrtos_device_t*)p->device)->foreground = pid > 0 ? pid : -1;
+    return 0;
+}
+
+// True when there was something to interrupt. False means the key was not
+// consumed and should go through as an ordinary character -- with no command
+// running there is a shell reading, and it can do something better with it than
+// the kernel can.
+bool myrtos_io_interrupt(const char *name) {
+    for (uint32_t i = 0; i < device_count; i++) {
+        if (!str_eq(devices[i].name, name)) continue;
+        int32_t victim = devices[i].foreground;
+        if (victim <= 0) return false;
+        devices[i].foreground = -1;
+
+        // Echoed the way a terminal has always echoed it, and written before
+        // interrupts go off: a write to the console can wait for room, and
+        // waiting with interrupts off would wait for a thread that cannot run.
+        if (devices[i].driver->write)
+            devices[i].driver->write((const uint8_t*)"^C\r\n", 4);
+
+        // This runs in the USB thread, not in a trap, so the scheduler's queues
+        // are not otherwise ours to touch.
+        uint32_t st = save_and_disable_interrupts();
+        myrtos_process_kill(victim);
+        restore_interrupts(st);
+        return true;
+    }
+    return false;
 }
 
 bool myrtos_io_readable(int32_t path, int32_t owner_pid) {

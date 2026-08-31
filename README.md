@@ -289,7 +289,20 @@ Type a module name to run it. Built in:
 A trailing & runs a command without waiting for it.
 Arrows move along the line and up and down the history; ctrl-A and
 ctrl-E jump to its ends; ctrl-L clears the screen when it is empty.
+ctrl-C ends the running command, or abandons the line if none is.
 ```
+
+Ctrl-C is caught in the driver, where the byte arrives, and never becomes data
+while a command is running. It has to be: the process it is meant for is usually
+blocked in a rendezvous reading nothing at all — `wifi scan` sits in
+`WAIT_REPLY` for eight seconds — and the only thing reading the keyboard at that
+moment is the *other* shell. The kernel cannot tell which process was meant, so
+the shell says: it names its foreground process with `SYS_FOREGRND` around every
+command it waits for.
+
+On the serial port the key is found by peeking at the head of the CDC FIFO in
+the USB task, so it is seen when it is the next byte — which it is unless
+something was typed first and left unread.
 
 The line editor keeps sixteen lines of history and refuses to take a character
 that would push the line past the right edge — a wrapped line cannot be redrawn
@@ -349,6 +362,8 @@ result. Inline wrappers for all of them are in the ABI header.
 | 37 | `SYS_WIFISCAN` | -1 to look → count; an index → that network's signal |
 | 38 | `SYS_CONFONT` | font or -1, &out, 1 to only look → 0, or -1 |
 | 39 | `SYS_READABLE` | path → bytes waiting, 0 for none, -1 for no such path |
+| 40 | `SYS_KILL` | pid → 0, or -1 if there is no such process or it is refused |
+| 41 | `SYS_FOREGRND` | path, pid or 0 → 0, or -1 if there is no such path |
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was

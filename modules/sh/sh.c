@@ -235,7 +235,8 @@ static void help(int32_t c) {
         "  bootsel  reboot into the bootloader\r\n"
         "\r\nA trailing & runs a command without waiting for it.\r\n"
         "Arrows move along the line and up and down the history; ctrl-A and\r\n"
-        "ctrl-E jump to its ends; ctrl-L clears the screen when it is empty.\r\n");
+        "ctrl-E jump to its ends; ctrl-L clears the screen when it is empty.\r\n"
+        "ctrl-C ends the running command, or abandons the line if none is.\r\n");
 }
 
 // Split the line at the first space: everything before is the module name,
@@ -261,7 +262,15 @@ static int32_t exec_line(char *line) {
     int32_t pid = myrtos_exec(line, args);
     // Wait for it before prompting again. Without this the prompt raced the
     // command's own output, and two commands in a row interleaved their lines.
-    if (pid >= 0 && !background) myrtos_wait(pid);
+    if (pid >= 0 && !background) {
+        // Name it as the one ctrl-C should end. The kernel cannot work that out
+        // -- by then the process is usually blocked in a rendezvous, reading
+        // nothing -- and the shell is the only thing that knows what it started
+        // and on which terminal.
+        myrtos_foreground(MYRTOS_STDIN, pid);
+        myrtos_wait(pid);
+        myrtos_foreground(MYRTOS_STDIN, 0);
+    }
     return pid;
 }
 
@@ -351,6 +360,13 @@ void module_main(void) {
             // A blank line between a command's output and the next prompt, as
             // there has always been. Nothing ran, nothing to separate.
             if (ran) myrtos_write_str(e->out, "\r\n");
+            redraw(e);
+        } else if (ch == 3) {            // Ctrl-C, with nothing running
+            // The kernel passes it through when there is no command to end, so
+            // it does here what it does everywhere: abandon the line.
+            myrtos_write_str(e->out, "^C\r\n");
+            e->len = e->pos = e->browse = 0;
+            e->line[0] = 0;
             redraw(e);
         } else if (ch == 1) {            // Ctrl-A
             e->pos = 0; redraw(e);

@@ -147,6 +147,18 @@ static uint32_t repeat_due;
 
 static uint8_t translate(uint8_t k, uint8_t mods);
 
+// Ctrl-C never reaches the queue while something is running in front of the
+// screen: it ends that process instead. With nothing running it goes through as
+// an ordinary character, because then there is a shell reading and it can do
+// something better with it -- clearing the line -- than the kernel can.
+bool myrtos_io_interrupt(const char *device_name);
+
+static void emit(uint8_t c) {
+    if (c == 3 && (myrtos_io_interrupt("con") || myrtos_io_interrupt("kbd")))
+        return;
+    push(c);
+}
+
 // The arrows and their neighbours, as the escape sequences every terminal has
 // sent for them since the VT100. They are not in the keymap and should not be:
 // a layout says which letter is on a key, and an arrow is an arrow on every
@@ -195,7 +207,7 @@ void myrtos_usbhost_repeat(void) {
         myrtos_usbhost_push_str(sq);
     } else {
         uint8_t c = translate(repeat_key, repeat_mods);
-        if (c) push(c);
+        if (c) emit(c);
     }
     repeat_due = now + REPEAT_RATE_MS;
 }
@@ -261,7 +273,7 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
                 myrtos_usbhost_push_str(sq);
             } else {
                 uint8_t c = translate(k, report[0]);
-                if (c) push(c);
+                if (c) emit(c);
             }
 
             // The newest key down is the one that repeats, as it is everywhere:
