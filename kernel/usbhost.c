@@ -207,9 +207,21 @@ static const char shift[] =
 
 // One keycode and the modifier byte to a character, through whichever layout is
 // in force. Shared by the first press and by every repeat after it.
+// Control turns a letter into the code it has stood for since teletypes: ctrl-A
+// is 1, ctrl-L is 12. It is applied after the layout rather than through it, so
+// it works whatever letter the key carries and needs no entry in the keymap --
+// and only to letters, because ctrl with anything else has no agreed meaning
+// worth inventing one for.
+static uint8_t control(uint8_t c) {
+    if (c >= 'a' && c <= 'z') return (uint8_t)(c - 'a' + 1);
+    if (c >= 'A' && c <= 'Z') return (uint8_t)(c - 'A' + 1);
+    return 0;
+}
+
 static uint8_t translate(uint8_t k, uint8_t mods) {
-    bool sh  = (mods & 0x22) != 0;              // either shift
-    bool alt = (mods & 0x40) != 0;              // right alt, which is AltGr
+    bool sh   = (mods & 0x22) != 0;             // either shift
+    bool alt  = (mods & 0x40) != 0;             // right alt, which is AltGr
+    bool ctrl = (mods & 0x11) != 0;             // either control
 
     if (keymap) {
         if (k >= MYRTOS_KEYMAP_KEYS) return 0;
@@ -217,9 +229,12 @@ static uint8_t translate(uint8_t k, uint8_t mods) {
         // AltGr on a key with nothing there falls back to the unshifted
         // character, as it does everywhere else.
         if (alt && !c) c = keymap->plain[k];
-        return c;
+        return ctrl ? control(c) : c;
     }
-    if (k < sizeof(plain) - 1) return (uint8_t)(sh ? shift[k] : plain[k]);
+    if (k < sizeof(plain) - 1) {
+        uint8_t c = (uint8_t)(sh ? shift[k] : plain[k]);
+        return ctrl ? control(c) : c;
+    }
     return 0;
 }
 
