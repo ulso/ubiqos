@@ -47,10 +47,24 @@ POSITION_INDEPENDENT = {
     "R_RISCV_SET32", "R_RISCV_SET_ULEB128", "R_RISCV_SUB_ULEB128",
 }
 
+# Never conclude anything from output that was not produced. readelf on a file
+# that is not there prints an error and exits non-zero, and reading its empty
+# stdout looked exactly like a module with nothing wrong -- a link that failed
+# behind a redirect was reported as position independent and shareable. Twice.
+def readelf_or_die(readelf, args, path):
+    r = subprocess.run([readelf, "-W"] + args + [path],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        print("MODULE CHECK FAILED: could not read %s" % path)
+        if r.stderr.strip():
+            print("  " + r.stderr.strip().splitlines()[0])
+        sys.exit(1)
+    return r.stdout
+
 problems = []
 
 for obj in obj_files:
-    out = subprocess.run([readelf, "-W", "-r", obj], capture_output=True, text=True).stdout
+    out = readelf_or_die(readelf, ["-r"], obj)
     section = None
     for line in out.splitlines():
         m = re.match(r"Relocation section '(\S+)'", line)
@@ -83,7 +97,7 @@ for obj in obj_files:
                     hint = f"{section}  ({dem})"
             problems.append(f"{obj}: {kind} in {hint}")
 
-out = subprocess.run([readelf, "-W", "-S", elf], capture_output=True, text=True).stdout
+out = readelf_or_die(readelf, ["-S"], elf)
 for line in out.splitlines():
     m = re.search(r"\]\s+(\.\S+)\s+\S+\s+\S+\s+\S+\s+(\S+)", line)
     # .tdata and .tbss are deliberately not in this list. They are writable, but

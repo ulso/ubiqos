@@ -393,6 +393,31 @@ target, which is why the check looks at all four.
     MODULE IS NOT POSITION INDEPENDENT:
       badtest_app.elf: writable section .sbss is present
 
+### Statics under clang
+
+The same, which is the answer worth having. Measured on a `static const` array,
+a `static const int` table and a `static __thread int`:
+
+| | gcc | clang |
+|---|---|---|
+| addressing a `static const` | `R_RISCV_PCREL_HI20`/`LO12` | the same |
+| a `__thread` variable | `R_RISCV_TPREL_*` | the same |
+| absolute addresses | none | none |
+
+So `-fno-pic -mcmodel=medany` means the same thing to both: statics are reached
+PC-relatively, and per-process variables go through `tp` exactly as this document
+describes. Nothing about the module format changes.
+
+What must be refused still is, under both:
+
+    static int counter;                  .bss -- writable, and two processes
+                                         sharing the code would share it
+    static const char *const names[]     R_RISCV_32 in .rela.rodata
+
+A writable static is not a relocation problem and no compiler flag fixes it. It
+is refused because the module is *shared*, and that is a property of how myrtos
+loads it rather than of how the code was built.
+
 ### Clang, and the relative vtables that would fix this
 
 Tried, and worth writing down. Homebrew's LLVM 23 has a riscv32 backend, and
