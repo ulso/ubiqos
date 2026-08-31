@@ -17,7 +17,7 @@ void module_main(int argc, char **argv) {
     // "wifi scan" lists what is on the air. It needs no name and no password:
     // a scan is what the chip hears, not what it joins.
     if (argc > 1 && is(argv[1], "scan")) {
-        char why[64];   // room for the raw bytes the chip answered with
+        char why[112];   // room for the raw bytes the chip answered with
         why[0] = 0;
         int32_t n = myrtos_wifi_network(-1, why, sizeof(why));
         if (n < 0) {
