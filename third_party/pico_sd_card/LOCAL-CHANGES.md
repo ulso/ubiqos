@@ -169,3 +169,25 @@ picture gone.
 
 The `CARD_TRY_SDIO_AT_BOOT` scaffold is gone. Nothing mounts the card at
 startup at all now, and SDIO is asked for by name with `mount sdio`.
+
+## The waits, bounded
+
+Upstream leaves seven waits open -- bare `while (...);` loops and ones marked
+"todo not forever" -- and four of them `printf` on every pass, so a state
+machine that never arrives floods the console as well as hanging.
+
+That matters more here than upstream. These run in the filesystem server at
+priority 22, above the shell at 16, so for ever means the shell never runs
+again: no echo, no prompt, and a USB console that stays enumerated because the
+USB task is at 30. The board looks dead over the serial port and is not.
+Measured that way on 31 Aug 2026 -- PC in the USB task, crash log empty, video
+DMA still walking the framebuffer.
+
+They now go through `SD_WAIT_OR_RETURN_STUCK`, next to the `safe_*` helpers it
+matches. The macro returns `SD_ERR_STUCK`, and is named so that it is obvious
+that it does. `acquiesce_sm` was already bounded; its "todo not forever" was
+stale and is gone.
+
+**With this and the `spoop()` removal, four-bit SDIO works.** `mount sdio` on a
+freshly inserted card: `use_sdio` 1, `bus_width` `bw_wide`, files listed, and
+the video chain still walking the framebuffer through the whole thing.

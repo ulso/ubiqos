@@ -129,6 +129,28 @@ inline static int safe_wait_tx_not_full(pio_hw_t *pio, uint sm) {
     return SD_OK;
 }
 
+// LOCAL: a bound for the waits upstream left open. Every one of them is marked
+// "todo not forever" or is a bare `while (...);`, and every one of them runs in
+// the filesystem server -- so for ever means one process at priority 22 spinning
+// above the shell, which starves the very thing you would use to look at it.
+// The board then answers nothing over serial while USB, at 30, keeps the port
+// enumerated: it looks dead and is not. Measured that way on 31 Aug 2026, with
+// the PC sitting in the USB task and the crash log empty.
+//
+// The macro returns, and is named so that it is obvious that it does.
+#define SD_SPIN_LIMIT 1000000u
+
+#define SD_WAIT_OR_RETURN_STUCK(cond, what)                    \
+    do {                                                       \
+        uint32_t spins__ = 0;                                  \
+        while (cond) {                                         \
+            if (++spins__ > SD_SPIN_LIMIT) {                   \
+                printf("sd: gave up waiting for %s\r\n", what); \
+                return SD_ERR_STUCK;                           \
+            }                                                  \
+        }                                                      \
+    } while (0)
+
 inline static int safe_dma_wait_for_finish(pio_hw_t *pio, uint sm, uint chan) {
     int wooble = 0;
     while (dma_channel_is_busy(chan)) {
@@ -161,7 +183,6 @@ static inline int acquiesce_sm(int sm) {
         if (addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd) {
             break;
         }
-        // todo not forever
     }
     if (!timeout) return SD_ERR_STUCK;
     check_pio_debug("ac3");
@@ -330,12 +351,12 @@ static int __time_critical_func(finish_read)(uint dma_channel, int sm, uint16_t 
         *sniffed_crc = (uint16_t)dma_hw->sniff_data;
     }
     if (sm == SD_DAT_SM) {
-        // todo not forever
-        while (pio_sm_is_rx_fifo_empty(sd_pio, SD_DAT_SM));
+        SD_WAIT_OR_RETURN_STUCK(pio_sm_is_rx_fifo_empty(sd_pio, SD_DAT_SM), "the data CRC");
         uint32_t w = sd_pio->rxf[SD_DAT_SM];
         if (suffixed_crc) *suffixed_crc = w >> 16u;
         if (bus_width == bw_wide) {
-            while (pio_sm_is_rx_fifo_empty(sd_pio, SD_DAT_SM));
+            SD_WAIT_OR_RETURN_STUCK(pio_sm_is_rx_fifo_empty(sd_pio, SD_DAT_SM),
+                                    "the second half of the wide CRC");
             sd_pio->rxf[SD_DAT_SM];
         }
     }
@@ -750,10 +771,7 @@ int sd_readblocks_sync(uint32_t *buf, uint32_t block, uint block_count)
     if (!rc)
     {
 //        printf("waiting for finish\n");
-        while (!sd_scatter_read_complete(&rc))
-        {
-            tight_loop_contents();
-        }
+        SD_WAIT_OR_RETURN_STUCK(!sd_scatter_read_complete(&rc), "the scatter read");
 //        for(int i=0;i<block_count;i++)
 //        {
 //            printf("y %08x\n", (uint) crcs[i * crc_words]);
@@ -803,10 +821,9 @@ int sd_readblocks_scatter_async(uint32_t *control_words, uint32_t block, uint bl
         p += 2;
     }
 
-    // todo further state checks
-    while (sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd) {
-        printf("oops %d\n", (uint)sd_pio->sm[SD_DAT_SM].addr);
-    }
+    SD_WAIT_OR_RETURN_STUCK(
+            sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd,
+            "the data state machine to come back for a command");
     assert(sd_pio->sm[SD_DAT_SM].addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd);
     assert(pio_sm_is_rx_fifo_empty(sd_pio, SD_DAT_SM));
     assert(block_count <= PICO_SD_MAX_BLOCK_COUNT);
@@ -1017,18 +1034,15 @@ int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_
     *p++ = 0;
     *p++ = 0;
 
-    // todo further state checks
-    while (sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd) {
-        printf("oops %d\n", (uint)sd_pio->sm[SD_DAT_SM].addr);
-
-    }
+    SD_WAIT_OR_RETURN_STUCK(
+            sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd,
+            "the data state machine to come back for a command");
     assert(sd_pio->sm[SD_DAT_SM].addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd);
     assert(pio_sm_is_tx_fifo_empty(sd_pio, SD_DAT_SM));
     pio_sm_put(sd_pio, SD_DAT_SM, sd_pio_cmd(sd_cmd_or_dat_offset_state_inline_instruction, pio_encode_jmp(sd_cmd_or_dat_offset_no_arg_state_wait_high)));
-    while (sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd) {
-        printf("reps %d\n", (uint)sd_pio->sm[SD_DAT_SM].addr);
-
-    }
+    SD_WAIT_OR_RETURN_STUCK(
+            sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd,
+            "the data state machine after the wait-high jump");
 
     assert(sector_count);
     int rc = sd_set_wide_bus(false); // use 1 bit writes for now
@@ -1121,10 +1135,9 @@ int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint s
     *p++ = 0;
     *p++ = 0;
 
-    // todo further state checks
-    while (sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd) {
-        printf("oops %d\n", (uint)sd_pio->sm[SD_DAT_SM].addr);
-    }
+    SD_WAIT_OR_RETURN_STUCK(
+            sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd,
+            "the data state machine to come back for a command");
     assert(sd_pio->sm[SD_DAT_SM].addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd);
     assert(pio_sm_is_rx_fifo_empty(sd_pio, SD_DAT_SM));
     assert(sector_count <= PICO_SD_MAX_BLOCK_COUNT);
