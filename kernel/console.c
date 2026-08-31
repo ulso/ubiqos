@@ -28,13 +28,18 @@ void myrtos_print(const char *s);
 
 extern const uint8_t myrtos_font8x16[224][16];
 
-// What is in each cell. The cursor used to be drawn as a solid block and lifted
-// by drawing a space, which destroyed whatever was under it: myrtos_print emits
-// a carriage return before every newline, so the cursor landed on column zero of
-// the line just written and ate its first character, on every line. Keeping the
-// text means the cursor can be lifted by redrawing what was really there.
-static char cell_char[ROWS][COLS];
 static uint32_t cur_col, cur_row;
+
+// The cursor is whatever is under it, inverted; lifting it inverts the same
+// pixels back. That restores exactly what was there and needs no record of it.
+//
+// It was drawn as a solid block once, and lifted by drawing a space -- which
+// destroyed whatever it had covered. myrtos_print emits a carriage return
+// before every newline, so the cursor landed on column zero of the line just
+// written and ate its first character, on every line. The fix then was to keep
+// a copy of the text; inverting is the fix that needs no copy, and two
+// kilobytes of screen buffer go back to the processes.
+static bool cursor_shown;
 
 // A line of exactly eighty characters used to break twice: once when the
 // eightieth was written and again when the newline arrived, leaving a blank
@@ -59,31 +64,27 @@ static inline uint8_t *cell_line(uint32_t row, uint32_t y) {
 // Four pixels per word, looked up a nibble at a time: two stores per scanline
 // instead of eight. A cell is eight pixels wide and every line of the
 // framebuffer is a multiple of four bytes, so the alignment always works out.
-static uint32_t nibble[16], nibble_inv[16];
+static uint32_t nibble[16];
 
 static void build_nibbles(void) {
     for (uint32_t n = 0; n < 16; n++) {
-        uint32_t w = 0, wi = 0;
-        for (uint32_t b = 0; b < 4; b++) {
-            bool on = (n >> (3 - b)) & 1;
-            w  |= (uint32_t)(on ? FG : BG) << (b * 8);
-            wi |= (uint32_t)(on ? BG : FG) << (b * 8);
-        }
-        nibble[n] = w; nibble_inv[n] = wi;
+        uint32_t w = 0;
+        for (uint32_t b = 0; b < 4; b++)
+            w |= (uint32_t)(((n >> (3 - b)) & 1) ? FG : BG) << (b * 8);
+        nibble[n] = w;
     }
 }
 
-static void draw_glyph(uint32_t col, uint32_t row, char c, bool invert) {
+static void draw_glyph(uint32_t col, uint32_t row, char c) {
     // Latin-1, not ASCII: a Swedish keyboard produces letters above 126 and
     // they have to land somewhere. Anything below space is drawn as one.
     uint8_t b = (uint8_t)c;
     uint32_t idx = (b < 32) ? 0 : (uint32_t)(b - 32);
-    const uint32_t *t = invert ? nibble_inv : nibble;
     for (uint32_t y = 0; y < CELL_H; y++) {
         uint8_t bits = myrtos_font8x16[idx][y];
         uint32_t *p = (uint32_t*)(cell_line(row, y) + col * CELL_W);
-        p[0] = t[bits >> 4];
-        p[1] = t[bits & 0x0f];
+        p[0] = nibble[bits >> 4];
+        p[1] = nibble[bits & 0x0f];
     }
 }
 
@@ -92,17 +93,18 @@ static void clear_row(uint32_t row) {
         uint32_t *p = (uint32_t*)cell_line(row, y);
         for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++) p[x] = nibble[0];
     }
-    for (uint32_t c = 0; c < COLS; c++) cell_char[row][c] = ' ';
     row_wrapped[row] = false;
 }
 
-static void put_cell(uint32_t col, uint32_t row, char c) {
-    cell_char[row][col] = c;
-    draw_glyph(col, row, c, false);
-}
-
+// Idempotent, because it has to be: inverting twice by mistake would leave the
+// cell wrong side out with nothing to say so.
 static void cursor(bool on) {
-    draw_glyph(cur_col, cur_row, cell_char[cur_row][cur_col], on);
+    if (on == cursor_shown) return;
+    for (uint32_t y = 0; y < CELL_H; y++) {
+        uint8_t *p = cell_line(cur_row, y) + cur_col * CELL_W;
+        for (uint32_t x = 0; x < CELL_W; x++) p[x] = (uint8_t)~p[x];
+    }
+    cursor_shown = on;
 }
 
 static void newline(void) {
@@ -110,10 +112,8 @@ static void newline(void) {
     if (++cur_row >= ROWS) {
         cur_row = ROWS - 1;
         myrtos_video_set_origin(myrtos_video_origin + CELL_H);
-        for (uint32_t r = 1; r < ROWS; r++) {        // the text moves up with it
-            for (uint32_t c = 0; c < COLS; c++) cell_char[r - 1][c] = cell_char[r][c];
+        for (uint32_t r = 1; r < ROWS; r++)          // the flags move up with it
             row_wrapped[r - 1] = row_wrapped[r];
-        }
         clear_row(ROWS - 1);            // the row that just came round
     }
 }
@@ -134,32 +134,35 @@ static void draw_char(char c) {
     case '\b':
         if (wrap_pending) {
             wrap_pending = false;
-            put_cell(cur_col, cur_row, ' ');
+            draw_glyph(cur_col, cur_row, ' ');
         } else if (cur_col) {
             cur_col--;
-            put_cell(cur_col, cur_row, ' ');
+            draw_glyph(cur_col, cur_row, ' ');
         } else if (cur_row && row_wrapped[cur_row - 1]) {
             cur_row--;
             cur_col = COLS - 1;
             row_wrapped[cur_row] = false;
-            put_cell(cur_col, cur_row, ' ');
+            draw_glyph(cur_col, cur_row, ' ');
         }
         break;
     case '\t':
         do {
             if (wrap_pending) { wrap_pending = false; row_wrapped[cur_row] = true; newline(); }
-            put_cell(cur_col, cur_row, ' ');
+            draw_glyph(cur_col, cur_row, ' ');
             if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
         } while (cur_col % 8);
         break;
     default:
         if ((unsigned char)c < 32) break;
         if (wrap_pending) { wrap_pending = false; row_wrapped[cur_row] = true; newline(); }
-        put_cell(cur_col, cur_row, c);
+        draw_glyph(cur_col, cur_row, c);
         if (++cur_col >= COLS) { cur_col = COLS - 1; wrap_pending = true; }
         break;
     }
-    cursor(true);
+    // The cursor is not put back here. It goes back once the run of characters
+    // is done -- see the server -- because putting it back after every one of
+    // them means drawing it twice per character and watching it flicker its way
+    // across a screen of output.
 }
 
 // --- THE RING -------------------------------------------------------------
@@ -207,7 +210,7 @@ uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len) {
 // server and cannot interleave with a module's output mid-character. Before the
 // server exists there is nothing else running, so drawing directly is safe.
 void myrtos_console_putc(char c) {
-    if (!server_up) { draw_char(c); return; }
+    if (!server_up) { draw_char(c); cursor(true); return; }
     uint8_t b = (uint8_t)c;
     while (myrtos_console_put(&b, 1) == 0) { /* the kernel waits; it is rare */ }
 }
@@ -219,6 +222,7 @@ static void console_thread(void) {
             draw_char((char)ring[ring_tail]);
             ring_tail = (ring_tail + 1) & RING_MASK;
         }
+        cursor(true);
         myrtos_sleep(1);
     }
 }
