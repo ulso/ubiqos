@@ -102,7 +102,10 @@ inline static int safe_wait_tx_empty(pio_hw_t *pio, uint sm) {
         if (wooble > 1000000) {
             check_pio_debug("stuck");
             printf("stuck %d @ %d\n", sm, (int)pio->sm[sm].addr);
-            __breakpoint();
+            // LOCAL CHANGE: __breakpoint() was here, as at 133. See the note
+            // there -- without a probe it is an ebreak our trap handler answers
+            // by spinning, so a bounded wait that had just decided to return an
+            // error stopped the machine instead. Missing these two cost a boot.
             return SD_ERR_STUCK;
         }
     }
@@ -116,7 +119,10 @@ inline static int safe_wait_tx_not_full(pio_hw_t *pio, uint sm) {
         if (wooble > 1000000) {
             check_pio_debug("stuck");
             printf("stuck %d @ %d\n", sm, (int)pio->sm[sm].addr);
-            __breakpoint();
+            // LOCAL CHANGE: __breakpoint() was here, as at 133. See the note
+            // there -- without a probe it is an ebreak our trap handler answers
+            // by spinning, so a bounded wait that had just decided to return an
+            // error stopped the machine instead. Missing these two cost a boot.
             return SD_ERR_STUCK;
         }
     }
@@ -630,17 +636,29 @@ static int sd_init( bool _allow_four_data_pins)
     fixup_cmd_response_48(response_buffer);
     if (byte_buf[4] != 0xa5)
     {
-        __breakpoint();
+        // LOCAL CHANGE: __breakpoint() was here, and this is the one that fires
+        // when the card does not answer CMD8 at all -- which is exactly what a
+        // card already latched into SPI mode does. An ebreak with no probe
+        // attached stops the machine, so the honest "return -1" below never ran.
         printf("R7 check pattern doesn't match sent\r\n");
         return -1;
     }
 
+    // LOCAL CHANGE: bounded. Upstream spins here for ever if the card never
+    // reports ready. This runs in the filesystem server, so for ever means one
+    // process at priority 22 spinning above the shell -- which starves the very
+    // thing you would use to look at it. A card that has not come ready after a
+    // thousand asks is not going to.
+    int tries = 0;
     do
     {
+        if (++tries > 1000) {
+            printf("card never reported ready\r\n");
+            return -1;
+        }
         sd_command(sd_make_command(55, 0, 0, 0, 0), response_buffer, 6);
         sd_command(sd_make_command(41, 0x40, 0x10, 0, 0), response_buffer, 6); // HCS=1, 3.2-3.3V only
         fixup_cmd_response_48(response_buffer);
-        assert(byte_buf[0] == 0x3f);
     }
     while (!(byte_buf[1] & 0x80u)); // repeat while nbusy bit is low
     printf("Card ready\r\n");

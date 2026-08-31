@@ -305,36 +305,19 @@ void myrtos_kernel_main(void) {
 
     myrtos_flash_scan();
 
-    // The buffer a module is read into on its way from the card. It is touched
-    // once per module and never again, which makes it exactly the wrong thing
-    // to keep 32 kB of SRAM for. PSRAM if there is any, and it is handed back
-    // as soon as the card has been read.
-    uint8_t *staging = myrtos_bulk_pool
-        ? myrtos_tlsf_malloc(myrtos_bulk_pool, 32 * 1024)
-        : myrtos_tlsf_malloc(myrtos_mem_pool, 32 * 1024);
-    const uint32_t staging_size = 32 * 1024;
-    if (!staging) myrtos_print("No buffer to read modules into; card ignored.\n");
-
-    if (staging && myrtos_sd_init() && myrtos_fat_mount()) {
-        char name[12];
-        for (uint32_t i = 0; myrtos_fat_find_nth("MOD", i, name); i++) {
-            int32_t n = myrtos_fat_read_file(name, staging, staging_size);
-            if (n <= 0) continue;
-            if (myrtos_moddir_add_copy(staging, (uint32_t)n, name)) {
-                myrtos_print("Registered ");
-                myrtos_print(name);
-                myrtos_print(" from card, ");
-                myrtos_print_u32((uint32_t)n);
-                myrtos_print(" bytes\n");
-            }
-        }
-    } else {
-        myrtos_print("SD: unavailable.\n");
-    }
-
-    if (staging) {
-        myrtos_tlsf_free(myrtos_bulk_pool ? myrtos_bulk_pool : myrtos_mem_pool, staging);
-    }
+    // The card is not touched here, and that is the point. It must be asked for
+    // SDIO before anything speaks SPI to it -- a card latches into SPI mode the
+    // moment it is addressed that way and stays there until the power is cut --
+    // so whoever brings it up has to be the first to touch it. And it cannot be
+    // this function: the SDIO driver's waits are unbounded, this runs before the
+    // scheduler, and a hang here takes the console and USB with it. It belongs
+    // to the filesystem server, which is a process, and it does it there before
+    // it serves anything. See card_bring_up in fsserver.c.
+    //
+    // The cost is that modules on the card are registered a moment later than
+    // they were, after the scheduler starts rather than before. Nothing the
+    // machine needs to boot lives there: the shell and every descriptor are
+    // resident in flash.
 
     // Descriptors first: the devices must exist before any process tries to
     // open them. A data module has no entry point and is not started.

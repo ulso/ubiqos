@@ -107,3 +107,24 @@ server, where it is already safe to hang, so that SDIO gets first refusal on
 every boot. Until then the driver's unbounded waits, which upstream marks "todo
 not forever", must stay out of anything that runs before the scheduler: trying
 it there cost a boot and needed the BOOTSEL button.
+
+## Every __breakpoint() is gone
+
+There were four, and removing one was worse than removing none: the driver gave
+up on the DMA as it was written to, and then hit the next one instead. Each sits
+immediately before an honest error return that never ran.
+
+    105, 122  bounded FIFO waits, return SD_ERR_STUCK
+    139       the DMA wait, returns SD_ERR_STUCK
+    639       the CMD8 check pattern, returns -1
+
+The last is the one that matters most: it fires when the card does not answer
+CMD8 at all, which is exactly what a card already latched into SPI mode does. So
+the failure that most needed to be survivable was the one that stopped the
+machine. With a probe attached `__breakpoint()` is a gift; without one it is an
+`ebreak`, and our trap handler answers that by spinning in `wfi` for ever.
+
+The ACMD41 ready loop is bounded too, at a thousand asks. Upstream spins there
+until the card answers, and this now runs in the filesystem server -- a process
+at priority 22, above the shell. Spinning for ever there starves the very thing
+you would use to look at the problem.

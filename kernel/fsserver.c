@@ -23,10 +23,14 @@
 #include "../common/modules.h"
 #include "fat32.h"
 #include "usbdev.h"
+#include "sdcard.h"
+#include "moddir.h"
+#include "tlsf.h"
 
 void myrtos_print(const char *s);
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 const char *myrtos_cwd_of(int32_t pid);
+static bool card_bring_up(void);
 bool myrtos_cwd_set_of(int32_t pid, const char *abs);
 
 static int32_t server_pid = -1;
@@ -104,7 +108,9 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
         // behind every failed listing.
-        return myrtos_fat_remount() ? 0 : -1;
+        // The same bring-up as at startup, so a swapped card brings its
+        // modules with it rather than only its files.
+        return card_bring_up() ? 0 : -1;
     case MYRTOS_MSG_FS_DIR: {
         const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)m->data;
         make_abs(from, d->path, abs, sizeof(abs));
@@ -125,7 +131,65 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     }
 }
 
+// --- THE CARD ------------------------------------------------------------
+// All of it, here, and none of it in main. Two reasons, and the second is the
+// one that cost a boot.
+//
+// The card must be asked for SDIO before anything speaks SPI to it: it latches
+// into SPI mode the moment it is addressed that way and stays there until the
+// power is cut. So whoever brings it up has to be the first to touch it, and
+// that used to be main.
+//
+// And it cannot be main, because the driver's waits are unbounded -- upstream
+// marks them "todo not forever" -- and main runs before the scheduler. A hang
+// there takes the console and USB with it and leaves the BOOTSEL button. Here
+// it costs this one process, and the shell, the screen and the keyboard carry
+// on, which is the difference between a fault you can look at and a dark board.
+extern tlsf_pool_t myrtos_mem_pool;
+extern tlsf_pool_t myrtos_bulk_pool;
+void myrtos_print_u32(uint32_t v);
+
+// A module read from the card is copied into RAM and stays there, so the buffer
+// it arrives through need not: 32 kB touched once per module, from PSRAM when
+// there is any, and handed straight back.
+static void register_card_modules(void) {
+    const uint32_t staging_size = 32 * 1024;
+    tlsf_pool_t pool = myrtos_bulk_pool ? myrtos_bulk_pool : myrtos_mem_pool;
+    uint8_t *staging = myrtos_tlsf_malloc(pool, staging_size);
+    if (!staging) {
+        myrtos_print("SD: no buffer to read modules into\n");
+        return;
+    }
+
+    char name[12];
+    for (uint32_t i = 0; myrtos_fat_find_nth("MOD", i, name); i++) {
+        int32_t n = myrtos_fat_read_file(name, staging, staging_size);
+        if (n <= 0) continue;
+        if (myrtos_moddir_add_copy(staging, (uint32_t)n, name)) {
+            myrtos_print("Registered ");
+            myrtos_print(name);
+            myrtos_print(" from card, ");
+            myrtos_print_u32((uint32_t)n);
+            myrtos_print(" bytes\n");
+        }
+    }
+    myrtos_tlsf_free(pool, staging);
+}
+
+static bool card_bring_up(void) {
+    if (!myrtos_fat_remount()) {
+        myrtos_print("SD: no card, or not FAT32\n");
+        return false;
+    }
+    myrtos_print(myrtos_sd_is_sdio() ? "SD: four-bit SDIO\n" : "SD: SPI\n");
+    register_card_modules();
+    return true;
+}
+
 static void fs_thread(void) {
+    // Before serving anything, and before anything else has touched the card.
+    card_bring_up();
+
     for (;;) {
         myrtos_msg_t m;
         int32_t from = myrtos_receive(&m);
