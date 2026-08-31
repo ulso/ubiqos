@@ -213,10 +213,14 @@ void myrtos_usbhost_repeat(void) {
     repeat_due = now + REPEAT_RATE_MS;
 }
 
+// Return gives a carriage return, as every terminal has since the teletype --
+// not a line feed. The shell takes either and so never noticed, but cu passes
+// bytes through untouched, and the device at the other end may well care: a
+// BleuIO ends its commands on CR and answers nothing at all to a line feed.
 static const char plain[] =
-    "\0\0\0\0abcdefghijklmnopqrstuvwxyz1234567890\n\x1b\b\t -=[]\\\0;'`,./";
+    "\0\0\0\0abcdefghijklmnopqrstuvwxyz1234567890\r\x1b\b\t -=[]\\\0;'`,./";
 static const char shift[] =
-    "\0\0\0\0ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\n\x1b\b\t _+{}|\0:\"~<>?";
+    "\0\0\0\0ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\r\x1b\b\t _+{}|\0:\"~<>?";
 
 // One keycode and the modifier byte to a character, through whichever layout is
 // in force. Shared by the first press and by every repeat after it.
