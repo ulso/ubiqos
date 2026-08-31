@@ -420,6 +420,26 @@ is not wanted here.
 every process running it. That is about sections, and no compiler flag has
 anything to do with it.
 
+Sharing is the reason it is *wanted*, but not the reason it *breaks*, and the
+difference is worth measuring once. A module with `static int counter;` links
+like this:
+
+    LOAD  FileSiz 0x12 = 18 bytes      what the image contains
+          MemSiz  0x18 = 24 bytes      what the module needs in memory
+
+`.bss` is NOBITS: no file content, just an address and a size, placed six bytes
+past the end of what `objcopy -O binary` extracts. Nothing reserves those six
+bytes. `module_size` in the header is the file's length, and
+`myrtos_moddir_add_copy` allocates exactly that and copies exactly that.
+
+So the variable does not land in shared memory. It lands **outside the module's
+memory altogether** -- for a card module, in whatever the heap put after the
+allocation; for a resident one, in the next module's header in the concatenated
+flash image, where the write is simply lost because flash is not writable.
+
+The format has no concept of `.bss`. `mem_size` is the *process's* block, which
+is a different thing entirely.
+
 A module with `static int counter;` is perfectly position independent and simply
 cannot be shared. `check_module.py` says so in those words, because calling that
 "not position independent" sends the reader looking for the wrong thing.
