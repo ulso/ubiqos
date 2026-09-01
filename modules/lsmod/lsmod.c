@@ -24,7 +24,8 @@ static uint32_t digits(uint32_t v) {
 void module_main(void) {
     myrtos_line_t line;
     myrtos_line_reset(&line);
-    myrtos_line_str(&line, "\nModule directory:\n  name         rev  links  bytes\n");
+    myrtos_line_str(&line, "\nModule directory:\n"
+                           "  name      type  rev  links  bytes\n");
     myrtos_line_flush(MYRTOS_STDOUT, &line);
 
     for (uint32_t i = 0; ; i++) {
@@ -33,8 +34,13 @@ void module_main(void) {
 
         myrtos_line_reset(&line);
         myrtos_line_str(&line, "  ");
-        myrtos_line_chars(&line, m.name, 11);
+        // Eight characters, not eleven: the last three are the 8.3 extension,
+        // and it says MOD on every module ever made. What the reader wants
+        // there is the type, which the header knows and the name never did.
+        myrtos_line_chars(&line, m.name, 8);
         myrtos_line_str(&line, "  ");
+        myrtos_line_str(&line, myrtos_type_name(m.type));
+        myrtos_line_str(&line, "   ");
         myrtos_line_u32(&line, m.revision);
         pad(&line, digits(m.revision), 5);
         myrtos_line_u32(&line, m.links);

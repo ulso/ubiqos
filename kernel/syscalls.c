@@ -466,6 +466,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             out->links = e->links;
             out->revision = e->header->revision;
             out->size = e->header->module_size;
+            out->type = (uint32_t)(e->header->type_lang >> 8);
             frame->a0 = 0;
             break;
         }

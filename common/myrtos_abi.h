@@ -36,6 +36,8 @@
 #define MYRTOS_TYPE_PROGRAM   1
 #define MYRTOS_TYPE_DRIVER    2
 #define MYRTOS_TYPE_DATA      3   // no code, no entry point
+#define MYRTOS_TYPE_LIBRARY   4   // code, but entered through a table rather
+                                  // than at one point -- see exec_offset
 
 // --- DEVICE DESCRIPTORS ---------------------------------------------------
 // A data module describing a device, in the OS-9 sense. It states what the
@@ -979,7 +981,20 @@ typedef struct {
     uint32_t links;      // processes running it right now
     uint32_t revision;   // the highest of this name won
     uint32_t size;       // the whole module, header included
+    uint32_t type;       // MYRTOS_TYPE_*, out of the header's own byte
 } myrtos_modinfo_t;
+
+// Three letters for a listing. Not the name's extension, which says MOD on
+// every module ever made and so says nothing at all.
+// An array of characters, not of pointers. A switch returning string literals
+// compiles to a table of addresses and check_module.py refuses the module for
+// it -- which it did to lsmod the first time this was written, exactly as the
+// documentation says it would.
+static inline const char *myrtos_type_name(uint32_t type)
+{
+    static const char names[5][4] = { "???", "PRG", "DRV", "DAT", "LIB" };
+    return names[type < 5 ? type : 0];
+}
 
 static inline int32_t myrtos_moddir_get(uint32_t index, myrtos_modinfo_t *out)
 {
