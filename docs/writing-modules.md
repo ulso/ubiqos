@@ -634,3 +634,38 @@ GNU ld needs: it does not warn about them at all.
 
 Verified on the board rather than at the build: a clang-built module was made
 resident, flashed and run, and printed what it should.
+
+## Ordinary C, through myrtos_posix.h
+
+`common/myrtos_posix.h` gives `open`, `read`, `write`, `close` and `lseek` their
+POSIX names and shapes, so a file-handling loop can be built here unchanged.
+`modules/cat/cat.c` is written against it and has nothing myrtos-shaped in its
+loop at all.
+
+**Functions, not macros, and the difference is not taste.** A macro rewrites
+every occurrence of the name, and this repository has a driver struct whose
+members are `open`, `read`, `write` and `close`, and a C++ class with a `write`
+method. `#define write(...)` breaks both. Functions cannot, and they may carry
+these names safely because modules are built `-nostdlib`: there is no C library
+here to collide with.
+
+**It refuses rather than pretends.** `O_APPEND` needs the file's length and
+there is no `stat`, so it returns -1 with `ENOSYS` instead of quietly writing at
+the start. `SEEK_END` likewise. `O_TRUNC` is honoured by removing the file
+first, which is what `write` has always done by hand, and `O_CREAT` is already
+implied because the first write brings a file into being.
+
+**errno is thread-local, and must be defined once by the program:**
+
+    __thread int errno;
+
+exactly as a C library would define it for you. It cannot be a plain static: a
+shareable module may not have writable data. In `cat` it costs four bytes of
+`.tbss`, and each process running the module gets its own -- which is more
+nearly right than a global errno would be in a single address space.
+
+Still missing before a real port: `FILE` and stdio, `malloc`, `string.h`,
+`ctype.h`. And the larger obstacle is not the API but the module format -- see
+"The other rule" above. Code with file-scope variables comes in as a `SINGLE`
+module, which is allowed writable data at the price of one instance at a time.
+

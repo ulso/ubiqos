@@ -1,4 +1,9 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/myrtos_posix.h"
+
+// The one definition of errno the program owes, exactly as a C library would
+// have provided it. Thread-local because it is per-process writable state, and
+// a shareable module may not have that as a static.
+__thread int errno;
 
 // cat -- writes files to standard output.
 //
@@ -6,10 +11,9 @@
 // data and stack together, so holding a file in memory would put an arbitrary
 // ceiling on what cat can show; reading in slices puts none.
 //
-// Through a descriptor rather than a path and an offset, which is what the
-// system had before descriptors reached files. The position lives in the
-// descriptor now, so the loop no longer counts bytes -- and this is the shape
-// fopen and fread will want underneath them.
+// Written against myrtos_posix.h rather than the system calls, so this file is
+// also the answer to "can ordinary C be built here": open, read, close and
+// STDOUT_FILENO, with nothing myrtos-shaped in the loop at all.
 
 #define CHUNK 256
 
@@ -30,10 +34,10 @@ void module_main(int argc, char **argv) {
 
     uint8_t buf[CHUNK];
     for (int i = 1; i < argc; i++) {
-        int32_t fd = myrtos_open(argv[i]);
+        int fd = open(argv[i], O_RDONLY);
         if (fd < 0) { complain(argv[i]); continue; }
         for (;;) {
-            int32_t n = myrtos_read(fd, buf, CHUNK);
+            int32_t n = read(fd, buf, CHUNK);
             // Nought is the end of the file and a negative is a file that was
             // never there. Opening does not check -- it cannot, while there are
             // no flags to say whether a write should create -- so this is where
@@ -41,8 +45,8 @@ void module_main(int argc, char **argv) {
             // test made cat silent about it.
             if (n < 0) { complain(argv[i]); break; }
             if (n == 0) break;
-            myrtos_write(MYRTOS_STDOUT, buf, (uint32_t)n);
+            write(STDOUT_FILENO, buf, (uint32_t)n);
         }
-        myrtos_close(fd);
+        close(fd);
     }
 }
