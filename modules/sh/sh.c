@@ -33,6 +33,11 @@ typedef struct {
     uint32_t hist_count, hist_next;
     uint32_t browse;             // 0 while editing, else how far back we are
     char     stash[LINE_MAX];    // the line being edited when browsing started
+
+    // A shell reading a script is the same loop with the screen turned off: no
+    // banner, no prompt, no echo of what it is about to run. What the commands
+    // themselves print still goes out, because that is the point of running it.
+    bool     quiet;
 } editor_t;
 
 static char *hist_slot(editor_t *e, uint32_t back) {   // back = 1 is the newest
@@ -64,6 +69,7 @@ static void build_prompt(editor_t *e) {
 // belongs. Absolute column addressing rather than a count of moves, so a
 // miscount cannot accumulate.
 static void redraw(editor_t *e) {
+    if (e->quiet) return;            // a script has nobody to draw for
     myrtos_line_t l;
     myrtos_line_reset(&l);
     myrtos_line_str(&l, "\r");
@@ -447,10 +453,17 @@ static int32_t exec_line(char *line) {
     return pid;
 }
 
-void module_main(void) {
+void module_main(int argc, char **argv) {
     // The kernel has already given us 0, 1 and 2. The shell opens nothing.
     editor_t ed;
     editor_t *e = &ed;
+
+    // "sh script" is how the boot script is run: same shell, stdin already
+    // pointed at the file by whoever started us. It is told rather than
+    // detected because the alternative is asking whether path 0 is a file,
+    // and a shell that has to ask about its own descriptors is one syscall
+    // away from caring where its input comes from, which it should not.
+    e->quiet = argc > 1 && line_is(argv[1], "script");
 
     e->out = MYRTOS_STDOUT;
     e->len = e->pos = 0;
@@ -459,8 +472,16 @@ void module_main(void) {
     e->hist_count = e->hist_next = e->browse = 0;
     e->hist = (char*)myrtos_alloc(HIST_LINES * LINE_MAX);
 
-    myrtos_write_str(e->out, "\r\nmyrtos shell ready. Type 'help'.\r\n");
-    e->width = ask_width(e->out, MYRTOS_STDIN);
+    if (!e->quiet) {
+        myrtos_write_str(e->out, "\r\nmyrtos shell ready. Type 'help'.\r\n");
+        // Not merely pointless on a script but destructive: ask_width writes a
+        // cursor report request and then reads whatever comes back for 150 ms.
+        // Pointed at a file it swallows the first 150 ms of the script looking
+        // for an escape sequence that is never coming.
+        e->width = ask_width(e->out, MYRTOS_STDIN);
+    } else {
+        e->width = WIDTH_DEFAULT;
+    }
     build_prompt(e);
     redraw(e);
 
@@ -469,7 +490,14 @@ void module_main(void) {
 
     for (;;) {
         uint8_t ch;
-        if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;   // nothing right now
+        int32_t got = myrtos_read(MYRTOS_STDIN, &ch, 1);
+        // Zero is the end and not "nothing yet": the kernel blocks a process
+        // whose device has nothing to say rather than returning, so a nought
+        // reaching here came from a file that has been read to its end or a
+        // pipe whose writers have gone. An interactive shell never sees one,
+        // and a script shell sees exactly one, at the bottom of the file.
+        if (got == 0) break;
+        if (got < 0) continue;
 
         // The same sequences the console draws are the ones the keyboard sends,
         // so one state machine serves the screen and the serial port. See
@@ -503,7 +531,7 @@ void module_main(void) {
 
         if (ch == '\r' || ch == '\n') {
             e->line[e->len] = 0;
-            myrtos_write_str(e->out, "\r\n");
+            if (!e->quiet) myrtos_write_str(e->out, "\r\n");
             bool ran = e->len != 0;
             if (ran) {
                 remember(e);
@@ -530,6 +558,7 @@ void module_main(void) {
             e->len = e->pos = e->browse = 0;
             e->line[0] = 0;
             build_prompt(e);             // cd may have moved us
+            if (e->quiet) continue;
             // A blank line between a command's output and the next prompt, as
             // there has always been. Nothing ran, nothing to separate.
             if (ran) myrtos_write_str(e->out, "\r\n");
