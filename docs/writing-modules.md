@@ -810,6 +810,12 @@ Measured, and the mechanism is there:
   referring to them is enough. There is no linker script in this repository and
   none was needed.
 
+  A copy of that script is at `docs/reference/ld-builtin-elf32lriscv.ld`, for
+  reading only -- nothing links against it. Modules are linked with no `-T` at
+  all, and it is not a file in the Pico SDK either: it is compiled into `ld`.
+  `riscv32-unknown-elf-ld -m elf32lriscv --verbose` prints the real one, which
+  is what to trust if the copy has aged.
+
 `myrtos_module.h` has `myrtos_run_constructors`, `myrtos_run_destructors` and
 `MYRTOS_CXX_MAIN(fn)`, which writes a `module_main` that runs the first, calls
 your function, and runs the second -- backwards, as the standard requires. A
