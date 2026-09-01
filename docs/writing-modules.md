@@ -794,3 +794,37 @@ refused the file while it was a plain static.
 Still absent: floating point in printf and scanf, `qsort`, `time`, and `"+"`
 stream modes.
 
+## Global constructors and destructors: most of the way
+
+Measured, and the mechanism is there:
+
+* The compiler emits `.init_array` already. With `-fno-use-cxa-atexit`, which
+  the build now passes, the destructors of globals go to `.fini_array` instead
+  of being registered through `__cxa_atexit` -- which would want that function
+  and `__dso_handle` from a C library that does not exist here. With the flag
+  the object file has **no undefined symbols at all**; without it, two.
+
+* The linker's own script already contains
+  `PROVIDE_HIDDEN (__init_array_start = .)` and the other three. They never
+  appeared because **PROVIDE only defines a symbol something asks for**. Merely
+  referring to them is enough. There is no linker script in this repository and
+  none was needed.
+
+`myrtos_module.h` has `myrtos_run_constructors`, `myrtos_run_destructors` and
+`MYRTOS_CXX_MAIN(fn)`, which writes a `module_main` that runs the first, calls
+your function, and runs the second -- backwards, as the standard requires. A
+ported program needs a shim like that anyway, since the entry point is not
+called `main` here.
+
+**A module with global objects must be SINGLE**: the object is writable data and
+`.init_array` is a table of absolute function pointers, and a shareable module
+may have neither.
+
+**It is not finished.** A demonstration module built this way hung the machine
+when run, and the cause is not yet known -- the first guess, that the objects
+land in `.bss` outside the image, does not survive reading the loader: a SINGLE
+module is copied into a reserved region that `.bss` sits inside, uninitialised
+but present. The support above is committed because every part of it was
+measured; the demonstration is not, because it does not work. Do not put a
+module with global constructors on a card until this is understood.
+

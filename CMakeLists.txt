@@ -181,7 +181,12 @@ function(myrtos_add_module name source)
     add_executable(${name}_app ${source} ${ARGN})
     target_compile_options(${name}_app PRIVATE
         -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
-        $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics>)
+        # -fno-use-cxa-atexit puts the destructors of globals in .fini_array
+        # instead of registering them with __cxa_atexit, which would want that
+        # function and __dso_handle from a C library that is not here. Measured:
+        # with the flag the object has no undefined symbols at all.
+        $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics
+                                  -fno-use-cxa-atexit>)
     # -N keeps the linker from page-aligning the writable sections. Without it
     # .tdata landed a page beyond the code and objcopy padded the gap, which put
     # four kilobytes of zeroes in every module that had a thread-local variable.
@@ -286,6 +291,7 @@ endif()
 # luck rather than design; check_module.py would catch it either way.
 set(MYRTOS_CLANG_C_FLAGS   -std=gnu23 -fno-jump-tables)
 set(MYRTOS_CLANG_CXX_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics
+                           -fno-use-cxa-atexit
                            -fno-jump-tables -fexperimental-relative-c++-abi-vtables)
 
 # Same signature and same RT / SINGLE options as myrtos_add_module. A module

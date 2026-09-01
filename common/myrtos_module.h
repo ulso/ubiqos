@@ -3,6 +3,59 @@
 
 // The C++ face of a module.
 //
+// --- GLOBAL CONSTRUCTORS AND DESTRUCTORS -----------------------------------
+// They work, and it took less than expected. The compiler already emits
+// .init_array; the linker's own script already contains
+//
+//     PROVIDE_HIDDEN (__init_array_start = .)
+//
+// and the reason those symbols never appeared is that PROVIDE only defines a
+// symbol something asks for. Referring to them is all it takes -- there is no
+// linker script here and none was needed.
+//
+// The build passes -fno-use-cxa-atexit, without which the destructors of
+// globals are registered through __cxa_atexit and want that function and
+// __dso_handle from a C library that does not exist here. With it they go to
+// .fini_array and the object needs nothing from outside at all.
+//
+// A MODULE WITH GLOBAL OBJECTS MUST BE SINGLE. The object itself is writable
+// data, and .init_array is a table of absolute function pointers -- two
+// separate reasons a shareable module may not have one. SINGLE is allowed both,
+// which is also where ported C++ belongs.
+
+extern "C" {
+typedef void (*myrtos_initfn_t)(void);
+extern myrtos_initfn_t __init_array_start[], __init_array_end[];
+extern myrtos_initfn_t __fini_array_start[], __fini_array_end[];
+}
+
+static inline void myrtos_run_constructors()
+{
+    for (myrtos_initfn_t *f = __init_array_start; f != __init_array_end; ++f) (*f)();
+}
+
+// Backwards, as the standard requires: last constructed, first destroyed.
+static inline void myrtos_run_destructors()
+{
+    for (myrtos_initfn_t *f = __fini_array_end; f != __fini_array_start; ) (*--f)();
+}
+
+// Writes module_main for you -- constructors, your function, destructors:
+//
+//     static void app(int argc, char **argv) { ... }
+//     MYRTOS_CXX_MAIN(app)
+//
+// A ported program needs a shim like this anyway, because the entry point is
+// not called main here, so this costs it nothing it was not already paying.
+#define MYRTOS_CXX_MAIN(fn)                                  \
+    extern "C" void module_main(int argc, char **argv)       \
+    {                                                        \
+        myrtos_run_constructors();                           \
+        fn(argc, argv);                                      \
+        myrtos_run_destructors();                            \
+    }
+
+//
 // A module may not keep state in a file-scope variable: one copy of the code is
 // shared by every process running it, so the variable would be shared too. C++
 // solves this without being asked. Member variables are addressed through
