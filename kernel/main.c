@@ -171,7 +171,12 @@ static void myrtos_bulk_pool_init(void) {
 // heap during pre-init, got NULL, and panicked into the ebreak in _exit. Days
 // went into it. See the size check at the end of CMakeLists.txt, which now
 // fails the build instead.
-#define MYRTOS_HEAP_SIZE (48 * 1024)
+// Forty-four, down from forty-eight, when file descriptors arrived: the open
+// file table, a wider path entry and the code to drive them cost about six
+// kilobytes between them, and the build's heap check refused the result rather
+// than letting it become another silent panic. The framebuffer is still 307200
+// bytes of the machine and still the real answer.
+#define MYRTOS_HEAP_SIZE (44 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 

@@ -26,7 +26,16 @@ void module_main(int argc, char **argv) {
     }
     myrtos_line_str(&line, "\n");
 
-    int32_t n = myrtos_fs_write(argv[1], 0, line.buf, line.len);
+    // Through a descriptor, like cat, so the writing half of the new path is
+    // exercised by something anyone can run. Opening does not create -- there
+    // is nothing there to create yet -- and does not need to: the first write
+    // brings the file into being, which is what the path-at-a-time call did.
+    int32_t fd = myrtos_open(argv[1]);
+    int32_t n = -1;
+    if (fd >= 0) {
+        n = myrtos_write(fd, line.buf, line.len);
+        myrtos_close(fd);
+    }
     if (n == (int32_t)line.len) return;
 
     myrtos_line_t err;

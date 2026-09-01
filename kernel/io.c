@@ -1,4 +1,5 @@
 #include "io.h"
+#include "hardware/sync.h"
 #include "tusb.h"          // the CDC host class, for the acm driver
 #include "hardware/sync.h"
 #include "hardware/uart.h"
@@ -251,7 +252,19 @@ typedef struct {
 
 typedef struct {
     const myrtos_device_t *device;
+    int16_t file;                  // index into open_files, -1 for a device
 } myrtos_path_t;
+
+// See io.h. Written by the filesystem server, which is a thread, and read and
+// written by open and close, which are traps -- so every one of them holds
+// interrupts, for the same reason the allocator does.
+typedef struct {
+    char     path[64];
+    uint32_t pos;
+    int32_t  refs;                 // a child inherits the position, as fork does
+} open_file_t;
+
+static open_file_t open_files[MYRTOS_MAX_OPEN_FILES];
 
 static myrtos_device_t devices[MYRTOS_MAX_DEVICES];
 static uint32_t device_count;
@@ -275,9 +288,12 @@ void myrtos_io_init(void) {
     drivers[driver_count++] = &driver_console;
     drivers[driver_count++] = &driver_acm;
     device_count = 0;
-    for (int p = 0; p < MYRTOS_MAX_PROCS; p++)
-        for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+    for (int p = 0; p < MYRTOS_MAX_PROCS; p++) {
+        for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
             paths[p][i].device = 0;
+            paths[p][i].file = -1;
+        }
+    }
     myrtos_print("I/O manager ready, awaiting device descriptors\n");
 }
 
@@ -342,6 +358,7 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
             if (paths[owner_pid][p].device) continue;
             if (devices[i].driver->open() != 0) return -1;
             paths[owner_pid][p].device = &devices[i];
+            paths[owner_pid][p].file = -1;
             return p;
         }
         return -1;
@@ -363,6 +380,78 @@ int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path) {
 
 // A process can only reach its own paths: the table is indexed by pid, so the
 // number says nothing about anyone else's.
+// A file entry, or null. Deliberately separate from path_of, which answers for
+// devices only: every existing caller of that means "a device" and would be
+// wrong about a file.
+static myrtos_path_t *file_entry(int32_t path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
+    if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
+    if (paths[owner_pid][path].file < 0) return 0;
+    return &paths[owner_pid][path];
+}
+
+int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS || !abs_path) return -1;
+    uint32_t st = save_and_disable_interrupts();
+
+    int32_t slot = -1;
+    for (int i = 0; i < MYRTOS_MAX_OPEN_FILES; i++)
+        if (!open_files[i].refs) { slot = i; break; }
+    int32_t fd = -1;
+    for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+        if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) { fd = i; break; }
+    if (slot < 0 || fd < 0) { restore_interrupts(st); return -1; }
+
+    uint32_t n = 0;
+    while (abs_path[n] && n < sizeof(open_files[0].path) - 1) {
+        open_files[slot].path[n] = abs_path[n];
+        n++;
+    }
+    open_files[slot].path[n] = 0;
+    open_files[slot].pos = 0;
+    open_files[slot].refs = 1;
+    paths[owner_pid][fd].file = (int16_t)slot;
+
+    restore_interrupts(st);
+    return fd;
+}
+
+bool myrtos_io_is_file(int32_t path, int32_t owner_pid) {
+    return file_entry(path, owner_pid) != 0;
+}
+
+bool myrtos_io_file_at(int32_t path, int32_t owner_pid,
+                       const char **path_out, uint32_t *pos_out) {
+    myrtos_path_t *p = file_entry(path, owner_pid);
+    if (!p) return false;
+    if (path_out) *path_out = open_files[p->file].path;
+    if (pos_out) *pos_out = open_files[p->file].pos;
+    return true;
+}
+
+void myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n) {
+    uint32_t st = save_and_disable_interrupts();
+    myrtos_path_t *p = file_entry(path, owner_pid);
+    if (p) open_files[p->file].pos += n;
+    restore_interrupts(st);
+}
+
+int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid, uint32_t pos) {
+    uint32_t st = save_and_disable_interrupts();
+    myrtos_path_t *p = file_entry(path, owner_pid);
+    if (p) open_files[p->file].pos = pos;
+    restore_interrupts(st);
+    return p ? (int32_t)pos : -1;
+}
+
+// Dropping one reference to an open file. The slot goes when the last
+// descriptor on it does, which is what makes a child's copy safe.
+static void file_release(myrtos_path_t *p) {
+    if (p->file < 0) return;
+    if (open_files[p->file].refs > 0) open_files[p->file].refs--;
+    p->file = -1;
+}
+
 static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
     if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
@@ -376,9 +465,15 @@ static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
 void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
     if (parent_pid < 0 || parent_pid >= MYRTOS_MAX_PROCS) return;
     if (child_pid < 0 || child_pid >= MYRTOS_MAX_PROCS) return;
+    uint32_t st = save_and_disable_interrupts();
     for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
         paths[child_pid][i] = paths[parent_pid][i];
+        // The child shares the open file, position and all, exactly as a fork's
+        // descriptors do. Two processes appending to the same file interleave
+        // rather than overwrite, which is the whole point of sharing it.
+        if (paths[child_pid][i].file >= 0) open_files[paths[child_pid][i].file].refs++;
     }
+    restore_interrupts(st);
 }
 
 int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid) {
@@ -461,6 +556,13 @@ int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_p
 }
 
 int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
+    myrtos_path_t *f = file_entry(path, owner_pid);
+    if (f) {
+        uint32_t st = save_and_disable_interrupts();
+        file_release(f);
+        restore_interrupts(st);
+        return 0;
+    }
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     p->device->driver->close();
@@ -470,10 +572,13 @@ int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
 
 void myrtos_io_close_all(int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return;
+    uint32_t st = save_and_disable_interrupts();
     for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
+        if (paths[owner_pid][i].file >= 0) file_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].device) {
             paths[owner_pid][i].device->driver->close();
             paths[owner_pid][i].device = 0;
         }
     }
+    restore_interrupts(st);
 }

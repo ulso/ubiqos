@@ -23,6 +23,7 @@
 #include "../common/modules.h"
 #include "fat32.h"
 #include "vfs.h"
+#include "io.h"
 #include "usbdev.h"
 #include "sdcard.h"
 #include "moddir.h"
@@ -122,6 +123,40 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         VOLUME_OR_FAIL(rmdir);
         return ops->rmdir(rest) ? 0 : -1;
+    }
+    case MYRTOS_MSG_FS_OPEN: {
+        make_abs(from, (const char*)m->data, abs, sizeof(abs));
+        // The volume has to exist; the file does not. Reading one that is not
+        // there gives nothing and writing creates it, which is what the
+        // path-at-a-time calls have always done -- so there is no flag here
+        // and no O_CREAT to argue about yet.
+        const char *rest;
+        if (!myrtos_vfs_split(abs, &rest)) return -1;
+        return myrtos_io_open_file(abs, from);
+    }
+    case MYRTOS_MSG_FS_FDIO: {
+        const myrtos_fs_fdio_t *r = (const myrtos_fs_fdio_t*)m->data;
+        const char *stored;
+        uint32_t pos = 0;
+        if (!myrtos_io_file_at(r->fd, from, &stored, &pos)) return -1;
+
+        // The stored path is already absolute -- it was resolved when the
+        // descriptor was opened, against the working directory of that moment.
+        // A process that has since done cd does not move its open files.
+        const char *rest;
+        const myrtos_fsops_t *ops = myrtos_vfs_split(stored, &rest);
+        if (!ops) return -1;
+
+        int32_t n;
+        if (r->write) {
+            if (!ops->write_at) return -1;
+            n = ops->write_at(rest, pos, r->buf, r->len);
+        } else {
+            if (!ops->read_at) return -1;
+            n = ops->read_at(rest, pos, r->buf, r->len);
+        }
+        if (n > 0) myrtos_io_file_advance(r->fd, from, (uint32_t)n);
+        return n;
     }
     case MYRTOS_MSG_FS_MOUNT:
         // Talking to the card can take a second when there is none in the slot,

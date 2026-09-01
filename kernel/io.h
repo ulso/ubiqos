@@ -68,6 +68,35 @@ bool     myrtos_io_interrupt(const char *device_name);
 // Whether a write would take anything. True for a driver that cannot say.
 bool     myrtos_io_writable(int32_t path, int32_t owner_pid);
 
+// --- OPEN FILES -----------------------------------------------------------
+// POSIX's own three levels, scaled down: the per-process table above, a shared
+// table of open files here, and the filesystem underneath. The middle one is
+// what makes a descriptor more than a name -- it carries the position, and it
+// is shared by a parent and its children exactly as a fork's descriptors are.
+//
+// A path string per open file rather than a filesystem handle. Sixty-four bytes
+// twelve times over is under a kilobyte, and it costs the filesystem a walk per
+// read that a handle would have saved. That is the wrong trade for a database
+// and the right one for a machine whose files are read once from start to end.
+// Eight, not twelve: the build's heap check refused twelve, which is exactly
+// what it is for. Eight open files across the whole machine is generous for
+// eight paths per process and thirty-two processes that mostly hold devices.
+#define MYRTOS_MAX_OPEN_FILES 8
+
+// Bind an already-resolved absolute path to a free descriptor. Called by the
+// filesystem server, which is the only thing that knows the path is real.
+int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid);
+
+// True when this descriptor is a file rather than a device. The read and write
+// system calls ask before deciding whether the work can be done in the trap.
+bool     myrtos_io_is_file(int32_t path, int32_t owner_pid);
+
+// The path and position behind a file descriptor, for the server to act on.
+bool     myrtos_io_file_at(int32_t path, int32_t owner_pid,
+                           const char **path_out, uint32_t *pos_out);
+void     myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n);
+int32_t  myrtos_io_file_seek(int32_t path, int32_t owner_pid, uint32_t pos);
+
 // Open on a SPECIFIC path number. The kernel uses it to give the first process
 // its 0, 1 and 2; ordinary opens take the first free slot.
 int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path);

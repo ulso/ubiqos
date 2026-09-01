@@ -163,6 +163,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_GETCWD    32u   // a0 = buf, a1 = length -> a0 = characters copied
 #define SYS_RMDIR     33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
 #define SYS_RECEIVETMO 44u  // a0 = msg out, a1 = milliseconds
+#define SYS_SEEK      45u   // a0 = descriptor, a1 = position -> a0 = position
 #define SYS_MOUNT     34u   // -> a0 = 0 ok, -1 no card
 #define SYS_REPLYTO   35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
 #define SYS_WIFIVER   36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
@@ -207,6 +208,8 @@ typedef struct {
 #define MYRTOS_MSG_FS_CHDIR  7u
 #define MYRTOS_MSG_FS_RMDIR  8u
 #define MYRTOS_MSG_FS_MOUNT  9u
+#define MYRTOS_MSG_FS_OPEN   10u   // data = path -> a descriptor
+#define MYRTOS_MSG_FS_FDIO   11u   // data = myrtos_fs_fdio_t
 
 // The WiFi coprocessor is a service too, for the same reason the filesystem is:
 // talking to it means waiting seconds for a scan, and waiting must not happen
@@ -345,6 +348,13 @@ static inline int32_t myrtos_receive(myrtos_msg_t *out)
 // A server that waits forever cannot notice that the thing it serves has
 // stopped answering, and cannot be told to stop either. That is the reason this
 // exists -- not speed, but the ability to complain.
+// Move a file descriptor's position. Absolute, from the start; there is no
+// SEEK_END yet because nothing has needed to ask how long a file is.
+static inline int32_t myrtos_seek(int32_t fd, uint32_t pos)
+{
+    return myrtos_syscall(SYS_SEEK, (uint32_t)fd, pos, 0);
+}
+
 static inline int32_t myrtos_receive_tmo(myrtos_msg_t *out, uint32_t ms)
 {
     return myrtos_syscall(SYS_RECEIVETMO, (uint32_t)(uintptr_t)out, ms, 0);
@@ -565,6 +575,18 @@ typedef struct {
     uint8_t *buf;
     uint32_t len;
 } myrtos_fs_io_t;
+
+// Reading or writing through a descriptor, where the position is the
+// descriptor's and not the caller's. The struct is filled in by the kernel, not
+// by the module: myrtos_read and myrtos_write take a descriptor and know
+// nothing of messages, and it is the system call that discovers the descriptor
+// is a file and turns the request into one.
+typedef struct {
+    int32_t  fd;
+    uint8_t *buf;
+    uint32_t len;
+    uint32_t write;                 // non-zero to write
+} myrtos_fs_fdio_t;
 
 // Read a slice of a file. Returns bytes read, 0 at end of file, -1 if missing.
 static inline int32_t myrtos_fs_read(const char *name, uint32_t offset, void *buf, uint32_t len)

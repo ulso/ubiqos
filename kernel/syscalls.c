@@ -50,6 +50,13 @@ static bool server_request(int32_t srv, uint32_t type, void *data) {
     return myrtos_msg_send(srv, &m);
 }
 
+// A descriptor read or write travels to the filesystem server as a message, and
+// the message points at this rather than at anything on the trap stack -- which
+// is gone the moment we switch away. One entry per process is enough because a
+// process can only be blocked in one send at a time, which is the same argument
+// that lets a sender's buffer be passed by pointer at all.
+static myrtos_fs_fdio_t fdio_req[MYRTOS_MAX_PROCESSES];
+
 static bool fs_request(uint32_t type, void *data) {
     return server_request(myrtos_fs_server_pid(), type, data);
 }
@@ -126,12 +133,52 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             myrtos_putc((char)frame->a0);
             frame->a0 = 0;
             break;
-        case SYS_OPEN:
-            frame->a0 = (uint32_t)myrtos_io_open((const char*)(uintptr_t)frame->a0,
-                                                 myrtos_current_pid());
+        case SYS_OPEN: {
+            const char *name = (const char*)(uintptr_t)frame->a0;
+            // Which of the two it is, and the device table decides rather than
+            // the spelling: "term" is a device, "kopia.txt" is a file, and both
+            // are bare names. Asking the table is cheap and it keeps every
+            // existing open working unchanged. "/dev/term" is the same device
+            // by its long name.
+            //
+            // A device is opened here, where it costs nothing. A file belongs to
+            // the server, because walking a directory is long work and long work
+            // in a trap is the mistake this system has already made four times.
+            const char *devname = 0;
+            if (name) {
+                if (name[0] != '/') {
+                    if (myrtos_io_has_device(name)) devname = name;
+                } else if (name[1] == 'd' && name[2] == 'e' && name[3] == 'v'
+                           && name[4] == '/') {
+                    devname = name + 5;
+                }
+            }
+            if (devname) {
+                frame->a0 = (uint32_t)myrtos_io_open(devname, myrtos_current_pid());
+                break;
+            }
+            if (!fs_request(MYRTOS_MSG_FS_OPEN, (void*)(uintptr_t)name)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        }
+        case SYS_SEEK: {
+            frame->a0 = (uint32_t)myrtos_io_file_seek((int32_t)frame->a0,
+                                                      myrtos_current_pid(), frame->a1);
             break;
+        }
         case SYS_WRITE: {
             int32_t wpath = (int32_t)frame->a0;
+            if (myrtos_io_is_file(wpath, myrtos_current_pid())) {
+                myrtos_fs_fdio_t *q = &fdio_req[myrtos_current_pid()];
+                q->fd = wpath;
+                q->buf = (uint8_t*)(uintptr_t)frame->a1;
+                q->len = frame->a2;
+                q->write = 1;
+                if (!fs_request(MYRTOS_MSG_FS_FDIO, q)) { frame->a0 = (uint32_t)-1; break; }
+                return myrtos_switch(sp);
+            }
             int32_t wn = myrtos_io_write(wpath, (const uint8_t*)(uintptr_t)frame->a1,
                                          frame->a2, myrtos_current_pid());
             if (wn == 0 && frame->a2 && myrtos_current_pid() != 0) {
@@ -184,6 +231,17 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         case SYS_READ: {
             int32_t path = (int32_t)frame->a0;
+            // A file at its end returns zero and does not block. Only a device
+            // can have "nothing yet"; a file has nothing more.
+            if (myrtos_io_is_file(path, myrtos_current_pid())) {
+                myrtos_fs_fdio_t *q = &fdio_req[myrtos_current_pid()];
+                q->fd = path;
+                q->buf = (uint8_t*)(uintptr_t)frame->a1;
+                q->len = frame->a2;
+                q->write = 0;
+                if (!fs_request(MYRTOS_MSG_FS_FDIO, q)) { frame->a0 = (uint32_t)-1; break; }
+                return myrtos_switch(sp);
+            }
             int32_t n = myrtos_io_read(path, (uint8_t*)(uintptr_t)frame->a1,
                                        frame->a2, myrtos_current_pid());
             if (n == 0 && myrtos_current_pid() != 0) {
