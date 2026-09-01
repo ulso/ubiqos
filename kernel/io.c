@@ -203,6 +203,23 @@ static int32_t con_readable(void) {
     return (int32_t)myrtos_usbhost_available();
 }
 
+// /dev/null. Everything written to it is taken and forgotten, and reading it is
+// immediately the end -- which is the part that needs saying, since a read of
+// nothing means "not yet" everywhere else here and a reader would wait for ever.
+static int32_t null_open(void)  { return 0; }
+static int32_t null_close(void) { return 0; }
+static int32_t null_write(const uint8_t *buf, uint32_t len) { (void)buf; return (int32_t)len; }
+static int32_t null_read(uint8_t *buf, uint32_t len) { (void)buf; (void)len; return 0; }
+static int32_t null_readable(void) { return 1; }        // the end is always ready
+static int32_t null_at_eof(void)   { return 1; }
+
+static const myrtos_driver_t driver_null = {
+    .module_name = "NULL    MOD",
+    .configure = 0,
+    .open = null_open, .write = null_write, .read = null_read, .close = null_close,
+    .readable = null_readable, .at_eof = null_at_eof
+};
+
 static const myrtos_driver_t driver_console = {
     .module_name = "CONSOLE MOD",
     .configure = 0,
@@ -306,6 +323,7 @@ void myrtos_io_init(void) {
     drivers[driver_count++] = &driver_kbd;
     drivers[driver_count++] = &driver_console;
     drivers[driver_count++] = &driver_acm;
+    drivers[driver_count++] = &driver_null;
     device_count = 0;
     for (int p = 0; p < MYRTOS_MAX_PROCS; p++) {
         for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
@@ -314,6 +332,20 @@ void myrtos_io_init(void) {
             paths[p][i].pipe = -1;
         }
     }
+    // null needs no descriptor. A descriptor says which pins, which speed and
+    // which driver; this one has no hardware to describe, and a data module
+    // holding nothing but its own name would be ceremony rather than
+    // configuration. So it is registered here, and it is the only one.
+    myrtos_device_t *n = &devices[device_count++];
+    const char *nm = "null";
+    // NUL-filled, as a descriptor's name arrives: the lookup compares C strings,
+    // and a name padded with spaces would never match what anyone types.
+    int k = 0;
+    while (nm[k]) { n->name[k] = nm[k]; k++; }
+    while (k < 12) n->name[k++] = 0;
+    n->driver = &driver_null;
+    n->foreground = -1;
+
     myrtos_print("I/O manager ready, awaiting device descriptors\n");
 }
 
@@ -707,9 +739,12 @@ int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
 }
 
 bool myrtos_io_at_eof(int32_t path, int32_t owner_pid) {
-    myrtos_path_t *p = pipe_entry(path, owner_pid);
-    if (!p || p->pipe_write) return false;
-    return !pipe_used(&pipes[p->pipe]) && !pipes[p->pipe].writers;
+    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    if (q) return !q->pipe_write
+             && !pipe_used(&pipes[q->pipe]) && !pipes[q->pipe].writers;
+
+    myrtos_path_t *p = path_of(path, owner_pid);
+    return p && p->device->driver->at_eof && p->device->driver->at_eof();
 }
 
 // Letting go of one end. A reader blocked on an empty pipe is released by the

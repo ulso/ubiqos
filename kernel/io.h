@@ -34,6 +34,10 @@ typedef struct {
     // hardware, so waiting on it would never end.
     int32_t (*writable)(void);
     int32_t (*close)(void);
+    // Whether a read of nothing means "never" rather than "not yet". A device
+    // without this can only fall quiet, and a reader waits; /dev/null has an
+    // end, and a reader that waited for it would wait for ever.
+    int32_t (*at_eof)(void);
 } myrtos_driver_t;
 
 void    myrtos_io_init(void);
