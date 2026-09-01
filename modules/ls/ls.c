@@ -35,6 +35,14 @@ void module_main(int argc, char **argv) {
         int32_t attr = myrtos_fs_dir_at(path, i, raw, &size);
         if (attr < 0) {
             if (i == 0) {
+                // Empty is not missing, and until stat existed there was no way
+                // to tell them apart: an empty directory has no first entry to
+                // list, and neither has one that is not there. An empty /tmp
+                // reported itself as missing for exactly that reason.
+                uint32_t size = 0;
+                int32_t st = myrtos_fs_stat(path[0] ? path : "/", &size);
+                if (st >= 0 && (st & MYRTOS_ATTR_DIRECTORY)) break;
+
                 myrtos_line_reset(&line);
                 // Nothing is mounted at startup any more, so the root failing
                 // is now the ordinary case rather than a typo. A mounted card

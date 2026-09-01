@@ -176,7 +176,11 @@ static void myrtos_bulk_pool_init(void) {
 // kilobytes between them, and the build's heap check refused the result rather
 // than letting it become another silent panic. The framebuffer is still 307200
 // bytes of the machine and still the real answer.
-#define MYRTOS_HEAP_SIZE (44 * 1024)
+// Forty, and the trend is the thing to notice: sixty-four, then fifty-six,
+// forty-eight, forty-four, forty. Every feature that keeps a table pays for it
+// here, and the framebuffer is still 307200 bytes of a 512 kB machine. When
+// this next runs out, that is the number to attack rather than this one.
+#define MYRTOS_HEAP_SIZE (40 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
@@ -303,6 +307,9 @@ void myrtos_kernel_main(void) {
     // card may add to them, and a module of the same name there is registered
     // alongside -- whichever was registered first wins the lookup.
     myrtos_bulk_pool_init();
+    // After the bulk pool, not with the other volumes: /tmp puts its files in
+    // PSRAM, and there is no PSRAM to put them in until now.
+    { extern void myrtos_tmpfs_init(void); myrtos_tmpfs_init(); }
     myrtos_pio_probe();
     myrtos_usbhost_init();
 

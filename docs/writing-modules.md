@@ -873,3 +873,29 @@ The parts that redirection needs and pipes share -- `myrtos_dup`, the device use
 count, the open file reference count -- are all proven, because redirection
 uses them.
 
+## /tmp
+
+A volume whose files live in PSRAM and go when the power does. Eight megabytes
+sit behind the second chip select doing very little, and a scratch file is what
+bulk memory is for -- the card is slow, wears out, and may not be there at all.
+
+Flat: no directories, eight files at once. A scratch filesystem that needed a
+directory tree would be a filesystem, and there is one of those. It has no
+`find_nth`, so module scanning passes it over without a special case -- nobody
+should be looking for modules in scratch space.
+
+    echo something > /tmp/p
+    cat /tmp/p
+    ls /tmp
+
+The reason it was built now is pipelines. `a | b` can be `a > /tmp/p` then
+`b < /tmp/p`, which uses the redirection that already works rather than a second
+arrangement of descriptors that has to be got right again. That is sequential
+rather than streaming -- the whole intermediate exists before the right side
+starts -- and for this machine, with eight megabytes and no `yes`, that is a
+fair trade.
+
+It also fixed something older. `ls` on an empty directory used to say "no such
+directory", because an empty one has no first entry to list and neither has one
+that is not there. `stat` can tell them apart, so now it does.
+
