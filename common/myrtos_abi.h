@@ -163,7 +163,14 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_GETCWD    32u   // a0 = buf, a1 = length -> a0 = characters copied
 #define SYS_RMDIR     33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
 #define SYS_RECEIVETMO 44u  // a0 = msg out, a1 = milliseconds
-#define SYS_SEEK      45u   // a0 = descriptor, a1 = position -> a0 = position
+#define SYS_SEEK      45u   // a0 = descriptor, a1 = offset, a2 = whence
+
+#define MYRTOS_SEEK_SET 0u   // from the start of the file
+#define MYRTOS_SEEK_CUR 1u   // from where the descriptor is now
+// SEEK_END is deliberately absent. It needs the file's length, and nothing can
+// answer that yet: the filesystem lists sizes when it walks a directory and has
+// no stat for one named file. Asking for it returns -1 rather than a number
+// that would be wrong.
 #define SYS_MOUNT     34u   // -> a0 = 0 ok, -1 no card
 #define SYS_REPLYTO   35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
 #define SYS_WIFIVER   36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
@@ -348,13 +355,6 @@ static inline int32_t myrtos_receive(myrtos_msg_t *out)
 // A server that waits forever cannot notice that the thing it serves has
 // stopped answering, and cannot be told to stop either. That is the reason this
 // exists -- not speed, but the ability to complain.
-// Move a file descriptor's position. Absolute, from the start; there is no
-// SEEK_END yet because nothing has needed to ask how long a file is.
-static inline int32_t myrtos_seek(int32_t fd, uint32_t pos)
-{
-    return myrtos_syscall(SYS_SEEK, (uint32_t)fd, pos, 0);
-}
-
 static inline int32_t myrtos_receive_tmo(myrtos_msg_t *out, uint32_t ms)
 {
     return myrtos_syscall(SYS_RECEIVETMO, (uint32_t)(uintptr_t)out, ms, 0);
@@ -751,6 +751,20 @@ static inline void *myrtos_realloc(void *ptr, uint32_t size)
 static inline void *myrtos_data_area(uint32_t *size_out)
 {
     return (void *)(uintptr_t)myrtos_syscall(SYS_DATAAREA, (uint32_t)(uintptr_t)size_out, 0, 0);
+}
+
+// Move a file descriptor's position, and answer where it ended up. Only files
+// have one: a device is a stream and seeking it means nothing, so it fails.
+//
+// myrtos_seek(fd, 0, MYRTOS_SEEK_CUR) is ftell, and costs nothing.
+static inline int32_t myrtos_seek(int32_t fd, int32_t offset, uint32_t whence)
+{
+    return myrtos_syscall(SYS_SEEK, (uint32_t)fd, (uint32_t)offset, whence);
+}
+
+static inline int32_t myrtos_tell(int32_t fd)
+{
+    return myrtos_seek(fd, 0, MYRTOS_SEEK_CUR);
 }
 
 static inline int32_t myrtos_close(int32_t path)

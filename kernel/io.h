@@ -95,7 +95,8 @@ bool     myrtos_io_is_file(int32_t path, int32_t owner_pid);
 bool     myrtos_io_file_at(int32_t path, int32_t owner_pid,
                            const char **path_out, uint32_t *pos_out);
 void     myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n);
-int32_t  myrtos_io_file_seek(int32_t path, int32_t owner_pid, uint32_t pos);
+int32_t  myrtos_io_file_seek(int32_t path, int32_t owner_pid,
+                             int32_t offset, uint32_t whence);
 
 // Open on a SPECIFIC path number. The kernel uses it to give the first process
 // its 0, 1 and 2; ordinary opens take the first free slot.

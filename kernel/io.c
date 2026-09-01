@@ -436,12 +436,28 @@ void myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n) {
     restore_interrupts(st);
 }
 
-int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid, uint32_t pos) {
+int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid,
+                            int32_t offset, uint32_t whence) {
     uint32_t st = save_and_disable_interrupts();
     myrtos_path_t *p = file_entry(path, owner_pid);
-    if (p) open_files[p->file].pos = pos;
+    int32_t result = -1;
+    if (p) {
+        uint32_t pos = open_files[p->file].pos;
+        bool ok = true;
+        switch (whence) {
+        case MYRTOS_SEEK_SET: pos = (uint32_t)offset; break;
+        case MYRTOS_SEEK_CUR: pos = (uint32_t)((int32_t)pos + offset); break;
+        // SEEK_END would need the file's length, and nothing can answer that
+        // yet. Refusing is better than seeking somewhere plausible.
+        default: ok = false; break;
+        }
+        if (ok) {
+            open_files[p->file].pos = pos;
+            result = (int32_t)pos;
+        }
+    }
     restore_interrupts(st);
-    return p ? (int32_t)pos : -1;
+    return result;
 }
 
 // Dropping one reference to an open file. The slot goes when the last

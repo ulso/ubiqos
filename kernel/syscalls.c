@@ -165,7 +165,8 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         }
         case SYS_SEEK: {
             frame->a0 = (uint32_t)myrtos_io_file_seek((int32_t)frame->a0,
-                                                      myrtos_current_pid(), frame->a1);
+                                                      myrtos_current_pid(),
+                                                      (int32_t)frame->a1, frame->a2);
             break;
         }
         case SYS_WRITE: {
