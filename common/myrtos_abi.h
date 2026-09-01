@@ -162,6 +162,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_CHDIR     31u   // a0 = path -> a0 = 0 ok, -1 no such directory
 #define SYS_GETCWD    32u   // a0 = buf, a1 = length -> a0 = characters copied
 #define SYS_RMDIR     33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
+#define SYS_RECEIVETMO 44u  // a0 = msg out, a1 = milliseconds
 #define SYS_MOUNT     34u   // -> a0 = 0 ok, -1 no card
 #define SYS_REPLYTO   35u   // a0 = pid, a1 = status -> a0 = 0, -1 not waiting on us
 #define SYS_WIFIVER   36u   // a0 = buffer, a1 = length -> a0 = 0 ok, -1 no answer
@@ -329,6 +330,24 @@ static inline int32_t myrtos_send(int32_t pid, const myrtos_msg_t *m)
 static inline int32_t myrtos_receive(myrtos_msg_t *out)
 {
     return myrtos_syscall(SYS_RECEIVE, (uint32_t)(uintptr_t)out, 0, 0);
+}
+
+// A tick is a millisecond, the same unit myrtos_sleep takes.
+#define MYRTOS_TIMEOUT_FOREVER 0xffffffffu
+// Distinct from a sender's pid, which is never negative, and from the -2 that
+// means a sender is still waiting to be answered.
+#define MYRTOS_RECV_TIMEOUT    (-3)
+
+// The same, but giving up after `ms`. MYRTOS_TIMEOUT_FOREVER is exactly
+// myrtos_receive; zero polls and never blocks. Anything else returns
+// MYRTOS_RECV_TIMEOUT when the time runs out with nothing to show.
+//
+// A server that waits forever cannot notice that the thing it serves has
+// stopped answering, and cannot be told to stop either. That is the reason this
+// exists -- not speed, but the ability to complain.
+static inline int32_t myrtos_receive_tmo(myrtos_msg_t *out, uint32_t ms)
+{
+    return myrtos_syscall(SYS_RECEIVETMO, (uint32_t)(uintptr_t)out, ms, 0);
 }
 
 // Release the sender that is being served. Until this is called its buffer must

@@ -45,6 +45,7 @@ typedef struct {
     int32_t  wait_pid;        // WAIT_CHILD: the process being waited for
     int32_t  sleep_delta;     // SLEEPING: ticks after the process ahead of it
     int32_t  sleep_next;      // SLEEPING: next in the delta list, -1 at the end
+    bool     recv_timed;      // WAIT_RECV: also on the sleep list, and will time out
     uint32_t priority;        // 0 is the idle process, 31 the most urgent
     int32_t  next_ready;      // READY: next in this priority's queue, -1 at the end
     struct alloc_hdr *allocs; // everything this process has been given
@@ -195,6 +196,7 @@ void myrtos_scheduler_init(void) {
         process_table[i].state = PROC_STATE_FREE;
         process_table[i].mem_base = NULL;
         process_table[i].sleep_next = -1;
+        process_table[i].recv_timed = false;
         process_table[i].next_ready = -1;
         process_table[i].allocs = NULL;
         process_table[i].priority = MYRTOS_PRIO_DEFAULT;
@@ -256,6 +258,7 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].cwd[1] = 0;
     process_table[slot].args     = NULL;
     process_table[slot].sleep_next = -1;
+    process_table[slot].recv_timed = false;
     process_table[slot].allocs = NULL;
     process_table[slot].priority = priority;
     process_table[slot].state    = PROC_STATE_READY;
@@ -424,6 +427,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].cwd[1] = 0;
     process_table[slot].args = (const char*)mem;
     process_table[slot].sleep_next = -1;
+    process_table[slot].recv_timed = false;
 
     // Priority is inherited, as paths are: that is what lets `nice` work
     // without the started program knowing anything about priorities. The
@@ -584,6 +588,16 @@ void myrtos_sleep_tick(void) {
         int32_t pid = sleep_head;
         sleep_head = process_table[pid].sleep_next;
         process_table[pid].sleep_next = -1;
+        // A timed receive waits on both lists at once, and this is the losing
+        // side of that race: nothing came, so the deadline answers instead. The
+        // frame is written the same way a sender would have written it, because
+        // as far as the process is concerned receive is simply returning.
+        if (process_table[pid].recv_timed) {
+            process_table[pid].recv_timed = false;
+            process_table[pid].msg_out = 0;
+            ((myrtos_frame_t*)(uintptr_t)process_table[pid].saved_sp)->a0 =
+                (uint32_t)MYRTOS_RECV_TIMEOUT;
+        }
         process_table[pid].state = PROC_STATE_READY;
         ready_enqueue(pid);
     }
@@ -758,6 +772,14 @@ bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
     me->msg_dest = dest;
 
     if (d->state == PROC_STATE_WAIT_RECV) {
+        // A receiver with a deadline is on the sleep list as well. It is being
+        // woken for the better reason, so take it off before the timer can also
+        // wake it -- a process on the ready queue twice is a process that
+        // returns from receive twice.
+        if (d->recv_timed) {
+            sleep_remove(dest);
+            d->recv_timed = false;
+        }
         // Nobody ahead of us: hand it straight over and wake the server.
         *d->msg_out = me->msg;
         d->msg_out = 0;
@@ -775,7 +797,15 @@ bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
 }
 
 // The sender's pid, or -1 when the caller has been put to sleep waiting.
-int32_t myrtos_msg_receive(myrtos_msg_t *out) {
+// Wait for a message, for at most `ms` milliseconds. Zero polls and never
+// blocks; MYRTOS_TIMEOUT_FOREVER is the old behaviour and is what
+// myrtos_msg_receive asks for.
+//
+// The deadline is the ordinary sleep list -- the same one myrtos_sleep uses --
+// so a receiver with a timeout is queued in two places at once and whichever
+// happens first cancels the other. reap already unlinks a dying process from
+// the sleep list, so nothing more is needed there.
+int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms) {
     // A second request may be taken before the first is answered: a server that
     // has to wait for something puts the sender aside with myrtos_reply_to and
     // goes on serving. msg_serving is merely the most recent, for the simple
@@ -790,9 +820,19 @@ int32_t myrtos_msg_receive(myrtos_msg_t *out) {
         me->msg_serving = from;
         return from;
     }
+    if (ms == 0) return MYRTOS_RECV_TIMEOUT;   // a poll, which never blocks
+
     me->msg_out = out;
     me->state = PROC_STATE_WAIT_RECV;
+    if (ms != MYRTOS_TIMEOUT_FOREVER) {
+        sleep_insert((int32_t)current_pid, ms);
+        me->recv_timed = true;
+    }
     return -1;
+}
+
+int32_t myrtos_msg_receive(myrtos_msg_t *out) {
+    return myrtos_msg_receive_tmo(out, MYRTOS_TIMEOUT_FOREVER);
 }
 
 int32_t myrtos_msg_reply(int32_t status) {

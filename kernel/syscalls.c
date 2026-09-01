@@ -22,6 +22,7 @@ uint32_t myrtos_process_get_args(char *buf, uint32_t len);
 void myrtos_block_on_read(int32_t path);
 bool    myrtos_msg_send(int32_t dest, const myrtos_msg_t *m);
 int32_t myrtos_msg_receive(myrtos_msg_t *out);
+int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms);
 int32_t myrtos_msg_reply(int32_t status);
 int32_t myrtos_msg_reply_to(int32_t pid, int32_t status);
 int32_t myrtos_find_pid(const char *name);
@@ -159,6 +160,16 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             int32_t from = myrtos_msg_receive((myrtos_msg_t*)(uintptr_t)frame->a0);
             if (from == -1) return myrtos_switch(sp);   // nothing yet; wait
             frame->a0 = (uint32_t)from;                 // -2 = reply first
+            break;
+        }
+        case SYS_RECEIVETMO: {
+            // -1 alone means the caller was put to sleep. A timeout is a value
+            // like any other and returns through the frame, which is why it is
+            // not -1: the two would be indistinguishable here.
+            int32_t from = myrtos_msg_receive_tmo((myrtos_msg_t*)(uintptr_t)frame->a0,
+                                                  frame->a1);
+            if (from == -1) return myrtos_switch(sp);
+            frame->a0 = (uint32_t)from;
             break;
         }
         case SYS_REPLY:
