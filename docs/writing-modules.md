@@ -895,6 +895,25 @@ The parts that redirection needs and pipes share -- `myrtos_dup`, the device use
 count, the open file reference count -- are all proven, because redirection
 uses them.
 
+## The namespace
+
+A path names its volume first: `/sd/docs/readme.txt`. The root is owned by
+nobody, so listing it lists the volumes -- which is OS-9's arrangement, where
+`/d0` and `/h0` sat at the top and the I/O manager dispatched on the name in
+front. A process starts in `/`, so a bare `ls` after boot shows volumes and not
+files.
+
+`/dev` is the device table `io.c` already keeps, shown as a directory. Only
+listing is implemented, and that is not a gap: a device is opened by name
+through the I/O manager, not read as a file.
+
+**`/dev/null`** is there. Everything written to it is taken and forgotten, and
+reading it is immediately the end. That second half needed a new question in the
+driver interface -- `at_eof` -- because a read of nothing means "not yet"
+everywhere else here, and a reader of `/dev/null` would have waited for ever.
+It is the one device registered without a descriptor: a descriptor says which
+pins, which speed and which driver, and this has no hardware to describe.
+
 ## /tmp
 
 A volume whose files live in PSRAM and go when the power does. Eight megabytes
