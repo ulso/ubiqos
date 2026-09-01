@@ -13,7 +13,7 @@
 // fputs, fclose, and "a" for appending -- which only became possible when stat
 // arrived and open could ask how long the file already was.
 
-MYRTOS_STDIO_DEFINE
+MYRTOS_LIBC_DEFINE
 MYRTOS_MEM_SIZE(8192);
 
 void module_main(int argc, char **argv) {

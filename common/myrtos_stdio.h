@@ -41,14 +41,17 @@ typedef struct {
     int16_t  unget;     // one pushed-back character, -1 for none; scanf needs it
 } FILE;
 
-// The program owes one line, exactly as a C library would have owed it:
+// Every piece of per-process state the C library keeps: errno, the streams, and
+// what strtok remembers between calls. The program owes one line, exactly as a
+// C library would have owed it:
 //
-//     MYRTOS_STDIO_DEFINE
+//     MYRTOS_LIBC_DEFINE
 //
 // It cannot live in the header: -fno-common makes a tentative definition in
 // several translation units a duplicate, and it cannot be static without every
 // file getting its own errno.
-#define MYRTOS_STDIO_DEFINE \
+#define MYRTOS_LIBC_DEFINE \
+    MYRTOS_STRING_DEFINE \
     __thread int errno; \
     __thread FILE __myrtos_files[MYRTOS_FOPEN_MAX];
 

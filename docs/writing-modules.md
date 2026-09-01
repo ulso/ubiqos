@@ -691,7 +691,9 @@ time. `setvbuf` takes the program's own array instead.
 
 The program owes one line, as it owes a C library one:
 
-    MYRTOS_STDIO_DEFINE
+    MYRTOS_LIBC_DEFINE
+
+which defines errno, the stream table, and what strtok remembers between calls.
 
 **Modes are "r", "w" and "a".** Appending works because `stat` arrived and
 `open` can ask how long the file already is; before that it was refused, since a

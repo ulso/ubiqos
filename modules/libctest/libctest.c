@@ -6,7 +6,7 @@
 // wrong width goes unnoticed for a year. Every line says ok or FAIL, and the
 // last line is the count that matters.
 
-MYRTOS_STDIO_DEFINE
+MYRTOS_LIBC_DEFINE
 MYRTOS_MEM_SIZE(8192);
 
 // Thread-local, not plain static: a shareable module may not have writable
@@ -74,6 +74,25 @@ void module_main(int argc, char **argv)
     check("strrchr finds the last", strrchr("abcabc", 'b') == strchr("abcabc", 'b') + 3);
     check("ctype", isdigit('7') && !isdigit('x') && toupper('q') == 'Q' && isspace('\t'));
     check("strtol base 0", strtol("0x1f", 0, 0) == 31 && strtol("012", 0, 0) == 10);
+
+    // strtok is the function that catches people out: written the usual way it
+    // keeps a static char * and check_module.py refuses the whole module. Here
+    // the state is thread-local, which is also more nearly right.
+    strcpy(b, "one,two,,three");
+    const char *want[] = { "one", "two", "three" };
+    int parts = 0, good = 1;
+    for (char *t = strtok(b, ","); t; t = strtok(0, ",")) {
+        if (parts > 2 || strcmp(t, want[parts])) good = 0;
+        parts++;
+    }
+    check("strtok splits", good && parts == 3);
+
+    char save_b[32], *save = 0;
+    strcpy(save_b, "a:b");
+    check("strtok_r keeps its own state",
+          !strcmp(strtok_r(save_b, ":", &save), "a")
+          && !strcmp(strtok_r(0, ":", &save), "b")
+          && strtok_r(0, ":", &save) == 0);
 
     printf("malloc\n");
     char *p = (char *)malloc(16);

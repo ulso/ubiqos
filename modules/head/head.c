@@ -11,7 +11,7 @@
 // myrtos-shaped in it but the include and the entry point's name.
 
 // The one line a C library would have owed us: errno and the stream table.
-MYRTOS_STDIO_DEFINE
+MYRTOS_LIBC_DEFINE
 
 // Stdio's buffer comes from PSRAM, but the line buffer here is on the stack,
 // and eight kilobytes is what makes room for both.
