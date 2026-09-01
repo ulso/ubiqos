@@ -67,6 +67,23 @@ static void dmesg_put(char c) {
     if (dmesg_head >= DMESG_SIZE) { dmesg_head = 0; dmesg_wrapped = true; }
 }
 
+// A whole line at once, with interrupts off for the copy.
+//
+// Feeding this a byte at a time was interleavable and was interleaved: the
+// first thing /var/dmesg ever showed after the filesystem server started
+// mounting at boot was "Kernel is nSD: card ready ..." with "ow the idle
+// process." arriving four lines later. Eleven characters in, the server got
+// the processor. The console had been given a ring copy for exactly this
+// reason and dmesg had been left as a loop.
+static void dmesg_write(const char *p, uint32_t n) {
+    uint32_t st = save_and_disable_interrupts();
+    for (uint32_t i = 0; i < n; i++) {
+        dmesg_buf[dmesg_head++] = p[i];
+        if (dmesg_head >= DMESG_SIZE) { dmesg_head = 0; dmesg_wrapped = true; }
+    }
+    restore_interrupts(st);
+}
+
 // How much there is, and one byte of it. Reading is by position rather than by
 // stream so that /var/dmesg can be an ordinary file: two readers do not
 // interfere, and cat can be run twice.
@@ -99,20 +116,51 @@ void myrtos_print(const char *s) {
     // in the middle of "Kernel is now the idle process."
     //
     // The UART still gets its bytes one at a time, with interrupts on.
+    // The newline goes in with the line it ends, in the same call. Sent on its
+    // own it left a gap exactly one write wide, and the filesystem server's
+    // first message walked straight into it: every boot put "Kernel is now the
+    // idle process.SD: card ready" on the screen, on one line. Which is the
+    // very thing the paragraph above says must not happen -- the rule was right
+    // and the implementation stopped one character short of it.
+    char line[132];
     while (*s) {
         const char *run = s;
         while (*s && *s != '\n') s++;
         uint32_t n = (uint32_t)(s - run);
-        if (n) {
-            myrtos_console_write(run, n);
-            for (uint32_t i = 0; i < n; i++) {
-                uart_putc_raw(MYRTOS_UART, run[i]);
-                dmesg_put(run[i]);
-            }
+        bool nl = (*s == '\n');
+
+        if (nl && n + 2 <= sizeof line) {
+            for (uint32_t i = 0; i < n; i++) line[i] = run[i];
+            line[n] = '\r';
+            line[n + 1] = '\n';
+            myrtos_console_write(line, n + 2);
+        } else {
+            // A line too long for the buffer goes as it always did. It can be
+            // split, and one that long is a hexdump rather than a sentence.
+            if (n)  myrtos_console_write(run, n);
+            if (nl) myrtos_console_write("\r\n", 2);
         }
-        if (*s == '\n') {
-            dmesg_put('\n');
-            myrtos_console_write("\r\n", 2);
+
+        // dmesg takes the same line in one piece. An earlier version of this
+        // comment claimed a ring could not be interleaved into; the board
+        // disagreed on the next boot, because the loop that filled it ran with
+        // interrupts on and a line is not one write.
+        if (nl && n + 1 <= sizeof line) {
+            line[n] = '\n';                  // the buffer already holds the run
+            dmesg_write(line, n + 1);
+        } else {
+            dmesg_write(run, n);
+            if (nl) dmesg_write("\n", 1);
+        }
+
+        // The UART genuinely is a byte stream, sent with interrupts on, and
+        // two writers can interleave in it. That is the one sink where it is
+        // left alone: it is the debugging port, it is never the only copy --
+        // the console and dmesg both have the line whole -- and holding
+        // interrupts off for 115200-baud characters would cost more than the
+        // tidiness is worth.
+        for (uint32_t i = 0; i < n; i++) uart_putc_raw(MYRTOS_UART, run[i]);
+        if (nl) {
             uart_putc_raw(MYRTOS_UART, '\r');
             uart_putc_raw(MYRTOS_UART, '\n');
             s++;
