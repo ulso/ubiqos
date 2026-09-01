@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/myrtos_stdio.h"
 
 // head -- the first few lines of a file.
 //
@@ -6,14 +6,18 @@
 //     head /sd/docs/readme.txt
 //     head /sd/big.txt 4096      -- from that byte onwards
 //
-// Also the smallest complete example of opening, seeking, reading and closing.
+// Written against myrtos_stdio.h, so it is also the answer to "can ordinary C
+// be built here": fopen, fgets, fseek, ftell, ferror and fclose, with nothing
+// myrtos-shaped in it but the include and the entry point's name.
 
-// Twice the ration, to show that a module can ask. head does not need it; it is
-// here because stdio will, and because an untested way of asking is no way.
+// The one line a C library would have owed us: errno and the stream table.
+MYRTOS_STDIO_DEFINE
+
+// Stdio's buffer comes from PSRAM, but the line buffer here is on the stack,
+// and eight kilobytes is what makes room for both.
 MYRTOS_MEM_SIZE(8192);
 
 #define LINES 10
-#define CHUNK 128
 
 static bool parse_u32(const char *s, uint32_t *out) {
     uint32_t v = 0, n = 0;
@@ -24,61 +28,45 @@ static bool parse_u32(const char *s, uint32_t *out) {
 
 void module_main(int argc, char **argv) {
     if (argc < 2) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: head FILE [SKIP]\n");
+        fputs("usage: head FILE [SKIP]\n", stderr);
         return;
     }
 
     uint32_t skip = 0;
     if (argc >= 3 && !parse_u32(argv[2], &skip)) {
-        myrtos_write_str(MYRTOS_STDERR, "head: SKIP must be a number\n");
+        fputs("head: SKIP must be a number\n", stderr);
         return;
     }
 
-    // The buffer is a local. A module may not have writable statics -- one copy
-    // of the code serves every process running it, so they would share it.
-    uint8_t buf[CHUNK];
+    FILE *f = fopen(argv[1], "r");
+    if (!f) { fputs("head: cannot open it\n", stderr); return; }
 
-    int32_t fd = myrtos_open(argv[1]);
-    if (fd < 0) {
-        myrtos_write_str(MYRTOS_STDERR, "head: cannot open it\n");
+    if (skip && fseek(f, (int32_t)skip, SEEK_SET) < 0) {
+        fputs("head: cannot seek there\n", stderr);
+        fclose(f);
         return;
     }
 
-    if (skip && myrtos_seek(fd, (int32_t)skip, MYRTOS_SEEK_SET) < 0) {
-        myrtos_write_str(MYRTOS_STDERR, "head: cannot seek there\n");
-        myrtos_close(fd);
-        return;
-    }
+    char line[128];
+    int n = 0;
+    while (n < LINES && fgets(line, (int)sizeof line, f)) { fputs(line, stdout); n++; }
 
-    int lines = 0;
-    for (;;) {
-        int32_t n = myrtos_read(fd, buf, CHUNK);
-        // Nought is the end of the file; a negative is a file that was never
-        // there, because opening does not check.
-        if (n < 0) { myrtos_write_str(MYRTOS_STDERR, "head: no such file\n"); break; }
-        if (n == 0) break;
+    // Opening does not check that a file exists -- there are no flags yet to
+    // say whether a write should create -- so an empty first read is where a
+    // missing file turns up, and ferror is what tells it from a real end.
+    if (!n && ferror(f)) fputs("head: no such file\n", stderr);
 
-        // Stop on the tenth newline rather than after ten chunks.
-        uint32_t take = 0;
-        while (take < (uint32_t)n && lines < LINES) {
-            if (buf[take] == '\n') lines++;
-            take++;
-        }
-        myrtos_write(MYRTOS_STDOUT, buf, take);
-        if (lines >= LINES) break;
-    }
-
-    // Where it stopped, which is what ftell is for -- and only when a skip was
-    // asked for, because whoever counts bytes in is the one who wants to know
-    // where they came out.
     if (skip) {
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "head: stopped at ");
-        myrtos_line_u32(&l, (uint32_t)myrtos_tell(fd));
-        myrtos_line_str(&l, "\n");
-        myrtos_line_flush(MYRTOS_STDERR, &l);
+        char msg[32];
+        int32_t at = ftell(f);
+        int i = 0;
+        for (uint32_t v = (uint32_t)at, d = 1000000000u; d; d /= 10)
+            if (v / d || i || d == 1) { msg[i++] = (char)('0' + (v / d) % 10); }
+        msg[i] = 0;
+        fputs("head: stopped at ", stderr);
+        fputs(msg, stderr);
+        fputs("\n", stderr);
     }
 
-    myrtos_close(fd);
+    fclose(f);
 }

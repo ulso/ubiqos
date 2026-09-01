@@ -669,3 +669,33 @@ Still missing before a real port: `FILE` and stdio, `malloc`, `string.h`,
 "The other rule" above. Code with file-scope variables comes in as a `SINGLE`
 module, which is allowed writable data at the price of one instance at a time.
 
+## stdio, and where a FILE lives
+
+`common/myrtos_stdio.h` gives `fopen`, `fclose`, `fread`, `fwrite`, `fgetc`,
+`fputc`, `fgets`, `fputs`, `puts`, `fflush`, `fseek`, `ftell`, `setvbuf`,
+`feof` and `ferror`. `modules/head/head.c` is written against it and has nothing
+myrtos-shaped in it but the include and the entry point's name.
+
+**The FILE objects are thread-local and the buffers are not**, and that split is
+the whole design. A FILE is twenty-eight bytes; eight of them plus errno cost
+`head` 228 bytes of `.tbss`. Cheap -- and, more to the point, it makes `stdin`,
+`stdout` and `stderr` addressable with no initialisation, which matters because
+nothing runs before `module_main`. Objects that had to be constructed first
+could not be printed to.
+
+A buffer is another matter: it is charged to the process whether it opens a file
+or not, and 512 bytes is an eighth of the default four kilobytes. So buffers
+come from PSRAM through `myrtos_alloc_bulk`, which is the bulk data that pool
+exists for, and a stream whose buffer cannot be had still works a byte at a
+time. `setvbuf` takes the program's own array instead.
+
+The program owes one line, as it owes a C library one:
+
+    MYRTOS_STDIO_DEFINE
+
+**Modes are "r" and "w".** `"a"` and any `"+"` are refused with `ENOSYS`: both
+need the file's length or a stream that can turn round mid-way, and both want a
+`stat` this filesystem does not have. A program that asks to append and is
+quietly given the beginning of the file destroys it, so this is a refusal and
+not an approximation.
+
