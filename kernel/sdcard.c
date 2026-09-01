@@ -206,8 +206,36 @@ static bool spi_write_block(uint32_t lba, const uint8_t *buf) {
 
 static bool use_sdio;
 
-// Off until the SDIO write path is made to work. Kept as a variable rather
-// than an #if so that the day someone fixes it, one line turns it back on.
+// A card that has stopped answering stays stopped until it is mounted again.
+//
+// Without this, one wedged transfer took the machine down. Every later read
+// found the data state machine still stuck, gave up after its million spins and
+// printed a line saying so -- and the filesystem walks a FAT chain a sector at a
+// time, so one `ls` was hundreds of those. The screen filled, and the shell
+// never ran again because the filesystem server sits at priority 22 above it.
+// From outside the board looked bricked; it was answering diligently, hundreds
+// of times, that it could not.
+//
+// One failure, one message, and every call after it returns false immediately.
+// `mount` clears it, because a remount is exactly the moment to try again.
+static bool sd_failed;
+
+static bool sd_fail(const char *why) {
+    if (!sd_failed) {
+        sd_failed = true;
+        myrtos_print("SD: ");
+        myrtos_print(why);
+        myrtos_print(" -- the card is offline until it is mounted again\n");
+    }
+    return false;
+}
+
+// Off. Turned on once, on 1 Sep 2026, when the bus-width bug below was found
+// and looked like the whole story. It was not: with the width restored and the
+// driver's debug output gone, the first write still wedged the card exactly as
+// before. So the width was a real bug and not this one, and what actually stops
+// the write is still unknown -- to be found with the probe, not by flashing
+// another guess. See [[myrtos-sdio-parked]].
 const bool myrtos_sd_sdio_writes_allowed = false;
 
 // Once SPI has been spoken to the card, SDIO is not worth asking for again --
@@ -217,6 +245,7 @@ static bool sdio_refused;
 bool myrtos_sd_init(void) {
     use_sdio = false;
     sdio_refused = false;
+    sd_failed = false;
 
     // SDIO first, and the order is the whole point. A card latches into SPI
     // mode the moment it is addressed that way and stays there until the power
@@ -252,6 +281,7 @@ bool myrtos_sd_init(void) {
 bool myrtos_sd_try_sdio(void) {
     if (use_sdio) return true;
     if (sdio_refused) return false;     // the card is in SPI mode now
+    sd_failed = false;
 
     // The card is on GP34 to GP39, and on RP2350 one PIO reaches either GPIO
     // 0-31 or 16-47, never both. The default window is the low one, so without
@@ -272,11 +302,31 @@ bool myrtos_sd_is_sdio(void) { return use_sdio; }
 // that reaches here is a static 512-byte buffer in the kernel, declared aligned.
 bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     if (!use_sdio) return spi_read_block(lba, buf);
+    if (sd_failed) return false;
     if ((uintptr_t)buf & 3u) return false;
-    return sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) == SD_OK;
+    if (sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) != SD_OK)
+        return sd_fail("a read did not complete");
+    return true;
 }
 
-// Writing over four bits does not work, and this is where that is admitted.
+// Put the bus back to four bits after a write.
+//
+// This is what made writing over SDIO look impossible. sd_writeblocks_async
+// calls sd_set_wide_bus(false) -- "use 1 bit writes for now", says the comment
+// upstream -- and never puts it back. The write itself may well land, but the
+// card and the driver are left one bit wide while use_sdio still says four, so
+// the next READ asks four lines for data arriving on one, the data state
+// machine never returns to waiting_for_cmd, and the bounded wait gives up.
+// Every read after the first write, for ever. That is the flood that filled the
+// screen, and the write was only where it started.
+//
+// So writes are one bit wide and slow, which is upstream's choice and fine, but
+// the bus goes back to four the moment one finishes.
+static void restore_wide_bus(void) {
+    if (use_sdio) sd_set_wide_bus(true);
+}
+
+// Writing over four bits: the bus width above was the fault.
 //
 // Reading does: 100000 bytes came back byte for byte on 1 Sep 2026. Writing was
 // never once tried, because until the filesystem server mounted the card itself
@@ -294,8 +344,12 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     if (!use_sdio) return spi_write_block(lba, buf);
     if ((uintptr_t)buf & 3u) return false;
     if (!myrtos_sd_sdio_writes_allowed) return false;
+    if (sd_failed) return false;
 
-    if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) return false;
+    if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) {
+        restore_wide_bus();
+        return sd_fail("a write was refused before it started");
+    }
 
     // Bounded, for the reason above. The driver's own waits give up and return,
     // and this one has to as well -- otherwise it simply calls them again.
@@ -303,9 +357,10 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     uint32_t spins = 0;
     while (!sd_write_complete(&status)) {
         if (++spins > 1000000u) {
-            myrtos_print("SD: write did not complete; the card may hold a torn block\n");
-            return false;
+            restore_wide_bus();
+            return sd_fail("a write did not complete, and a block may be torn");
         }
     }
+    restore_wide_bus();
     return status == SD_OK;
 }

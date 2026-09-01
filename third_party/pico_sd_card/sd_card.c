@@ -511,7 +511,11 @@ void read_status(bool dump)
       sd_command(sd_make_command(13, rca_high, rca_low, 0, 0), response_buffer, 6);
       fixup_cmd_response_48(response_buffer);
       uint8_t *b = (uint8_t *)response_buffer;
-      printf("%02x %02x %02x %02x : %02x %02x\n", b[0], b[1], b[2], b[3], b[4], b[5]);
+      // LOCAL CHANGE: this printf was unconditional, so a function whose real
+      // job is to wait for the card to say it is ready also wrote six bytes of
+      // hex every time it was called -- including from the write path, on every
+      // sector. The waiting is kept; the narration follows `dump` like the rest.
+      if (dump) printf("%02x %02x %02x %02x : %02x %02x\n", b[0], b[1], b[2], b[3], b[4], b[5]);
       if (dump) {
         print_status(response_buffer, false);
       }
@@ -1059,7 +1063,7 @@ int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_
                         response_buffer, 6);
         if (!rc) rc = sd_command(sd_make_command(25, sector_num >> 24, sector_num >> 16, sector_num >> 8, sector_num & 0xffu), response_buffer, 6);
     }
-    read_status(true);
+    read_status(false);          // LOCAL CHANGE: wait for ready, quietly
     if (!rc)
     {
         pio_sm_set_enabled(sd_pio, SD_DAT_SM, false);
@@ -1067,29 +1071,23 @@ int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_
         dma_sniffer_set_byte_swap_enabled(true);
         start_chain_dma_write(SD_DAT_SM, ctrl_words);
         pio_sm_set_enabled(sd_pio, SD_DAT_SM, true);
-        printf("dma chain data (rem %04x @ %08x) data (rem %04x @ %08x) pio data (rem %04x @ %08x) datsm @ %d\n",
-               (uint) dma_hw->ch[sd_chain_dma_channel].transfer_count,
-               (uint) dma_hw->ch[sd_chain_dma_channel].read_addr,
-               (uint) dma_hw->ch[sd_data_dma_channel].transfer_count, (uint) dma_hw->ch[sd_data_dma_channel].read_addr,
-               (uint) dma_hw->ch[sd_pio_dma_channel].transfer_count, (uint) dma_hw->ch[sd_pio_dma_channel].read_addr,
-               (int) sd_pio->sm[SD_DAT_SM].addr);
-
+        // LOCAL CHANGE: a DMA trace was printed here on every sector written.
     }
     return rc;
 }
 
 bool sd_write_complete(int *status) {
-    printf("dma chain data (rem %04x @ %08x) data (rem %04x @ %08x) datsm @ %d\n",
-           (uint)dma_hw->ch[sd_chain_dma_channel].transfer_count, (uint)dma_hw->ch[sd_chain_dma_channel].read_addr,
-           (uint)dma_hw->ch[sd_data_dma_channel].transfer_count, (uint)dma_hw->ch[sd_data_dma_channel].read_addr,
-           (int)sd_pio->sm[SD_DAT_SM].addr);
+    // LOCAL CHANGE: this is a poll, called from a spin loop until the write
+    // lands, and it printed a line of DMA state every time round. At 115200
+    // baud one line costs about two milliseconds of UART, so the loop spent all
+    // its time narrating rather than waiting, and the console ring took the
+    // rest. The trace is gone.
     // this is a bit half arsed atm
     bool rc;
     if (dma_channel_is_busy(sd_chain_dma_channel) || dma_channel_is_busy(sd_data_dma_channel)) rc = false;
     else rc = sd_pio->sm[SD_DAT_SM].addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd;
     if (rc) {
-        read_status(true);
-        printf("sniffo %08x\n", (uint)dma_hw->sniff_data);
+        read_status(false);      // LOCAL CHANGE: wait for ready, quietly
     }
     if (status) *status = SD_OK;
     return rc;

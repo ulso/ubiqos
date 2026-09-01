@@ -377,6 +377,9 @@ static void fs_thread(void) {
     // So the automatic bus is the one that is proven in both directions. `mount
     // sdio` still exists for reading, and it is worth having -- but it must not
     // be what a machine picks for itself before anyone has asked for it.
+    // SPI, because it is the bus that can be written to. SDIO reads faster and
+    // is reachable with `mount sdio` after a power cycle, but a machine must
+    // not choose for itself a bus on which the first write wedges the card.
     card_bring_up(false);
     run_startup_script();
 
