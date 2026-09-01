@@ -225,6 +225,14 @@ typedef struct {
 #define MYRTOS_MEM_PROCESSES    1u
 #define MYRTOS_MEM_BULK_FREE    2u   // largest free block in PSRAM
 #define MYRTOS_MEM_BULK_SIZE    3u   // how much PSRAM there is at all
+// Assertions the kernel has stepped over, and where the last one was. A failed
+// TU_ASSERT in the USB stack is an unconditional ebreak on RISC-V, which the
+// trap handler steps past so the machine survives -- see the note in
+// syscalls.c. The count is here because the printed line goes to the screen and
+// the UART, not to the USB console, so a session on the serial port could not
+// otherwise tell whether anything had happened.
+#define MYRTOS_MEM_ASSERTS      4u
+#define MYRTOS_MEM_ASSERT_LAST  5u
 
 // Where the second pool lives: the XIP window after sixteen megabytes of flash
 // address space, which is also where our resident module region ends.
@@ -793,6 +801,22 @@ static inline void myrtos_line_u32(myrtos_line_t *l, uint32_t v)
         v /= 10;
     }
     myrtos_line_str(l, &tmp[i]);
+}
+
+// An address is not a quantity, and printing one in decimal costs whoever reads
+// it a conversion before they can look it up. The kernel's assertion line was
+// decimal the first time it ever fired in front of a user, and that is exactly
+// what happened.
+static inline void myrtos_line_hex(myrtos_line_t *l, uint32_t v)
+{
+    static const char digits[] = "0123456789abcdef";
+    char tmp[11];
+    tmp[0] = '0';
+    tmp[1] = 'x';
+    for (int i = 0; i < 8; i++)
+        tmp[2 + i] = digits[(v >> (28 - i * 4)) & 0xfu];
+    tmp[10] = 0;
+    myrtos_line_str(l, tmp);
 }
 
 // Utilities need to print numbers, and a module has no printf. Ten lines here

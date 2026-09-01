@@ -26,5 +26,18 @@ void module_main(void) {
     }
 
     row("Processes alive:    ", (uint32_t)myrtos_meminfo(MYRTOS_MEM_PROCESSES), "");
+
+    // Only when there have been any. A line reading zero every time is a line
+    // nobody reads, and this one has to be noticed on the day it is not zero.
+    uint32_t asserts = (uint32_t)myrtos_meminfo(MYRTOS_MEM_ASSERTS);
+    if (asserts) {
+        row("Assertions stepped: ", asserts, "");
+        myrtos_line_t l;
+        myrtos_line_reset(&l);
+        myrtos_line_str(&l, "  last at ");
+        myrtos_line_hex(&l, (uint32_t)myrtos_meminfo(MYRTOS_MEM_ASSERT_LAST));
+        myrtos_line_str(&l, "\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &l);
+    }
     // The path is not closed: it was inherited and belongs to whoever started us.
 }

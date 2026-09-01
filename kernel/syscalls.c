@@ -376,6 +376,8 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 frame->a0 = myrtos_bulk_pool ? (uint32_t)myrtos_psram_bytes() : 0;
                 break;
             }
+            if (frame->a0 == MYRTOS_MEM_ASSERTS)     { frame->a0 = myrtos_asserts_seen; break; }
+            if (frame->a0 == MYRTOS_MEM_ASSERT_LAST) { frame->a0 = myrtos_assert_last;  break; }
             frame->a0 = (frame->a0 == MYRTOS_MEM_PROCESSES)
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
