@@ -15,7 +15,13 @@ __thread int errno;
 // also the answer to "can ordinary C be built here": open, read, close and
 // STDOUT_FILENO, with nothing myrtos-shaped in the loop at all.
 
-#define CHUNK 256
+// 256 was four hundred read calls for a hundred-kilobyte file, and while the
+// filesystem no longer re-walks the FAT chain for each one, every call is still
+// a message to the file server and a round trip through it. A kilobyte is two
+// sectors, and stays well inside the four kilobytes a process has for data and
+// stack together -- which is the ceiling this must not go near, since the
+// buffer is a local.
+#define CHUNK 1024
 
 static void complain(const char *name) {
     myrtos_line_t l;
