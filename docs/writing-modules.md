@@ -834,3 +834,28 @@ but present. The support above is committed because every part of it was
 measured; the demonstration is not, because it does not work. Do not put a
 module with global constructors on a card until this is understood.
 
+## Redirection
+
+The shell understands `>`, `>>`, `<` and `2>`, and does what every shell has
+done since the seventh edition: it puts the file on the descriptor, starts the
+child, and puts its own descriptor back. The child is told nothing and needs to
+know nothing -- it writes to 1 as it always did.
+
+That works because a child inherits its parent's numbered paths, and because
+files got descriptors. `myrtos_dup(fd, new)` is `dup` and `dup2` in one: -1 for
+the lowest free number, or a specific one, closing whatever was there. `dup` and
+`dup2` themselves are in `myrtos_posix.h`.
+
+Two descriptors can now name one device, so closing one no longer closes the
+driver if another still refers to it. Two naming one open file share its
+position, which is what the reference count in the open file table was for.
+
+The filename is copied out of the command line rather than terminated in place:
+a NUL in the middle of the line would cut off every argument after it, which is
+how `cmd > file arg` would quietly lose `arg`.
+
+**Pipes are not here.** A pipe needs a buffer with two ends that block, a third
+kind of thing a descriptor can name beside a device and a file, and a shell that
+starts both halves before waiting for either. Redirection needed none of that,
+which is why it came first.
+

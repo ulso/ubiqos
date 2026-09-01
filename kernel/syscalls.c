@@ -163,6 +163,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         }
+        case SYS_DUP:
+            frame->a0 = (uint32_t)myrtos_io_dup((int32_t)frame->a0, (int32_t)frame->a1,
+                                                myrtos_current_pid());
+            break;
         case SYS_SEEK: {
             frame->a0 = (uint32_t)myrtos_io_file_seek((int32_t)frame->a0,
                                                       myrtos_current_pid(),

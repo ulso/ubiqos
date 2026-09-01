@@ -240,6 +240,67 @@ static void help(int32_t c) {
         "ctrl-C ends the running command, or abandons the line if none is.\r\n");
 }
 
+// --- REDIRECTION -----------------------------------------------------------
+// The shell puts the file on the descriptor, starts the child, and puts its own
+// descriptor back -- which is what every shell has done since the seventh
+// edition, and what dup2 is for. The child needs to know nothing: it inherits
+// numbered paths and writes to 1 as it always did.
+typedef struct {
+    int32_t fd;
+    char    name[40];
+    bool    append;
+} redirect_t;
+
+static bool token_is(const char *t, const char *w) {
+    while (*w && *t == *w) { t++; w++; }
+    return !*w && (!*t || *t == ' ');
+}
+
+// Take the redirections out of the command line, blanking them with spaces so
+// what reaches the child is only its own arguments. The name is COPIED rather
+// than terminated in place: a NUL in the middle of the line would cut off every
+// argument after it, which is how "cmd > file arg" would quietly lose arg.
+static int take_redirects(char *args, redirect_t *out, int max) {
+    int n = 0;
+    char *p = args;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+
+        int32_t fd = -1;
+        bool append = false;
+        int len = 0;
+        if (token_is(p, "2>"))      { fd = MYRTOS_STDERR; len = 2; }
+        else if (token_is(p, ">>")) { fd = MYRTOS_STDOUT; len = 2; append = true; }
+        else if (token_is(p, ">"))  { fd = MYRTOS_STDOUT; len = 1; }
+        else if (token_is(p, "<"))  { fd = MYRTOS_STDIN;  len = 1; }
+        if (fd < 0) {                                   // an ordinary argument
+            while (*p && *p != ' ') p++;
+            continue;
+        }
+
+        char *tok = p;
+        p += len;
+        while (*p == ' ') p++;
+        char *name = p;
+        while (*p && *p != ' ') p++;
+
+        if (name != p && n < max) {
+            uint32_t i = 0;
+            while (name + i < p && i < sizeof out[0].name - 1) {
+                out[n].name[i] = name[i];
+                i++;
+            }
+            out[n].name[i] = 0;
+            out[n].fd = fd;
+            out[n].append = append;
+            n++;
+        }
+        while (tok < p) *tok++ = ' ';                   // the arrow and the name
+    }
+    return n;
+}
+
 // Split the line at the first space: everything before is the module name,
 // everything after is the command line the process is given.
 static int32_t exec_line(char *line) {
@@ -260,7 +321,32 @@ static int32_t exec_line(char *line) {
         while (end > args && end[-1] == ' ') { end--; *end = 0; }
     }
 
-    int32_t pid = myrtos_exec(line, args);
+    redirect_t rd[3];
+    int nrd = take_redirects(args, rd, 3);
+
+    // Saved descriptors, so the shell's own 0, 1 and 2 come back afterwards.
+    int32_t saved[3] = { -1, -1, -1 };
+    int opened = 0;
+    for (int i = 0; i < nrd; i++) {
+        if (rd[i].fd == MYRTOS_STDOUT && !rd[i].append) myrtos_fs_remove(rd[i].name);
+
+        int32_t f = myrtos_open(rd[i].name);
+        if (f < 0) {
+            myrtos_write_str(MYRTOS_STDERR, "sh: cannot open the file\n");
+            break;                                      // the command does not run
+        }
+        if (rd[i].append) {
+            uint32_t size = 0;
+            if (myrtos_fs_stat(rd[i].name, &size) >= 0 && size)
+                myrtos_seek(f, (int32_t)size, MYRTOS_SEEK_SET);
+        }
+        saved[i] = myrtos_dup(rd[i].fd, -1);
+        myrtos_dup(f, rd[i].fd);
+        myrtos_close(f);
+        opened++;
+    }
+
+    int32_t pid = opened == nrd ? myrtos_exec(line, args) : -1;
     // Wait for it before prompting again. Without this the prompt raced the
     // command's own output, and two commands in a row interleaved their lines.
     if (pid >= 0 && !background) {
@@ -271,6 +357,14 @@ static int32_t exec_line(char *line) {
         myrtos_foreground(MYRTOS_STDIN, pid);
         myrtos_wait(pid);
         myrtos_foreground(MYRTOS_STDIN, 0);
+    }
+
+    // Back to the terminal. The child took its copy when it was made, so this
+    // cannot reach it, background or not.
+    for (int i = nrd - 1; i >= 0; i--) {
+        if (saved[i] < 0) continue;
+        myrtos_dup(saved[i], rd[i].fd);
+        myrtos_close(saved[i]);
     }
     return pid;
 }

@@ -165,6 +165,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_RECEIVETMO 44u  // a0 = msg out, a1 = milliseconds
 #define SYS_SEEK      45u   // a0 = descriptor, a1 = offset, a2 = whence
 #define SYS_FSSTAT    46u   // a0 = myrtos_fs_stat_t -> a0 = attributes, -1 none
+#define SYS_DUP       47u   // a0 = descriptor, a1 = new one or -1 -> a0 = new one
 
 #define MYRTOS_SEEK_SET 0u   // from the start of the file
 #define MYRTOS_SEEK_CUR 1u   // from where the descriptor is now
@@ -803,6 +804,14 @@ static inline int32_t myrtos_seek(int32_t fd, int32_t offset, uint32_t whence)
 static inline int32_t myrtos_tell(int32_t fd)
 {
     return myrtos_seek(fd, 0, MYRTOS_SEEK_CUR);
+}
+
+// A second descriptor onto the same thing. -1 for the lowest free number.
+// This is what redirection is made of: put the file on 1, start the child, put
+// the old descriptor back.
+static inline int32_t myrtos_dup(int32_t path, int32_t new_path)
+{
+    return myrtos_syscall(SYS_DUP, (uint32_t)path, (uint32_t)new_path, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path)

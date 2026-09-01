@@ -571,6 +571,16 @@ int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_p
     return p->device->driver->read(buf, len);
 }
 
+// Whether any OTHER descriptor of this process still names the same device.
+// Two can, since dup, and closing the driver while one of them is still open
+// would take the device away from a descriptor that never asked.
+static bool device_shared(int32_t path, int32_t owner_pid) {
+    const myrtos_device_t *d = paths[owner_pid][path].device;
+    for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+        if (i != path && paths[owner_pid][i].device == d) return true;
+    return false;
+}
+
 int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
     myrtos_path_t *f = file_entry(path, owner_pid);
     if (f) {
@@ -581,9 +591,39 @@ int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
     }
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
-    p->device->driver->close();
+    if (!device_shared(path, owner_pid)) p->device->driver->close();
     p->device = 0;
     return 0;
+}
+
+int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return -1;
+    if (path < 0 || path >= MYRTOS_MAX_PATHS) return -1;
+    myrtos_path_t *src = &paths[owner_pid][path];
+    if (!src->device && src->file < 0) return -1;       // nothing to copy
+    if (new_path == path) return path;                  // dup2 onto itself
+
+    uint32_t st = save_and_disable_interrupts();
+    if (new_path < 0) {
+        for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+            if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) {
+                new_path = i;
+                break;
+            }
+        if (new_path < 0) { restore_interrupts(st); return -1; }
+    } else if (new_path >= MYRTOS_MAX_PATHS) {
+        restore_interrupts(st);
+        return -1;
+    } else {
+        restore_interrupts(st);
+        myrtos_io_close(new_path, owner_pid);           // dup2 closes it first
+        st = save_and_disable_interrupts();
+    }
+
+    paths[owner_pid][new_path] = *src;
+    if (src->file >= 0) open_files[src->file].refs++;   // one more descriptor on it
+    restore_interrupts(st);
+    return new_path;
 }
 
 void myrtos_io_close_all(int32_t owner_pid) {

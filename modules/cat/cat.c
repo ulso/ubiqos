@@ -27,8 +27,16 @@ static void complain(const char *name) {
 }
 
 void module_main(int argc, char **argv) {
+    // No arguments means standard input, as cat has always done -- which is
+    // also the only way to see that "< file" reached the child, since every
+    // other utility here takes its file by name.
     if (argc < 2) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: cat FILE...\n");
+        uint8_t buf[CHUNK];
+        for (;;) {
+            int32_t n = read(STDIN_FILENO, buf, CHUNK);
+            if (n <= 0) break;
+            write(STDOUT_FILENO, buf, (uint32_t)n);
+        }
         return;
     }
 

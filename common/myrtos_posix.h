@@ -90,6 +90,20 @@ static inline int open(const char *path, int flags, ...)
     return (int)fd;
 }
 
+static inline int dup(int fd)
+{
+    int32_t n = myrtos_dup((int32_t)fd, -1);
+    if (n < 0) errno = EBADF;
+    return (int)n;
+}
+
+static inline int dup2(int oldfd, int newfd)
+{
+    int32_t n = myrtos_dup((int32_t)oldfd, (int32_t)newfd);
+    if (n < 0) errno = EBADF;
+    return (int)n;
+}
+
 static inline int close(int fd)
 {
     return myrtos_close((int32_t)fd) < 0 ? (errno = EBADF, -1) : 0;

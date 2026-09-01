@@ -98,6 +98,12 @@ void     myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n);
 int32_t  myrtos_io_file_seek(int32_t path, int32_t owner_pid,
                              int32_t offset, uint32_t whence);
 
+// A second descriptor onto the same thing. new_path -1 takes the lowest free
+// one; otherwise that number, closing whatever was there. This is dup and dup2,
+// and it is what redirection is made of: a shell puts the file on descriptor 1,
+// starts the child, and puts its own back.
+int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid);
+
 // Open on a SPECIFIC path number. The kernel uses it to give the first process
 // its 0, 1 and 2; ordinary opens take the first free slot.
 int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path);
