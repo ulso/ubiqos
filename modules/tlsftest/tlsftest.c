@@ -2,8 +2,9 @@
 
 // tlsftest -- how long TLSF takes, and whether it survives being used.
 //
-//     tlsftest          the SRAM pool, which is what real-time modules get
-//     tlsftest bulk     PSRAM, where the big allocations live
+//     tlsftest              the SRAM pool, which is what real-time modules get
+//     tlsftest bulk         PSRAM, where the big allocations live
+//     tlsftest 2000000      a longer run; and two at once test the locking
 //
 // Two questions, and they need different tests. Timing wants the same thing
 // done many times over; survival wants many different things done in an order
@@ -74,6 +75,12 @@ static void time_one_size(uint32_t size)
 // --- whether it survives ---------------------------------------------------
 #define HELD 24
 
+static void parse_u32_into(const char *s, uint32_t *out) {
+    uint32_t v = 0;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (uint32_t)(*s++ - '0');
+    if (v) *out = v;
+}
+
 // A pattern that depends on the address, so a block written through a stale
 // pointer is caught even when the value looks plausible.
 static uint8_t mark(void *p, uint32_t i) { return (uint8_t)(((uintptr_t)p >> 3) + i); }
@@ -120,10 +127,24 @@ static bool stress(uint32_t iterations, uint32_t max_size)
     return true;
 }
 
+static bool digits_only(const char *s) {
+    if (!*s) return false;
+    while (*s) if (*s < '0' || *s++ > '9') return false;
+    return true;
+}
+
 void module_main(int argc, char **argv)
 {
     start_counting();
     use_bulk = argc > 1 && argv[1][0] == 'b';
+
+    // How many operations, so a longer run needs no rebuild. Two of these at
+    // once on the same pool is what tests the allocator's critical section --
+    // one inside the pool from a kernel thread while the other arrives through
+    // a trap -- which a single process cannot exercise at all.
+    uint32_t rounds = 20000;
+    for (int i = 1; i < argc; i++)
+        if (digits_only(argv[i])) { parse_u32_into(argv[i], &rounds); break; }
     printf("\ntlsftest: %s pool\n", use_bulk ? "PSRAM" : "SRAM");
 
     uint32_t before = largest();
@@ -171,10 +192,24 @@ void module_main(int argc, char **argv)
     if (use_bulk) { time_one_size(1024); time_one_size(16384); }
 
     printf("\n  mixed sizes, held and released in no order\n");
-    bool ok = stress(20000, use_bulk ? 4096 : 256);
+    bool ok = stress(rounds, use_bulk ? 4096 : 256);
 
+    // Two verdicts, because they answer different questions and only one of
+    // them holds when somebody else is using the pool.
+    //
+    // Corruption is the real test and is always valid: every block is written
+    // with a pattern made from its own address and checked before it is let go,
+    // so a block handed out twice is caught wherever it happens.
+    //
+    // The pool returning to where it started is only meaningful alone. Run two
+    // of these at once -- which is the only way to exercise the allocator's
+    // critical section -- and each finishes while the other still holds
+    // blocks. Reporting that as a failure is how the first concurrent run
+    // accused the allocator of a fault that was in this test.
     uint32_t after = largest();
-    printf("\n  largest free at the end:   %u bytes  %s\n", after,
-           after == before ? "-- nothing lost" : "-- FRAGMENTED OR LEAKED");
-    printf("  %s\n", ok && after == before ? "passed" : "FAILED");
+    printf("\n  contents:  %s\n", ok ? "no corruption" : "CORRUPTED");
+    printf("  pool:      %u bytes, started at %u%s\n", after, before,
+           after == before ? " -- returned"
+                           : " -- not equal, which only means anything alone");
+    printf("  %s\n", ok ? "passed" : "FAILED");
 }
