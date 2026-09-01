@@ -377,14 +377,16 @@ void myrtos_kernel_main(void) {
     // moment it is addressed that way and stays there until the power is cut --
     // so whoever brings it up has to be the first to touch it. And it cannot be
     // this function: the SDIO driver's waits are unbounded, this runs before the
-    // scheduler, and a hang here takes the console and USB with it. It belongs
-    // to the filesystem server, which is a process, and it does it there before
-    // it serves anything. See card_bring_up in fsserver.c.
+    // scheduler, and a hang here takes the console and USB with it.
     //
-    // The cost is that modules on the card are registered a moment later than
-    // they were, after the scheduler starts rather than before. Nothing the
-    // machine needs to boot lives there: the shell and every descriptor are
-    // resident in flash.
+    // So nothing brings the card up automatically -- not here and not in the
+    // filesystem server either, whose thread deliberately touches nothing until
+    // someone sends it MYRTOS_MSG_FS_MOUNT. `mount` is a command the user types.
+    // See card_bring_up in fsserver.c.
+    //
+    // The cost is that modules on the card are not registered at boot at all;
+    // they appear when the card is mounted. Nothing the machine needs to boot
+    // lives there: the shell and every descriptor are resident in flash.
 
     // Descriptors first: the devices must exist before any process tries to
     // open them. A data module has no entry point and is not started.
