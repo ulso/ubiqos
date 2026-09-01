@@ -228,6 +228,7 @@ static void help(int32_t c) {
         "  kill     end a process by number\r\n"
         "  cu       talk to a device, e.g. 'cu /dev/acm' for a serial dongle\r\n"
         "  cat      show a file\r\n"
+        "  more     a screenful at a time; space, Return, q\r\n"
         "  cp       copy a file\r\n"
         "  rm       delete a file\r\n"
         "  write    write text to a file\r\n"
