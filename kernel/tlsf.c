@@ -197,6 +197,12 @@ static size_t myrtos_tlsf_largest_free_unlocked(tlsf_pool_t pool) {
 }
 
 
+bool myrtos_tlsf_owns(tlsf_pool_t pool, const void* p) {
+    tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
+    if (!ctrl || !p) return false;
+    return (uintptr_t)p >= ctrl->pool_start && (uintptr_t)p < ctrl->pool_end;
+}
+
 // --- THE LOCK -------------------------------------------------------------
 // The free lists are walked and rewritten by two kinds of caller, and until now
 // nothing kept them apart.

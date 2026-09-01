@@ -653,10 +653,23 @@ tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m) {
 }
 
 // Which pool a block came from is decided by where it is, so the header does
-// not have to carry it.
+// not have to carry it -- but by ASKING the pool, not by comparing against the
+// memory map.
+//
+// This read "address >= MYRTOS_PSRAM_BASE" and was wrong for every block it
+// ever saw. PSRAM is at 0x11000000 and SRAM at 0x20000000, so every SRAM
+// address is above the PSRAM base: each free of SRAM put the block into the
+// PSRAM pool's free lists. SRAM never came back, and the bulk pool was left
+// holding addresses that are not in it -- which would eventually have been
+// handed out.
+//
+// It hid because of the order at startup. The kernel's own heap self-test runs
+// before myrtos_bulk_pool_init, so myrtos_bulk_pool is still null there, the
+// guard falls through to the right pool, and the test reports "fully
+// reclaimed". Everything after that boot moment was wrong.
 tlsf_pool_t myrtos_pool_of_address(void *p) {
-    return ((uintptr_t)p >= MYRTOS_PSRAM_BASE && myrtos_bulk_pool)
-         ? myrtos_bulk_pool : myrtos_mem_pool;
+    if (myrtos_bulk_pool && myrtos_tlsf_owns(myrtos_bulk_pool, p)) return myrtos_bulk_pool;
+    return myrtos_mem_pool;
 }
 static tlsf_pool_t pool_of(void *p) { return myrtos_pool_of_address(p); }
 

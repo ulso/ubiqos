@@ -16,6 +16,12 @@ typedef void* tlsf_pool_t;
 tlsf_pool_t myrtos_tlsf_create(void* mem, size_t bytes);
 void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size);
 void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr);
+
+// Whether this pool is the one a block came from. A pool knows where it lies,
+// which is the only thing that cannot drift out of step with the memory map --
+// and the memory map is what caught this out: PSRAM sits at 0x11000000 and SRAM
+// at 0x20000000, so "above the PSRAM base" is true of both.
+bool myrtos_tlsf_owns(tlsf_pool_t pool, const void* p);
 size_t myrtos_tlsf_largest_free(tlsf_pool_t pool);
 
 #endif // MYRTOS_TLSF_H
