@@ -282,11 +282,20 @@ static void register_card_modules(void) {
 // longer hear the question. Falling back automatically therefore spends the one
 // chance at SDIO on the first `ls` anyone types.
 //
-// And SDIO is not free to attempt. It configures DMA channels 8-11 by hardcoded
-// number without claiming them, and reprograms PIO1; both belong to the video
-// chain. The screen goes black on `mount` and stays black until a reset, every
-// time, and that is still not understood. So it is behind a word the user has
-// to type, and plain `mount` is the safe one.
+// SDIO used to black the screen out on every attempt, and that is fixed: it was
+// spoop() in the vendored driver reprogramming DMA channel 3, which the video
+// chain owns. With it gone, the DMA read address was sampled three times across
+// a `mount sdio` and was walking the framebuffer each time. The bystanders the
+// old comment here accused are innocent -- the driver's own channels are 8-11
+// and its PIO block is PIO1, while video runs on DMA 1-3 and HSTX and the USB
+// host on PIO0, so none of them overlap.
+//
+// What is still true is that those four channels are hardcoded and never
+// claimed, so the DMA allocator will hand 8-11 out to whoever asks next and
+// nothing will complain until both are running.
+//
+// So SDIO stays behind a word the user types, but for the reason above this
+// paragraph rather than this one: a wrong guess costs the card's one chance.
 static bool card_bring_up(bool try_sdio) {
     if (try_sdio) {
         if (!myrtos_sd_try_sdio() || !myrtos_fat_mount()) {
