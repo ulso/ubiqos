@@ -604,3 +604,33 @@ besides. Relative vtables fix the table, not the object.
 
 The C flags are unchanged and still both needed. Re-measured on `sh`: 97
 `R_RISCV_32` without `-fno-jump-tables`, none with it.
+
+## Choosing the compiler, per module
+
+Both toolchains are wired in. `myrtos_add_module` is GCC and is the default;
+`myrtos_add_clang_module` takes the same arguments, including `RT` and `SINGLE`,
+and builds with clang and `ld.lld` instead. The two produce the same `${name}.mod`
+through the same `check_module.py`, `objcopy` and `make_module.py` -- nothing
+downstream can tell which compiler made one.
+
+    myrtos_add_module(echo modules/echo/echo.c)              # gcc
+    myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
+
+**There is one reason to choose clang and it is virtual functions.** For plain C
+there is nothing to gain, and GCC is the road everything else travels.
+
+CMake has one compiler per project, so the clang modules are built by custom
+commands rather than `add_executable`. The architecture flags are taken from
+`CMAKE_C_FLAGS`, so the two compilers cannot drift apart, and clang is *probed*
+at configure time with those flags: a machine without clang and lld, or with a
+clang that cannot build for this target, silently gets the GCC path instead of a
+broken build. Configure says which:
+
+    -- Clang module toolchain: /opt/homebrew/opt/llvm/bin/clang + /opt/homebrew/bin/ld.lld
+
+`ld.lld` is a separate Homebrew formula from `llvm` and is **not** in the llvm
+formula's own `bin`. Note also that lld rejects `--no-warn-rwx-segments`, which
+GNU ld needs: it does not warn about them at all.
+
+Verified on the board rather than at the build: a clang-built module was made
+resident, flashed and run, and printed what it should.

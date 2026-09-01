@@ -14,6 +14,7 @@
 void myrtos_print(const char *s);
 void myrtos_putc(char c);
 void myrtos_print_u32(uint32_t v);
+void myrtos_print_hex(uint32_t v);
 int32_t myrtos_current_pid(void);
 uint32_t myrtos_process_count(void);
 int32_t myrtos_process_create(const myrtos_module_header_t *m, const char *args);
@@ -462,8 +463,11 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     if (frame->mcause == MCAUSE_BREAKPOINT) {
         if (!myrtos_asserts_seen) {
             myrtos_crash_note(MYRTOS_CRASH_ASSERT, frame->mepc, 0, 0);
+            // Hex, because the only thing anyone does with this number is
+            // look it up with addr2line. Printed in decimal it cost a round
+            // trip to convert, the first time it ever fired in front of a user.
             myrtos_print("\n*** MYRTOS: assertion at ");
-            myrtos_print_u32(frame->mepc);
+            myrtos_print_hex(frame->mepc);
             myrtos_print(", stepped over ***\n");
         }
         myrtos_asserts_seen++;

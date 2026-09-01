@@ -233,6 +233,148 @@ function(myrtos_add_module name source)
         COMMENT "Building module ${name}.mod")
 endfunction()
 
+# --- The second toolchain -------------------------------------------------
+# Clang and lld, beside GCC rather than instead of it, chosen per module.
+#
+# There is one reason to want it and it is C++ with virtual functions. A vtable
+# is a table of pointers, which is the one thing a shareable module may not
+# contain, so every virtual call has been out of reach. Clang's
+# -fexperimental-relative-c++-abi-vtables stores the distance from each slot to
+# its function instead of the address, which is exactly what the module format
+# needs -- and GNU ld cannot link the result, so it is clang *and* lld or
+# neither. See the closing sections of docs/writing-modules.md for the
+# measurements.
+#
+# CMake has one compiler per project, so these modules are built by hand with
+# custom commands rather than add_executable. They go through the same
+# check_module.py, the same objcopy and the same make_module.py, and land as the
+# same ${name}.mod -- nothing downstream can tell which compiler made them.
+find_program(MYRTOS_CLANG   clang   HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin)
+find_program(MYRTOS_CLANGXX clang++ HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin)
+find_program(MYRTOS_LLD     ld.lld  HINTS /opt/homebrew/bin /opt/homebrew/opt/lld/bin /usr/local/bin)
+
+# The architecture comes from whatever the SDK's toolchain file chose, so the
+# two compilers cannot drift apart. Clang may not know every extension GCC does,
+# which is why this is probed rather than assumed: a machine without clang, or
+# with one that cannot build for this target, quietly gets the GCC path instead
+# of a broken build.
+separate_arguments(MYRTOS_TARGET_ARCH NATIVE_COMMAND "${CMAKE_C_FLAGS}")
+set(MYRTOS_CLANG_OK FALSE)
+if(MYRTOS_CLANG AND MYRTOS_CLANGXX AND MYRTOS_LLD)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c "int probe(void){return 0;}\n")
+    execute_process(
+        COMMAND ${MYRTOS_CLANG} --target=riscv32-unknown-elf ${MYRTOS_TARGET_ARCH}
+                -ffreestanding -nostdlib -c ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c
+                -o ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.o
+        RESULT_VARIABLE probe_rc OUTPUT_QUIET ERROR_VARIABLE probe_err)
+    if(probe_rc EQUAL 0)
+        set(MYRTOS_CLANG_OK TRUE)
+        message(STATUS "Clang module toolchain: ${MYRTOS_CLANG} + ${MYRTOS_LLD}")
+    else()
+        message(STATUS "Clang found but cannot build for this target; modules fall back to gcc")
+        message(STATUS "  ${probe_err}")
+    endif()
+else()
+    message(STATUS "No clang/lld found; clang modules fall back to gcc")
+endif()
+
+# -std=gnu23 because clang defaults to a C where bool is not a keyword.
+# -fno-jump-tables because a large switch otherwise becomes a table of absolute
+# addresses -- sh comes out with 97 R_RISCV_32 without it and none with it.
+# GCC is given neither and has simply never emitted a jump table here, which is
+# luck rather than design; check_module.py would catch it either way.
+set(MYRTOS_CLANG_C_FLAGS   -std=gnu23 -fno-jump-tables)
+set(MYRTOS_CLANG_CXX_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics
+                           -fno-jump-tables -fexperimental-relative-c++-abi-vtables)
+
+# Same signature and same RT / SINGLE options as myrtos_add_module. A module
+# built this way is not different in kind; it was only compiled by the other
+# compiler.
+function(myrtos_add_clang_module name source)
+    if(NOT MYRTOS_CLANG_OK)
+        myrtos_add_module(${name} ${source} ${ARGN})
+        return()
+    endif()
+
+    set(rt_flag "")
+    if("RT" IN_LIST ARGN)
+        set(rt_flag "--rt")
+        list(REMOVE_ITEM ARGN "RT")
+    endif()
+    set(single_flag "")
+    set(single_link "")
+    set(single_compile "")
+    if("SINGLE" IN_LIST ARGN)
+        set(single_flag "--single")
+        set(single_link "-Ttext=0x1178002c")   # MYRTOS_SINGLE_TEXT
+        set(single_compile "-fno-zero-initialized-in-bss")
+        list(REMOVE_ITEM ARGN "SINGLE")
+    endif()
+
+    set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_clang)
+    file(MAKE_DIRECTORY ${objdir})
+    set(objs "")
+    foreach(src ${source} ${ARGN})
+        get_filename_component(base ${src} NAME_WE)
+        get_filename_component(ext ${src} EXT)
+        set(obj ${objdir}/${base}.o)
+        if(ext STREQUAL ".cpp" OR ext STREQUAL ".cc" OR ext STREQUAL ".cxx")
+            set(cc ${MYRTOS_CLANGXX})
+            set(lang_flags ${MYRTOS_CLANG_CXX_FLAGS})
+        else()
+            set(cc ${MYRTOS_CLANG})
+            set(lang_flags ${MYRTOS_CLANG_C_FLAGS})
+        endif()
+        add_custom_command(
+            OUTPUT ${obj}
+            COMMAND ${cc} --target=riscv32-unknown-elf ${MYRTOS_TARGET_ARCH}
+                    -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
+                    ${lang_flags} ${single_compile}
+                    -c ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
+            COMMENT "Compiling ${src} with clang")
+        list(APPEND objs ${obj})
+    endforeach()
+
+    # lld needs no --no-warn-rwx-segments: it does not warn about them. -N and
+    # -e 0 mean what they mean for GNU ld -- see the note in myrtos_add_module.
+    set(elf ${objdir}/${name}.elf)
+    add_custom_command(
+        OUTPUT ${elf}
+        COMMAND ${MYRTOS_LLD} -m elf32lriscv -N -e 0 ${single_link} -o ${elf} ${objs}
+        DEPENDS ${objs}
+        COMMENT "Linking ${name} with lld")
+
+    add_custom_command(
+        OUTPUT ${objdir}/${name}.checked
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+                ${single_flag} ${CMAKE_READELF} ${objs} ${elf}
+        COMMAND ${CMAKE_COMMAND} -E touch ${objdir}/${name}.checked
+        DEPENDS ${elf} ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+        COMMENT "Checking that ${name} is position independent")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        COMMAND ${CMAKE_OBJCOPY} -O binary ${elf} ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        DEPENDS ${objdir}/${name}.checked
+        COMMENT "Extracting raw position-independent machine code from ${name}")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${single_flag}
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+                "${name}"
+                ${elf}
+                ${CMAKE_NM}
+                module_main
+                ${rt_flag}
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+        COMMENT "Building module ${name}.mod (clang)")
+endfunction()
+
 # A data module has no entry point: it IS its bytes.
 function(myrtos_add_data_module name source)
     add_executable(${name}_app ${source})
@@ -269,7 +411,7 @@ function(myrtos_add_data_module name source)
 endfunction()
 
 myrtos_add_module(counter modules/counter/counter.c)
-myrtos_add_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
+myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(echo modules/echo/echo.c)
