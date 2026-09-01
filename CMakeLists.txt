@@ -60,6 +60,7 @@ pico_sdk_init()
 # ============================================================================
 add_executable(os_kernel 
     kernel/crashlog.c
+    kernel/vfs.c
     kernel/main.c 
     kernel/tlsf.c
     kernel/scheduler.c 

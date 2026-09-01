@@ -669,3 +669,17 @@ bool myrtos_fat_remount(void) {
     if (!myrtos_sd_init()) return false;
     return myrtos_fat_mount();
 }
+
+// See vfs.h. Nothing above needed changing -- every one of these already takes
+// an absolute path in this filesystem's own terms, which is exactly what the
+// server hands over once it has stripped the volume name off the front.
+const myrtos_fsops_t myrtos_fat_ops = {
+    .read_at   = myrtos_fat_read_at,
+    .write_at  = myrtos_fat_write_at,
+    .remove    = myrtos_fat_remove,
+    .mkdir     = myrtos_fat_mkdir,
+    .rmdir     = myrtos_fat_rmdir,
+    .stat_nth  = myrtos_fat_stat_nth,
+    .find_nth  = myrtos_fat_find_nth,
+    .read_file = myrtos_fat_read_file,
+};

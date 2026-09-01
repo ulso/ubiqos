@@ -43,4 +43,9 @@ bool     myrtos_fat_remount(void);
 // "readme.txt" -> "README  TXT", the form the directory actually stores.
 bool     myrtos_fat_name_to_83(const char *user, char *out_11);
 
+// The same functions as a volume, for the filesystem server to mount by name.
+// The signatures above were not changed to fit: the struct was shaped to them.
+#include "vfs.h"
+extern const myrtos_fsops_t myrtos_fat_ops;
+
 #endif

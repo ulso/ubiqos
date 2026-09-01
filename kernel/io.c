@@ -283,6 +283,15 @@ void myrtos_io_init(void) {
 
 uint32_t myrtos_io_device_count(void) { return device_count; }
 
+// The nth device's name, so /dev can list what is registered. The order is
+// registration order and nothing more; nobody should depend on it.
+bool myrtos_io_device_nth(uint32_t index, char *name_out) {
+    if (index >= device_count) return false;
+    for (int i = 0; i < 12; i++) name_out[i] = devices[index].name[i];
+    name_out[11] = 0;
+    return true;
+}
+
 // Whether a named device was registered. Asked before starting a process that
 // would have nowhere to talk: there is no way to kill another process, so the
 // question has to come first.

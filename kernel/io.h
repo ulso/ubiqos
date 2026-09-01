@@ -38,6 +38,9 @@ typedef struct {
 
 void    myrtos_io_init(void);
 uint32_t myrtos_io_device_count(void);
+
+// The nth device's name, twelve bytes out. False when index is past the end.
+bool     myrtos_io_device_nth(uint32_t index, char *name_out);
 bool myrtos_io_has_device(const char *name);
 
 // Register a device from a descriptor. The driver is looked up by name and is

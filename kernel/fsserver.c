@@ -22,6 +22,7 @@
 #include <stdbool.h>
 #include "../common/modules.h"
 #include "fat32.h"
+#include "vfs.h"
 #include "usbdev.h"
 #include "sdcard.h"
 #include "moddir.h"
@@ -81,6 +82,16 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
     out[k] = 0;
 }
 
+// A path names its volume first -- "/sd/docs/x" -- so every request begins by
+// splitting that off and finding who owns the rest. A volume that is not
+// mounted, and the root itself, own no files: both come back as null here and
+// the request is refused, which is the same answer a missing file has always
+// given.
+#define VOLUME_OR_FAIL(op)                                       \
+    const char *rest;                                            \
+    const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);    \
+    if (!ops || !ops->op) return -1
+
 static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     char abs[128];
 
@@ -88,22 +99,30 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     case MYRTOS_MSG_FS_READ: {
         const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)m->data;
         make_abs(from, r->name, abs, sizeof(abs));
-        return myrtos_fat_read_at(abs, r->offset, r->buf, r->len);
+        VOLUME_OR_FAIL(read_at);
+        return ops->read_at(rest, r->offset, r->buf, r->len);
     }
     case MYRTOS_MSG_FS_WRITE: {
         const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)m->data;
         make_abs(from, r->name, abs, sizeof(abs));
-        return myrtos_fat_write_at(abs, r->offset, r->buf, r->len);
+        VOLUME_OR_FAIL(write_at);
+        return ops->write_at(rest, r->offset, r->buf, r->len);
     }
-    case MYRTOS_MSG_FS_REMOVE:
+    case MYRTOS_MSG_FS_REMOVE: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
-        return myrtos_fat_remove(abs) ? 0 : -1;
-    case MYRTOS_MSG_FS_MKDIR:
+        VOLUME_OR_FAIL(remove);
+        return ops->remove(rest) ? 0 : -1;
+    }
+    case MYRTOS_MSG_FS_MKDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
-        return myrtos_fat_mkdir(abs) ? 0 : -1;
-    case MYRTOS_MSG_FS_RMDIR:
+        VOLUME_OR_FAIL(mkdir);
+        return ops->mkdir(rest) ? 0 : -1;
+    }
+    case MYRTOS_MSG_FS_RMDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
-        return myrtos_fat_rmdir(abs) ? 0 : -1;
+        VOLUME_OR_FAIL(rmdir);
+        return ops->rmdir(rest) ? 0 : -1;
+    }
     case MYRTOS_MSG_FS_MOUNT:
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
@@ -112,7 +131,11 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     case MYRTOS_MSG_FS_DIR: {
         const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)m->data;
         make_abs(from, d->path, abs, sizeof(abs));
-        return myrtos_fat_stat_nth(abs, d->index, d->name, d->size);
+        // The root is owned by nobody, so listing it lists the volumes. That is
+        // the one directory no filesystem can answer for.
+        if (!abs[1]) return myrtos_vfs_root_nth(d->index, d->name, d->size);
+        VOLUME_OR_FAIL(stat_nth);
+        return ops->stat_nth(rest, d->index, d->name, d->size);
     }
     case MYRTOS_MSG_FS_CHDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
@@ -121,7 +144,15 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // directory always answers. The root is taken on trust.
         char name[12];
         uint32_t size = 0;
-        if (abs[1] && myrtos_fat_stat_nth(abs, 0, name, &size) < 0) return -1;
+        if (abs[1]) {
+            const char *rest;
+            const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);
+            if (!ops) return -1;
+            // A volume's own root is taken on trust, as the machine root always
+            // was: an empty FAT root has no entries to prove itself with.
+            if (rest[1] && (!ops->stat_nth || ops->stat_nth(rest, 0, name, &size) < 0))
+                return -1;
+        }
         return myrtos_cwd_set_of(from, abs) ? 0 : -1;
     }
     default:
@@ -151,6 +182,10 @@ void myrtos_print_u32(uint32_t v);
 // it arrives through need not: 32 kB touched once per module, from PSRAM when
 // there is any, and handed straight back.
 static void register_card_modules(void) {
+    const char *vol = "";
+    const myrtos_fsops_t *ops = myrtos_vfs_module_volume(&vol);
+    if (!ops) return;
+
     const uint32_t staging_size = 32 * 1024;
     tlsf_pool_t pool = myrtos_bulk_pool ? myrtos_bulk_pool : myrtos_mem_pool;
     uint8_t *staging = myrtos_tlsf_malloc(pool, staging_size);
@@ -160,13 +195,15 @@ static void register_card_modules(void) {
     }
 
     char name[12];
-    for (uint32_t i = 0; myrtos_fat_find_nth("MOD", i, name); i++) {
-        int32_t n = myrtos_fat_read_file(name, staging, staging_size);
+    for (uint32_t i = 0; ops->find_nth("MOD", i, name); i++) {
+        int32_t n = ops->read_file(name, staging, staging_size);
         if (n <= 0) continue;
         if (myrtos_moddir_add_copy(staging, (uint32_t)n, name)) {
             myrtos_print("Registered ");
             myrtos_print(name);
-            myrtos_print(" from card, ");
+            myrtos_print(" from /");
+            myrtos_print(vol);
+            myrtos_print(", ");
             myrtos_print_u32((uint32_t)n);
             myrtos_print(" bytes\n");
         }
@@ -199,6 +236,13 @@ static bool card_bring_up(bool try_sdio) {
             return false;
         }
         myrtos_print("SD: SPI\n");
+    }
+    // It becomes /sd. The name is the volume's, not the filesystem's: a
+    // LittleFS partition or a USB stick would come in the same way under its
+    // own name, and nothing above here would know the difference.
+    if (!myrtos_vfs_add("sd", &myrtos_fat_ops)) {
+        myrtos_print("SD: no room in the volume table\n");
+        return false;
     }
     register_card_modules();
     return true;

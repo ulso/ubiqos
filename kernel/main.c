@@ -289,6 +289,9 @@ void myrtos_kernel_main(void) {
 
     myrtos_scheduler_init();
     myrtos_io_init();
+    // Before any volume can be added, and before the first path is resolved.
+    // /dev exists from here on, so the root is never empty.
+    { extern void myrtos_vfs_init(void); myrtos_vfs_init(); }
     myrtos_moddir_init();
 
     // Flash first: resident modules run where they lie and cost no heap. The
