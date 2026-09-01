@@ -216,7 +216,20 @@ static void myrtos_bulk_pool_init(void) {
 // forty-eight, forty-four, forty. Every feature that keeps a table pays for it
 // here, and the framebuffer is still 307200 bytes of a 512 kB machine. When
 // this next runs out, that is the number to attack rather than this one.
-#define MYRTOS_HEAP_SIZE (40 * 1024)
+//
+// Thirty-six, and this time the arithmetic is worth writing down because it is
+// not what it looks like. The read cache and the boot script added 708 bytes:
+// 496 of code, 128 of strings, 84 of table. But the link is done with
+// -z max-page-size=4096, so .bss starts on a page boundary after .data -- and
+// those 128 bytes of strings pushed .data past one. .bss moved up a whole page,
+// and a 708-byte change cost 4180 bytes of heap, 4096 of it padding.
+//
+// So this knob now moves in jumps of four kilobytes whatever the feature costs,
+// and the number here says less about what was added than about which side of a
+// page boundary .data happened to land on. Which makes the framebuffer more
+// overdue rather than less: it is the only object big enough that removing it
+// would end this entirely, and there are only nine of these jumps left.
+#define MYRTOS_HEAP_SIZE (36 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 

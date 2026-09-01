@@ -25,7 +25,10 @@ static uint32_t rd32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+void myrtos_fat_forget_read_cache(void);   // defined with the cache, below
+
 bool myrtos_fat_mount(void) {
+    myrtos_fat_forget_read_cache();
     mounted = false;
 
     if (!myrtos_sd_read_block(0, sector)) {
@@ -276,23 +279,68 @@ int32_t myrtos_fat_stat(const char *path, uint32_t *size_out) {
     return (int32_t)attr;
 }
 
+// Reading a file used to cost more than reading the card. Every read_at call
+// resolved the path from the root, walked the directory to find the entry, and
+// then spooled the cluster chain from the file's first cluster to the offset it
+// wanted -- and fat_next_cluster is an SD block read per link. cat asks in
+// small pieces, so a 100 kB file took 391 calls, and call k spooled k/16
+// clusters: about 4800 block reads of FAT to deliver 100 kB of data. Measured
+// at 49 kB/s over four-bit SDIO, on a bus doing 1.5 MB/s underneath. The card
+// was never the problem.
+//
+// So remember where the last read left off. One file, because reading is
+// overwhelmingly sequential and a second file simply takes the slot.
+static char     ra_path[64];       // as long as the open-file table's own
+static bool     ra_valid;
+static uint32_t ra_first, ra_size;
+static uint32_t ra_index;                 // which link of the chain ra_cluster is
+static uint32_t ra_cluster;
+
+// Anything that moves data or entries around drops it. This is deliberately
+// blunt: a stale cluster number reads the wrong sector and hands back another
+// file's bytes, which is far worse than the walk it saves.
+void myrtos_fat_forget_read_cache(void) { ra_valid = false; }
+
+static bool same_path(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
 int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len) {
     if (!mounted) return -1;
 
-    uint32_t dir = 0; char name_83[12];
-    if (!resolve_parent(path, &dir, name_83)) return -1;
+    if (!ra_valid || !same_path(path, ra_path)) {
+        uint32_t dir = 0; char name_83[12];
+        if (!resolve_parent(path, &dir, name_83)) return -1;
 
-    uint32_t cluster = 0, file_size = 0; uint8_t attr = 0;
-    if (!find_entry(dir, name_83, &cluster, &file_size, &attr)) return -1;
-    if (attr & 0x10) return -1;                          // a directory is not readable
+        uint32_t cluster = 0, file_size = 0; uint8_t attr = 0;
+        if (!find_entry(dir, name_83, &cluster, &file_size, &attr)) return -1;
+        if (attr & 0x10) return -1;                      // a directory is not readable
+
+        uint32_t n = 0;
+        while (path[n] && n < sizeof(ra_path) - 1) { ra_path[n] = path[n]; n++; }
+        ra_path[n] = 0;
+        ra_first = cluster; ra_size = file_size;
+        ra_index = 0; ra_cluster = cluster;
+        ra_valid = true;
+    }
+
+    uint32_t file_size = ra_size;
     if (offset >= file_size) return 0;                  // end of file
     if (len > file_size - offset) len = file_size - offset;
 
+    // Forward from where the last read stopped, and only backwards from the
+    // start -- which is what a seek to somewhere earlier costs, and no worse
+    // than every call used to cost.
     const uint32_t bytes_per_cluster = sectors_per_cluster * 512;
-    for (uint32_t skip = offset / bytes_per_cluster; skip; skip--) {
-        cluster = fat_next_cluster(cluster);
-        if (cluster >= 0x0ffffff8) return -1;           // chain shorter than the size claims
+    uint32_t want = offset / bytes_per_cluster;
+    if (want < ra_index) { ra_index = 0; ra_cluster = ra_first; }
+    while (ra_index < want) {
+        ra_cluster = fat_next_cluster(ra_cluster);
+        if (ra_cluster >= 0x0ffffff8) { ra_valid = false; return -1; }
+        ra_index++;
     }
+    uint32_t cluster = ra_cluster;
 
     uint32_t pos = offset % bytes_per_cluster, written = 0;
     while (cluster < 0x0ffffff8 && written < len) {
@@ -472,6 +520,7 @@ static bool dir_alloc_slot(uint32_t dir_cluster, uint32_t *lba_out, uint32_t *of
 }
 
 bool myrtos_fat_remove(const char *path) {
+    myrtos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t dir = 0; char name_83[12];
@@ -498,6 +547,7 @@ bool myrtos_fat_remove(const char *path) {
 // stack, so a utility streams rather than holding a file in memory.
 int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
                             const uint8_t *buf, uint32_t len) {
+    myrtos_fat_forget_read_cache();
     if (!mounted || !len) return -1;
 
     uint32_t dir = 0; char name_83[12];
@@ -579,6 +629,7 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
 // cluster number. FAT has said so since the beginning, and resolve_dir turns it
 // back into root_cluster on the way up.
 bool myrtos_fat_mkdir(const char *path) {
+    myrtos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t dir = 0;
@@ -624,6 +675,7 @@ bool myrtos_fat_mkdir(const char *path) {
 // file: the other way round would leave a name pointing at clusters that had
 // been handed to somebody else.
 bool myrtos_fat_rmdir(const char *path) {
+    myrtos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t dir = 0;
