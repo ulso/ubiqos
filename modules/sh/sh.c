@@ -226,7 +226,7 @@ static void help(int32_t c) {
         "  color    text and background, or 'color' to see them\r\n"
         "  wifi     firmware, scan, connect <ssid>, or ip\r\n"
         "  kill     end a process by number\r\n"
-        "  cu       talk to a device, e.g. 'cu acm' for a USB serial dongle\r\n"
+        "  cu       talk to a device, e.g. 'cu /dev/acm' for a serial dongle\r\n"
         "  cat      show a file\r\n"
         "  cp       copy a file\r\n"
         "  rm       delete a file\r\n"
