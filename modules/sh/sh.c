@@ -316,17 +316,18 @@ static int32_t start_one(char *cmd) {
     int32_t saved[3] = { -1, -1, -1 };
     int opened = 0;
     for (int i = 0; i < nrd; i++) {
-        if (rd[i].fd == MYRTOS_STDOUT && !rd[i].append) myrtos_fs_remove(rd[i].name);
+        // The arrow says what the flags are, and the kernel does the rest:
+        // emptying the file for >, placing the descriptor at the end for >>,
+        // and refusing a missing one for <.
+        uint32_t flags = rd[i].fd == MYRTOS_STDIN
+                       ? MYRTOS_O_RDONLY
+                       : MYRTOS_O_WRONLY | MYRTOS_O_CREAT
+                         | (rd[i].append ? MYRTOS_O_APPEND : MYRTOS_O_TRUNC);
 
-        int32_t f = myrtos_open(rd[i].name);
+        int32_t f = myrtos_open_flags(rd[i].name, flags);
         if (f < 0) {
             myrtos_write_str(MYRTOS_STDERR, "sh: cannot open the file\n");
             break;                                      // the command does not run
-        }
-        if (rd[i].append) {
-            uint32_t size = 0;
-            if (myrtos_fs_stat(rd[i].name, &size) >= 0 && size)
-                myrtos_seek(f, (int32_t)size, MYRTOS_SEEK_SET);
         }
         saved[i] = myrtos_dup(rd[i].fd, -1);
         myrtos_dup(f, rd[i].fd);
@@ -334,7 +335,10 @@ static int32_t start_one(char *cmd) {
         opened++;
     }
 
-    int32_t pid = opened == nrd ? myrtos_exec(cmd, args) : -1;
+    // -3 rather than -1: the redirection said what was wrong, and the caller
+    // adding "no such module" to it sends the reader looking for the wrong
+    // thing entirely.
+    int32_t pid = opened == nrd ? myrtos_exec(cmd, args) : -3;
 
     // Back to the terminal. The child took its copy when it was made, so this
     // cannot reach it.

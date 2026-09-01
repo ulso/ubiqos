@@ -167,6 +167,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FSSTAT    46u   // a0 = myrtos_fs_stat_t -> a0 = attributes, -1 none
 #define SYS_DUP       47u   // a0 = descriptor, a1 = new one or -1 -> a0 = new one
 #define SYS_PIPE      48u   // a0 = int32_t[2] out -> a0 = 0, -1 if none can be had
+// SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
+// caller written before they existed passed, so none of them changed meaning.
 
 #define MYRTOS_SEEK_SET 0u   // from the start of the file
 #define MYRTOS_SEEK_CUR 1u   // from where the descriptor is now
@@ -221,6 +223,24 @@ typedef struct {
 #define MYRTOS_MSG_FS_OPEN   10u   // data = path -> a descriptor
 #define MYRTOS_MSG_FS_FDIO   11u   // data = myrtos_fs_fdio_t
 #define MYRTOS_MSG_FS_STAT   12u   // data = myrtos_fs_stat_t
+
+// How a file is being opened. The numbers are POSIX's, so myrtos_posix.h can
+// alias them rather than translate. The kernel acts on them: it refuses a file
+// that is not there unless one of the creating flags is given, empties it for
+// TRUNC, and puts the descriptor at the end for APPEND -- all before the caller
+// sees the descriptor, which is what makes them worth having in the kernel
+// rather than arranged afterwards by whoever opened it.
+#define MYRTOS_O_RDONLY 0u
+#define MYRTOS_O_WRONLY 1u
+#define MYRTOS_O_RDWR   2u
+#define MYRTOS_O_CREAT  0x40u
+#define MYRTOS_O_TRUNC  0x200u
+#define MYRTOS_O_APPEND 0x400u
+
+typedef struct {
+    const char *name;
+    uint32_t    flags;
+} myrtos_fs_open_t;
 
 // The WiFi coprocessor is a service too, for the same reason the filesystem is:
 // talking to it means waiting seconds for a scan, and waiting must not happen
@@ -287,9 +307,15 @@ static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32
     return (int32_t)r_a0;
 }
 
+static inline int32_t myrtos_open_flags(const char *name, uint32_t flags)
+{
+    return myrtos_syscall(SYS_OPEN, (uint32_t)(uintptr_t)name, flags, 0);
+}
+
+// Opening for reading, which is what this always meant.
 static inline int32_t myrtos_open(const char *device)
 {
-    return myrtos_syscall(SYS_OPEN, (uint32_t)(uintptr_t)device, 0, 0);
+    return myrtos_open_flags(device, MYRTOS_O_RDONLY);
 }
 
 // Writes take what the device can hold and report how much that was, as write

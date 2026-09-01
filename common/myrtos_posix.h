@@ -18,12 +18,15 @@
 // plain write would put its output at the start of the file, and that is the
 // kind of fault that costs an evening. See the table below.
 
-#define O_RDONLY 0
-#define O_WRONLY 1
-#define O_RDWR   2
-#define O_CREAT  0x40      // implied: the first write brings the file into being
-#define O_TRUNC  0x200     // honoured by removing the file before opening it
-#define O_APPEND 0x400     // the descriptor is placed at the end after opening
+// Aliases, not translations: the kernel uses POSIX's own numbers and acts on
+// them itself, so nothing here has to arrange afterwards what the flag asked
+// for. That is the difference between a flag and a convention.
+#define O_RDONLY MYRTOS_O_RDONLY
+#define O_WRONLY MYRTOS_O_WRONLY
+#define O_RDWR   MYRTOS_O_RDWR
+#define O_CREAT  MYRTOS_O_CREAT
+#define O_TRUNC  MYRTOS_O_TRUNC
+#define O_APPEND MYRTOS_O_APPEND
 
 #define SEEK_SET MYRTOS_SEEK_SET
 #define SEEK_CUR MYRTOS_SEEK_CUR
@@ -65,28 +68,12 @@ static inline int stat(const char *path, struct stat *st)
 }
 
 // The mode argument is accepted and ignored: there are no permissions to set.
+// Everything else is the kernel's: it refuses a missing file, empties one for
+// O_TRUNC and positions the descriptor for O_APPEND, all before this returns.
 static inline int open(const char *path, int flags, ...)
 {
-    // Opening for reading something that is not there is an error, and since
-    // stat arrived it can be said at the right moment instead of being
-    // discovered by the first read.
-    int writing = (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) != 0;
-    uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(path, &size);
-    if (!writing && attr < 0) { errno = ENOENT; return -1; }
-
-    // Truncation is the one flag that needs doing rather than allowing. Writing
-    // does not shorten a file, so a shorter text over a longer one would leave
-    // the old tail in place -- removing it first is what the `write` utility
-    // has always done by hand.
-    if (flags & O_TRUNC) { myrtos_fs_remove(path); size = 0; }
-
-    int32_t fd = myrtos_open(path);
+    int32_t fd = myrtos_open_flags(path, (uint32_t)flags);
     if (fd < 0) { errno = ENOENT; return -1; }
-
-    // Appending is a seek, now that there is something to seek to.
-    if ((flags & O_APPEND) && size)
-        myrtos_seek(fd, (int32_t)size, MYRTOS_SEEK_SET);
     return (int)fd;
 }
 

@@ -56,6 +56,7 @@ static bool server_request(int32_t srv, uint32_t type, void *data) {
 // process can only be blocked in one send at a time, which is the same argument
 // that lets a sender's buffer be passed by pointer at all.
 static myrtos_fs_fdio_t fdio_req[MYRTOS_MAX_PROCESSES];
+static myrtos_fs_open_t open_req[MYRTOS_MAX_PROCESSES];
 
 static bool fs_request(uint32_t type, void *data) {
     return server_request(myrtos_fs_server_pid(), type, data);
@@ -157,7 +158,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 frame->a0 = (uint32_t)myrtos_io_open(devname, myrtos_current_pid());
                 break;
             }
-            if (!fs_request(MYRTOS_MSG_FS_OPEN, (void*)(uintptr_t)name)) {
+            myrtos_fs_open_t *o = &open_req[myrtos_current_pid()];
+            o->name = name;
+            o->flags = frame->a1;
+            if (!fs_request(MYRTOS_MSG_FS_OPEN, o)) {
                 frame->a0 = (uint32_t)-1;
                 break;
             }

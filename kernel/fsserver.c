@@ -125,14 +125,34 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         return ops->rmdir(rest) ? 0 : -1;
     }
     case MYRTOS_MSG_FS_OPEN: {
-        make_abs(from, (const char*)m->data, abs, sizeof(abs));
-        // The volume has to exist; the file does not. Reading one that is not
-        // there gives nothing and writing creates it, which is what the
-        // path-at-a-time calls have always done -- so there is no flag here
-        // and no O_CREAT to argue about yet.
+        const myrtos_fs_open_t *o = (const myrtos_fs_open_t*)m->data;
+        make_abs(from, o->name, abs, sizeof(abs));
         const char *rest;
-        if (!myrtos_vfs_split(abs, &rest)) return -1;
-        return myrtos_io_open_file(abs, from);
+        const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);
+        if (!ops) return -1;
+
+        uint32_t size = 0;
+        bool exists = ops->stat && ops->stat(rest, &size) >= 0;
+        bool creating = (o->flags & (MYRTOS_O_CREAT | MYRTOS_O_TRUNC)) != 0;
+
+        // Reading something that is not there is an error, and this is the
+        // moment to say so: leaving it to the first read means the caller has a
+        // descriptor onto nothing and finds out later, which is how cat had to
+        // tell a missing file from an empty one by the sign of a return value.
+        if (!exists && !creating) return -1;
+
+        if ((o->flags & MYRTOS_O_TRUNC) && exists && ops->remove) {
+            ops->remove(rest);
+            size = 0;
+        }
+
+        int32_t fd = myrtos_io_open_file(abs, from);
+        if (fd < 0) return -1;
+        // Appending is a position, and setting it here means the caller never
+        // holds a descriptor that is pointing at the wrong place.
+        if ((o->flags & MYRTOS_O_APPEND) && size)
+            myrtos_io_file_seek(fd, from, (int32_t)size, MYRTOS_SEEK_SET);
+        return fd;
     }
     case MYRTOS_MSG_FS_FDIO: {
         const myrtos_fs_fdio_t *r = (const myrtos_fs_fdio_t*)m->data;

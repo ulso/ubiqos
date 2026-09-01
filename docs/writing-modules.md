@@ -754,6 +754,18 @@ program that asks to append and is given the start of the file destroys it.
 mid-way, and this one holds a single direction at a time -- which is what keeps
 the buffer arithmetic simple enough to be right.
 
+**The flags are the kernel's, not the shim's.** `myrtos_open_flags(path, flags)`
+takes POSIX's own numbers, and the filesystem server acts on them: it refuses a
+file that is not there unless one of the creating flags is given, empties one
+for `O_TRUNC`, and puts the descriptor at the end for `O_APPEND` -- all before
+the caller ever holds it. `myrtos_posix.h` aliases the constants rather than
+translating them, and its `open` is a pass-through.
+
+That matters beyond tidiness. A caller that arranges truncation and appending
+for itself holds, for a moment, a descriptor pointing at the wrong place; and
+`myrtos_open` on its own could not refuse a missing file, so `cat` had to tell
+one from an empty file by the sign of a return value. Both are gone.
+
 `stat(path, &st)` gives `st_size` and `st_mode`, with `S_ISDIR`. There are no
 owners, times or permissions here to report, so those fields do not exist rather
 than lying. `lseek(fd, n, SEEK_END)` is still refused, and the reason is no
