@@ -854,8 +854,22 @@ The filename is copied out of the command line rather than terminated in place:
 a NUL in the middle of the line would cut off every argument after it, which is
 how `cmd > file arg` would quietly lose `arg`.
 
-**Pipes are not here.** A pipe needs a buffer with two ends that block, a third
-kind of thing a descriptor can name beside a device and a file, and a shell that
-starts both halves before waiting for either. Redirection needed none of that,
-which is why it came first.
+**Pipes are half here.** The kernel has them: `myrtos_pipe(fds)` gives two
+descriptors onto a 128-byte ring, a descriptor can name a pipe beside a device
+and a file, the reader blocks while it is empty, and an empty pipe whose writers
+have all gone reads as end of file rather than blocking for ever -- which the
+read system call asks about with `myrtos_io_at_eof` before deciding to wait.
+
+**The shell half is not finished**, and `|` is refused rather than accepted.
+It hung the shell twice. One real cause was found and fixed: a child inherits
+*every* descriptor its parent holds, and there is no `fork` here and so no
+moment inside the child to close what it does not need -- so a reader started
+while the shell still held the writing end inherited it, and a reader that holds
+the writing end waits for itself. Closing each end as soon as the child's
+descriptor has it fixes that, and it is in the code. It was not enough; whatever
+else is wrong is not yet known.
+
+The parts that redirection needs and pipes share -- `myrtos_dup`, the device use
+count, the open file reference count -- are all proven, because redirection
+uses them.
 

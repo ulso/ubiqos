@@ -98,6 +98,26 @@ void     myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n);
 int32_t  myrtos_io_file_seek(int32_t path, int32_t owner_pid,
                              int32_t offset, uint32_t whence);
 
+// --- PIPES ----------------------------------------------------------------
+// A buffer with two ends. The reader blocks while it is empty and a writer
+// still holds the other end; when the last writer closes, an empty pipe reads
+// as end of file rather than blocking for ever, which is the whole difference
+// between a pipe and a device that has gone quiet.
+//
+// The waiting is the same machinery devices use -- block_on_read, the readable
+// check, and the wake on the timer tick -- because a pipe is exactly a thing
+// that sometimes has bytes and sometimes does not.
+#define MYRTOS_MAX_PIPES 4
+#define MYRTOS_PIPE_BUF  128
+
+// Two descriptors: fds[0] reads, fds[1] writes. -1 when none can be had.
+int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid);
+
+// True when a read would return nothing and nothing can ever arrive: an empty
+// pipe whose writers have all gone. The read system call asks before blocking,
+// since zero from a device means "not yet" and zero from here means "never".
+bool    myrtos_io_at_eof(int32_t path, int32_t owner_pid);
+
 // A second descriptor onto the same thing. new_path -1 takes the lowest free
 // one; otherwise that number, closing whatever was there. This is dup and dup2,
 // and it is what redirection is made of: a shell puts the file on descriptor 1,

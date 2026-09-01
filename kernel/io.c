@@ -253,7 +253,26 @@ typedef struct {
 typedef struct {
     const myrtos_device_t *device;
     int16_t file;                  // index into open_files, -1 for a device
+    int16_t pipe;                  // index into pipes, -1 when not one
+    uint8_t pipe_write;            // which end of it this descriptor is
 } myrtos_path_t;
+
+// See io.h. A ring, and the counts of who still holds each end -- the second is
+// what tells an empty pipe apart from a finished one.
+typedef struct {
+    uint8_t  buf[MYRTOS_PIPE_BUF];
+    uint32_t head, tail;
+    int32_t  readers, writers;
+} pipe_t;
+
+static pipe_t pipes[MYRTOS_MAX_PIPES];
+
+static uint32_t pipe_used(const pipe_t *q) {
+    return (q->head - q->tail) % MYRTOS_PIPE_BUF;
+}
+
+static myrtos_path_t *pipe_entry(int32_t path, int32_t owner_pid);
+static void pipe_release(myrtos_path_t *p);
 
 // See io.h. Written by the filesystem server, which is a thread, and read and
 // written by open and close, which are traps -- so every one of them holds
@@ -292,6 +311,7 @@ void myrtos_io_init(void) {
         for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
             paths[p][i].device = 0;
             paths[p][i].file = -1;
+            paths[p][i].pipe = -1;
         }
     }
     myrtos_print("I/O manager ready, awaiting device descriptors\n");
@@ -359,6 +379,7 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
             if (devices[i].driver->open() != 0) return -1;
             paths[owner_pid][p].device = &devices[i];
             paths[owner_pid][p].file = -1;
+            paths[owner_pid][p].pipe = -1;
             return p;
         }
         return -1;
@@ -488,11 +509,33 @@ void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
         // descriptors do. Two processes appending to the same file interleave
         // rather than overwrite, which is the whole point of sharing it.
         if (paths[child_pid][i].file >= 0) open_files[paths[child_pid][i].file].refs++;
+        // A pipe end held by two processes is what makes a pipeline work: the
+        // writer's end is not finished until every holder has let go.
+        if (paths[child_pid][i].pipe >= 0) {
+            if (paths[child_pid][i].pipe_write) pipes[paths[child_pid][i].pipe].writers++;
+            else                                pipes[paths[child_pid][i].pipe].readers++;
+        }
     }
     restore_interrupts(st);
 }
 
 int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid) {
+    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    if (q) {
+        if (!q->pipe_write) return -1;                  // the wrong end
+        uint32_t st = save_and_disable_interrupts();
+        pipe_t *r = &pipes[q->pipe];
+        // Nobody to read it. Failing beats filling a buffer that will never be
+        // emptied, which is what SIGPIPE is for elsewhere.
+        if (!r->readers) { restore_interrupts(st); return -1; }
+        uint32_t n = 0;
+        while (n < len && pipe_used(r) < MYRTOS_PIPE_BUF - 1) {
+            r->buf[r->head] = buf[n++];
+            r->head = (r->head + 1) % MYRTOS_PIPE_BUF;
+        }
+        restore_interrupts(st);
+        return (int32_t)n;                              // zero means wait for room
+    }
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     return p->device->driver->write(buf, len);
@@ -552,6 +595,13 @@ bool myrtos_io_readable(int32_t path, int32_t owner_pid) {
 // How much, rather than whether. A device with no readable entry point is not
 // an error: it has nothing waiting, which is what zero says.
 int32_t myrtos_io_readable_count(int32_t path, int32_t owner_pid) {
+    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    // An exhausted pipe reads as ready, because what it has ready is the end of
+    // itself: a reader that stayed blocked would wait for a writer that has
+    // gone. The read call sorts the two apart with myrtos_io_at_eof.
+    if (q) return q->pipe_write ? 0
+         : (int32_t)pipe_used(&pipes[q->pipe]) + (pipes[q->pipe].writers ? 0 : 1);
+
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     if (!p->device->driver->readable) return 0;
@@ -559,6 +609,12 @@ int32_t myrtos_io_readable_count(int32_t path, int32_t owner_pid) {
 }
 
 bool myrtos_io_writable(int32_t path, int32_t owner_pid) {
+    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    // Room, or nobody left to read it -- and the second counts as writable so
+    // that a writer into a pipe nobody holds fails rather than waits for ever.
+    if (q) return q->pipe_write
+        && (pipe_used(&pipes[q->pipe]) < MYRTOS_PIPE_BUF - 1 || !pipes[q->pipe].readers);
+
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return false;
     if (!p->device->driver->writable) return true;      // cannot fill up
@@ -566,6 +622,19 @@ bool myrtos_io_writable(int32_t path, int32_t owner_pid) {
 }
 
 int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_pid) {
+    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    if (q) {
+        if (q->pipe_write) return -1;                   // the wrong end
+        uint32_t st = save_and_disable_interrupts();
+        pipe_t *r = &pipes[q->pipe];
+        uint32_t n = 0;
+        while (n < len && pipe_used(r)) {
+            buf[n++] = r->buf[r->tail];
+            r->tail = (r->tail + 1) % MYRTOS_PIPE_BUF;
+        }
+        restore_interrupts(st);
+        return (int32_t)n;
+    }
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p || !p->device->driver->read) return -1;
     return p->device->driver->read(buf, len);
@@ -589,6 +658,13 @@ int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
         restore_interrupts(st);
         return 0;
     }
+    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    if (q) {
+        uint32_t st = save_and_disable_interrupts();
+        pipe_release(q);
+        restore_interrupts(st);
+        return 0;
+    }
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     if (!device_shared(path, owner_pid)) p->device->driver->close();
@@ -596,11 +672,60 @@ int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
     return 0;
 }
 
+static myrtos_path_t *pipe_entry(int32_t path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
+    if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
+    if (paths[owner_pid][path].pipe < 0) return 0;
+    return &paths[owner_pid][path];
+}
+
+int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS || !fds) return -1;
+    uint32_t st = save_and_disable_interrupts();
+
+    int32_t q = -1;
+    for (int i = 0; i < MYRTOS_MAX_PIPES; i++)
+        if (!pipes[i].readers && !pipes[i].writers) { q = i; break; }
+
+    int32_t r = -1, w = -1;
+    for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
+        if (paths[owner_pid][i].device || paths[owner_pid][i].file >= 0
+            || paths[owner_pid][i].pipe >= 0) continue;
+        if (r < 0) r = i; else { w = i; break; }
+    }
+    if (q < 0 || w < 0) { restore_interrupts(st); return -1; }
+
+    pipes[q].head = pipes[q].tail = 0;
+    pipes[q].readers = pipes[q].writers = 1;
+    paths[owner_pid][r].pipe = (int16_t)q; paths[owner_pid][r].pipe_write = 0;
+    paths[owner_pid][w].pipe = (int16_t)q; paths[owner_pid][w].pipe_write = 1;
+    fds[0] = r;
+    fds[1] = w;
+
+    restore_interrupts(st);
+    return 0;
+}
+
+bool myrtos_io_at_eof(int32_t path, int32_t owner_pid) {
+    myrtos_path_t *p = pipe_entry(path, owner_pid);
+    if (!p || p->pipe_write) return false;
+    return !pipe_used(&pipes[p->pipe]) && !pipes[p->pipe].writers;
+}
+
+// Letting go of one end. A reader blocked on an empty pipe is released by the
+// writer's last close, which is why the counts matter more than the buffer.
+static void pipe_release(myrtos_path_t *p) {
+    if (p->pipe < 0) return;
+    if (p->pipe_write) { if (pipes[p->pipe].writers) pipes[p->pipe].writers--; }
+    else               { if (pipes[p->pipe].readers) pipes[p->pipe].readers--; }
+    p->pipe = -1;
+}
+
 int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return -1;
     if (path < 0 || path >= MYRTOS_MAX_PATHS) return -1;
     myrtos_path_t *src = &paths[owner_pid][path];
-    if (!src->device && src->file < 0) return -1;       // nothing to copy
+    if (!src->device && src->file < 0 && src->pipe < 0) return -1;
     if (new_path == path) return path;                  // dup2 onto itself
 
     uint32_t st = save_and_disable_interrupts();
@@ -622,6 +747,10 @@ int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
 
     paths[owner_pid][new_path] = *src;
     if (src->file >= 0) open_files[src->file].refs++;   // one more descriptor on it
+    if (src->pipe >= 0) {
+        if (src->pipe_write) pipes[src->pipe].writers++;
+        else                 pipes[src->pipe].readers++;
+    }
     restore_interrupts(st);
     return new_path;
 }
@@ -631,6 +760,7 @@ void myrtos_io_close_all(int32_t owner_pid) {
     uint32_t st = save_and_disable_interrupts();
     for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
         if (paths[owner_pid][i].file >= 0) file_release(&paths[owner_pid][i]);
+        if (paths[owner_pid][i].pipe >= 0) pipe_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].device) {
             paths[owner_pid][i].device->driver->close();
             paths[owner_pid][i].device = 0;

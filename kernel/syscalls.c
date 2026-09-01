@@ -163,6 +163,18 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         }
+        case SYS_PIPE: {
+            int32_t fds[2];
+            if (myrtos_io_pipe(fds, myrtos_current_pid()) < 0) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            int32_t *out = (int32_t*)(uintptr_t)frame->a0;
+            out[0] = fds[0];
+            out[1] = fds[1];
+            frame->a0 = 0;
+            break;
+        }
         case SYS_DUP:
             frame->a0 = (uint32_t)myrtos_io_dup((int32_t)frame->a0, (int32_t)frame->a1,
                                                 myrtos_current_pid());
@@ -249,6 +261,13 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             int32_t n = myrtos_io_read(path, (uint8_t*)(uintptr_t)frame->a1,
                                        frame->a2, myrtos_current_pid());
+            // Zero from a device means "not yet" and is worth waiting for.
+            // Zero from a pipe whose writers have gone means "never", and a
+            // process that waited for it would wait for ever.
+            if (n == 0 && myrtos_io_at_eof(path, myrtos_current_pid())) {
+                frame->a0 = 0;
+                break;
+            }
             if (n == 0 && myrtos_current_pid() != 0) {
                 // Nothing there. Step mepc back onto the ecall and block: when
                 // the process runs again it re-executes the call with its

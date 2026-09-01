@@ -301,25 +301,13 @@ static int take_redirects(char *args, redirect_t *out, int max) {
     return n;
 }
 
-// Split the line at the first space: everything before is the module name,
-// everything after is the command line the process is given.
-static int32_t exec_line(char *line) {
-    char *args = line;
+// One command, with its redirections applied and undone, started but not
+// waited for. A pipeline needs both halves running at once, so waiting cannot
+// happen in here.
+static int32_t start_one(char *cmd) {
+    char *args = cmd;
     while (*args && *args != ' ') args++;
     if (*args) { *args = 0; args++; while (*args == ' ') args++; }
-
-    // A trailing & means do not wait. Without it there is no way to have two
-    // processes running at once from the keyboard, and no way to see that the
-    // sleep list orders more than one sleeper.
-    bool background = false;
-    char *end = args;
-    while (*end) end++;
-    while (end > args && end[-1] == ' ') end--;
-    if (end > args && end[-1] == '&') {
-        background = true;
-        end[-1] = 0;
-        while (end > args && end[-1] == ' ') { end--; *end = 0; }
-    }
 
     redirect_t rd[3];
     int nrd = take_redirects(args, rd, 3);
@@ -346,7 +334,44 @@ static int32_t exec_line(char *line) {
         opened++;
     }
 
-    int32_t pid = opened == nrd ? myrtos_exec(line, args) : -1;
+    int32_t pid = opened == nrd ? myrtos_exec(cmd, args) : -1;
+
+    // Back to the terminal. The child took its copy when it was made, so this
+    // cannot reach it.
+    for (int i = nrd - 1; i >= 0; i--) {
+        if (saved[i] < 0) continue;
+        myrtos_dup(saved[i], rd[i].fd);
+        myrtos_close(saved[i]);
+    }
+    return pid;
+}
+
+// Split the line at the first space: everything before is the module name,
+// everything after is the command line the process is given.
+static int32_t exec_line(char *line) {
+    // No pipelines yet. The kernel has pipes -- myrtos_pipe, and a descriptor
+    // can name one -- but the shell half is not finished: a first attempt hung
+    // it, and saying so is better than accepting a "|" that stops the machine.
+    for (char *b = line; *b; b++) {
+        if (*b != '|') continue;
+        myrtos_write_str(MYRTOS_STDERR, "sh: pipelines are not finished yet\n");
+        return -3;                              // said its piece already
+    }
+
+    // A trailing & means do not wait. Without it there is no way to have two
+    // processes running at once from the keyboard, and no way to see that the
+    // sleep list orders more than one sleeper.
+    bool background = false;
+    char *end = line;
+    while (*end) end++;
+    while (end > line && end[-1] == ' ') end--;
+    if (end > line && end[-1] == '&') {
+        background = true;
+        end[-1] = 0;
+        while (end > line && end[-1] == ' ') { end--; *end = 0; }
+    }
+
+    int32_t pid = start_one(line);
     // Wait for it before prompting again. Without this the prompt raced the
     // command's own output, and two commands in a row interleaved their lines.
     if (pid >= 0 && !background) {
@@ -357,14 +382,6 @@ static int32_t exec_line(char *line) {
         myrtos_foreground(MYRTOS_STDIN, pid);
         myrtos_wait(pid);
         myrtos_foreground(MYRTOS_STDIN, 0);
-    }
-
-    // Back to the terminal. The child took its copy when it was made, so this
-    // cannot reach it, background or not.
-    for (int i = nrd - 1; i >= 0; i--) {
-        if (saved[i] < 0) continue;
-        myrtos_dup(saved[i], rd[i].fd);
-        myrtos_close(saved[i]);
     }
     return pid;
 }
@@ -435,7 +452,7 @@ void module_main(void) {
                     change_dir(e->out, e->line);
                 } else {
                     int32_t r = exec_line(e->line);
-                    if (r < 0) {
+                    if (r < 0 && r != -3) {
                         myrtos_line_t l;
                         myrtos_line_reset(&l);
                         // -2 means the module is there but is not re-entrant and

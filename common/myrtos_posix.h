@@ -90,6 +90,15 @@ static inline int open(const char *path, int flags, ...)
     return (int)fd;
 }
 
+static inline int pipe(int fds[2])
+{
+    int32_t f[2];
+    if (myrtos_pipe(f) < 0) { errno = ENOSYS; return -1; }
+    fds[0] = (int)f[0];
+    fds[1] = (int)f[1];
+    return 0;
+}
+
 static inline int dup(int fd)
 {
     int32_t n = myrtos_dup((int32_t)fd, -1);
