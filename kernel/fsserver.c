@@ -158,6 +158,15 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         if (n > 0) myrtos_io_file_advance(r->fd, from, (uint32_t)n);
         return n;
     }
+    case MYRTOS_MSG_FS_STAT: {
+        const myrtos_fs_stat_t *r = (const myrtos_fs_stat_t*)m->data;
+        make_abs(from, r->name, abs, sizeof(abs));
+        // The machine root is a directory that no volume owns, and saying so is
+        // better than saying it does not exist.
+        if (!abs[1]) { if (r->size) *r->size = 0; return MYRTOS_ATTR_DIRECTORY; }
+        VOLUME_OR_FAIL(stat);
+        return ops->stat(rest, r->size);
+    }
     case MYRTOS_MSG_FS_MOUNT:
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted

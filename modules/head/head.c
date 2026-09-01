@@ -38,6 +38,12 @@ void module_main(int argc, char **argv) {
         return;
     }
 
+    // stat before opening, so a missing file is named before anything else
+    // happens -- and so the length is there to report.
+    struct stat st;
+    if (stat(argv[1], &st) < 0) { fputs("head: no such file\n", stderr); return; }
+    if (S_ISDIR(st.st_mode)) { fputs("head: that is a directory\n", stderr); return; }
+
     FILE *f = fopen(argv[1], "r");
     if (!f) { fputs("head: cannot open it\n", stderr); return; }
 

@@ -37,6 +37,10 @@ bool     myrtos_fat_mkdir(const char *path);
 // Remove a directory. Refuses one that still has anything in it.
 bool     myrtos_fat_rmdir(const char *path);
 
+// One named entry: its attribute byte, or -1 when there is no such thing. The
+// size comes back through the pointer, and a directory reports zero.
+int32_t  myrtos_fat_stat(const char *path, uint32_t *size_out);
+
 // Take the card again from the beginning, for one swapped while running.
 bool     myrtos_fat_remount(void);
 

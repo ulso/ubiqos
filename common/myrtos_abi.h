@@ -164,6 +164,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_RMDIR     33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
 #define SYS_RECEIVETMO 44u  // a0 = msg out, a1 = milliseconds
 #define SYS_SEEK      45u   // a0 = descriptor, a1 = offset, a2 = whence
+#define SYS_FSSTAT    46u   // a0 = myrtos_fs_stat_t -> a0 = attributes, -1 none
 
 #define MYRTOS_SEEK_SET 0u   // from the start of the file
 #define MYRTOS_SEEK_CUR 1u   // from where the descriptor is now
@@ -217,6 +218,7 @@ typedef struct {
 #define MYRTOS_MSG_FS_MOUNT  9u
 #define MYRTOS_MSG_FS_OPEN   10u   // data = path -> a descriptor
 #define MYRTOS_MSG_FS_FDIO   11u   // data = myrtos_fs_fdio_t
+#define MYRTOS_MSG_FS_STAT   12u   // data = myrtos_fs_stat_t
 
 // The WiFi coprocessor is a service too, for the same reason the filesystem is:
 // talking to it means waiting seconds for a scan, and waiting must not happen
@@ -588,6 +590,14 @@ typedef struct {
     uint32_t write;                 // non-zero to write
 } myrtos_fs_fdio_t;
 
+// Asking about one named file. The size comes back through the pointer because
+// the reply carries the attribute byte, and a directory is worth telling from a
+// file even when both exist.
+typedef struct {
+    const char *name;
+    uint32_t   *size;
+} myrtos_fs_stat_t;
+
 // Read a slice of a file. Returns bytes read, 0 at end of file, -1 if missing.
 static inline int32_t myrtos_fs_read(const char *name, uint32_t offset, void *buf, uint32_t len)
 {
@@ -605,6 +615,14 @@ static inline int32_t myrtos_fs_write(const char *name, uint32_t offset, const v
 }
 
 // Delete a file. Returns 0, or -1 if it is missing or is a directory.
+// The attribute byte, or -1 when there is no such entry. MYRTOS_ATTR_DIRECTORY
+// is the bit worth testing. Size may be null if only existence matters.
+static inline int32_t myrtos_fs_stat(const char *name, uint32_t *size_out)
+{
+    myrtos_fs_stat_t r = { name, size_out };
+    return myrtos_syscall(SYS_FSSTAT, (uint32_t)(uintptr_t)&r, 0, 0);
+}
+
 static inline int32_t myrtos_fs_remove(const char *name)
 {
     return myrtos_syscall(SYS_FSREMOVE, (uint32_t)(uintptr_t)name, 0, 0);

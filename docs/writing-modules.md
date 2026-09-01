@@ -693,9 +693,17 @@ The program owes one line, as it owes a C library one:
 
     MYRTOS_STDIO_DEFINE
 
-**Modes are "r" and "w".** `"a"` and any `"+"` are refused with `ENOSYS`: both
-need the file's length or a stream that can turn round mid-way, and both want a
-`stat` this filesystem does not have. A program that asks to append and is
-quietly given the beginning of the file destroys it, so this is a refusal and
-not an approximation.
+**Modes are "r", "w" and "a".** Appending works because `stat` arrived and
+`open` can ask how long the file already is; before that it was refused, since a
+program that asks to append and is given the start of the file destroys it.
+
+`"+"` is still refused with `ENOSYS`. It needs a stream that can turn round
+mid-way, and this one holds a single direction at a time -- which is what keeps
+the buffer arithmetic simple enough to be right.
+
+`stat(path, &st)` gives `st_size` and `st_mode`, with `S_ISDIR`. There are no
+owners, times or permissions here to report, so those fields do not exist rather
+than lying. `lseek(fd, n, SEEK_END)` is still refused, and the reason is no
+longer the missing stat: a raw descriptor does not carry its path, so there is
+nothing to ask about. `fopen` knows its path, which is why `"a"` works.
 

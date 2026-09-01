@@ -65,18 +65,26 @@ static inline FILE *__myrtos_std(int32_t fd)
 #define stderr __myrtos_std(MYRTOS_STDERR)
 
 // --- opening ---------------------------------------------------------------
-// "r" and "w" only. "a" needs the file's length to start at the end, and "+"
-// needs a stream that can turn round mid-way; both want a stat this filesystem
-// does not have. They are refused rather than approximated, because a program
-// that asks to append and is given the beginning of the file destroys it.
+// "r", "w" and "a". Appending works because open can ask how long the file is
+// and place the descriptor at the end; before stat existed it was refused,
+// since a program that asks to append and is given the start of the file
+// destroys it.
 static inline FILE *fopen(const char *path, const char *mode)
 {
-    if (!mode || (mode[0] != 'r' && mode[0] != 'w')) { errno = EINVAL; return 0; }
+    if (!mode || (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a')) {
+        errno = EINVAL;
+        return 0;
+    }
+    // "+" would need a stream that can turn round mid-way, and this one holds
+    // one direction at a time -- which is what makes the buffer arithmetic
+    // simple enough to be right. Refused rather than approximated.
     for (const char *m = mode; *m; m++)
-        if (*m == '+' || *m == 'a') { errno = ENOSYS; return 0; }
+        if (*m == '+') { errno = ENOSYS; return 0; }
 
-    int writing = (mode[0] == 'w');
-    int fd = open(path, writing ? (O_WRONLY | O_CREAT | O_TRUNC) : O_RDONLY);
+    int writing = (mode[0] != 'r');
+    int fd = open(path, mode[0] == 'w' ? (O_WRONLY | O_CREAT | O_TRUNC)
+                      : mode[0] == 'a' ? (O_WRONLY | O_CREAT | O_APPEND)
+                      : O_RDONLY);
     if (fd < 0) return 0;
 
     for (int i = 3; i < MYRTOS_FOPEN_MAX; i++) {

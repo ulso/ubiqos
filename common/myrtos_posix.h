@@ -23,11 +23,14 @@
 #define O_RDWR   2
 #define O_CREAT  0x40      // implied: the first write brings the file into being
 #define O_TRUNC  0x200     // honoured by removing the file before opening it
-#define O_APPEND 0x400     // REFUSED: needs the file's length, and there is no stat
+#define O_APPEND 0x400     // the descriptor is placed at the end after opening
 
 #define SEEK_SET MYRTOS_SEEK_SET
 #define SEEK_CUR MYRTOS_SEEK_CUR
-#define SEEK_END 2         // REFUSED by lseek, for the same reason
+// SEEK_END is still refused by lseek, and the reason is no longer the missing
+// stat: a raw descriptor does not carry the path, so there is nothing to ask
+// about. fopen knows its path, so stdio's "a" mode works.
+#define SEEK_END 2
 
 #define ENOENT  2
 #define EBADF   9
@@ -43,19 +46,47 @@
 // exactly as a C library would define it for you.
 extern __thread int errno;
 
+// Existence, and the size if wanted. Enough of stat for what porting asks of
+// it; there are no owners, times or permissions here to report.
+struct stat {
+    uint32_t st_size;
+    uint32_t st_mode;
+};
+#define S_IFDIR   0x10
+#define S_ISDIR(m) (((m) & S_IFDIR) != 0)
+
+static inline int stat(const char *path, struct stat *st)
+{
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(path, &size);
+    if (attr < 0) { errno = ENOENT; return -1; }
+    if (st) { st->st_size = size; st->st_mode = (uint32_t)attr; }
+    return 0;
+}
+
 // The mode argument is accepted and ignored: there are no permissions to set.
 static inline int open(const char *path, int flags, ...)
 {
-    if (flags & O_APPEND) { errno = ENOSYS; return -1; }
+    // Opening for reading something that is not there is an error, and since
+    // stat arrived it can be said at the right moment instead of being
+    // discovered by the first read.
+    int writing = (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) != 0;
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(path, &size);
+    if (!writing && attr < 0) { errno = ENOENT; return -1; }
 
     // Truncation is the one flag that needs doing rather than allowing. Writing
     // does not shorten a file, so a shorter text over a longer one would leave
     // the old tail in place -- removing it first is what the `write` utility
     // has always done by hand.
-    if (flags & O_TRUNC) myrtos_fs_remove(path);
+    if (flags & O_TRUNC) { myrtos_fs_remove(path); size = 0; }
 
     int32_t fd = myrtos_open(path);
     if (fd < 0) { errno = ENOENT; return -1; }
+
+    // Appending is a seek, now that there is something to seek to.
+    if ((flags & O_APPEND) && size)
+        myrtos_seek(fd, (int32_t)size, MYRTOS_SEEK_SET);
     return (int)fd;
 }
 

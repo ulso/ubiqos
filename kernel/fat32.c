@@ -257,6 +257,25 @@ bool myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
 // asks for one piece at a time. The cluster chain is walked from the start on
 // every call, which is quadratic over a large file -- acceptable while files are
 // small, and the place to put a cursor if that stops being true.
+// One named entry, which is what read_at already does before it reads -- the
+// two helpers were here all along and nothing needed adding to find them.
+int32_t myrtos_fat_stat(const char *path, uint32_t *size_out) {
+    if (!mounted) return -1;
+    if (size_out) *size_out = 0;
+
+    // The volume's own root has no directory entry to look up. It exists.
+    const char *p = path ? path : "";
+    if (!p[0] || (p[0] == '/' && !p[1])) return 0x10;
+
+    uint32_t dir = 0; char name_83[12];
+    if (!resolve_parent(path, &dir, name_83)) return -1;
+
+    uint32_t cluster = 0, file_size = 0; uint8_t attr = 0;
+    if (!find_entry(dir, name_83, &cluster, &file_size, &attr)) return -1;
+    if (size_out) *size_out = file_size;
+    return (int32_t)attr;
+}
+
 int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len) {
     if (!mounted) return -1;
 
@@ -680,6 +699,7 @@ const myrtos_fsops_t myrtos_fat_ops = {
     .mkdir     = myrtos_fat_mkdir,
     .rmdir     = myrtos_fat_rmdir,
     .stat_nth  = myrtos_fat_stat_nth,
+    .stat      = myrtos_fat_stat,
     .find_nth  = myrtos_fat_find_nth,
     .read_file = myrtos_fat_read_file,
 };

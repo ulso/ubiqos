@@ -38,8 +38,18 @@ static int32_t dev_stat_nth(const char *dirpath, uint32_t index,
     return 0;                                              // a file, not a directory
 }
 
+// A device has no length, but it does have existence, and that is the half of
+// stat anyone asks /dev about.
+static int32_t dev_stat(const char *path, uint32_t *size_out) {
+    if (size_out) *size_out = 0;
+    if (!path || path[0] != '/') return -1;
+    if (!path[1]) return MYRTOS_ATTR_DIRECTORY;          // /dev itself
+    return myrtos_io_has_device(path + 1) ? 0 : -1;
+}
+
 static const myrtos_fsops_t dev_ops = {
     .stat_nth = dev_stat_nth,
+    .stat     = dev_stat,
 };
 
 void myrtos_vfs_init(void) {

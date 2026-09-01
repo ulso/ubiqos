@@ -28,6 +28,10 @@ typedef struct {
     bool    (*mkdir)(const char *path);
     bool    (*rmdir)(const char *path);
     int32_t (*stat_nth)(const char *dirpath, uint32_t index, char *name_out, uint32_t *size_out);
+    // One named entry rather than the nth: attribute byte, or -1. This is what
+    // lets a program ask how long a file is, which is what "a", SEEK_END and an
+    // open that can refuse a missing file all wanted.
+    int32_t (*stat)(const char *path, uint32_t *size_out);
     // Module scanning: find the nth file with this extension, then read it.
     bool    (*find_nth)(const char *ext_3, uint32_t index, char *name_out);
     int32_t (*read_file)(const char *name_83, uint8_t *buf, uint32_t max_len);

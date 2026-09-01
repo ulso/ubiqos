@@ -372,6 +372,12 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         }
+        case SYS_FSSTAT:
+            if (!fs_request(MYRTOS_MSG_FS_STAT, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         case SYS_MOUNT:
             if (!fs_request(MYRTOS_MSG_FS_MOUNT, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;
