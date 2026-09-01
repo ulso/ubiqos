@@ -30,6 +30,8 @@
 #include "tlsf.h"
 
 void myrtos_print(const char *s);
+// No header declares this one; main.c reaches for it the same way.
+int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const char *args);
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 const char *myrtos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
@@ -321,11 +323,63 @@ static bool card_bring_up(bool try_sdio) {
     return true;
 }
 
+// The boot script, run once, by a shell like any other. It is a shell rather
+// than something new because the shell already knows how to run a line, and
+// its stdin is already a descriptor: point path 0 at a file instead of a
+// console and the same loop reads a script. "script" tells it to keep quiet --
+// no banner, no prompt, and above all no terminal-width probe, which would eat
+// the first 150 ms of the file waiting for a cursor report.
+//
+// It is started, not waited for. The system is up either way, and a script that
+// blocks holds up nothing but itself.
+#define STARTUP_PATH "/sd/startup"
+
+static void run_startup_script(void) {
+    uint32_t size = 0;
+    if (myrtos_fat_stat("startup", &size) < 0) return;   // no script, nothing to say
+
+    const char *sh = myrtos_moddir_match("sh");
+    const myrtos_module_header_t *m = sh ? myrtos_moddir_link(sh) : 0;
+    int32_t pid = m ? myrtos_process_create(m, "script") : -1;
+    if (pid < 0) { myrtos_print("startup: no shell to run it\n"); return; }
+
+    // A new process has no paths, so the file lands on 0 -- but take the
+    // number the call gives rather than trusting that, and put it on stdin.
+    int32_t in = myrtos_io_open_file(STARTUP_PATH, pid);
+    if (in < 0) { myrtos_print("startup: could not open " STARTUP_PATH "\n"); return; }
+    if (in != MYRTOS_STDIN) myrtos_io_dup(in, MYRTOS_STDIN, pid);
+
+    const char *console = myrtos_io_has_device("con") ? "con" : "usb";
+    myrtos_io_open_as(console, pid, MYRTOS_STDOUT);
+    myrtos_io_open_as(console, pid, MYRTOS_STDERR);
+
+    myrtos_print("Running " STARTUP_PATH "\n");
+}
+
 static void fs_thread(void) {
-    // Nothing touches the card here, and that is deliberate. Mounting it at
-    // startup would latch it into SPI before anyone could ask for SDIO, and it
-    // would spend the driver's unbounded waits on a machine that has just come
-    // up. The card is mounted when someone says `mount`, and not before.
+    // The card is brought up here, in a process, and this is the only place it
+    // can be. Not in main: that runs before the scheduler, so a driver that
+    // stalls takes the console and USB with it and the BOOTSEL button is the
+    // way back. Here a stall costs one process.
+    //
+    // Over SPI, and not over SDIO, however tempting the speed is.
+    //
+    // This did auto-mount SDIO for one build, and it worked until something
+    // wrote. Reading over four bits is proven -- 100000 bytes verified byte for
+    // byte -- but nothing had ever written over it, because until this function
+    // existed the default bus was SPI and every write ever tested went that
+    // way. The first `echo > /sd/startup` on SDIO wedged the data state machine
+    // and the driver printed "gave up waiting" onto the screen for as long as
+    // the board was powered: the retry above it never stops, and the filesystem
+    // server at priority 22 starves the shell at 16, so there is no way to type
+    // anything at a board that is still running.
+    //
+    // So the automatic bus is the one that is proven in both directions. `mount
+    // sdio` still exists for reading, and it is worth having -- but it must not
+    // be what a machine picks for itself before anyone has asked for it.
+    card_bring_up(false);
+    run_startup_script();
+
     for (;;) {
         myrtos_msg_t m;
         int32_t from = myrtos_receive(&m);
