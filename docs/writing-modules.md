@@ -446,6 +446,57 @@ target, which is why the check looks at all four.
     MODULE IS NOT POSITION INDEPENDENT:
       badtest_app.elf: writable section .sbss is present
 
+### __thread, and where it stops
+
+The way out is `__thread`, and it is not a workaround but the mechanism the
+format was built around -- it is OS-9's U register, in the register RISC-V set
+aside for it. Three forms were measured, and all three pass as *position
+independent and shareable*:
+
+    __thread int counter;        // uninitialised, into .tbss
+    __thread int seeded = 5;     // initialised, into .tdata, copied per process
+    __thread char buf[256];      // an aggregate is no different
+
+Two forms do not, and both fail at compilation rather than at the checker, which
+is the better place:
+
+    __thread int x;
+    static int *p = &x;
+    // error: initializer element is not constant
+
+A thread-local address is not known until the process exists, so it cannot stand
+in a static initialiser. And in C++:
+
+    struct Counter { int n; Counter() : n(7) {} };
+    __thread Counter c;
+    // error: non-local variable 'c' declared '__thread'
+    //        needs dynamic initialization
+
+There is no phase in which a constructor could run -- nothing happens before
+`module_main` -- so thread-local objects must be plain data. A POD is fine.
+
+**What it costs.** The thread-local block is carved out of the process's memory
+and charged whether the variable is touched or not. `errno` and eight `FILE`
+objects come to 228 bytes; `strtok`'s saved pointer takes it to 232. Against the
+default four kilobytes that is small, and `MYRTOS_MEM_SIZE` raises the ceiling
+when it is not.
+
+**strtok is the one that catches people out.** Written the usual way it keeps a
+`static char *` between calls, and the module is refused:
+
+    MODULE IS NOT SHAREABLE:
+      d.elf: writable section .sbss is present
+
+A program that brings its own `strtok` is refused for exactly that reason.
+`myrtos_string.h` keeps that state in `__thread` instead, and offers `strtok_r`,
+which keeps it in the caller's own variable and needs nothing hidden at all.
+
+**The rule of thumb: `__thread` for code you write, `SINGLE` for code you
+import.** Putting `__thread` in front of every global in a third-party file is
+exactly the editing that porting was meant to avoid, and a `SINGLE` module is
+allowed writable data with no change to the source at all -- at the price of one
+instance running at a time, which for a utility is no price.
+
 ### File-scope variables
 
 `static` or not makes no difference. It changes linkage, not storage, and what
