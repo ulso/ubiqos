@@ -206,6 +206,10 @@ static bool spi_write_block(uint32_t lba, const uint8_t *buf) {
 
 static bool use_sdio;
 
+// Off until the SDIO write path is made to work. Kept as a variable rather
+// than an #if so that the day someone fixes it, one line turns it back on.
+const bool myrtos_sd_sdio_writes_allowed = false;
+
 // Once SPI has been spoken to the card, SDIO is not worth asking for again --
 // see below. This says so, so that the mount command's retry does not hang.
 static bool sdio_refused;
@@ -272,15 +276,36 @@ bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     return sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) == SD_OK;
 }
 
+// Writing over four bits does not work, and this is where that is admitted.
+//
+// Reading does: 100000 bytes came back byte for byte on 1 Sep 2026. Writing was
+// never once tried, because until the filesystem server mounted the card itself
+// the default bus was SPI and every write anyone had tested went that way. The
+// first one over SDIO wedged the data state machine, and the wait below -- the
+// eighth unbounded one, missed when the other seven were bounded because this
+// path never ran -- spun for ever, printing the driver's give-up line onto the
+// screen for as long as the board had power.
+//
+// Refusing is better than trying. A wedged write is not merely slow: it stops
+// mid-block, and what is on the card afterwards is neither the old sector nor
+// the new one. So SDIO is a read-only bus here until someone makes the write
+// path work, and `mount sdio` says so.
 bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     if (!use_sdio) return spi_write_block(lba, buf);
     if ((uintptr_t)buf & 3u) return false;
+    if (!myrtos_sd_sdio_writes_allowed) return false;
+
     if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) return false;
 
-    // Asynchronous, and there is nothing else for this process to do until it
-    // lands. Spinning is honest here: the filesystem server is a process, so the
-    // scheduler can take the processor away from it while it waits.
+    // Bounded, for the reason above. The driver's own waits give up and return,
+    // and this one has to as well -- otherwise it simply calls them again.
     int status = SD_OK;
-    while (!sd_write_complete(&status)) { }
+    uint32_t spins = 0;
+    while (!sd_write_complete(&status)) {
+        if (++spins > 1000000u) {
+            myrtos_print("SD: write did not complete; the card may hold a torn block\n");
+            return false;
+        }
+    }
     return status == SD_OK;
 }

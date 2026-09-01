@@ -21,5 +21,6 @@ bool    myrtos_sd_present(void);
 // Four-bit SDIO, asked for rather than assumed -- see the note in sdcard.c.
 bool    myrtos_sd_try_sdio(void);
 bool    myrtos_sd_is_sdio(void);
+extern const bool myrtos_sd_sdio_writes_allowed;   // false: SDIO reads only
 
 #endif

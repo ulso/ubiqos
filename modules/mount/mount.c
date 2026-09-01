@@ -2,19 +2,20 @@
 
 // mount -- takes the SD card from the beginning.
 //
-//   mount        over SPI, which is safe
-//   mount sdio   over four-bit SDIO, which is not
+//   mount        over SPI, reading and writing
+//   mount sdio   over four-bit SDIO, reading only, about twelve times faster
 //
-// Nothing touches the card at startup, so this is always the first thing to
-// address it, and that matters: a card latches into SPI the moment it is asked
-// that way and stays there until the power is cut. SDIO has to be asked for
-// first or not at all, which is why there is no automatic fallback -- one plain
-// `mount` spends the chance for the rest of the power cycle.
+// The filesystem server mounts the card over SPI at startup, so by the time
+// anyone can type this the card is already latched into SPI and `mount sdio`
+// will refuse. Four bits therefore costs a power cycle: cut the power, and this
+// is the first thing to address the card. That is not a limitation of the
+// command but of the card, which latches into SPI the moment it is asked that
+// way and stays there until the power is cut.
 //
-// SDIO is the dangerous one. It takes DMA channels 8-11 by number without
-// claiming them and reprograms PIO1, and both belong to the video chain: the
-// screen goes black and stays black until a reset. That is not understood yet,
-// so it is behind a word rather than behind a guess.
+// The blacked-out screen the old comment here warned about was spoop() in the
+// vendored driver reprogramming DMA channel 3, and it is gone. What SDIO still
+// cannot do is write: the first attempt wedged the data state machine, so
+// myrtos_sd_write_block refuses rather than tearing a block in half.
 //
 // A swapped card needs the whole conversation repeated rather than the boot
 // sector reread: a fresh card comes up idle and knows nothing of what was asked
@@ -38,6 +39,9 @@ void module_main(int argc, char **argv) {
 
     if (myrtos_mount(bus) == 0) {
         myrtos_write_str(MYRTOS_STDOUT, "card mounted\n");
+        if (bus == MYRTOS_MOUNT_SDIO)
+            myrtos_write_str(MYRTOS_STDOUT,
+                             "reading only: writing over SDIO is not implemented\n");
     } else if (bus == MYRTOS_MOUNT_SDIO) {
         myrtos_write_str(MYRTOS_STDOUT,
                          "mount: no SDIO. If the card was already mounted over SPI it\n"
