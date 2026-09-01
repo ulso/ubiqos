@@ -501,6 +501,41 @@ void print_status(uint32_t *response_buffer, bool needs_fixup) {
     printf("\n");
 }
 
+// LOCAL: one line of state, printed after a failure rather than during one.
+// The driver's own traces printed on every poll and had to go; this says the
+// same things once, when something has actually gone wrong.
+void sd_dump_state(void) {
+    printf("  DAT sm at %d, chain dma %s, data dma %s, card %s\r\n",
+           (int)sd_pio->sm[SD_DAT_SM].addr,
+           dma_channel_is_busy(sd_chain_dma_channel) ? "busy" : "idle",
+           dma_channel_is_busy(sd_data_dma_channel)  ? "busy" : "idle",
+           sd_wait_not_busy(200) == SD_OK ? "ready" : "still busy after 200 ms");
+}
+
+// LOCAL: wait for the card to come out of the programming state.
+//
+// Upstream's own note twelve hundred lines down says "this is only writing the
+// first sector ... probably need a delay between sectors", and that is exactly
+// what this board sees: the directory sector lands and the data sector after it
+// wedges the data state machine. A card that has just been written is busy
+// programming and answers CMD13 with READY_FOR_DATA clear until it is done;
+// starting the next transfer before then is asking a card that is not
+// listening. read_status waits three milliseconds, which is a guess rather than
+// a bound, and is also the ready-check for everything else -- so this is
+// separate, and it is the writer's business to call it.
+int sd_wait_not_busy(uint32_t ms) {
+    uint32_t response_buffer[5];
+    for (uint32_t i = 0; i <= ms; i++) {
+        if (sd_command(sd_make_command(13, rca_high, rca_low, 0, 0), response_buffer, 6) == SD_OK) {
+            fixup_cmd_response_48(response_buffer);
+            const uint8_t *b = (const uint8_t *)response_buffer;
+            if (b[3] & 1) return SD_OK;          // READY_FOR_DATA
+        }
+        sleep_ms(1);
+    }
+    return SD_ERR_STUCK;
+}
+
 void read_status(bool dump)
 {
     uint32_t response_buffer[5];
@@ -530,7 +565,12 @@ void read_status(bool dump)
 
 int sd_set_wide_bus(bool wide)
 {
-  printf("Set bus width: %d\n", (wide ? 4 : 1));
+  // LOCAL CHANGE: this printed on every call, and the write path calls it twice
+  // per sector -- narrow to write, wide again afterwards. A hundred-kilobyte
+  // copy is 196 sectors, so it was 392 lines scrolled up a 640x480 framebuffer
+  // for a job with nothing to report. The function itself already does nothing
+  // when the width is unchanged; only the narration ran every time.
+
     if (bus_width == bw_unknown || bus_width == (wide ? bw_narrow : bw_wide)) {
         if (wide && !allow_four_data_pins) {
             printf("May not select wide pus without 4 data pins\n");
@@ -940,9 +980,36 @@ static uint32_t dma_ctrl_for(enum dma_channel_transfer_size size, bool src_incr,
 }
 //#define CRC_FIRST
 // note caller must make space for CRC (2 word) in 4 bit mode
+// LOCAL: park the data state machine, rather than assert that it is parked.
+//
+// The write path asserts twice that the machine sits at waiting_for_cmd with an
+// empty TX FIFO -- and this is built with -DNDEBUG, so both asserts compile to
+// nothing and the code proceeds regardless. It was not parked. The board said
+// "stuck 1 @ 12", and 12 is inside the receive loop: receive_bits is 9 and
+// wrap_for_4bit_receive is 14. A machine sitting in receive cannot drain the
+// words a write pushes at it, so the TX FIFO never empties and the wait that
+// noticed was the one that printed.
+//
+// What leaves it there is the read before it, and every write is preceded by
+// reads because the filesystem looks the file up first. So the assumption was
+// wrong in the one case that always happens.
+static int dat_sm_park(void) {
+    if (sd_pio->sm[SD_DAT_SM].addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd
+        && pio_sm_is_tx_fifo_empty(sd_pio, SD_DAT_SM)) {
+        return SD_OK;
+    }
+    pio_sm_set_enabled(sd_pio, SD_DAT_SM, false);
+    pio_sm_clear_fifos(sd_pio, SD_DAT_SM);
+    pio_sm_exec(sd_pio, SD_DAT_SM,
+                pio_encode_jmp(sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd));
+    pio_sm_set_enabled(sd_pio, SD_DAT_SM, true);
+    return SD_OK;
+}
+
 int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_count)
 {
     uint32_t response_buffer[5];
+    dat_sm_park();       // LOCAL: see above
 
 #ifdef CRC_FIRST
     // lets crc the first sector
@@ -1041,8 +1108,9 @@ int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_
     SD_WAIT_OR_RETURN_STUCK(
             sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd,
             "the data state machine to come back for a command");
-    assert(sd_pio->sm[SD_DAT_SM].addr == sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd);
-    assert(pio_sm_is_tx_fifo_empty(sd_pio, SD_DAT_SM));
+    // LOCAL: these two were asserts, which -DNDEBUG deletes. Parking makes the
+    // thing they asserted true instead of taking it on trust.
+    dat_sm_park();
     pio_sm_put(sd_pio, SD_DAT_SM, sd_pio_cmd(sd_cmd_or_dat_offset_state_inline_instruction, pio_encode_jmp(sd_cmd_or_dat_offset_no_arg_state_wait_high)));
     SD_WAIT_OR_RETURN_STUCK(
             sd_pio->sm[SD_DAT_SM].addr != sd_cmd_or_dat_offset_no_arg_state_waiting_for_cmd,

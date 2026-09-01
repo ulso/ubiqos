@@ -226,17 +226,20 @@ static bool sd_fail(const char *why) {
         myrtos_print("SD: ");
         myrtos_print(why);
         myrtos_print(" -- the card is offline until it is mounted again\n");
+        // Once, and with it the state that says where it stopped. A failure
+        // that only says "it failed" costs a power cycle to learn anything
+        // from; this one is meant to be read afterwards in /var/dmesg. The
+        // state machine and the channel numbers belong to the driver, so it
+        // prints them.
+        sd_dump_state();
     }
     return false;
 }
 
-// Off. Turned on once, on 1 Sep 2026, when the bus-width bug below was found
-// and looked like the whole story. It was not: with the width restored and the
-// driver's debug output gone, the first write still wedged the card exactly as
-// before. So the width was a real bug and not this one, and what actually stops
-// the write is still unknown -- to be found with the probe, not by flashing
-// another guess. See [[myrtos-sdio-parked]].
-const bool myrtos_sd_sdio_writes_allowed = false;
+// Writing over four-bit SDIO works, verified 1 Sep 2026: a 100000-byte copy
+// read back byte for byte across all 196 sectors. Kept as a variable rather
+// than an #if so it can be turned off in one line if a card ever misbehaves.
+const bool myrtos_sd_sdio_writes_allowed = true;
 
 // Once SPI has been spoken to the card, SDIO is not worth asking for again --
 // see below. This says so, so that the mount command's retry does not hang.
@@ -311,9 +314,8 @@ bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
 
 // Put the bus back to four bits after a write.
 //
-// This is what made writing over SDIO look impossible. sd_writeblocks_async
-// calls sd_set_wide_bus(false) -- "use 1 bit writes for now", says the comment
-// upstream -- and never puts it back. The write itself may well land, but the
+// sd_writeblocks_async calls sd_set_wide_bus(false) -- "use 1 bit writes for
+// now", says the comment upstream -- and never puts it back. The write itself may well land, but the
 // card and the driver are left one bit wide while use_sdio still says four, so
 // the next READ asks four lines for data arriving on one, the data state
 // machine never returns to waiting_for_cmd, and the bounded wait gives up.
@@ -326,20 +328,24 @@ static void restore_wide_bus(void) {
     if (use_sdio) sd_set_wide_bus(true);
 }
 
-// Writing over four bits: the bus width above was the fault.
+// Writing over four-bit SDIO, which took three wrong answers to get right.
 //
-// Reading does: 100000 bytes came back byte for byte on 1 Sep 2026. Writing was
-// never once tried, because until the filesystem server mounted the card itself
-// the default bus was SPI and every write anyone had tested went that way. The
-// first one over SDIO wedged the data state machine, and the wait below -- the
-// eighth unbounded one, missed when the other seven were bounded because this
-// path never ran -- spun for ever, printing the driver's give-up line onto the
-// screen for as long as the board had power.
+// The first write ever attempted wedged the card, and each of these looked like
+// the cause and was not: the bus left one bit wide after a write (real, fixed),
+// the driver's debug output in the polling loop (real, fixed), and the data
+// state machine not parked where the write path asserts it is -- an assert that
+// -DNDEBUG deletes, so the code proceeded on an assumption nothing checked.
 //
-// Refusing is better than trying. A wedged write is not merely slow: it stops
-// mid-block, and what is on the card afterwards is neither the old sector nor
-// the new one. So SDIO is a read-only bus here until someone makes the write
-// path work, and `mount sdio` says so.
+// What it actually was: after the data lands, the card spends time programming
+// and answers nothing until it is done. Restoring the bus width during that
+// window sends ACMD6 to a card that will not take a command, and it never came
+// back. The board said so plainly once there was a diagnostic to say it with --
+// both DMA channels idle, transfer finished, card still busy after half a
+// second. Wait for the card first, reconfigure afterwards.
+//
+// Upstream guessed at this from the other end and left the note in
+// sd_writeblocks_async: "probably need a delay between sectors". It is not a
+// delay, it is the card's own answer to CMD13.
 bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     if (!use_sdio) return spi_write_block(lba, buf);
     if ((uintptr_t)buf & 3u) return false;
@@ -361,6 +367,22 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
             return sd_fail("a write did not complete, and a block may be torn");
         }
     }
+    if (status != SD_OK) { restore_wide_bus(); return false; }
+
+    // Wait for the card FIRST, and only then touch the bus width. The other
+    // order was mine and it was wrong: restore_wide_bus sends ACMD6, and a card
+    // that is still programming will not take a command. So the sequence was
+    // write, reconfigure a busy card, then ask why it never came back -- and it
+    // never did, which is exactly what the board reported: both DMA channels
+    // idle, the transfer finished, the card still busy after half a second.
+    //
+    // Upstream's own note two functions down guessed at this from the other
+    // end: "probably need a delay between sectors". The delay is not a guess
+    // here, it is the card's own answer to CMD13.
+    if (sd_wait_not_busy(500) != SD_OK) {
+        restore_wide_bus();
+        return sd_fail("the card stayed busy for half a second after a write");
+    }
     restore_wide_bus();
-    return status == SD_OK;
+    return true;
 }

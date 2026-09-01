@@ -380,7 +380,12 @@ static void fs_thread(void) {
     // SPI, because it is the bus that can be written to. SDIO reads faster and
     // is reachable with `mount sdio` after a power cycle, but a machine must
     // not choose for itself a bus on which the first write wedges the card.
-    card_bring_up(false);
+    // SDIO first, SPI second. The order is the only one that works: a card
+    // latches into SPI the moment it is addressed that way and stays there
+    // until the power is cut, so SPI first would spend the one chance at four
+    // bits. A failed SDIO attempt never speaks SPI and leaves the card able to
+    // answer either way, so falling back costs nothing.
+    if (!card_bring_up(true)) card_bring_up(false);
     run_startup_script();
 
     for (;;) {

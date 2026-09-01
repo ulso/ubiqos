@@ -44,6 +44,13 @@ void sd_set_byteswap_on_read(bool swap);
 bool sd_scatter_read_complete(int *status);
 int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_count);
 bool sd_write_complete(int *status);
+
+// LOCAL: bounded wait for the card to leave the programming state after a
+// write. See the definition in sd_card.c.
+int sd_wait_not_busy(uint32_t ms);
+
+// LOCAL: one line of driver state, for after a failure.
+void sd_dump_state(void);
 int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint sector_count);
 int sd_set_wide_bus(bool wide);
 int sd_set_clock_divider(uint div);
