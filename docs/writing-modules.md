@@ -707,3 +707,37 @@ than lying. `lseek(fd, n, SEEK_END)` is still refused, and the reason is no
 longer the missing stat: a raw descriptor does not carry its path, so there is
 nothing to ask about. `fopen` knows its path, which is why `"a"` works.
 
+## The rest of the C library
+
+`myrtos_string.h`, `myrtos_ctype.h` and `myrtos_stdlib.h` alongside the stdio
+header, all inline and none of them holding state -- so a module pays only for
+what it calls and there is nothing for the position-independence check to
+object to.
+
+`printf`, `fprintf`, `snprintf`, `sprintf` and their `v` forms share one
+formatter: a stream and a fixed buffer differ only in where a character goes, so
+the sink is the difference and nothing is written twice. The count is kept
+whether or not the buffer can take it, which is how `snprintf` answers the
+standard's question -- how long would it have been. `%d %i %u %x %X %o %c %s %p`
+with `-`, `0`, `+`, space, width, precision and `*`. `l`, `h` and `z` are read
+and ignored, because long is int here and ported code is full of them.
+
+`sscanf`, `fscanf` and `scanf` mirror it with a source instead of a sink, and
+`ungetc` is what makes them possible: reading a number means reading one
+character too many.
+
+`malloc` asks PSRAM first. A process's own pool is four kilobytes -- a stack and
+a few locals, not what ported code expects of malloc -- while the bulk pool has
+megabytes and is what it is for. Eight bytes in front of every block remember
+its size, because the kernel knows it but through no call a module can make, and
+`realloc` cannot work without it.
+
+`modules/libctest/libctest.c` checks all of it against what the standard says
+and prints ok or FAIL per line, because eyeballing printf output is how a wrong
+width goes unnoticed for a year. It is also a worked example of the rule above:
+its failure counter had to become `static __thread`, since `check_module.py`
+refused the file while it was a plain static.
+
+Still absent: floating point in printf and scanf, `qsort`, `time`, and `"+"`
+stream modes.
+

@@ -2,6 +2,9 @@
 #define MYRTOS_STDIO_H
 
 #include "myrtos_posix.h"
+#include "myrtos_string.h"
+#include "myrtos_ctype.h"
+#include "myrtos_stdlib.h"
 
 // stdio, as far as it can honestly go here.
 //
@@ -35,6 +38,7 @@ typedef struct {
     uint8_t  writing;   // one direction at a time; see the note on modes
     uint8_t  owned;     // the buffer is ours to give back
     uint8_t  eof, err;
+    int16_t  unget;     // one pushed-back character, -1 for none; scanf needs it
 } FILE;
 
 // The program owes one line, exactly as a C library would have owed it:
@@ -56,7 +60,7 @@ extern __thread FILE __myrtos_files[MYRTOS_FOPEN_MAX];
 static inline FILE *__myrtos_std(int32_t fd)
 {
     FILE *f = &__myrtos_files[fd];
-    if (!f->used) { f->fd = fd; f->used = 1; }
+    if (!f->used) { f->fd = fd; f->unget = -1; f->used = 1; }
     return f;
 }
 
@@ -97,6 +101,7 @@ static inline FILE *fopen(const char *path, const char *mode)
         f->buf = (uint8_t *)myrtos_alloc_bulk(BUFSIZ);
         f->owned = f->buf ? 1 : 0;      // no buffer is slow, not broken
         f->size = f->buf ? BUFSIZ : 0;
+        f->unget = -1;
         f->used = 1;
         return f;
     }
@@ -154,6 +159,7 @@ static inline int __myrtos_fill(FILE *f)
 static inline int fgetc(FILE *f)
 {
     if (!f || !f->used || f->writing) { errno = EBADF; return EOF; }
+    if (f->unget >= 0) { int c = f->unget; f->unget = -1; return c; }
     if (f->pos >= f->len && __myrtos_fill(f) < 0) {
         if (f->buf) return EOF;
         uint8_t c;                          // no buffer, so one byte at a time
@@ -252,6 +258,295 @@ static inline int32_t ftell(FILE *f)
     if (here < 0) return -1;
     if (f->writing) return here + (int32_t)f->len;
     return here - (int32_t)(f->len - f->pos);
+}
+
+// One character back, which is all the standard promises and all scanf needs:
+// it reads one too many to know a number has ended, and must put it back.
+static inline int ungetc(int c, FILE *f)
+{
+    if (!f || !f->used || c == EOF || f->unget >= 0) return EOF;
+    f->unget = (int16_t)c;
+    f->eof = 0;
+    return c;
+}
+
+
+// --- printf ----------------------------------------------------------------
+// One formatter, two destinations. A stream and a fixed buffer differ only in
+// where a character goes, so the sink is the difference and nothing else is
+// written twice. The count is kept whether or not the buffer can take it, which
+// is what lets snprintf answer the standard's question: how long would it have
+// been.
+typedef struct {
+    FILE     *f;
+    char     *buf;
+    uint32_t  cap;
+    uint32_t  len;
+} __myrtos_sink;
+
+static inline void __myrtos_put(__myrtos_sink *k, int c)
+{
+    k->len++;
+    if (k->f) fputc(c, k->f);
+    else if (k->buf && k->len < k->cap) k->buf[k->len - 1] = (char)c;
+}
+
+static inline void __myrtos_pad(__myrtos_sink *k, int n, char c)
+{
+    while (n-- > 0) __myrtos_put(k, c);
+}
+
+static inline int vfprintf_sink(__myrtos_sink *k, const char *fmt, __builtin_va_list ap)
+{
+    for (; *fmt; fmt++) {
+        if (*fmt != '%') { __myrtos_put(k, *fmt); continue; }
+        fmt++;
+
+        int left = 0, zero = 0, plus = 0, space = 0;
+        for (;; fmt++) {
+            if (*fmt == '-') left = 1;
+            else if (*fmt == '0') zero = 1;
+            else if (*fmt == '+') plus = 1;
+            else if (*fmt == ' ') space = 1;
+            else break;
+        }
+
+        int width = 0;
+        if (*fmt == '*') { width = __builtin_va_arg(ap, int); fmt++;
+                           if (width < 0) { left = 1; width = -width; } }
+        else while (isdigit((int)(uint8_t)*fmt)) width = width * 10 + (*fmt++ - '0');
+
+        int prec = -1;
+        if (*fmt == '.') {
+            fmt++;
+            prec = 0;
+            if (*fmt == '*') { prec = __builtin_va_arg(ap, int); fmt++; }
+            else while (isdigit((int)(uint8_t)*fmt)) prec = prec * 10 + (*fmt++ - '0');
+        }
+
+        // long is the same width as int here, so l and h are read and ignored
+        // rather than refused: code being ported is full of them.
+        while (*fmt == 'l' || *fmt == 'h' || *fmt == 'z') fmt++;
+
+        char tmp[12];
+        int n = 0, base = 10, upper = 0, neg = 0;
+        const char *str = 0;
+        uint32_t v = 0;
+
+        switch (*fmt) {
+        case 0: return (int)k->len;
+        case '%': __myrtos_put(k, '%'); continue;
+        case 'c': tmp[0] = (char)__builtin_va_arg(ap, int); str = tmp; n = 1; break;
+        case 's': {
+            str = __builtin_va_arg(ap, const char *);
+            if (!str) str = "(null)";
+            n = (int)(prec >= 0 ? strnlen(str, (uint32_t)prec) : strlen(str));
+            break;
+        }
+        case 'p': base = 16; v = (uint32_t)(uintptr_t)__builtin_va_arg(ap, void *); break;
+        case 'X': upper = 1; /* fall through */
+        case 'x': base = 16; v = __builtin_va_arg(ap, uint32_t); break;
+        case 'o': base = 8;  v = __builtin_va_arg(ap, uint32_t); break;
+        case 'u': v = __builtin_va_arg(ap, uint32_t); break;
+        case 'd': case 'i': {
+            int sv = __builtin_va_arg(ap, int);
+            neg = sv < 0;
+            v = (uint32_t)(neg ? -(int64_t)sv : sv);
+            break;
+        }
+        default: __myrtos_put(k, '%'); __myrtos_put(k, *fmt); continue;
+        }
+
+        if (!str) {                                   // a number, built backwards
+            const char *set = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+            int i = (int)sizeof tmp;
+            if (!v) tmp[--i] = '0';
+            while (v) { tmp[--i] = set[v % (uint32_t)base]; v /= (uint32_t)base; }
+            str = &tmp[i];
+            n = (int)sizeof tmp - i;
+        }
+
+        char sign = neg ? '-' : plus ? '+' : space ? ' ' : 0;
+        int total = n + (sign ? 1 : 0);
+        if (!left && !zero) __myrtos_pad(k, width - total, ' ');
+        if (sign) __myrtos_put(k, sign);
+        if (!left && zero) __myrtos_pad(k, width - total, '0');
+        for (int i = 0; i < n; i++) __myrtos_put(k, str[i]);
+        if (left) __myrtos_pad(k, width - total, ' ');
+    }
+    return (int)k->len;
+}
+
+static inline int vfprintf(FILE *f, const char *fmt, __builtin_va_list ap)
+{
+    __myrtos_sink k = { f, 0, 0, 0 };
+    return vfprintf_sink(&k, fmt, ap);
+}
+
+static inline int vsnprintf(char *buf, uint32_t cap, const char *fmt, __builtin_va_list ap)
+{
+    __myrtos_sink k = { 0, buf, cap, 0 };
+    int n = vfprintf_sink(&k, fmt, ap);
+    if (buf && cap) buf[k.len < cap ? k.len : cap - 1] = 0;
+    return n;
+}
+
+static inline int fprintf(FILE *f, const char *fmt, ...)
+{
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vfprintf(f, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+static inline int printf(const char *fmt, ...)
+{
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vfprintf(stdout, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+static inline int snprintf(char *buf, uint32_t cap, const char *fmt, ...)
+{
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vsnprintf(buf, cap, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+// sprintf with no ceiling is how buffers are overrun, so it is given the largest
+// one that cannot be wrong about the caller's intent and no more.
+static inline int sprintf(char *buf, const char *fmt, ...)
+{
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vsnprintf(buf, 0x7fffffffu, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+// --- scanf -----------------------------------------------------------------
+// The mirror of the sink: a source that is either a stream or a string, and one
+// character of pushback either way, because reading a number means reading one
+// character too many.
+typedef struct {
+    FILE       *f;
+    const char *s;
+    uint32_t    i;
+} __myrtos_src;
+
+static inline int __myrtos_get(__myrtos_src *r)
+{
+    if (r->f) return fgetc(r->f);
+    return r->s[r->i] ? (int)(uint8_t)r->s[r->i++] : EOF;
+}
+
+static inline void __myrtos_unget(__myrtos_src *r, int c)
+{
+    if (c == EOF) return;
+    if (r->f) ungetc(c, r->f);
+    else if (r->i) r->i--;
+}
+
+static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_list ap)
+{
+    int filled = 0;
+
+    for (; *fmt; fmt++) {
+        if (isspace((int)(uint8_t)*fmt)) {          // any run of space matches any
+            int c;
+            while ((c = __myrtos_get(r)) != EOF && isspace(c)) { }
+            __myrtos_unget(r, c);
+            continue;
+        }
+        if (*fmt != '%') {
+            int c = __myrtos_get(r);
+            if (c != *fmt) { __myrtos_unget(r, c); return filled; }
+            continue;
+        }
+
+        fmt++;
+        int skip = 0, width = 0;
+        if (*fmt == '*') { skip = 1; fmt++; }
+        while (isdigit((int)(uint8_t)*fmt)) width = width * 10 + (*fmt++ - '0');
+        while (*fmt == 'l' || *fmt == 'h' || *fmt == 'z') fmt++;
+        if (!width) width = 0x7fffffff;
+
+        int c;
+        if (*fmt == 'c') {
+            c = __myrtos_get(r);
+            if (c == EOF) return filled ? filled : EOF;
+            if (!skip) { *__builtin_va_arg(ap, char *) = (char)c; filled++; }
+            continue;
+        }
+
+        while ((c = __myrtos_get(r)) != EOF && isspace(c)) { }   // leading space
+        if (c == EOF) return filled ? filled : EOF;
+
+        if (*fmt == 's') {
+            char *out = skip ? 0 : __builtin_va_arg(ap, char *);
+            int n = 0;
+            while (c != EOF && !isspace(c) && n < width) {
+                if (out) out[n] = (char)c;
+                n++;
+                c = __myrtos_get(r);
+            }
+            __myrtos_unget(r, c);
+            if (out) { out[n] = 0; filled++; }
+            continue;
+        }
+
+        int base = *fmt == 'x' || *fmt == 'X' ? 16 : *fmt == 'o' ? 8 : 10;
+        if (*fmt != 'd' && *fmt != 'i' && *fmt != 'u'
+            && *fmt != 'x' && *fmt != 'X' && *fmt != 'o') {
+            __myrtos_unget(r, c);
+            return filled;
+        }
+
+        int neg = 0, any = 0;
+        long v = 0;
+        if (c == '+' || c == '-') { neg = (c == '-'); c = __myrtos_get(r); width--; }
+        for (; c != EOF && width > 0; c = __myrtos_get(r), width--) {
+            int d;
+            if (isdigit(c)) d = c - '0';
+            else if (isxdigit(c)) d = tolower(c) - 'a' + 10;
+            else break;
+            if (d >= base) break;
+            v = v * base + d;
+            any = 1;
+        }
+        __myrtos_unget(r, c);
+        if (!any) return filled;                    // a conversion that matched nothing
+        if (!skip) { *__builtin_va_arg(ap, int *) = (int)(neg ? -v : v); filled++; }
+    }
+    return filled;
+}
+
+static inline int sscanf(const char *str, const char *fmt, ...)
+{
+    __myrtos_src r = { 0, str, 0 };
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vfscanf_src(&r, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+static inline int fscanf(FILE *f, const char *fmt, ...)
+{
+    __myrtos_src r = { f, 0, 0 };
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vfscanf_src(&r, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
+}
+
+static inline int scanf(const char *fmt, ...)
+{
+    __myrtos_src r = { stdin, 0, 0 };
+    __builtin_va_list ap; __builtin_va_start(ap, fmt);
+    int n = vfscanf_src(&r, fmt, ap);
+    __builtin_va_end(ap);
+    return n;
 }
 
 static inline int feof(FILE *f)   { return f && f->eof; }

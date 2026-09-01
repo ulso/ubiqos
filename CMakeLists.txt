@@ -421,6 +421,7 @@ myrtos_add_module(sh modules/sh/sh.c RT)
 myrtos_add_module(ls modules/ls/ls.c)
 myrtos_add_module(cat modules/cat/cat.c)
 myrtos_add_module(head modules/head/head.c)
+myrtos_add_module(libctest modules/libctest/libctest.c)
 myrtos_add_module(rm modules/rm/rm.c)
 myrtos_add_module(cp modules/cp/cp.c)
 myrtos_add_module(write modules/write/write.c)
@@ -523,6 +524,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/ls.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cat.mod
             ${CMAKE_CURRENT_BINARY_DIR}/head.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/libctest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/rm.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cp.mod
             ${CMAKE_CURRENT_BINARY_DIR}/write.mod
@@ -564,6 +566,7 @@ add_custom_target(modules ALL
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
 set(MYRTOS_RESIDENT
+    libctest
     head
     # Descriptors first. They are what the devices are made of, and a directory
     # that fills up turns away whatever comes last -- which twice now has been
