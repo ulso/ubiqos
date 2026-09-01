@@ -81,7 +81,11 @@ static inline uint8_t eff_bg(void)
     return ansi_colour[reverse_video ? fg_index : bg_index];
 }
 
-static const console_font_t *font = &fonts[0];
+// 6x12 by default: a 22-inch monitor at 640x480 makes 8x16 unnecessarily large,
+// and 6x12 gives 106 columns by 40 rows instead of 80 by 30. `font 8x16`
+// switches back. Both heights divide 480 exactly, which is what the ring
+// framebuffer requires.
+static const console_font_t *font = &fonts[1];
 static uint32_t cell_w = 8, cell_h = 16;
 static uint32_t cols = MYRTOS_H_ACTIVE / 8, rows = MYRTOS_V_ACTIVE / 16;
 // 106 columns of six pixels come to 636, four short of the line. Split them, so
@@ -719,7 +723,7 @@ void myrtos_console_start_server(void)
 
 void myrtos_console_init(void)
 {
-    set_grid(&fonts[0]);
+    set_grid(&fonts[1]);       // 6x12; see the note above the font pointer
     ready = true;
     cursor(true);
 }

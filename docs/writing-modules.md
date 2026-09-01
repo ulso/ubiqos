@@ -866,7 +866,17 @@ The filename is copied out of the command line rather than terminated in place:
 a NUL in the middle of the line would cut off every argument after it, which is
 how `cmd > file arg` would quietly lose `arg`.
 
-**Pipes are half here.** The kernel has them: `myrtos_pipe(fds)` gives two
+**Pipelines go through /tmp**, not through the kernel's pipe. `a | b` writes the
+left side into a file in PSRAM and gives it to the right side, which is the
+redirection that already works rather than a second arrangement of descriptors.
+They run one after the other, so nothing is inherited that should not be, and
+the whole difficulty below disappears.
+
+The price is that it does not stream: all of the left side exists before the
+right side starts. With eight megabytes of PSRAM and no `yes` to run for ever
+that is a fair trade, and the streaming version is an upgrade of this same shape.
+
+**The kernel's real pipe is still there and still unproven.** The kernel has them: `myrtos_pipe(fds)` gives two
 descriptors onto a 128-byte ring, a descriptor can name a pipe beside a device
 and a file, the reader blocks while it is empty, and an empty pipe whose writers
 have all gone reads as end of file rather than blocking for ever -- which the

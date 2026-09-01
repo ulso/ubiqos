@@ -27,25 +27,27 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
-    if (argc < 2) {
-        fputs("usage: head FILE [SKIP]\n", stderr);
-        return;
-    }
-
     uint32_t skip = 0;
     if (argc >= 3 && !parse_u32(argv[2], &skip)) {
         fputs("head: SKIP must be a number\n", stderr);
         return;
     }
 
-    // stat before opening, so a missing file is named before anything else
-    // happens -- and so the length is there to report.
-    struct stat st;
-    if (stat(argv[1], &st) < 0) { fputs("head: no such file\n", stderr); return; }
-    if (S_ISDIR(st.st_mode)) { fputs("head: that is a directory\n", stderr); return; }
+    // No file means standard input, which is what makes "something | head"
+    // work. stdin is not ours to close afterwards.
+    FILE *f = stdin;
+    bool ours = false;
+    if (argc >= 2) {
+        // stat before opening, so a missing file is named before anything else
+        // happens -- and so the length is there to report.
+        struct stat st;
+        if (stat(argv[1], &st) < 0) { fputs("head: no such file\n", stderr); return; }
+        if (S_ISDIR(st.st_mode)) { fputs("head: that is a directory\n", stderr); return; }
 
-    FILE *f = fopen(argv[1], "r");
-    if (!f) { fputs("head: cannot open it\n", stderr); return; }
+        f = fopen(argv[1], "r");
+        if (!f) { fputs("head: cannot open it\n", stderr); return; }
+        ours = true;
+    }
 
     if (skip && fseek(f, (int32_t)skip, SEEK_SET) < 0) {
         fputs("head: cannot seek there\n", stderr);
@@ -60,7 +62,7 @@ void module_main(int argc, char **argv) {
     // Opening does not check that a file exists -- there are no flags yet to
     // say whether a write should create -- so an empty first read is where a
     // missing file turns up, and ferror is what tells it from a real end.
-    if (!n && ferror(f)) fputs("head: no such file\n", stderr);
+    if (!n && ours && ferror(f)) fputs("head: no such file\n", stderr);
 
     if (skip) {
         char msg[32];
@@ -74,5 +76,5 @@ void module_main(int argc, char **argv) {
         fputs("\n", stderr);
     }
 
-    fclose(f);
+    if (ours) fclose(f);
 }

@@ -350,17 +350,73 @@ static int32_t start_one(char *cmd) {
     return pid;
 }
 
+// left | right, through a file in PSRAM rather than a buffer with two ends.
+//
+// Ulf's idea, and the better one for this machine. The kernel has a real pipe --
+// myrtos_pipe, blocking, with end of file once the writers have gone -- and
+// driving it from the shell hung twice, because a child inherits EVERY
+// descriptor its parent holds and there is no fork here in which to close what
+// it does not need. Through /tmp there is nothing to inherit: the halves run one
+// after the other, and each is only the redirection that already works.
+//
+// The price is that it does not stream. All of the left side exists before the
+// right side starts, so `big | head` writes the whole of big first. With eight
+// megabytes of PSRAM and no `yes` to run for ever that is a fair trade, and the
+// streaming version is an upgrade of this shape rather than a different one.
+static int32_t run_between(char *cmd, int32_t fd, const char *file, uint32_t flags) {
+    int32_t f = myrtos_open_flags(file, flags);
+    if (f < 0) {
+        myrtos_write_str(MYRTOS_STDERR, "sh: no room in /tmp for the pipe\n");
+        return -3;
+    }
+    int32_t saved = myrtos_dup(fd, -1);
+    myrtos_dup(f, fd);
+    myrtos_close(f);
+
+    int32_t pid = start_one(cmd);
+    if (pid >= 0) {
+        myrtos_foreground(MYRTOS_STDIN, pid);
+        myrtos_wait(pid);
+        myrtos_foreground(MYRTOS_STDIN, 0);
+    }
+
+    myrtos_dup(saved, fd);
+    myrtos_close(saved);
+    return pid;
+}
+
+static int32_t run_pipeline(char *left, char *right) {
+    const char *between = "/tmp/pipe";
+
+    int32_t p1 = run_between(left, MYRTOS_STDOUT, between,
+                             MYRTOS_O_WRONLY | MYRTOS_O_CREAT | MYRTOS_O_TRUNC);
+    if (p1 == -3) return -3;
+    if (p1 < 0) { myrtos_fs_remove(between); return p1; }
+
+    int32_t p2 = run_between(right, MYRTOS_STDIN, between, MYRTOS_O_RDONLY);
+    myrtos_fs_remove(between);
+    return p2;
+}
+
 // Split the line at the first space: everything before is the module name,
 // everything after is the command line the process is given.
 static int32_t exec_line(char *line) {
-    // No pipelines yet. The kernel has pipes -- myrtos_pipe, and a descriptor
-    // can name one -- but the shell half is not finished: a first attempt hung
-    // it, and saying so is better than accepting a "|" that stops the machine.
+    // A pipe splits the line before anything else looks at it, because each
+    // half has its own name, arguments and redirections.
     for (char *b = line; *b; b++) {
         if (*b != '|') continue;
-        myrtos_write_str(MYRTOS_STDERR, "sh: pipelines are not finished yet\n");
-        return -3;                              // said its piece already
+        *b = 0;
+        char *right = b + 1;
+        while (*right == ' ') right++;
+        char *e = b;
+        while (e > line && e[-1] == ' ') *--e = 0;
+        if (!*line || !*right) {
+            myrtos_write_str(MYRTOS_STDERR, "sh: a pipe wants a command on both sides\n");
+            return -3;
+        }
+        return run_pipeline(line, right);
     }
+
 
     // A trailing & means do not wait. Without it there is no way to have two
     // processes running at once from the keyboard, and no way to see that the
