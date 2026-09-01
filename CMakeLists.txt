@@ -62,6 +62,7 @@ add_executable(os_kernel
     kernel/crashlog.c
     kernel/vfs.c
     kernel/tmpfs.c
+    kernel/varfs.c
     kernel/main.c 
     kernel/tlsf.c
     kernel/scheduler.c 

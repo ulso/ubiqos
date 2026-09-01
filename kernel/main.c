@@ -49,6 +49,38 @@ void myrtos_putc(char c) {
 // time slice can land in the middle of the string. The atomicity that module
 // writes get for free the kernel must therefore take itself, with a critical
 // section.
+// Everything the kernel says, kept. It is a static buffer and not an allocation
+// because the first message goes out before any pool exists -- the earliest
+// lines are the ones worth having, and they are exactly the ones an allocator
+// could not have held.
+//
+// A ring, so a long boot loses its beginning rather than its end. That is the
+// wrong way round for a boot log and the right way round for a running system,
+// and the running system is what has messages nobody was watching for.
+#define DMESG_SIZE 2048
+static char dmesg_buf[DMESG_SIZE];
+static uint32_t dmesg_head;      // where the next byte goes
+static bool dmesg_wrapped;
+
+static void dmesg_put(char c) {
+    dmesg_buf[dmesg_head++] = c;
+    if (dmesg_head >= DMESG_SIZE) { dmesg_head = 0; dmesg_wrapped = true; }
+}
+
+// How much there is, and one byte of it. Reading is by position rather than by
+// stream so that /var/dmesg can be an ordinary file: two readers do not
+// interfere, and cat can be run twice.
+uint32_t myrtos_dmesg_size(void) {
+    return dmesg_wrapped ? DMESG_SIZE : dmesg_head;
+}
+
+int32_t myrtos_dmesg_at(uint32_t offset) {
+    uint32_t n = myrtos_dmesg_size();
+    if (offset >= n) return -1;
+    uint32_t start = dmesg_wrapped ? dmesg_head : 0;
+    return (uint8_t)dmesg_buf[(start + offset) % DMESG_SIZE];
+}
+
 void myrtos_print(const char *s) {
     // This used to hold interrupts off for the whole string, so a kernel line
     // could not be interleaved with a module's. The cost turned out to be
@@ -73,9 +105,13 @@ void myrtos_print(const char *s) {
         uint32_t n = (uint32_t)(s - run);
         if (n) {
             myrtos_console_write(run, n);
-            for (uint32_t i = 0; i < n; i++) uart_putc_raw(MYRTOS_UART, run[i]);
+            for (uint32_t i = 0; i < n; i++) {
+                uart_putc_raw(MYRTOS_UART, run[i]);
+                dmesg_put(run[i]);
+            }
         }
         if (*s == '\n') {
+            dmesg_put('\n');
             myrtos_console_write("\r\n", 2);
             uart_putc_raw(MYRTOS_UART, '\r');
             uart_putc_raw(MYRTOS_UART, '\n');
@@ -301,6 +337,8 @@ void myrtos_kernel_main(void) {
     // Before any volume can be added, and before the first path is resolved.
     // /dev exists from here on, so the root is never empty.
     { extern void myrtos_vfs_init(void); myrtos_vfs_init(); }
+    // /var needs no memory: the ring is already full of what has been said.
+    { extern void myrtos_varfs_init(void); myrtos_varfs_init(); }
     myrtos_moddir_init();
 
     // Flash first: resident modules run where they lie and cost no heap. The

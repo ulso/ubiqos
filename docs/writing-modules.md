@@ -907,6 +907,21 @@ files.
 listing is implemented, and that is not a gap: a device is opened by name
 through the I/O manager, not read as a file.
 
+**A device is reached at `/dev/name` and nowhere else.** Bare names used to work
+too, and it seemed harmless: `open` asked the device table when a name had no
+slash. It was not harmless. A name that matched a device could never be a file,
+so `echo hej > null` in any directory wrote to the null device and created
+nothing, and six names -- null, term, con, usb, kbd, acm -- were unusable. DOS
+had exactly this with CON for twenty years.
+
+`/var/dmesg` is everything the kernel has said, as a file. The boot messages go
+to the screen and the UART, and a session on the USB console never sees them:
+by the time that console exists the kernel has finished talking. The ring is a
+static buffer in `main.c` beside `myrtos_print`, because the first line is
+written before any pool exists -- and the earliest lines are exactly the ones an
+allocation could not have held. It is read by position rather than as a stream,
+so two readers do not interfere and `cat` can be run twice.
+
 **`/dev/null`** is there. Everything written to it is taken and forgotten, and
 reading it is immediately the end. That second half needed a new question in the
 driver interface -- `at_eof` -- because a read of nothing means "not yet"

@@ -136,24 +136,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         case SYS_OPEN: {
             const char *name = (const char*)(uintptr_t)frame->a0;
-            // Which of the two it is, and the device table decides rather than
-            // the spelling: "term" is a device, "kopia.txt" is a file, and both
-            // are bare names. Asking the table is cheap and it keeps every
-            // existing open working unchanged. "/dev/term" is the same device
-            // by its long name.
+            // A device is reached at /dev/name and nowhere else. Asking the
+            // device table about bare names as well seemed harmless and was
+            // not: a name that matched a device could never be a file, so
+            // `echo hej > null` in any directory wrote to the null device and
+            // created nothing. Six names were unusable that way, which is the
+            // bug DOS had with CON for twenty years.
             //
             // A device is opened here, where it costs nothing. A file belongs to
             // the server, because walking a directory is long work and long work
             // in a trap is the mistake this system has already made four times.
             const char *devname = 0;
-            if (name) {
-                if (name[0] != '/') {
-                    if (myrtos_io_has_device(name)) devname = name;
-                } else if (name[1] == 'd' && name[2] == 'e' && name[3] == 'v'
-                           && name[4] == '/') {
-                    devname = name + 5;
-                }
-            }
+            if (name && name[0] == '/' && name[1] == 'd' && name[2] == 'e'
+                     && name[3] == 'v' && name[4] == '/')
+                devname = name + 5;
             if (devname) {
                 frame->a0 = (uint32_t)myrtos_io_open(devname, myrtos_current_pid());
                 break;

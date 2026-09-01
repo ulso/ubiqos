@@ -4,7 +4,7 @@
 // same module format -- the only difference is which device is opened, and that
 // is decided by a descriptor.
 void module_main(void) {
-    int32_t u = myrtos_open("usb");
+    int32_t u = myrtos_open("/dev/usb");
     if (u < 0) { myrtos_exit(); return; }
 
     myrtos_line_t line;

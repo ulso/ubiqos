@@ -9,7 +9,7 @@
 // Escape quits.
 
 void module_main(void) {
-    int32_t kbd = myrtos_open("kbd");
+    int32_t kbd = myrtos_open("/dev/kbd");
     if (kbd < 0) {
         myrtos_write_str(MYRTOS_STDERR, "keys: no such device\n");
         return;

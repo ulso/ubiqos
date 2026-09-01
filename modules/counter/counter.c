@@ -6,7 +6,7 @@
 // rather than an incomprehensible failure at runtime.
 
 void module_main(void) {
-    int32_t path = myrtos_open("term");
+    int32_t path = myrtos_open("/dev/term");
     if (path < 0) return;
 
     myrtos_write_str(path, "\n[counter] second module, loaded from the same card\n");
