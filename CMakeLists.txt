@@ -430,6 +430,7 @@ myrtos_add_module(ls modules/ls/ls.c)
 myrtos_add_module(cat modules/cat/cat.c)
 myrtos_add_module(head modules/head/head.c)
 myrtos_add_module(more modules/more/more.c)
+myrtos_add_module(tlsftest modules/tlsftest/tlsftest.c)
 myrtos_add_module(libctest modules/libctest/libctest.c)
 myrtos_add_module(rm modules/rm/rm.c)
 myrtos_add_module(cp modules/cp/cp.c)
@@ -534,6 +535,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/cat.mod
             ${CMAKE_CURRENT_BINARY_DIR}/head.mod
             ${CMAKE_CURRENT_BINARY_DIR}/more.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/tlsftest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/libctest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/rm.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cp.mod
@@ -576,6 +578,7 @@ add_custom_target(modules ALL
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
 set(MYRTOS_RESIDENT
+    tlsftest
     more
     libctest
     head
