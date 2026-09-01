@@ -8,6 +8,10 @@
 //
 // Also the smallest complete example of opening, seeking, reading and closing.
 
+// Twice the ration, to show that a module can ask. head does not need it; it is
+// here because stdio will, and because an untested way of asking is no way.
+MYRTOS_MEM_SIZE(8192);
+
 #define LINES 10
 #define CHUNK 128
 

@@ -682,6 +682,26 @@ typedef struct {
 // is useful rather than by what fits.
 #define MYRTOS_MAX_PROCESSES 32
 
+// How much memory each process running this module is given: the command line,
+// argv, the thread-local block and the data area at the bottom, the stack from
+// the top. Say nothing and it is four kilobytes, which is what every module had
+// before this existed and is ample for a utility.
+//
+// Write it once at file scope:
+//
+//     MYRTOS_MEM_SIZE(8192);
+//
+// It becomes an ABSOLUTE symbol -- no data, no relocation, nothing in the image
+// at all -- and make_module.py reads its value with nm. That is why it can be
+// stated beside the code that needs it rather than in the build files, and why
+// it costs the module nothing to say.
+//
+// The build refuses anything that is not a multiple of four between 1024 and
+// 65536: below that is not a process once a 128-byte trap frame is on the
+// stack, and above it cannot be satisfied out of the SRAM pool.
+#define MYRTOS_MEM_SIZE(n) \
+    __asm__(".globl __myrtos_mem_size\n.set __myrtos_mem_size, " #n "\n")
+
 // Ask about one slot. Slots are not compacted, so walk from 0 to the limit and
 // skip the ones that answer -1 rather than stopping at the first.
 #define MYRTOS_PS_SLOTS      MYRTOS_MAX_PROCESSES

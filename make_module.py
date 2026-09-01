@@ -19,6 +19,34 @@ def elf_load_base(elf_path, nm_tool):
     return min(bases)
 
 
+def find_mem_size(elf_path, nm_tool, default):
+    """How much memory the module asks for, if it says.
+
+    MYRTOS_MEM_SIZE(n) puts an ABSOLUTE symbol in the object -- no data, no
+    relocation, nothing in the image -- so its nm value IS the number. A module
+    that says nothing gets the default, which is what every module got before
+    this existed.
+    """
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([nm_tool, elf_path], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise SystemExit(f"nm failed on {elf_path}")
+    m = re.search(r"^([0-9a-fA-F]+)\s+[aA]\s+__myrtos_mem_size$", out.stdout, re.M)
+    if not m:
+        return default
+
+    n = int(m.group(1), 16)
+    # A stack lives at the top of this and a trap frame is 128 bytes, so a
+    # thousand bytes is not a process. The ceiling is the SRAM pool's own size:
+    # asking for more cannot be satisfied and should fail here, where it can be
+    # read, rather than at exec where it is a number nobody sees.
+    if n % 4 or not (1024 <= n <= 64 * 1024):
+        raise SystemExit(f"{elf_path}: MYRTOS_MEM_SIZE({n}) is not a multiple of "
+                         f"four between 1024 and 65536")
+    return n
+
+
 def find_entry_offset(elf_path, nm_tool, symbol):
     """Where the module's entry point sits in the raw binary.
 
@@ -144,8 +172,13 @@ def create_module(input_bin_path, output_mod_path, module_name,
     attrs = (0 if single else 1) | (2 if realtime else 0)
     attr_rev  = (attrs << 8) | MYRTOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
-# trap frame is 128 bytes, so 4 kB leaves ample depth for call chains.
+# trap frame is 128 bytes, so 4 kB leaves ample depth for call chains -- and it
+# was every module's ration until MYRTOS_MEM_SIZE let one say otherwise. A
+# module that needs a buffer larger than its stack can spare is what this is
+# for; stdio's is the first.
     mem_size = 4096
+    if elf_path and nm_tool:
+        mem_size = find_mem_size(elf_path, nm_tool, 4096)
 
 # The checksum covers the first nine 32-bit words AS THEY LIE IN MEMORY, and is
 # stored in the tenth. Two bugs lived here: type_lang precedes attr_rev in a
@@ -189,6 +222,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 
     print(f"  module '{module_name}' revision {revision}, "
           f"{module_size} bytes, {tls_total} thread-local"
+          f"{f', {mem_size} bytes of memory' if mem_size != 4096 else ''}"
           f"{', real-time' if realtime else ''}"
           f"{', single instance' if single else ''}")
 
