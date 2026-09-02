@@ -1,7 +1,15 @@
 #include "tusb.h"
 
-// USB descriptors for myrtos. A single CDC-ACM function: a serial port over
-// USB, meant to replace the FTDI cable on GP44.
+// USB descriptors for myrtos. Two functions on one device: a CDC-ACM serial
+// port, which replaced the FTDI cable on GP44, and a mass storage device that
+// hands the SD card to the host.
+//
+// Both are declared always, even though the card is only shared when asked.
+// The alternative -- adding the storage function when it is wanted -- means
+// re-enumerating, and re-enumerating drops the console session you are typing
+// the command into. Declared always, the storage device simply reports no
+// medium until someone hands it the card, which is what an empty card reader
+// does and what every host already knows how to display.
 //
 // VID 0xcafe is TinyUSB's example identity and is fine for private use.
 // Anything distributed needs a real VID/PID pair.
@@ -32,17 +40,20 @@ const uint8_t *tud_descriptor_device_cb(void) {
     return (const uint8_t *)&desc_device;
 }
 
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
+enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
 
 #define EPNUM_CDC_NOTIF   0x81
 #define EPNUM_CDC_OUT     0x02
 #define EPNUM_CDC_IN      0x82
+#define EPNUM_MSC_OUT     0x03
+#define EPNUM_MSC_IN      0x83
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
 
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
 };
 
 const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
@@ -52,10 +63,11 @@ const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
 
 static const char *string_desc_arr[] = {
     (const char[]){ 0x09, 0x04 },   // 0: engelska (0x0409)
-    "myrtos",                        // 1: tillverkare
-    "myrtos console",                // 2: produkt
-    "000001",                        // 3: serienummer
+    "myrtos",                        // 1: manufacturer
+    "myrtos console",                // 2: product
+    "000001",                        // 3: serial number
     "myrtos CDC",                    // 4: the CDC interface
+    "myrtos SD card",                // 5: the mass storage interface
 };
 
 static uint16_t desc_str[32];

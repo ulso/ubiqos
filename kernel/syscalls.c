@@ -305,6 +305,12 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         // Reading a module off the card is filesystem work, so it goes where
         // all filesystem work goes. The caller blocks in send until the server
         // has it, and the reply's status is the call's result.
+        case SYS_USBDISK:
+            if (!fs_request(MYRTOS_MSG_FS_USBDISK, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         case SYS_LOADMOD:
             if (!fs_request(MYRTOS_MSG_FS_LOADMOD, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;

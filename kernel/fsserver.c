@@ -37,6 +37,9 @@ const char *myrtos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
 static bool card_mounted;
 static bool load_module_from_card(const char *name);
+bool myrtos_msc_hand_over(void);
+void myrtos_msc_take_back(void);
+bool myrtos_msc_host_has_card(void);
 // Which pool a module belongs in: SRAM if it is real-time, PSRAM otherwise.
 tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
 bool myrtos_cwd_set_of(int32_t pid, const char *abs);
@@ -213,9 +216,51 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         VOLUME_OR_FAIL(stat);
         return ops->stat(rest, r->size);
     }
+    // Handing the card to the host, and taking it back. It goes through here
+    // rather than straight to the USB code so that it queues behind whatever
+    // the server was doing: a reply means the last write has landed, which is
+    // the difference between a clean volume and one the host will find halfway
+    // through a directory update.
+    case MYRTOS_MSG_FS_USBDISK: {
+        bool give_away = (uintptr_t)m->data != 0;
+        if (give_away) {
+            if (!card_mounted) return -1;
+            if (!myrtos_msc_hand_over()) return -1;
+            myrtos_vfs_remove("sd");
+            card_mounted = false;
+            myrtos_print("USB disk: the card is the host's now; eject it there\n");
+            return 0;
+        }
+        // Taking it back is not a mount. The card was never lost -- only lent --
+        // so it is still on whatever bus it was, still initialised, and the
+        // driver's state is intact. Re-running the bring-up would call
+        // myrtos_sd_init, which speaks SPI to it, and a card latches into SPI
+        // the moment it is addressed that way and stays there until the power
+        // is cut. Lending the card out would then cost four-bit SDIO for the
+        // rest of the session, which is a steep price for copying a file.
+        //
+        // What does have to happen is re-reading the filesystem, because the
+        // host has been writing to it: the boot sector, the FAT and every
+        // cached thing this side believed about the directory are out of date.
+        myrtos_msc_take_back();
+        if (!myrtos_fat_mount()) {
+            myrtos_print("USB disk: the card came back unreadable\n");
+            return -1;
+        }
+        if (!card_mounted && !myrtos_vfs_add("sd", &myrtos_fat_ops)) {
+            myrtos_print("USB disk: no room in the volume table\n");
+            return -1;
+        }
+        card_mounted = true;
+        return 0;
+    }
     case MYRTOS_MSG_FS_LOADMOD:
         return load_module_from_card((const char*)m->data) ? 0 : -1;
     case MYRTOS_MSG_FS_MOUNT:
+        // A distinct answer, so `mount` can say which of the two it is. Saying
+        // "no card, or not FAT32" about a card the host is holding sends the
+        // reader looking for the wrong problem entirely.
+        if (myrtos_msc_host_has_card()) return -2;
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
         // behind every failed listing.
@@ -350,6 +395,21 @@ static bool load_module_from_card(const char *name) {
 // So SDIO stays behind a word the user types, but for the reason above this
 // paragraph rather than this one: a wrong guess costs the card's one chance.
 static bool card_bring_up(bool try_sdio) {
+    // Not while the host has it. Without this the whole arrangement is
+    // decoration: `usbdisk` then `mount` puts the card under two filesystems
+    // that each cache its directory and free-cluster map, and the volume is
+    // ruined by whichever writes second.
+    //
+    // This is not hypothetical. The first end-to-end test went usbdisk, copy a
+    // file on the Mac, eject, mount -- and the mount succeeded even though the
+    // eject had never reached the board. macOS unmounted the volume and stopped
+    // asking, without sending START_STOP_UNIT, so tud_msc_start_stop_cb never
+    // ran and the card was still the host's as far as this was concerned.
+    //
+    // Which makes `usbdisk off` the ordinary way back rather than the exception:
+    // an eject is a courtesy the host may or may not extend, and this cannot be
+    // built on it.
+
     // What the detect pin says, reported and not acted on. See the note on
     // myrtos_sd_present: with a card in the slot it reads as empty, so gating
     // the mount on it stopped the machine mounting a card that was there.

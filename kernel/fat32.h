@@ -9,6 +9,10 @@
 // slashes -- "/docs/readme.txt" -- and an empty path is the root.
 
 bool     myrtos_fat_mount(void);
+
+// Where the mounted volume starts and how many blocks the card holds up to its
+// end, counted from block zero. False when nothing is mounted.
+bool     myrtos_fat_extent(uint32_t *first_block, uint32_t *block_count);
 int32_t  myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len);
 
 // Enumerate files in the root directory with a given extension. index starts

@@ -172,6 +172,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_LOADMOD   49u   // a0 = module name; reads it off the card into the
                             // directory -> a0 = 0, -1 not there or no room
 #define SYS_REBOOT    50u   // starts the machine again; never returns
+#define SYS_USBDISK   51u   // a0 = 1 hand the card to the host, 0 take it back
+                            // -> a0 = 0, or -1 if there is nothing to hand over
 // SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
@@ -229,6 +231,7 @@ typedef struct {
 #define MYRTOS_MSG_FS_FDIO   11u   // data = myrtos_fs_fdio_t
 #define MYRTOS_MSG_FS_STAT   12u   // data = myrtos_fs_stat_t
 #define MYRTOS_MSG_FS_LOADMOD 13u  // data = module name, without the extension
+#define MYRTOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
 
 // How a file is being opened. The numbers are POSIX's, so myrtos_posix.h can
 // alias them rather than translate. The kernel acts on them: it refuses a file
@@ -429,6 +432,14 @@ static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len)
 }
 
 // Start a module by name, with a command line. OS-9's F$Link then F$Fork.
+// Hand the SD card to the host as a USB disk, or take it back. Only one side
+// may have it: giving it away unmounts /sd here first, and taking it back is
+// followed by an ordinary mount.
+static inline int32_t myrtos_usbdisk(bool give_away)
+{
+    return myrtos_syscall(SYS_USBDISK, give_away ? 1u : 0u, 0, 0);
+}
+
 // Start the machine again. The counterpart of myrtos_bootsel, which hands it to
 // the bootloader instead. Neither returns.
 static inline void myrtos_reboot(void)

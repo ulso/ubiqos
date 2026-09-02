@@ -74,6 +74,7 @@ add_executable(os_kernel
     kernel/flashmod.c
     kernel/usbdev.c
     kernel/usb_descriptors.c
+        kernel/usbmsc.c
     kernel/scheduler.S
     kernel/pio/pioprobe.c
     kernel/usbhost.c
@@ -593,6 +594,7 @@ endfunction()
 myrtos_add_module(counter modules/counter/counter.c)
 myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
 myrtos_add_d_module(dhello modules/dhello/dhello.d)
+myrtos_add_module(usbdisk modules/usbdisk/usbdisk.c)
 myrtos_add_module(reboot modules/reboot/reboot.c)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
@@ -751,6 +753,7 @@ add_custom_target(modules ALL
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
 set(MYRTOS_RESIDENT
+    usbdisk
     reboot
     dhello
     tlsftest

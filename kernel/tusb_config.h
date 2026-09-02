@@ -65,7 +65,13 @@
 #define CFG_TUD_ENDPOINT0_SIZE  64
 
 #define CFG_TUD_CDC             1
-#define CFG_TUD_MSC             0
+#define CFG_TUD_MSC             1
+
+// A whole sector in one transfer. The SD driver reads and writes 512 bytes at a
+// time and nothing smaller is useful, so this is the natural size -- and the
+// host asks for many sectors per command, which TinyUSB then feeds through this
+// buffer one at a time.
+#define CFG_TUD_MSC_EP_BUFSIZE  512
 #define CFG_TUD_HID             0
 #define CFG_TUD_MIDI            0
 #define CFG_TUD_VENDOR          0

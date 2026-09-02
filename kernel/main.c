@@ -273,7 +273,15 @@ static void myrtos_bulk_pool_init(void) {
 // page boundary .data happened to land on. Which makes the framebuffer more
 // overdue rather than less: it is the only object big enough that removing it
 // would end this entirely, and there are only nine of these jumps left.
-#define MYRTOS_HEAP_SIZE (36 * 1024)
+//
+// Thirty-two, for USB mass storage: a 512-byte endpoint buffer, a sector buffer
+// of its own, and TinyUSB's state for a second device class. This is the tenth
+// time this number has come down and the framebuffer is still 307200 bytes of a
+// 512 kB machine -- eighty-five per cent of the SRAM serving a screen that
+// could live in the eight megabytes of PSRAM sitting idle beside it. There are
+// eight of these four-kilobyte steps left. It is now the only change worth
+// making here.
+#define MYRTOS_HEAP_SIZE (32 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 

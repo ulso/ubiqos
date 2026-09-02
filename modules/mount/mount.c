@@ -36,7 +36,13 @@ void module_main(int argc, char **argv) {
         }
     }
 
-    if (myrtos_mount(bus) == 0) {
+    int32_t rc = myrtos_mount(bus);
+    if (rc == -2) {
+        myrtos_write_str(MYRTOS_STDOUT,
+            "mount: the host has the card. Eject it there, then 'usbdisk off'\n");
+        return;
+    }
+    if (rc == 0) {
         myrtos_write_str(MYRTOS_STDOUT, "card mounted\n");
     } else if (bus == MYRTOS_MOUNT_SDIO) {
         myrtos_write_str(MYRTOS_STDOUT,

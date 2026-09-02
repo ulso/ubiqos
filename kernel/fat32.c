@@ -11,6 +11,13 @@ static uint32_t root_cluster;
 static uint32_t num_fats;           // every copy must be kept in step
 static uint32_t sectors_per_fat;
 static uint32_t cluster_count;      // bounds the search for a free cluster
+
+// Where the volume sits on the card and how long it is. Kept because the mass
+// storage device needs a size to report, and this is the only place anything
+// here reads one. It is the end of the FAT volume, not the end of the card --
+// there may be unpartitioned space past it that nothing has looked at.
+static uint32_t volume_lba;
+static uint32_t volume_sectors;
 static bool     mounted;
 
 static uint8_t sector[512] __attribute__((aligned(4)));
@@ -43,6 +50,7 @@ bool myrtos_fat_mount(void) {
     // Sector zero is either a partition table or the volume's own boot
     // sector. The jump instruction at the start tells them apart.
     uint32_t vbr_lba = 0;
+    volume_lba = volume_sectors = 0;
     if (!(sector[0] == 0xeb || sector[0] == 0xe9)) {
         // Partition table: the first entry starts at 446, the LBA at +8.
         vbr_lba = rd32(&sector[446 + 8]);
@@ -63,6 +71,8 @@ bool myrtos_fat_mount(void) {
         return false;
     }
 
+    volume_lba     = vbr_lba;
+    volume_sectors = total_sectors;
     fat_start_lba  = vbr_lba + reserved;
     data_start_lba = fat_start_lba + num_fats * sectors_per_fat;
     cluster_count  = (total_sectors - (reserved + num_fats * sectors_per_fat))
@@ -300,6 +310,16 @@ static uint32_t ra_cluster;
 // blunt: a stale cluster number reads the wrong sector and hands back another
 // file's bytes, which is far worse than the walk it saves.
 void myrtos_fat_forget_read_cache(void) { ra_valid = false; }
+
+// How much of the card is worth exposing: everything up to the end of the
+// mounted volume, counted from block zero so the partition table comes with it.
+// A host then sees what a card reader would show it and mounts it the same way.
+bool myrtos_fat_extent(uint32_t *first_block, uint32_t *block_count) {
+    if (!mounted || !volume_sectors) return false;
+    if (first_block) *first_block = volume_lba;
+    if (block_count) *block_count = volume_lba + volume_sectors;
+    return true;
+}
 
 static bool same_path(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }
