@@ -163,16 +163,64 @@ round. The image is written whole, so a module is added by adding it to
 `MYRTOS_RESIDENT` and loading the image again, never by loading one module.
 
 **From the SD card.** Copy the `.mod` files to the root of the card. The
-filesystem support is FAT32 and read-only; the kernel looks for files with the
-extension `MOD` and registers them at startup. Note the 8.3 names — `sh.mod`
-goes on the card as `SH.MOD`.
+filesystem is FAT32, read and write, and the 8.3 names are uppercase —
+`dhello.mod` goes on the card as `DHELLO.MOD`.
 
-The two are not equivalent. A module in flash runs where it lies; one on the
-card is read into RAM at startup and stays there for as long as the machine is
-up, whether or not anything runs it. The card is for what is being worked on.
+Nothing is read off the card until something runs it. A name that is not in the
+module directory and not in flash is looked for on the card, read in, and
+registered; when the last process using it exits, the entry goes and its memory
+is freed with it. A module occupies memory for exactly as long as something is
+using it. Flash modules work the same way and always have: they are never
+copied at all, since the code runs where it lies.
 
-Flash is searched before the card. A module of the same name on the card is
-registered alongside it, and whichever was registered first wins the lookup.
+Flash is searched first, so a module that exists in both places comes from
+flash and the card copy is never read. Take it out of `MYRTOS_RESIDENT` if the
+card version is the one being worked on.
+
+### Getting files onto the card without moving it
+
+`usbdisk` hands the card to the host over USB, so a program built on the Mac
+can be copied straight onto it.
+
+```bash
+usbdisk                              # on the board: the card appears as MYRTOS
+```
+```bash
+cp build/dhello.mod /Volumes/MYRTOS/DHELLO.MOD    # on the host
+diskutil eject /Volumes/MYRTOS                    # or eject in Finder
+```
+```bash
+usbdisk off                          # on the board: take it back
+```
+
+**Eject on the host before `usbdisk off`, and do not skip it.** The eject is
+what makes the host flush what it is still holding; pulling the card out from
+under it can leave a directory update half written. And `usbdisk off` is needed
+*after* the eject because macOS unmounts a volume and stops asking without
+sending `START_STOP_UNIT` — the board never hears that the eject happened.
+
+Only one side may have the card at a time, which is why `usbdisk` unmounts
+`/sd` first and `mount` refuses while the host still has it. Both filesystems
+cache the directory and the free-cluster map; if both write, the volume is
+ruined in seconds and neither notices until it reads something back.
+
+Taking the card back is not a mount and does not need one: it was lent, not
+lost, so it is still on whatever bus it was using, and only the filesystem is
+re-read.
+
+**If the host is a Mac, do this once**, and mounting goes from fifteen seconds
+to none:
+
+```bash
+touch /Volumes/MYRTOS/.metadata_never_index
+mkdir -p /Volumes/MYRTOS/.fseventsd && touch /Volumes/MYRTOS/.fseventsd/no_log
+```
+
+Measured: the first mount of a card without those read 15920 sectors — eight
+megabytes off a volume holding a hundred kilobytes of files — because Spotlight
+indexes anything it is shown. With indexing off, the same mount reads 91
+sectors. `usbdisk off` prints what the host read and wrote, so this is visible
+rather than folklore.
 
 ## Devices
 
@@ -226,11 +274,22 @@ console, so the system never goes mute.
 
 1. Scheduler, I/O manager and module directory are initialised
 2. Flash is scanned for resident modules
-3. The SD card is mounted and `.MOD` files are registered
-4. Data modules are read as device descriptors and the devices are created
-5. If `sh` exists only that is started, with 0/1/2 opened on `usb`, else `term`
-6. With no shell, everything found is started, so the system still shows signs of life
-7. The timer starts and pre-emption begins
+3. Data modules are read as device descriptors and the devices are created
+4. If `sh` exists only that is started, with 0/1/2 opened on `usb`, else `term`
+5. With no shell, everything found is started, so the system still shows signs of life
+6. The timer starts and pre-emption begins
+7. The filesystem server, now a running process, mounts the SD card — four-bit
+   SDIO first and SPI if that fails — and runs `/sd/startup` if it is there
+
+The card is deliberately last, and in a process rather than here. Mounting it
+before the scheduler starts means a driver that stalls takes the console and USB
+with it, and the only way back is the BOOTSEL button; in a process a stall costs
+one process. Nothing the machine needs to boot lives on the card — the shell and
+every descriptor are resident in flash.
+
+`/sd/startup` is run by an ordinary shell with its standard input pointed at the
+file, so it is a list of commands and nothing more. It is started, not waited
+for: the system is up either way.
 
 ## The display
 
@@ -505,7 +564,5 @@ the shell was asleep.
 
 ## What is missing
 
-- **No writing to the filesystem.** FAT32 support is read-only, so `rm`, `cp`
-  and `mkdir` cannot be written yet.
 - **No protection.** No MPU, no user mode — a module can write anywhere.
   Position independence is what makes sharing possible, not a guard rail.
