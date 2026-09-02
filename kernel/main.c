@@ -62,11 +62,6 @@ static char dmesg_buf[DMESG_SIZE];
 static uint32_t dmesg_head;      // where the next byte goes
 static bool dmesg_wrapped;
 
-static void dmesg_put(char c) {
-    dmesg_buf[dmesg_head++] = c;
-    if (dmesg_head >= DMESG_SIZE) { dmesg_head = 0; dmesg_wrapped = true; }
-}
-
 // A whole line at once, with interrupts off for the copy.
 //
 // Feeding this a byte at a time was interleavable and was interleaved: the

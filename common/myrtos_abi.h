@@ -169,6 +169,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FSSTAT    46u   // a0 = myrtos_fs_stat_t -> a0 = attributes, -1 none
 #define SYS_DUP       47u   // a0 = descriptor, a1 = new one or -1 -> a0 = new one
 #define SYS_PIPE      48u   // a0 = int32_t[2] out -> a0 = 0, -1 if none can be had
+#define SYS_LOADMOD   49u   // a0 = module name; reads it off the card into the
+                            // directory -> a0 = 0, -1 not there or no room
 // SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
@@ -225,6 +227,7 @@ typedef struct {
 #define MYRTOS_MSG_FS_OPEN   10u   // data = path -> a descriptor
 #define MYRTOS_MSG_FS_FDIO   11u   // data = myrtos_fs_fdio_t
 #define MYRTOS_MSG_FS_STAT   12u   // data = myrtos_fs_stat_t
+#define MYRTOS_MSG_FS_LOADMOD 13u  // data = module name, without the extension
 
 // How a file is being opened. The numbers are POSIX's, so myrtos_posix.h can
 // alias them rather than translate. The kernel acts on them: it refuses a file
@@ -425,9 +428,26 @@ static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len)
 }
 
 // Start a module by name, with a command line. OS-9's F$Link then F$Fork.
+// Nothing is read off the card until something is run from it, so a name that
+// is not in the directory is not yet an answer: it may be a file on the card
+// that nobody has needed until now. Ask for it once, and try again.
+//
+// The retry lives here rather than in the kernel because loading is a
+// filesystem call and SYS_EXEC is not. A trap runs with interrupts off, so it
+// cannot read a card itself; it would have to send to the filesystem server and
+// block, and a syscall that blocks in the middle has to be able to resume where
+// it stopped. Two calls from out here need none of that machinery, and every
+// caller gets the behaviour by calling myrtos_exec as it always did.
 static inline int32_t myrtos_exec(const char *module_name, const char *args)
 {
-    return myrtos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name, (uint32_t)(uintptr_t)args, 0);
+    int32_t pid = myrtos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
+                                 (uint32_t)(uintptr_t)args, 0);
+    if (pid != -1) return pid;               // -2 is "not re-entrant", not "missing"
+
+    if (myrtos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)module_name, 0, 0) != 0)
+        return -1;
+    return myrtos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
+                          (uint32_t)(uintptr_t)args, 0);
 }
 
 // A module starts like main: argc in a0, argv in a1, and argv[0] is the

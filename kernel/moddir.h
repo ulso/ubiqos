@@ -52,7 +52,7 @@ void  myrtos_moddir_init(void);
 bool  myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char *name);
 
 // Copy a module onto the heap once and register it.
-bool  myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name);
+bool  myrtos_moddir_add_image(uint8_t *image, uint32_t len, const char *name);
 
 // Look up and bump the link count. Returns NULL if the module does not exist.
 const myrtos_module_header_t *myrtos_moddir_link(const char *name);

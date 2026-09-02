@@ -16,8 +16,26 @@ static bool name_eq(const char *a, const char *b) {
     return true;
 }
 
+// Eleven bytes, stopping at a NUL and padding with spaces.
+//
+// It used to copy eleven bytes flat, which is right for a name that comes out
+// of a module header -- a fixed field, padded already -- and wrong for a C
+// string. When modules began being loaded by name from the card, the name came
+// from the shell's line buffer, and `dhello from the card` registered a module
+// called "dhello\0from the ca": the copy ran straight past the terminator and
+// took the arguments with it. name_eq compares all eleven, so nothing ever
+// matched it again -- the module loaded, sat in the directory, and could not be
+// found or run.
+//
+// Padding with spaces and not with zeroes, which was the second half of the
+// same bug: a module name is space-padded to eight, and myrtos_moddir_match
+// decides a shorter name matches by checking that the rest of the field is
+// blank. Zero-filled, the name was clean, printed correctly in lsmod, and still
+// matched nothing.
 static void name_copy(char *dst, const char *src) {
-    for (int i = 0; i < 11; i++) dst[i] = src[i];
+    int i = 0;
+    while (i < 11 && src[i]) { dst[i] = src[i]; i++; }
+    while (i < 11) dst[i++] = ' ';
     dst[11] = 0;
 }
 
@@ -124,25 +142,29 @@ bool myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char
     return true;
 }
 
-bool myrtos_moddir_add_copy(const uint8_t *src, uint32_t len, const char *name) {
-    if (!verify_myrtos_header((myrtos_module_header_t*)src)) return false;
-    if (!supersedes((const myrtos_module_header_t*)src, name)) return false;
-
-    // A real-time module is copied into SRAM; the rest go to PSRAM, where the
-    // code still runs but through the XIP cache.
-    extern tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
-    tlsf_pool_t pool = myrtos_pool_for((const myrtos_module_header_t*)src);
-    void *space = myrtos_tlsf_malloc(pool, len);
-    if (!space) { myrtos_print("  no heap for module\n"); return false; }
-    uint8_t *d = (uint8_t*)space;
-    for (uint32_t i = 0; i < len; i++) d[i] = src[i];
+// Take an image the caller has already allocated, rather than copying one.
+//
+// This used to be myrtos_moddir_add_copy, which took a pointer to a module
+// sitting in a staging buffer and made its own copy in the right pool. That
+// suited a scan that read every module through one fixed 32 kB buffer. Now that
+// a module is read only when something runs it, the reader knows its size
+// before it reads and can put it straight where it belongs -- so what arrives
+// here is the module, not a view of it, and the directory adopts the
+// allocation. `owned` says so, and is what frees it again.
+//
+// On refusal the caller still owns the image and frees it; saying so here
+// rather than freeing it means one owner at a time and no double free.
+bool myrtos_moddir_add_image(uint8_t *image, uint32_t len, const char *name) {
+    (void)len;
+    if (!verify_myrtos_header((myrtos_module_header_t*)image)) return false;
+    if (!supersedes((const myrtos_module_header_t*)image, name)) return false;
 
     myrtos_module_entry_t *e = alloc_entry();
-    if (!e) { myrtos_tlsf_free(pool, space); return false; }
-    e->header = (const myrtos_module_header_t*)space;
+    if (!e) return false;
+    e->header = (const myrtos_module_header_t*)image;
     e->links = 0;
-    e->owned = space;
-    e->transient = false;
+    e->owned = image;
+    e->transient = false;      // `owned` is what decides its fate, not this
     name_copy(e->name, name);
     commit_entry();
     return true;
@@ -220,14 +242,27 @@ void myrtos_moddir_unlink(const myrtos_module_header_t *header) {
         if (modules[i].header != header) continue;
         uint32_t st = save_and_disable_interrupts();
         if (modules[i].links) modules[i].links--;
-        // The copy stays even at zero links. OS-9 did the same until the memory
-        // was needed: the next start of the same utility is then immediate.
+        // At zero links the entry goes, and if it owns an image that goes too.
         //
-        // An adopted one goes, because there is nothing to keep: the module is
-        // in flash either way, and the entry existed only to count the links.
-        // Keeping them would fill the directory with everything ever run.
-        if (modules[i].transient && !modules[i].links)
+        // This used to keep the copy -- OS-9 kept a loaded module until the
+        // memory was needed, so the next start of the same utility was
+        // immediate. Ulf's call on 2 Sep 2026 was to drop it: nothing should
+        // sit in RAM because it was run once. Since nothing is read off the
+        // card until it is run either, a module now occupies memory for exactly
+        // as long as something is using it and not one moment longer.
+        //
+        // An adopted flash entry has no image to free -- the module is in flash
+        // either way and the entry existed only to count the links -- but it
+        // goes for the same reason: keeping them would fill the directory with
+        // everything ever run.
+        if (!modules[i].links) {
+            if (modules[i].owned) {
+                extern tlsf_pool_t myrtos_pool_of_address(void *p);
+                myrtos_tlsf_free(myrtos_pool_of_address(modules[i].owned),
+                                 modules[i].owned);
+            }
             modules[i] = modules[--module_count];
+        }
         restore_interrupts(st);
         return;
     }

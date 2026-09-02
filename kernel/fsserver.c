@@ -35,6 +35,9 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const ch
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 const char *myrtos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
+static bool load_module_from_card(const char *name);
+// Which pool a module belongs in: SRAM if it is real-time, PSRAM otherwise.
+tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
 bool myrtos_cwd_set_of(int32_t pid, const char *abs);
 
 static int32_t server_pid = -1;
@@ -189,6 +192,8 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         VOLUME_OR_FAIL(stat);
         return ops->stat(rest, r->size);
     }
+    case MYRTOS_MSG_FS_LOADMOD:
+        return load_module_from_card((const char*)m->data) ? 0 : -1;
     case MYRTOS_MSG_FS_MOUNT:
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
@@ -244,37 +249,62 @@ extern tlsf_pool_t myrtos_mem_pool;
 extern tlsf_pool_t myrtos_bulk_pool;
 void myrtos_print_u32(uint32_t v);
 
-// A module read from the card is copied into RAM and stays there, so the buffer
-// it arrives through need not: 32 kB touched once per module, from PSRAM when
-// there is any, and handed straight back.
-static void register_card_modules(void) {
+// One module off the card, by name, because something is trying to run it.
+//
+// Nothing is read at mount. That was the other way round until 2 Sep 2026:
+// every .MOD on the card was read at mount and kept for the session, run or
+// not. What that bought was the revision check -- a newer build on the card
+// superseding the one in flash -- and Ulf's recollection of OS-9, where the
+// revision number was there so a later version could be pushed into an EPROM
+// socket, is that nothing scanned a disk to patch ROM modules. It does not any
+// more here either. Flash modules already worked this way: adopt_from_flash
+// gives one a directory entry when something runs it and drops it afterwards.
+//
+// The file is read twice on purpose. The first read is the header alone, which
+// says how long the module is and whether it wants real time -- and therefore
+// which pool it belongs in. Reading the header first means the body is
+// allocated once, at its own size, in the right place. The old scan used a
+// fixed 32 kB staging buffer for every module regardless.
+static bool load_module_from_card(const char *name) {
     const char *vol = "";
     const myrtos_fsops_t *ops = myrtos_vfs_module_volume(&vol);
-    if (!ops) return;
+    if (!ops || !ops->stat || !ops->read_at) return false;
 
-    const uint32_t staging_size = 32 * 1024;
-    tlsf_pool_t pool = myrtos_bulk_pool ? myrtos_bulk_pool : myrtos_mem_pool;
-    uint8_t *staging = myrtos_tlsf_malloc(pool, staging_size);
-    if (!staging) {
-        myrtos_print("SD: no buffer to read modules into\n");
-        return;
+    // 8.3, and the card holds it uppercase: sh.mod is SH.MOD.
+    char file[13];
+    uint32_t n = 0;
+    while (name[n] && n < 8) {
+        char c = name[n];
+        file[n] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+        n++;
     }
+    if (!n) return false;
+    file[n++] = '.'; file[n++] = 'M'; file[n++] = 'O'; file[n++] = 'D'; file[n] = 0;
 
-    char name[12];
-    for (uint32_t i = 0; ops->find_nth("MOD", i, name); i++) {
-        int32_t n = ops->read_file(name, staging, staging_size);
-        if (n <= 0) continue;
-        if (myrtos_moddir_add_copy(staging, (uint32_t)n, name)) {
-            myrtos_print("Registered ");
-            myrtos_print(name);
-            myrtos_print(" from /");
-            myrtos_print(vol);
-            myrtos_print(", ");
-            myrtos_print_u32((uint32_t)n);
-            myrtos_print(" bytes\n");
-        }
+    uint32_t size = 0;
+    if (ops->stat(file, &size) < 0 || !size) return false;
+
+    myrtos_module_header_t hdr;
+    if (ops->read_at(file, 0, (uint8_t*)&hdr, sizeof hdr) != (int32_t)sizeof hdr)
+        return false;
+    if (hdr.module_size > size) return false;      // a header that outruns its file
+
+    tlsf_pool_t pool = myrtos_pool_for(&hdr);
+    uint8_t *image = myrtos_tlsf_malloc(pool, hdr.module_size);
+    if (!image) { myrtos_print("SD: no room for module\n"); return false; }
+
+    bool ok = ops->read_at(file, 0, image, hdr.module_size) == (int32_t)hdr.module_size
+              && myrtos_moddir_add_image(image, hdr.module_size, name);
+    if (!ok) {
+        myrtos_tlsf_free(pool, image);
+        return false;
     }
-    myrtos_tlsf_free(pool, staging);
+    myrtos_print("Loaded ");
+    myrtos_print(name);
+    myrtos_print(" from /");
+    myrtos_print(vol);
+    myrtos_print("\n");
+    return true;
 }
 
 // Which bus, asked for by name. The two are not interchangeable and cannot be
@@ -319,7 +349,6 @@ static bool card_bring_up(bool try_sdio) {
         myrtos_print("SD: no room in the volume table\n");
         return false;
     }
-    register_card_modules();
     return true;
 }
 
