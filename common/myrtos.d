@@ -9,6 +9,13 @@
 // This is the counterpart of common/myrtos_abi.h and follows it. The numbers
 // are that file's; if one changes there it must change here, and there is
 // nothing but this comment to enforce that.
+//
+// One deliberate difference: the C side calls a descriptor a `path`, which is
+// what OS-9 called it -- a path number is exactly what Unix calls a file
+// descriptor, and the kernel's tables are named for it throughout. Here it is
+// `fd`, because `int path` reads as a string until you check the type, and
+// myrtos_posix.h already uses `fd` for the same thing. They are the same
+// number; only the spelling changes with which world you are standing in.
 module myrtos;
 
 import ldc.llvmasm;
@@ -29,7 +36,7 @@ enum : uint {
     SYS_ARGS = 10, SYS_FSDIR = 11, SYS_FSREAD = 12, SYS_FSWRITE = 13,
     SYS_FSREMOVE = 14, SYS_WAIT = 15, SYS_SLEEP = 16, SYS_SETPRIO = 17,
     SYS_TICKS = 18, SYS_PSINFO = 19, SYS_BOOTSEL = 20, SYS_ALLOC = 21,
-    SYS_FREE = 22, SYS_REALLOC = 23,
+    SYS_FREE = 22, SYS_REALLOC = 23, SYS_READABLE = 39
 }
 
 enum int STDIN = 0, STDOUT = 1, STDERR = 2;
@@ -39,11 +46,11 @@ enum : uint { O_RDONLY = 0, O_WRONLY = 1, O_RDWR = 2, O_CREAT = 4, O_TRUNC = 8, 
 // Writes take what the device can hold and say how much that was, so this
 // loops rather than assuming. The kernel blocks instead of returning zero, so
 // the loop waits rather than spins. Same as myrtos_write in the C header.
-int write(int path, const(void)* buf, uint len) {
+int write(int fd, const(void)* buf, uint len) {
     auto p = cast(const(ubyte)*) buf;
     uint done = 0;
     while (done < len) {
-        int n = syscall(SYS_WRITE, path, cast(uint)(p + done), len - done);
+        int n = syscall(SYS_WRITE, fd, cast(uint)(p + done), len - done);
         if (n < 0) return n;
         done += n;
     }
@@ -52,12 +59,18 @@ int write(int path, const(void)* buf, uint len) {
 
 // A slice knows its own length, which is the one place D saves the caller from
 // getting it wrong.
-int write(int path, const(char)[] s) { return write(path, s.ptr, cast(uint) s.length); }
+int write(int fd, const(char)[] s)    { return write(fd, s.ptr, cast(uint) s.length); }
 
-int read(int path, void* buf, uint len) {
-    return syscall(SYS_READ, path, cast(uint) buf, len);
-}
-int read(int path, ubyte[] buf) { return read(path, buf.ptr, cast(uint) buf.length); }
+int read(int fd, void* buf, uint len) { return syscall(SYS_READ, fd, cast(uint) buf, len); }
+int read(int fd, ubyte[] buf)         { return read(fd, buf.ptr, cast(uint) buf.length); }
+
+// Is there anything to read? read() blocks when there is not -- the caller goes
+// on WAIT_READ and its ecall is re-executed when a byte turns up, which is what
+// a loop with nothing else to do wants and exactly what a loop waiting for an
+// answer that may never come does not. Ask first and a program can give up.
+//
+// Returns the bytes waiting, 0 for none, -1 for a descriptor that is not open.
+int readable(int fd)                  { return syscall(SYS_READABLE, fd); }
 
 // Names reach the kernel as C strings, so a D literal needs its terminator.
 // String literals in D are NUL-terminated when they are used as const(char)*,
@@ -65,7 +78,7 @@ int read(int path, ubyte[] buf) { return read(path, buf.ptr, cast(uint) buf.leng
 int open(const(char)* name, uint flags = O_RDONLY) {
     return syscall(SYS_OPEN, cast(uint) name, flags);
 }
-int close(int path)      { return syscall(SYS_CLOSE, path); }
+int close(int fd)      { return syscall(SYS_CLOSE, fd); }
 void exit(int code = 0)  { syscall(SYS_EXIT, code); }
 int sleep(uint ms)       { return syscall(SYS_SLEEP, ms); }
 uint ticks()             { return cast(uint) syscall(SYS_TICKS); }
