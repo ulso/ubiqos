@@ -955,3 +955,79 @@ It also fixed something older. `ls` on an empty directory used to say "no such
 directory", because an empty one has no first entry to list and neither has one
 that is not there. `stat` can tell them apart, so now it does.
 
+
+## In D, the problem does not arise at all
+
+The whole of this document is about one thing: a module may not have writable
+data, because one copy of the code serves every process running it. In C that
+means `__thread` on every variable that needs to be per-process, a checker to
+catch the ones that were forgotten, and the sections above explaining what goes
+wrong when they are.
+
+D puts every module-level and static variable in thread-local storage unless it
+is marked `__gshared`. Not as an option -- as the language's default. So the
+rule this document exists to teach is, in D, the thing you get by writing
+nothing at all.
+
+```d
+module dhello;
+import myrtos;
+@nogc: nothrow:
+
+uint calls;                    // thread-local, without being asked
+
+extern(C) void module_main(int argc, char** argv) {
+    calls++;
+    write(STDOUT, "hello from D\r\n");
+}
+```
+
+That compiles to `.text`, `.rodata` and `.tbss`, with no `.data` and no `.bss`,
+and `check_module.py` calls it position independent and shareable. Declare it
+with `myrtos_add_d_module` and it takes the same `RT` and `SINGLE` options as
+any other module, goes through the same checker and the same `make_module.py`,
+and comes out as the same `.mod`. Nothing downstream can tell which compiler
+made it.
+
+### The one flag that matters
+
+`--fthread-model=local-exec`. Without it LDC emits `R_RISCV_TLS_GOT_HI20` for a
+thread-local: the general-dynamic model reaches its variable through a GOT, and
+a GOT entry is an absolute address the linker writes in -- the one thing a
+module may not contain. `check_module.py` refuses it, correctly. Local exec
+gives `TPREL_HI20`, `TPREL_LO12` and `TPREL_ADD`, the same relocations `__thread`
+produces in C. Both were built and read before this went in.
+
+The rest of the command line says the same things the C one does:
+`--relocation-model=static` is `-fno-pic`, `--code-model=medium` is
+`-mcmodel=medany`, and `-betterC` drops druntime, the garbage collector,
+exceptions and ModuleInfo.
+
+### What -betterC leaves you
+
+Slices that know their length, templates, compile-time function evaluation -- a
+CRC table can be computed by the compiler instead of pasted in as literals --
+`scope(exit)`, and `@nogc`/`nothrow` as contracts the compiler checks rather
+than comments. No classes with a runtime, no exceptions, no `new`.
+
+Array bounds are still checked. `common/myrtos.d` supplies the `__assert` that
+a failed check calls, so an out-of-range slice says so on the console and ends
+the process instead of reading whatever came next in memory. It also supplies
+`memset`, `memcpy` and `strlen`, which LDC emits calls to and which a hosted
+target would take from a C library -- including for loops you wrote by hand,
+because the optimiser recognises them.
+
+### Importing is not linking
+
+`import myrtos;` brings in the declarations. The definitions exist only if that
+file was compiled too, so `myrtos_add_d_module` puts `common/myrtos.d` and every
+`.d` source of the module into one `ldc2` invocation with `--singleobj`. A C
+file listed alongside is compiled with gcc on the same terms as any other
+module's, and linked in with it.
+
+### Arguments
+
+`module_main(int argc, char** argv)`, exactly as in C -- the kernel builds the
+vector. There is a `myrtos.args()` because the system call exists, but it gives
+the first word only: by the time a module runs, the kernel has split the stored
+argument string in place to build `argv`, and the call copies to the first NUL.

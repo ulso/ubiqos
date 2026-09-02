@@ -384,6 +384,177 @@ function(myrtos_add_clang_module name source)
         COMMENT "Building module ${name}.mod (clang)")
 endfunction()
 
+# --- The third toolchain --------------------------------------------------
+# LDC, the LLVM D compiler, beside the other two.
+#
+# D is here for one property: it puts every module-level and static variable in
+# thread-local storage unless told otherwise. That is not a convenience, it is
+# exactly what a shareable module needs, and in D it is the default rather than
+# something every declaration has to remember. The C modules get there with
+# __thread on each variable and a checker to catch the ones that forgot.
+#
+# Everything downstream is the same. A D module goes through the same
+# check_module.py, the same objcopy and the same make_module.py, and lands as
+# the same ${name}.mod.
+find_program(MYRTOS_LDC ldc2 HINTS /opt/homebrew/bin /usr/local/bin)
+
+# -betterC is what makes D usable here: no druntime, no garbage collector, no
+# exceptions, no ModuleInfo. What survives is the part worth having -- slices,
+# templates, compile-time evaluation, scope guards, and @nogc/nothrow as
+# contracts the compiler checks.
+#
+# --fthread-model=local-exec is the flag the whole thing turns on. Without it
+# LDC emits R_RISCV_TLS_GOT_HI20 for a thread-local: the general-dynamic model
+# reaches its variable through a GOT, and a GOT entry is an absolute address the
+# linker writes in, which is the one thing a module may not contain. Local exec
+# gives TPREL_HI20/LO12/ADD -- the same relocations __thread produces in C, and
+# the ones check_module.py already allows. Measured both ways before this went
+# in: the general-dynamic build is refused as not position independent and the
+# local-exec build passes.
+#
+# --relocation-model=static is -fno-pic and --code-model=medium is -mcmodel=medany.
+set(MYRTOS_LDC_ARCH -mtriple=riscv32-unknown-elf -mattr=+m,+a,+c,+zba,+zbb,+zbs)
+set(MYRTOS_LDC_FLAGS -betterC -Oz --relocation-model=static --code-model=medium
+                     --fthread-model=local-exec)
+
+set(MYRTOS_LDC_OK FALSE)
+if(MYRTOS_LDC)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.d
+         "module ldc_probe;\nextern(C) int probe() @nogc nothrow { return 0; }\n")
+    execute_process(
+        COMMAND ${MYRTOS_LDC} -c ${MYRTOS_LDC_FLAGS} ${MYRTOS_LDC_ARCH}
+                ${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.d
+                -of=${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.o
+        RESULT_VARIABLE dprobe_rc OUTPUT_QUIET ERROR_VARIABLE dprobe_err)
+    if(dprobe_rc EQUAL 0)
+        set(MYRTOS_LDC_OK TRUE)
+        message(STATUS "D module toolchain: ${MYRTOS_LDC}")
+    else()
+        message(STATUS "ldc2 found but cannot build for this target; D modules skipped")
+        message(STATUS "  ${dprobe_err}")
+    endif()
+else()
+    message(STATUS "No ldc2 found; D modules skipped")
+endif()
+
+# Same signature and same RT / SINGLE options as myrtos_add_module. Unlike the
+# clang one this cannot fall back to another compiler -- there is no gcc that
+# reads D -- so a machine without ldc2 gets no module rather than a broken
+# build, and says so at configure time.
+function(myrtos_add_d_module name source)
+    if(NOT MYRTOS_LDC_OK)
+        message(STATUS "Skipping D module ${name}: no usable ldc2")
+        return()
+    endif()
+
+    set(rt_flag "")
+    if("RT" IN_LIST ARGN)
+        set(rt_flag "--rt")
+        list(REMOVE_ITEM ARGN "RT")
+    endif()
+    set(single_flag "")
+    set(single_link "")
+    if("SINGLE" IN_LIST ARGN)
+        set(single_flag "--single")
+        set(single_link "-Wl,-Ttext=0x1178002c")   # MYRTOS_SINGLE_TEXT
+        list(REMOVE_ITEM ARGN "SINGLE")
+    endif()
+
+    set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_d)
+    file(MAKE_DIRECTORY ${objdir})
+
+    # Every D source of the module in one ldc2 invocation, with common/myrtos.d
+    # among them, and --singleobj so it comes out as one object.
+    #
+    # Importing a D module is not linking against it: an import brings in the
+    # declarations, and the definitions only exist if that file was compiled
+    # too. common/myrtos.d also carries memset, memcpy and __assert, which LDC
+    # emits calls to and a hosted target would take from a C library.
+    set(dsrcs "")
+    set(objs "")
+    foreach(src ${source} ${ARGN})
+        get_filename_component(ext ${src} EXT)
+        if(ext STREQUAL ".d")
+            list(APPEND dsrcs ${CMAKE_CURRENT_SOURCE_DIR}/${src})
+        endif()
+    endforeach()
+    if(dsrcs)
+        set(dobj ${objdir}/${name}_d.o)
+        add_custom_command(
+            OUTPUT ${dobj}
+            COMMAND ${MYRTOS_LDC} -c --singleobj ${MYRTOS_LDC_FLAGS} ${MYRTOS_LDC_ARCH}
+                    -I${CMAKE_CURRENT_SOURCE_DIR}/common
+                    ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.d ${dsrcs} -of=${dobj}
+            DEPENDS ${dsrcs} ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.d
+            COMMENT "Compiling ${name} with ldc2")
+        list(APPEND objs ${dobj})
+    endif()
+
+    foreach(src ${source} ${ARGN})
+        get_filename_component(base ${src} NAME_WE)
+        get_filename_component(ext ${src} EXT)
+        if(ext STREQUAL ".d")
+            continue()          # already in the single ldc2 object above
+        endif()
+        set(obj ${objdir}/${base}.o)
+        if(TRUE)
+        else()
+            # A C file alongside, on the same terms as any other module's.
+            add_custom_command(
+                OUTPUT ${obj}
+                COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH}
+                        -fno-pic -mcmodel=medany -fno-common -ffreestanding
+                        -nostdlib -O2 -c ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
+                DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
+                COMMENT "Compiling ${src} for D module ${name}")
+        endif()
+        list(APPEND objs ${obj})
+    endforeach()
+
+    # GNU ld through the compiler driver, exactly as myrtos_add_module links.
+    # -N so the writable sections are not page-aligned: without it .tbss lands a
+    # page past the code and objcopy pads the gap, which is four kilobytes of
+    # zeroes in every module with a thread-local -- and in D that is every
+    # module with a variable.
+    set(elf ${objdir}/${name}.elf)
+    add_custom_command(
+        OUTPUT ${elf}
+        COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH} -nostdlib
+                -Wl,-m,elf32lriscv -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
+                ${single_link} ${objs} -o ${elf}
+        DEPENDS ${objs}
+        COMMENT "Linking ${name} (D)")
+
+    add_custom_command(
+        OUTPUT ${objdir}/${name}.checked
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+                ${single_flag} ${CMAKE_READELF} ${objs} ${elf}
+        COMMAND ${CMAKE_COMMAND} -E touch ${objdir}/${name}.checked
+        DEPENDS ${elf} ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+        COMMENT "Checking that ${name} is position independent")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        COMMAND ${CMAKE_OBJCOPY} -O binary ${elf} ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        DEPENDS ${objdir}/${name}.checked
+        COMMENT "Extracting raw position-independent machine code from ${name}")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${single_flag}
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+                "${name}"
+                ${elf}
+                ${CMAKE_NM}
+                module_main
+                ${rt_flag}
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+        COMMENT "Building module ${name}.mod (D)")
+endfunction()
+
 # A data module has no entry point: it IS its bytes.
 function(myrtos_add_data_module name source)
     add_executable(${name}_app ${source})
@@ -421,6 +592,7 @@ endfunction()
 
 myrtos_add_module(counter modules/counter/counter.c)
 myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
+myrtos_add_d_module(dhello modules/dhello/dhello.d)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(echo modules/echo/echo.c)
@@ -578,6 +750,7 @@ add_custom_target(modules ALL
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
 set(MYRTOS_RESIDENT
+    dhello
     tlsftest
     more
     libctest
