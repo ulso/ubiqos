@@ -11,7 +11,21 @@ void myrtos_print_u32(uint32_t v);
 #define SD_MOSI_PIN  35
 #define SD_MISO_PIN  36
 #define SD_CS_PIN    39
-#define SD_DETECT_PIN 33
+// GP33 is card detect according to Adafruit's own board header
+// (ADAFRUIT_FRUIT_JAM_SD_CARD_DETECT_PIN), and on this board nothing drives it.
+// Measured 2 Sep 2026 with a card in the slot that mounted over four-bit SDIO
+// in the next breath: with a pull-up GP33 reads 1, with a pull-down it reads 0.
+// It follows the pull, which is what an unconnected pin does.
+//
+// There was a myrtos_sd_present() here that read it and returned "empty". It is
+// gone rather than left for someone to trust: gating the mount on it stopped
+// the machine reading a card that was plainly there, and a function that
+// answers wrongly is worse than no function.
+//
+// So a removed card has to be noticed by the card no longer answering, not by
+// asking the slot. That is the more robust test anyway -- a card can stop
+// answering without being pulled.
+#define SD_DETECT_PIN 33      // defined for the record; nothing reads it
 
 #define CMD0_GO_IDLE          0
 #define CMD8_SEND_IF_COND     8
@@ -53,20 +67,6 @@ static uint8_t sd_command(uint8_t cmd, uint32_t arg, uint8_t crc) {
     sd_xfer((uint8_t)arg);
     sd_xfer(crc);          // CRC is only required for CMD0 and CMD8
     return sd_wait_response();
-}
-
-// The pin has to be configured before it is read. Asking before init returned
-// an uninitialised value, and an empty slot was reported as a card present.
-bool myrtos_sd_present(void) {
-    static bool configured;
-    if (!configured) {
-        gpio_init(SD_DETECT_PIN);
-        gpio_set_dir(SD_DETECT_PIN, GPIO_IN);
-        gpio_pull_up(SD_DETECT_PIN);
-        for (volatile int i = 0; i < 1000; i++) { }   // let the pull-up settle
-        configured = true;
-    }
-    return gpio_get(SD_DETECT_PIN) == 0;   // active low
 }
 
 static bool spi_init_card(void) {

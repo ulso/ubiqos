@@ -16,7 +16,8 @@ bool    myrtos_sd_read_block(uint32_t lba, uint8_t *buf);
 // Write one 512-byte block. The card is polled until it releases the bus, so a
 // caller that gets true can issue the next command straight away.
 bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf);
-bool    myrtos_sd_present(void);
+// myrtos_sd_present was here. GP33 is not connected on this board -- see the
+// note at SD_DETECT_PIN in sdcard.c.
 
 // Four-bit SDIO, asked for rather than assumed -- see the note in sdcard.c.
 bool    myrtos_sd_try_sdio(void);

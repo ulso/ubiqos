@@ -329,6 +329,9 @@ static bool load_module_from_card(const char *name) {
 // So SDIO stays behind a word the user types, but for the reason above this
 // paragraph rather than this one: a wrong guess costs the card's one chance.
 static bool card_bring_up(bool try_sdio) {
+    // What the detect pin says, reported and not acted on. See the note on
+    // myrtos_sd_present: with a card in the slot it reads as empty, so gating
+    // the mount on it stopped the machine mounting a card that was there.
     if (try_sdio) {
         if (!myrtos_sd_try_sdio() || !myrtos_fat_mount()) {
             myrtos_print("SD: no SDIO -- no card, or SPI was asked for first\n");
