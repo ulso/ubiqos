@@ -10,6 +10,7 @@
 #include "moddir.h"
 #include "flashmod.h"
 #include "pico/bootrom.h"
+#include "hardware/watchdog.h"
 #include "hardware/psram.h"
 #include "pico/time.h"
 
@@ -562,6 +563,16 @@ void myrtos_kernel_main(void) {
 // place.
 void myrtos_reboot_bootsel(void) {
     reset_usb_boot(0, 0);
+}
+
+// Start the machine again, which is the other half of what the BOOTSEL button
+// and the reset button do between them. The watchdog with a zero entry point
+// means an ordinary boot: the bootrom runs, the image is copied to RAM again,
+// and everything comes up as it does from power-on -- except the card, which
+// does not lose power and so stays latched into whatever bus it was using.
+void myrtos_reboot_machine(void) {
+    watchdog_reboot(0, 0, 0);
+    for (;;) { }                // it does not come back; this is for the compiler
 }
 
 // The Pico SDK's crt0 calls main once clocks and runtime are set up.

@@ -240,6 +240,7 @@ static void help(int32_t c) {
         "  write    write text to a file\r\n"
         "  sleep    wait, in milliseconds\r\n"
         "  nice     run a command at a priority\r\n"
+        "  reboot   start the machine again\r\n"
         "  bootsel  reboot into the bootloader\r\n"
         "\r\nA trailing & runs a command without waiting for it.\r\n"
         "Arrows move along the line and up and down the history; ctrl-A and\r\n"

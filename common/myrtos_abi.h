@@ -171,6 +171,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_PIPE      48u   // a0 = int32_t[2] out -> a0 = 0, -1 if none can be had
 #define SYS_LOADMOD   49u   // a0 = module name; reads it off the card into the
                             // directory -> a0 = 0, -1 not there or no room
+#define SYS_REBOOT    50u   // starts the machine again; never returns
 // SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
@@ -428,6 +429,13 @@ static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len)
 }
 
 // Start a module by name, with a command line. OS-9's F$Link then F$Fork.
+// Start the machine again. The counterpart of myrtos_bootsel, which hands it to
+// the bootloader instead. Neither returns.
+static inline void myrtos_reboot(void)
+{
+    myrtos_syscall(SYS_REBOOT, 0, 0, 0);
+}
+
 // Nothing is read off the card until something is run from it, so a name that
 // is not in the directory is not yet an answer: it may be a file on the card
 // that nobody has needed until now. Ask for it once, and try again.

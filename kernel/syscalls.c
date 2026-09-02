@@ -71,6 +71,7 @@ void myrtos_sleep_begin(uint32_t ticks);
 uint32_t myrtos_set_priority(uint32_t prio);
 int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out);
 void myrtos_reboot_bootsel(void);
+void myrtos_reboot_machine(void);
 uint32_t myrtos_psram_bytes(void);
 void *myrtos_mem_alloc(uint32_t size);
 void *myrtos_mem_alloc_bulk(uint32_t size);
@@ -510,6 +511,9 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         case SYS_BOOTSEL:
             myrtos_reboot_bootsel();    // does not return
+            break;
+        case SYS_REBOOT:
+            myrtos_reboot_machine();    // does not return either
             break;
         case SYS_PSINFO:
             frame->a0 = (uint32_t)myrtos_process_info(frame->a0,
