@@ -435,9 +435,12 @@ static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len)
 // Hand the SD card to the host as a USB disk, or take it back. Only one side
 // may have it: giving it away unmounts /sd here first, and taking it back is
 // followed by an ordinary mount.
-static inline int32_t myrtos_usbdisk(bool give_away)
+// 1 gives the card away, 0 takes it back, 2 takes it back from a host that has
+// gone without ejecting. Taking it back is refused with -2 while the host still
+// has the volume mounted, because doing it then hangs the host.
+static inline int32_t myrtos_usbdisk(uint32_t what)
 {
-    return myrtos_syscall(SYS_USBDISK, give_away ? 1u : 0u, 0, 0);
+    return myrtos_syscall(SYS_USBDISK, what, 0, 0);
 }
 
 // Start the machine again. The counterpart of myrtos_bootsel, which hands it to

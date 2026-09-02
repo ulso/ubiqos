@@ -222,7 +222,9 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     // the difference between a clean volume and one the host will find halfway
     // through a directory update.
     case MYRTOS_MSG_FS_USBDISK: {
-        bool give_away = (uintptr_t)m->data != 0;
+        uintptr_t what = (uintptr_t)m->data;
+        bool give_away = (what == 1);
+        bool force     = (what == 2);
         if (give_away) {
             if (!card_mounted) return -1;
             if (!myrtos_msc_hand_over()) return -1;
@@ -242,6 +244,22 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // What does have to happen is re-reading the filesystem, because the
         // host has been writing to it: the boot sector, the FAT and every
         // cached thing this side believed about the directory are out of date.
+        // Refuse while the host still has it, because it means no eject has
+        // arrived. A host that ejects properly sends START_STOP_UNIT, which
+        // clears this by itself -- measured 2 Sep 2026: macOS sends no
+        // PREVENT/ALLOW and no SYNCHRONIZE CACHE, but it does send the eject
+        // when the volume is ejected. So the flag still being set says the
+        // host is holding a mounted volume, and taking the card from under it
+        // leaves it hung against a device that has stopped answering. Finder
+        // hangs, diskutil hangs, and the way out is to give the card back.
+        //
+        // Not a hard refusal: a host that has gone away -- an unplugged cable,
+        // a sleeping machine -- will never send anything, and then this is the
+        // only way back. `usbdisk force` says so deliberately.
+        if (myrtos_msc_host_has_card() && !force) {
+            myrtos_print("USB disk: the host has not ejected it\n");
+            return -2;
+        }
         myrtos_msc_take_back();
         if (!myrtos_fat_mount()) {
             myrtos_print("USB disk: the card came back unreadable\n");

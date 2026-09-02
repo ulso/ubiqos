@@ -617,6 +617,7 @@ myrtos_add_module(spinrt modules/spin/spin.c RT)
 myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
 myrtos_add_module(mkdir modules/mkdir/mkdir.c)
+myrtos_add_module(hibouair modules/hibouair/hibouair.c)
 # The TCP/IP stack, NOT built yet -- see docs/lwip/README.md.
 #
 # It compiles, links and very nearly passes the position-independence check: 57
@@ -733,6 +734,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cu.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/hibouair.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod

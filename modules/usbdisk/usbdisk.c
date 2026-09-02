@@ -40,25 +40,35 @@ static bool same(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
-    bool give_away = true;
+    uint32_t what = 1;                  // hand it over
 
     if (argc > 1) {
-        if (same(argv[1], "off")) {
-            give_away = false;
-        } else {
-            myrtos_write_str(MYRTOS_STDOUT, "usage: usbdisk [off]\n");
+        if      (same(argv[1], "off"))   what = 0;
+        else if (same(argv[1], "force")) what = 2;
+        else {
+            myrtos_write_str(MYRTOS_STDOUT, "usage: usbdisk [off | force]\n");
             return;
         }
     }
 
-    if (myrtos_usbdisk(give_away) != 0) {
+    int32_t rc = myrtos_usbdisk(what);
+
+    if (rc == -2) {
         myrtos_write_str(MYRTOS_STDOUT,
-            give_away ? "usbdisk: no card is mounted to hand over\n"
+            "usbdisk: the host has not ejected the card. Eject it there first --\n"
+            "         taking it back now would leave the host hung on a device\n"
+            "         that has stopped answering. 'usbdisk force' if the host\n"
+            "         has gone away and will never eject it.\n");
+        return;
+    }
+    if (rc != 0) {
+        myrtos_write_str(MYRTOS_STDOUT,
+            what == 1 ? "usbdisk: no card is mounted to hand over\n"
                       : "usbdisk: could not take the card back\n");
         return;
     }
 
     myrtos_write_str(MYRTOS_STDOUT,
-        give_away ? "the card is the host's. Eject it there, then 'usbdisk off'\n"
+        what == 1 ? "the card is the host's. Eject it there, then 'usbdisk off'\n"
                   : "the card is back, on the bus it was already using\n");
 }
