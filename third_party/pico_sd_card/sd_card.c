@@ -95,13 +95,37 @@ static inline uint64_t sd_make_command(uint8_t cmd, uint8_t b0, uint8_t b1, uint
     return rc;
 }
 
+// LOCAL: the bus gives up once, not once per wait.
+//
+// Every one of these waits returns SD_ERR_STUCK when it times out, and the
+// callers do check it -- but a card that has stopped answering fails every
+// wait, and the filesystem walks a FAT chain a sector at a time. Pulling a card
+// out of a running board therefore did not produce an error; it produced a
+// screen filling with "stuck 1 @ 12" until the power was cut, because the
+// filesystem server sits at priority 22 and the shell it would have told at 16.
+//
+// So: the first timeout says so and sets the flag, and every wait after it
+// returns immediately without spinning its million turns or printing anything.
+// sd_bus_revive() clears it, and mounting is the only thing that calls it.
+static bool sd_dead;
+
+bool sd_bus_dead(void) { return sd_dead; }
+void sd_bus_revive(void) { sd_dead = false; }
+
+static void sd_note_stuck(const char *what, int sm, int addr) {
+    if (sd_dead) return;
+    sd_dead = true;
+    printf("sd: gave up waiting for %s", what);
+    if (sm >= 0) printf(" (sm %d at %d)", sm, addr);
+    printf("\r\n");
+}
+
 inline static int safe_wait_tx_empty(pio_hw_t *pio, uint sm) {
     int wooble = 0;
     while (!pio_sm_is_tx_fifo_empty(pio, sm)) {
         wooble++;
         if (wooble > 1000000) {
-            check_pio_debug("stuck");
-            printf("stuck %d @ %d\n", sm, (int)pio->sm[sm].addr);
+            sd_note_stuck("the transmit FIFO", (int)sm, (int)pio->sm[sm].addr);
             // LOCAL CHANGE: __breakpoint() was here, as at 133. See the note
             // there -- without a probe it is an ebreak our trap handler answers
             // by spinning, so a bounded wait that had just decided to return an
@@ -117,8 +141,7 @@ inline static int safe_wait_tx_not_full(pio_hw_t *pio, uint sm) {
     while (pio_sm_is_tx_fifo_full(pio, sm)) {
         wooble++;
         if (wooble > 1000000) {
-            check_pio_debug("stuck");
-            printf("stuck %d @ %d\n", sm, (int)pio->sm[sm].addr);
+            sd_note_stuck("the transmit FIFO", (int)sm, (int)pio->sm[sm].addr);
             // LOCAL CHANGE: __breakpoint() was here, as at 133. See the note
             // there -- without a probe it is an ebreak our trap handler answers
             // by spinning, so a bounded wait that had just decided to return an
@@ -142,10 +165,11 @@ inline static int safe_wait_tx_not_full(pio_hw_t *pio, uint sm) {
 
 #define SD_WAIT_OR_RETURN_STUCK(cond, what)                    \
     do {                                                       \
+        if (sd_bus_dead()) return SD_ERR_STUCK;                \
         uint32_t spins__ = 0;                                  \
         while (cond) {                                         \
             if (++spins__ > SD_SPIN_LIMIT) {                   \
-                printf("sd: gave up waiting for %s\r\n", what); \
+                sd_note_stuck(what, -1, 0);                    \
                 return SD_ERR_STUCK;                           \
             }                                                  \
         }                                                      \
@@ -156,8 +180,7 @@ inline static int safe_dma_wait_for_finish(pio_hw_t *pio, uint sm, uint chan) {
     while (dma_channel_is_busy(chan)) {
         wooble++;
         if (wooble > 8000000) {
-            check_pio_debug("stuck dma");
-            printf("stuck dma channel %d rem %08x %d @ %d\n", chan, (uint)dma_hw->ch[chan].transfer_count, sm, (int)pio->sm[sm].addr);
+            sd_note_stuck("a DMA channel to finish", (int)sm, (int)pio->sm[sm].addr);
             // LOCAL CHANGE, not upstream. __breakpoint() was here. With a probe
             // attached it is a gift; without one it is an ebreak that our trap
             // handler answers by spinning in wfi -- so a driver that had just

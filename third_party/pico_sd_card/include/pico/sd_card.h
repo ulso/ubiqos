@@ -51,6 +51,12 @@ int sd_wait_not_busy(uint32_t ms);
 
 // LOCAL: one line of driver state, for after a failure.
 void sd_dump_state(void);
+
+// LOCAL: the bus has stopped answering. Set by the first wait that times out;
+// every wait after it returns SD_ERR_STUCK without spinning or printing.
+// Cleared only by bringing the card up again.
+bool sd_bus_dead(void);
+void sd_bus_revive(void);
 int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint sector_count);
 int sd_set_wide_bus(bool wide);
 int sd_set_clock_divider(uint div);

@@ -220,6 +220,29 @@ static bool use_sdio;
 // `mount` clears it, because a remount is exactly the moment to try again.
 static bool sd_failed;
 
+// Set when the card has gone, cleared by bringing one up again. It is separate
+// from sd_failed because the two want different things: sd_failed refuses work
+// on a card that is still there and not answering, while this says the driver's
+// idea of the bus is stale and the next mount has to start from CMD0.
+//
+// It cannot simply clear use_sdio, which was the first attempt: with use_sdio
+// false, myrtos_sd_read_block falls through to spi_read_block, and speaking SPI
+// to a freshly inserted card latches it into SPI mode for good -- spending the
+// one chance at four bits on a read that was only ever going to fail.
+static bool needs_init;
+
+// Whether the card has stopped answering, for anyone who needs to act on it --
+// the filesystem server unmounts the volume when it has.
+bool myrtos_sd_failed(void) { return sd_failed || sd_bus_dead(); }
+
+// The card is gone. Nothing more may be spoken to it on either bus until
+// something mounts again, and when that happens it starts from the beginning.
+void myrtos_sd_forget(void) {
+    needs_init = true;
+    sd_failed = false;
+    sd_bus_revive();
+}
+
 static bool sd_fail(const char *why) {
     if (!sd_failed) {
         sd_failed = true;
@@ -249,6 +272,8 @@ bool myrtos_sd_init(void) {
     use_sdio = false;
     sdio_refused = false;
     sd_failed = false;
+    needs_init = false;
+    sd_bus_revive();          // taking the card again is the one thing that clears it
 
     // SDIO first, and the order is the whole point. A card latches into SPI
     // mode the moment it is addressed that way and stays there until the power
@@ -282,9 +307,20 @@ bool myrtos_sd_init(void) {
 // Try to move the card to four-bit SDIO. Returns false and leaves SPI in place
 // if the card will not have it.
 bool myrtos_sd_try_sdio(void) {
+    // A card that vanished leaves stale state behind: use_sdio still says four
+    // bits, so without this the call returned true at once and the mount went
+    // on to read a card that had never been initialised. That is what "mount:
+    // no SDIO" meant after swapping a card -- not a card that refused, but one
+    // nobody had asked anything.
+    if (needs_init) {
+        use_sdio = false;
+        sdio_refused = false;
+        needs_init = false;
+    }
     if (use_sdio) return true;
     if (sdio_refused) return false;     // the card is in SPI mode now
     sd_failed = false;
+    sd_bus_revive();
 
     // The card is on GP34 to GP39, and on RP2350 one PIO reaches either GPIO
     // 0-31 or 16-47, never both. The default window is the low one, so without
@@ -304,8 +340,9 @@ bool myrtos_sd_is_sdio(void) { return use_sdio; }
 // The driver takes words, so a caller's buffer has to be aligned. Everything
 // that reaches here is a static 512-byte buffer in the kernel, declared aligned.
 bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
+    if (needs_init) return false;
     if (!use_sdio) return spi_read_block(lba, buf);
-    if (sd_failed) return false;
+    if (myrtos_sd_failed()) return false;
     if ((uintptr_t)buf & 3u) return false;
     if (sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) != SD_OK)
         return sd_fail("a read did not complete");
@@ -347,10 +384,11 @@ static void restore_wide_bus(void) {
 // sd_writeblocks_async: "probably need a delay between sectors". It is not a
 // delay, it is the card's own answer to CMD13.
 bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
+    if (needs_init) return false;
     if (!use_sdio) return spi_write_block(lba, buf);
     if ((uintptr_t)buf & 3u) return false;
     if (!myrtos_sd_sdio_writes_allowed) return false;
-    if (sd_failed) return false;
+    if (myrtos_sd_failed()) return false;
 
     if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) {
         restore_wide_bus();

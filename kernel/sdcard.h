@@ -22,6 +22,13 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf);
 // Four-bit SDIO, asked for rather than assumed -- see the note in sdcard.c.
 bool    myrtos_sd_try_sdio(void);
 bool    myrtos_sd_is_sdio(void);
+
+// True once the card has stopped answering. Cleared by mounting it again.
+bool    myrtos_sd_failed(void);
+
+// The card has gone. Refuse both buses until something mounts again, and when
+// it does, start from CMD0 rather than from what the last card was doing.
+void    myrtos_sd_forget(void);
 extern const bool myrtos_sd_sdio_writes_allowed;   // false: SDIO reads only
 
 #endif

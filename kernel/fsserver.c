@@ -35,6 +35,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const ch
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 const char *myrtos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
+static bool card_mounted;
 static bool load_module_from_card(const char *name);
 // Which pool a module belongs in: SRAM if it is real-time, PSRAM otherwise.
 tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
@@ -98,8 +99,28 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
     const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);    \
     if (!ops || !ops->op) return -1
 
+// A card that has stopped answering loses its volume.
+//
+// Without this the card stayed mounted and every path under /sd went on being
+// accepted and failing -- and pulling a card out of a running board produced a
+// screen full of driver complaints rather than "no such directory". Now the
+// first failure takes /sd out of the volume table, so the answer is the one the
+// user can act on, and `mount` is what puts it back.
+//
+// Checked here rather than in the driver because unmounting is the filesystem's
+// business, and this is the one place every filesystem request passes through.
+static void drop_card_if_dead(void) {
+    if (!card_mounted || !myrtos_sd_failed()) return;
+    myrtos_vfs_remove("sd");
+    myrtos_sd_forget();          // so the next mount starts from CMD0
+    card_mounted = false;
+    myrtos_print("SD: the card stopped answering; /sd is unmounted\n");
+}
+
 static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     char abs[128];
+
+    drop_card_if_dead();
 
     switch (m->type) {
     case MYRTOS_MSG_FS_READ: {
@@ -352,6 +373,7 @@ static bool card_bring_up(bool try_sdio) {
         myrtos_print("SD: no room in the volume table\n");
         return false;
     }
+    card_mounted = true;
     return true;
 }
 
