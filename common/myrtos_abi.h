@@ -365,9 +365,14 @@ static inline int32_t myrtos_console(void)
 {
     if (myrtos_write(MYRTOS_STDOUT, "", 0) >= 0)
         return MYRTOS_STDOUT;
-    int32_t p = myrtos_open("usb");
+    // Under /dev, and only there. Bare device names stopped reaching the device
+    // table when devices were confined to /dev, and this fallback had gone on
+    // asking for them by bare name ever since -- so it could not have opened
+    // anything. Nothing noticed, because it is only reached by a module started
+    // without a parent, and everything here has one.
+    int32_t p = myrtos_open("/dev/usb");
     if (p < 0)
-        p = myrtos_open("term");
+        p = myrtos_open("/dev/term");
     return p;
 }
 
