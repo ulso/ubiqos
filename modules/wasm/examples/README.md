@@ -1,87 +1,199 @@
 # Applications as .wasm files
 
-A program here is an ordinary C file. It is not a myrtos module: none of the
-rules in ../../../docs/writing-modules.md apply to it -- no `__thread`, no ban
-on writable statics, no position independence -- because a wasm program has its
-own linear memory and its own globals. What the machine cannot provide with
-hardware, the interpreter provides with a sandbox.
+A program here is an ordinary program. It is not a myrtos module, and none of
+the rules in [writing-modules.md](../../../docs/writing-modules.md) apply to it:
+no `__thread`, no ban on writable statics, no position independence, no module
+header. A wasm program has its own linear memory and its own globals, so what
+this machine cannot provide with hardware the interpreter provides with a
+sandbox.
 
-## Building
+The cost is one shared 190 kB interpreter, and nothing per program.
 
-    clang --target=wasm32-wasip1 \
-          --sysroot=$(brew --prefix wasi-libc)/share/wasi-sysroot \
-          -O2 ctest.c -o ctest.wasm
+## What the host provides
 
-`brew install wasi-libc wasi-runtimes` provides the sysroot and the compiler-rt
-builtins; the LLVM that Homebrew installs already targets wasm32.
+Fourteen WASI calls, implemented in [../wasi.c](../wasi.c):
 
-**Not emscripten.** `emcc -sSTANDALONE_WASM -sPURE_WASI=1` builds and the result
-imports only four calls we implement -- but its `open()` never reaches WASI, so
-there is no `path_open` in the import list and every file access fails. Measured
-on 3 Sep 2026 against a real file with `wasm3 --dir /`: it answered "no dongle".
-wasi-libc's `open()` goes straight to `path_open`, which is the whole point.
+    fd_write   fd_read    fd_close    fd_seek      fd_fdstat_get
+    fd_filestat_get       path_open   fd_prestat_get
+    fd_prestat_dir_name   environ_get environ_sizes_get
+    proc_exit  clock_time_get         poll_oneoff
 
-## Getting one onto the board
+That is enough for stdio, for files, and for waiting. Files are more than they
+sound: there is **one preopen, `/`**, so `/sd/data.txt` and `/dev/acm` arrive
+through the same call. **A dongle is a file.** `hibou.c` opens the BleuIO with
+`open("/dev/acm", O_RDWR)` and talks to it with `read` and `write`, and an FTDI
+cable would work the same day a driver registers one.
 
-    usbdisk              # the card becomes a disk on the host
-    # copy the .wasm across, eject it there
-    usbdisk off
-    wasm /sd/ctest.wasm
+`sleep()` and `nanosleep()` work, through `poll_oneoff`. `time()` works but
+counts from boot: there is no calendar on this machine and nothing sets a date.
 
-Long names work: the filesystem reads VFAT long entries, so `ctest.wasm` is
-`ctest.wasm` and not `CTES~1.WAS`. Writing them does not yet, so the copy has to
-come from the host rather than from the board.
+A read of a device blocks until there is something. That is why none of these
+examples poll: the loop simply reads. On the module side the same wait is
+`myrtos_arm` and a pulse; here it is one blocking call, and shorter for it.
 
-## What a program may use
+Not implemented, each small when something needs it:
 
-The host implements fourteen WASI calls: `fd_write`, `fd_read`, `fd_close`,
-`fd_seek`, `fd_fdstat_get`, `fd_filestat_get`, `path_open`, `fd_prestat_get`,
-`fd_prestat_dir_name`, `environ_get`, `environ_sizes_get`, `proc_exit`,
-`clock_time_get` and `poll_oneoff`.
-That is enough for stdio and for files, and files are more than they sound:
-there is one preopen, `/`, so `/sd/data.txt` and `/dev/acm` arrive the same way.
-**A dongle is a file.** hibou.c opens the BleuIO with `open("/dev/acm", O_RDWR)`
-and talks to it with `read` and `write`, and an FTDI cable would work the same
-day a driver registers one.
-
-`sleep()` and `nanosleep()` work, through `poll_oneoff`. hibou.c needs them:
-the BleuIO wants a pause between AT+CENTRAL and the scan that follows, and
-without one the first command is echoed and the rest are ignored. `time()` works
-too, but counts from boot -- there is no calendar on this machine and nothing
-sets a date.
-
-Not implemented, and each is small when something needs it:
-
-  - `args_get`, `args_sizes_get` -- so a program gets no argv. Hardcode paths.
-  - `random_get`     -- Rust's standard library wants this for its hash seeds
+  - `args_get`, `args_sizes_get` -- a program gets no argv. Hardcode paths.
+  - `random_get` -- Rust's standard library wants it for its hash seeds.
   - polling several descriptors at once. A `poll_oneoff` on a descriptor is
     answered as ready without looking, which is right while every read blocks.
 
-A read of a device blocks until there is something, which is why hibou.c has no
-timer and no polling: the loop simply reads. On the module side that same wait
-is `myrtos_arm` and a pulse; here it is one blocking call, and shorter for it.
+## Building
+
+All of these need the WASI sysroot and the compiler-rt builtins:
+
+    brew install wasi-libc wasi-runtimes
+
+`wasi-runtimes` is the easily missed half. Without it the link fails looking for
+`libclang_rt.builtins.a`, and its version has to match the LLVM in use.
+Homebrew's LLVM already targets wasm32, so there is no other compiler to fetch.
+
+    SYSROOT=$(brew --prefix wasi-libc)/share/wasi-sysroot
+    CLANG=$(brew --prefix llvm)/bin/clang
+
+### C, against POSIX -- hibou.c
+
+The ordinary way: `open`, `read`, `write`, `printf`.
+
+    $CLANG --target=wasm32-wasip1 --sysroot=$SYSROOT -Os hibou.c -o hibou.wasm
+
+### C, with no libc at all -- tiny.c
+
+The WASI calls imported by hand. Fourteen times smaller, and no longer portable
+C: it will not build for the host and cannot use a library that expects a libc.
+
+    $CLANG --target=wasm32 -Oz -fno-builtin -nostdlib \
+           -Wl,--no-entry -Wl,--export=_start -Wl,--strip-all \
+           tiny.c -o tiny.wasm
+
+`-fno-builtin` is not optional: without it clang recognises the hand-written
+string-length loop and replaces it with a call to `strlen`, which is not linked.
+
+### Nim -- hibou.nim
+
+Nim reaches wasm the way it reaches everything else, by writing C and driving a
+C compiler, so it goes all the way in one command.
+
+    nim c --cpu:wasm32 --os:any --mm:arc -d:useMalloc -d:release --opt:size \
+          --noMain --cc:clang \
+          --clang.exe:$CLANG --clang.linkerexe:$CLANG \
+          --passC:"--target=wasm32-wasip1 --sysroot=$SYSROOT -fno-builtin \
+                   -D_WASI_EMULATED_SIGNAL -ffunction-sections -fdata-sections" \
+          --passL:"--target=wasm32-wasip1 --sysroot=$SYSROOT \
+                   -lwasi-emulated-signal -Wl,--gc-sections -Wl,--strip-all" \
+          --out:hibou.wasm hibou.nim
+
+Four of those are load-bearing and each cost an attempt. `-d:useMalloc`, because
+`--os:any` has no memory manager and Nim stops with "Port memory manager to your
+platform". `_WASI_EMULATED_SIGNAL`, because Nim's `system` module reaches for
+`SIGINT` and `SIGSEGV` and wasm has no signals. `--noMain` with the entry
+exported as `main` rather than `_start`, because wasi-libc's crt1 owns `_start`
+and exporting it here is a duplicate symbol. And `--mm:arc`, which is what keeps
+the runtime small enough to be worth measuring.
+
+### Rust
+
+`hello.wasm` in the parent directory was built this way. The target is already
+installed; `rustup target add wasm32-wasip1` if it is not.
+
+    rustc --target wasm32-wasip1 -O prog.rs -o prog.wasm
+
+Ordinary `std` works: `std::fs::read_to_string` and `File::open` both do.
+Anything that seeds a hash map will want `random_get`, which is not implemented.
+
+### Not emscripten
+
+`emcc -sSTANDALONE_WASM -sPURE_WASI=1` builds cleanly and imports only four
+calls, all of which are implemented here -- but **its `open()` never reaches
+WASI**. There is no `path_open` in the import list at all, and a program answers
+as though the file were missing. Measured on 3 Sep 2026 against a real file
+under `wasm3 --dir /`: it said "no dongle". Since the point of these programs is
+that a device is a file, emscripten is the wrong tool for them.
+
+### TinyGo
+
+`tinygo build -target=wasi -o prog.wasm prog.go` should work on the same
+fourteen calls. Not tried here -- the four measured below were, on the board.
+
+## Reading a program's imports
+
+Before copying a new binary across, check what it actually asks for. Twenty
+lines of Python walking section 2 of the file beats installing a toolchain:
+
+    python3 - prog.wasm <<'PYEOF'
+    import sys
+    d = open(sys.argv[1], 'rb').read()
+    def uleb(b, i):
+        r = s = 0
+        while True:
+            x = b[i]; i += 1; r |= (x & 0x7f) << s; s += 7
+            if not x & 0x80: return r, i
+    i = 8
+    while i < len(d):
+        sid = d[i]; i += 1
+        size, i = uleb(d, i)
+        if sid == 2:
+            j = i; n, j = uleb(d, j)
+            for _ in range(n):
+                l, j = uleb(d, j); mod = d[j:j+l].decode(); j += l
+                l, j = uleb(d, j); nm  = d[j:j+l].decode(); j += l
+                k = d[j]; j += 1
+                if k == 0: _, j = uleb(d, j)
+                elif k in (1, 2):
+                    if k == 1: j += 1
+                    lim = d[j]; j += 1; _, j = uleb(d, j)
+                    if lim: _, j = uleb(d, j)
+                elif k == 3: j += 2
+                print(f"  {mod}.{nm}")
+        i += size
+    PYEOF
+
+## Getting one onto the board
+
+    usbdisk                 # the card becomes a disk on the host
+    # copy the .wasm across, then eject it there
+    usbdisk off
+    wasm /sd/hibou.wasm
+
+Long names work: the filesystem reads VFAT long entries, so `hibou.wasm` is
+`hibou.wasm` and not `HIBO~1.WAS`. Writing them does not yet, which is why the
+copy comes from the host rather than from the board.
+
+`wasm` with no argument runs the program built into the module. An argument
+beginning with `/` is a path; anything else is a stage name -- `entry`, `bss`,
+`heap`, `env`, `runtime`, `parse`, `load`, `link` -- which stops after that step.
+That exists because bisecting a host fault that way found one already.
 
 ## What one costs
 
-Measured on 3 Sep 2026, all three doing the same job against the dongle:
+Measured 3 Sep 2026. All four do the same job against the dongle, and all four
+were run on the board -- these are the sizes of programs that work, not of
+programs that link:
 
     tiny.wasm       925   C, raw WASI calls, no libc
-    hibou.nim      4258   Nim, raw WASI calls, ARC, one nim command
-    hibou.wasm    13813   C, the same program written against POSIX
+    hibou.nim      4258   Nim, raw WASI calls, ARC, one command
+    hibou.wasm    13813   C, the same program against POSIX and stdio
     hibouair.mod   3124   the native module -- and it decodes and draws a table
 
-The middle number is the surprising one, and it is worth knowing where it goes.
-Almost all of it is a single function of 6.9 kB: dlmalloc. Opening a file makes
-wasi-libc build its preopen table on the heap, so any program that touches a
-file pays for the allocator. Dropping stdio for plain `write()` saved two
+The third number is the surprising one, and it is worth knowing where it goes.
+Almost all of it is a single function of 6.9 kB: **dlmalloc**. Opening a file
+makes wasi-libc build its preopen table on the heap, so any program that touches
+a file pays for the allocator. Dropping stdio for plain `write()` saved two
 kilobytes; dropping libc altogether saved twelve.
 
 So a program that talks to a device can be smaller than the module it replaces,
-and one that wants printf and the standard library will not be. Neither number
-is the interpreter, which is 190 kB and shared by every program that runs.
+and one that wants printf and the standard library will not be. Nim sitting
+between the two is the pleasant surprise: a garbage-collected language with its
+runtime, in four kilobytes, because it never touches dlmalloc either.
 
-Nim sitting between the two is the pleasant surprise: a garbage-collected
-language with its runtime, four kilobytes, and it goes all the way to .wasm in
-one command because its backend is C and it will drive any C compiler you give
-it. All three of these were run on the board against the dongle -- the numbers
-are of programs that work, not of programs that link.
+## Two things that cost a run each
+
+A raw `path_open` takes a path **relative to the preopen, with no leading
+slash** -- the host puts the slash back itself. `"/dev/acm"` opens something
+that is not the dongle and reads nothing, which looks exactly like a dongle that
+is not plugged in. libc does that stripping for you; by hand you must.
+
+A device wants time between commands. The BleuIO echoes the first and ignores
+the rest if `ATE0`, `AT+CENTRAL` and `AT+FINDSCANDATA` go out back to back. The
+module had `myrtos_sleep(200)` between them all along, and the first wasm port
+had nothing to sleep with. That is what `poll_oneoff` is for.
