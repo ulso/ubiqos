@@ -237,9 +237,25 @@ void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k) { keymap = k; }
 #define REPEAT_DELAY_MS 400      // before the first repeat
 #define REPEAT_RATE_MS   35      // between them after that
 
+// And a limit, because the clock has no way of knowing the key was let go.
+//
+// A held key produces no reports at all -- the keyboard answers each poll with
+// a NAK until something changes -- so silence cannot be told from a keyboard
+// that has stopped answering. That leaves the release report as the only thing
+// that ends a repeat, and losing one costs the machine: Return repeated for
+// ever, an empty command each time, the prompt redrawn over the bottom row
+// until the power is cut. It happened repeatedly on 3 Sep 2026.
+//
+// Five seconds is longer than anyone holds a key on purpose except on the
+// cursor keys, and there the cost of the limit is lifting a finger and pressing
+// again. Against that: a lost report costs one keystroke instead of the
+// session. The trade is not close.
+#define REPEAT_LIMIT_MS 5000
+
 static uint8_t  repeat_key;      // 0 when nothing is held
 static uint8_t  repeat_mods;
 static uint32_t repeat_due;
+static uint32_t repeat_began;    // when this key started repeating
 
 // The keys the previous report said were down. At file scope rather than inside
 // the callback because a lost transfer has to be able to clear it: see below.
@@ -315,6 +331,7 @@ void myrtos_usbhost_push_str(const char *sq) {
 void myrtos_usbhost_repeat(void) {
     if (!repeat_key) return;
     uint32_t now = tusb_time_millis_api();
+    if ((int32_t)(now - repeat_began) > REPEAT_LIMIT_MS) { forget_held_keys(); return; }
     if ((int32_t)(now - repeat_due) < 0) return;
     const char *sq = nav_sequence(repeat_key);
     if (sq) {
@@ -431,9 +448,10 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
 
             // The newest key down is the one that repeats, as it is everywhere:
             // hold a, then hold b, and it is b that runs away.
-            repeat_key  = k;
-            repeat_mods = report[0];
-            repeat_due  = tusb_time_millis_api() + REPEAT_DELAY_MS;
+            repeat_key   = k;
+            repeat_mods  = report[0];
+            repeat_began = tusb_time_millis_api();
+            repeat_due   = repeat_began + REPEAT_DELAY_MS;
         }
         // A key that has been let go stops repeating. Modifiers are taken
         // afresh, so shift released mid-repeat turns capitals into small ones.
