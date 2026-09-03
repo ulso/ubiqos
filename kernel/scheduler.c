@@ -745,6 +745,18 @@ bool myrtos_block_on_child(int32_t pid) {
     return true;
 }
 
+#define MYRTOS_MAX_ARMS 8
+
+typedef struct {
+    int32_t  pid;
+    int32_t  path;
+    uint32_t type;
+} arm_t;
+
+static arm_t arms[MYRTOS_MAX_ARMS];
+
+static int32_t pulse_deliver(int32_t dest, int32_t from, uint32_t type, uint32_t value);
+
 // Called from the timer tick. A device driver knows whether it has anything
 // waiting; asking it once per millisecond costs the kernel a few comparisons and
 // costs the blocked process nothing at all.
@@ -759,6 +771,21 @@ void myrtos_wake_readers(void) {
         }
         process_table[i].state = PROC_STATE_READY;
         ready_enqueue(i);
+    }
+
+    // And the watchers, in the same sweep. A pulse rather than a wake-up,
+    // because a watcher is not blocked on the descriptor -- it is off doing
+    // something else, or waiting in receive for whichever of several things
+    // happens first, which is the entire point of arming.
+    for (int i = 0; i < MYRTOS_MAX_ARMS; i++) {
+        if (!arms[i].pid) continue;
+        if (process_table[arms[i].pid].state == PROC_STATE_FREE) {
+            arms[i].pid = 0;
+            continue;
+        }
+        if (!myrtos_io_readable(arms[i].path, arms[i].pid)) continue;
+        pulse_deliver(arms[i].pid, 0, arms[i].type, (uint32_t)arms[i].path);
+        arms[i].pid = 0;                        // one shot; ask again for more
     }
 }
 
@@ -827,7 +854,7 @@ static bool pulse_take(int32_t pid, myrtos_msg_t *out) {
 // inside a trap, and a trap runs with mstatus.MIE clear. The day something wants
 // to send a pulse from an interrupt handler -- which is exactly what a device
 // arming a reader would want -- that stops being true and this needs one.
-int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
+static int32_t pulse_deliver(int32_t dest, int32_t from, uint32_t type, uint32_t value) {
     if (dest <= 0 || dest >= MAX_PROCESSES) return -1;
 
     pcb_t *d = &process_table[dest];
@@ -838,7 +865,7 @@ int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
     // timer cannot wake it a second time.
     if (d->state == PROC_STATE_WAIT_RECV) {
         if (d->recv_timed) { sleep_remove(dest); d->recv_timed = false; }
-        pulse_into(d->msg_out, (int32_t)current_pid, type, value);
+        pulse_into(d->msg_out, from, type, value);
         d->msg_out = 0;
         // Zero, not a pid: a pulse is not replied to, and replying to zero
         // fails. QNX says the same thing with the same number.
@@ -850,11 +877,58 @@ int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
 
     if (pulse_count >= MYRTOS_MAX_PULSES) return -1;
     pulses[pulse_count].dest  = dest;
-    pulses[pulse_count].from  = (int32_t)current_pid;
+    pulses[pulse_count].from  = from;
     pulses[pulse_count].type  = type;
     pulses[pulse_count].value = value;
     pulse_count++;
     return 0;
+}
+
+int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
+    return pulse_deliver(dest, (int32_t)current_pid, type, value);
+}
+
+// --- ARMING ----------------------------------------------------------------
+//
+// Ask to be told when a descriptor has something, instead of asking it over and
+// over. QNX calls this ionotify and delivers the answer as a pulse, which is
+// exactly why pulses came first.
+//
+// It rides on the loop below, which the timer already runs once a millisecond
+// to wake blocked readers. No driver knows anything about this: the same
+// myrtos_io_readable that decides whether a sleeping reader may run decides
+// whether a watcher gets its pulse.
+//
+// One shot, as ionotify is. It fires once and disarms, so a device that stays
+// readable does not bury its watcher in pulses -- and a program that wants the
+// next one says so, which is also the moment it has finished with the last.
+//
+// The pulse comes from pid 0, the kernel, because that is the truth: no process
+// sent it. Its value is the descriptor, so a process watching several knows
+// which one woke.
+// type 0 cancels. Arming the same descriptor twice replaces the first, so a
+// program cannot accumulate watches it has forgotten about.
+int32_t myrtos_arm_read(int32_t path, uint32_t type) {
+    int32_t free_slot = -1;
+    for (int i = 0; i < MYRTOS_MAX_ARMS; i++) {
+        if (arms[i].pid == (int32_t)current_pid && arms[i].path == path) {
+            if (type == 0) { arms[i].pid = 0; return 0; }
+            arms[i].type = type;
+            return 0;
+        }
+        if (!arms[i].pid && free_slot < 0) free_slot = i;
+    }
+    if (type == 0) return 0;                    // cancelling what was not armed
+    if (free_slot < 0) return -1;
+    arms[free_slot].pid  = (int32_t)current_pid;
+    arms[free_slot].path = path;
+    arms[free_slot].type = type;
+    return 0;
+}
+
+static void arms_drop_for(int32_t pid) {
+    for (int i = 0; i < MYRTOS_MAX_ARMS; i++)
+        if (arms[i].pid == pid) arms[i].pid = 0;
 }
 
 // Drop anything addressed to a process that has gone. Nobody is waiting on
@@ -1104,6 +1178,7 @@ static void reap(uint32_t pid) {
     sleep_remove((int32_t)pid);                 // harmless if it was not asleep
     msg_unlink_all((int32_t)pid);               // release anyone waiting on us
     pulse_drop_for((int32_t)pid);               // nobody is waiting on these
+    arms_drop_for((int32_t)pid);                // and no one to tell any more
     myrtos_io_close_all(pid);
     if (process_table[pid].module) {            // a kernel thread has none
         myrtos_moddir_unlink(process_table[pid].module);

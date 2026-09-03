@@ -73,6 +73,7 @@ int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out);
 void myrtos_reboot_bootsel(void);
 void myrtos_reboot_machine(void);
 int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value);
+int32_t myrtos_arm_read(int32_t path, uint32_t type);
 uint32_t myrtos_psram_bytes(void);
 void *myrtos_mem_alloc(uint32_t size);
 void *myrtos_mem_alloc_bulk(uint32_t size);
@@ -306,6 +307,9 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         // Reading a module off the card is filesystem work, so it goes where
         // all filesystem work goes. The caller blocks in send until the server
         // has it, and the reply's status is the call's result.
+        case SYS_ARM:
+            frame->a0 = (uint32_t)myrtos_arm_read((int32_t)frame->a0, frame->a1);
+            break;
         case SYS_PULSE:
             frame->a0 = (uint32_t)myrtos_pulse_send((int32_t)frame->a0,
                                                     frame->a1, frame->a2);

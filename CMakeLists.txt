@@ -594,6 +594,7 @@ endfunction()
 myrtos_add_module(counter modules/counter/counter.c)
 myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
 myrtos_add_d_module(dhello modules/dhello/dhello.d)
+myrtos_add_module(armtest modules/armtest/armtest.c)
 myrtos_add_module(usbdisk modules/usbdisk/usbdisk.c)
 myrtos_add_module(reboot modules/reboot/reboot.c)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
@@ -755,6 +756,7 @@ add_custom_target(modules ALL
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
 set(MYRTOS_RESIDENT
+    armtest
     usbdisk
     reboot
     dhello

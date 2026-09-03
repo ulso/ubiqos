@@ -176,6 +176,8 @@ typedef struct __attribute__((packed, aligned(4))) {
                             // -> a0 = 0, or -1 if there is nothing to hand over
 #define SYS_PULSE     52u   // a0 = pid, a1 = type, a2 = value; never blocks
                             // -> a0 = 0, -1 no such process or the ring is full
+#define SYS_ARM       53u   // a0 = path, a1 = pulse type (0 cancels)
+                            // -> a0 = 0, -1 if there is no room to watch
 // SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
@@ -385,6 +387,25 @@ static inline int32_t myrtos_console(void)
 static inline int32_t myrtos_pulse(int32_t pid, uint32_t type, uint32_t value)
 {
     return myrtos_syscall(SYS_PULSE, (uint32_t)pid, type, value);
+}
+
+// Ask to be told when a descriptor has something, instead of asking it over and
+// over. The answer arrives as a pulse whose value is the descriptor, so a
+// program watching several knows which one woke. QNX calls this ionotify and
+// delivers it the same way.
+//
+// One shot: it fires once and disarms. A device that stays readable would
+// otherwise bury its watcher in pulses, and asking again is also the moment a
+// program has finished with the last one. Type 0 cancels.
+//
+// What it is for: waiting on more than one thing. myrtos_read blocks on one
+// descriptor and myrtos_receive_tmo blocks on messages and a clock, and before
+// this there was no way to wait for whichever came first. Arm the descriptor
+// and then wait in receive, and a keystroke, a reply and a deadline all arrive
+// at the same place.
+static inline int32_t myrtos_arm(int32_t path, uint32_t type)
+{
+    return myrtos_syscall(SYS_ARM, (uint32_t)path, type, 0);
 }
 
 // Send and block until the receiver replies. The return value is the reply's
