@@ -587,11 +587,20 @@ void myrtos_reboot_machine(void) {
 int main(void) {
     // Before anything that depends on a clock rate, the UART included. HSTX
     // shifts two bits per cycle and needs five cycles per TMDS character, so
-    // the pixel clock is clk_hstx/5 -- and clk_hstx has only a two-bit divider,
-    // which cannot reach 125 MHz from the SDK's default 150. So the system runs
-    // at 125 and the picture is right; whether PIO-USB minds is the next thing
-    // to find out.
-    set_sys_clock_khz(125000, true);
+    // the pixel clock is clk_hstx/5, and clk_hstx is pointed at clk_sys.
+    //
+    // PIO-USB does mind, which is what the note here used to wonder about. It
+    // derives its bit clocks by dividing clk_sys down -- 48 MHz to transmit at
+    // full speed, 96 MHz to receive -- and a PIO divider has eight fractional
+    // bits. 125 divides into neither: transmit lands 0.05 % low and receive
+    // 0.10 % high. 120 divides into both exactly, which is why every account of
+    // this library says to run at 120 MHz.
+    //
+    // The cost is the picture: 24 MHz through the same divide by five instead
+    // of 25, so 640x480 arrives at about 57 Hz rather than 60. Monitors take it.
+    // The gain is that a bus which a hub has to resynchronise and repeat is at
+    // last clocked at the rate it is specified for.
+    set_sys_clock_khz(120000, true);
 
     myrtos_uart_init();
     myrtos_kernel_main();

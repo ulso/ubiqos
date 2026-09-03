@@ -202,8 +202,9 @@ void myrtos_video_init(void) {
         0 << HSTX_CTRL_EXPAND_SHIFT_RAW_SHIFT_LSB;
 
     // Ten bits per TMDS character, two shifted per cycle, so five cycles each --
-    // which fixes the pixel clock at clk_hstx/5, and is why the system runs at
-    // 125 MHz rather than the SDK's 150.
+    // which fixes the pixel clock at clk_hstx/5. The system runs at 120 MHz for
+    // PIO-USB's sake rather than at the 125 that would give exactly 25 MHz here,
+    // so the picture is 640x480 at about 57 Hz. See the note in main.c.
     hstx_ctrl_hw->csr = 0;
     hstx_ctrl_hw->csr =
         HSTX_CTRL_CSR_EXPAND_EN_BITS |
