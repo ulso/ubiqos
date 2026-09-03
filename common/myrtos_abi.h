@@ -199,6 +199,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_READABLE  39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
 #define SYS_KILL      40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
 #define SYS_FOREGRND  41u   // a0 = path, a1 = pid or 0 -> a0 = 0 ok, -1 no path
+#define SYS_USBINFO   55u   // a0 = what -> a0 = that field of the USB host state
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -293,6 +294,22 @@ typedef struct {
 // otherwise tell whether anything had happened.
 #define MYRTOS_MEM_ASSERTS      4u
 #define MYRTOS_MEM_ASSERT_LAST  5u
+
+// What SYS_USBINFO will tell you about the PIO USB host. This exists because
+// reading the same state with a debug probe is not free: memory access on
+// Hazard3 halts the processor, and PIO-USB loses transactions while it is
+// stopped, so the probe produces the failure it was there to watch. Ask the
+// running machine instead.
+#define MYRTOS_USB_REARMS       0u   // refused asks that had to be repeated
+#define MYRTOS_USB_RECOVERIES   1u   // submitted transfers found lost
+#define MYRTOS_USB_REPEATKEY    2u   // the HID usage now repeating, 0 for none
+#define MYRTOS_USB_KEYSIN       3u   // bytes ever pushed into the key ring
+#define MYRTOS_USB_ROOT         4u   // init | connected<<1 | fullspeed<<2 | susp<<3 | event<<8
+// addr | instance<<8 | wanted<<16 | armed<<17 | idle<<24, for eight slots
+#define MYRTOS_USB_HID          0x10u
+// dev<<0 | ep<<8 | has_transfer<<16 | started<<17 | stalled<<18 | failed<<24
+#define MYRTOS_USB_EP           0x20u
+#define MYRTOS_USB_EP_COUNT     32u
 
 // Where the second pool lives: the XIP window after sixteen megabytes of flash
 // address space, which is also where our resident module region ends.
@@ -1134,6 +1151,11 @@ static inline int32_t myrtos_moddir_get(uint32_t index, myrtos_modinfo_t *out)
 static inline int32_t myrtos_meminfo(uint32_t what)
 {
     return myrtos_syscall(SYS_MEMINFO, what, 0, 0);
+}
+
+static inline uint32_t myrtos_usbinfo(uint32_t what)
+{
+    return (uint32_t)myrtos_syscall(SYS_USBINFO, what, 0, 0);
 }
 
 static inline int32_t myrtos_line_flush(int32_t path, myrtos_line_t *l)

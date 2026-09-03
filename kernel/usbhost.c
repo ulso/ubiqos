@@ -466,3 +466,45 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
     }
     hid_want(addr, instance);
 }
+
+// --- WHAT THE HOST STACK THINKS, WITHOUT A PROBE --------------------------
+//
+// Every number below was read with J-Link on 3 Sep 2026, and reading them that
+// way is what taught us not to. Memory access on Hazard3 goes through a halt,
+// and PIO-USB bit-bangs a bus whose timing is measured in microseconds: each
+// mem8 stopped the processor long enough to lose transactions, so the probe
+// manufactured the very failures it was brought in to observe. Hours went into
+// symptoms that were mine.
+//
+// So the same state is reported here, over the UART or the CDC console, by a
+// machine that never stops. One word at a time, because a syscall that returns
+// a structure would have to copy it into the caller's memory and this needs no
+// such ceremony -- usbstat asks for the fields it wants and lays them out.
+uint32_t myrtos_usbhost_info(uint32_t what) {
+    if (what == MYRTOS_USB_REARMS)     return myrtos_hid_rearms;
+    if (what == MYRTOS_USB_RECOVERIES) return myrtos_hid_recoveries;
+    if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
+    if (what == MYRTOS_USB_KEYSIN)     return head;
+
+    if (what == MYRTOS_USB_ROOT) {
+        const root_port_t *r = PIO_USB_ROOT_PORT(0);
+        return (uint32_t)r->initialized | ((uint32_t)r->connected << 1)
+             | ((uint32_t)r->is_fullspeed << 2) | ((uint32_t)r->suspended << 3)
+             | ((uint32_t)r->event << 8);
+    }
+
+    if (what >= MYRTOS_USB_HID && what < MYRTOS_USB_HID + HID_SLOTS) {
+        int i = (int)(what - MYRTOS_USB_HID);
+        return (uint32_t)hid_poll[i].addr | ((uint32_t)hid_poll[i].instance << 8)
+             | ((uint32_t)hid_poll[i].wanted << 16) | ((uint32_t)hid_poll[i].armed << 17)
+             | ((uint32_t)hid_poll[i].idle << 24);
+    }
+
+    if (what >= MYRTOS_USB_EP && what < MYRTOS_USB_EP + PIO_USB_EP_POOL_CNT) {
+        const endpoint_t *e = PIO_USB_ENDPOINT((int)(what - MYRTOS_USB_EP));
+        return (uint32_t)e->dev_addr | ((uint32_t)e->ep_num << 8)
+             | ((uint32_t)e->has_transfer << 16) | ((uint32_t)e->transfer_started << 17)
+             | ((uint32_t)e->stalled << 18) | ((uint32_t)e->failed_count << 24);
+    }
+    return 0;
+}

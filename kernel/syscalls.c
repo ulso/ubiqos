@@ -511,6 +511,11 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
             break;
+        case SYS_USBINFO: {
+            extern uint32_t myrtos_usbhost_info(uint32_t what);
+            frame->a0 = myrtos_usbhost_info(frame->a0);
+            break;
+        }
         case SYS_DATAAREA:
             frame->a0 = (uint32_t)(uintptr_t)myrtos_process_data_area(
                             (uint32_t*)(uintptr_t)frame->a0);

@@ -607,6 +607,7 @@ myrtos_add_module(usbdisk modules/usbdisk/usbdisk.c)
 myrtos_add_module(reboot modules/reboot/reboot.c)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
+myrtos_add_module(usbstat modules/usbstat/usbstat.c)
 myrtos_add_module(echo modules/echo/echo.c)
 myrtos_add_module(usbecho modules/usbecho/usbecho.c)
 myrtos_add_module(sh modules/sh/sh.c RT)
@@ -845,6 +846,7 @@ set(MYRTOS_RESIDENT
     echo
     lsmod
     free
+    usbstat
     msgtest
     msgcli
 )
