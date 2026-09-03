@@ -34,21 +34,28 @@ come from the host rather than from the board.
 
 ## What a program may use
 
-The host implements twelve WASI calls: `fd_write`, `fd_read`, `fd_close`,
+The host implements fourteen WASI calls: `fd_write`, `fd_read`, `fd_close`,
 `fd_seek`, `fd_fdstat_get`, `fd_filestat_get`, `path_open`, `fd_prestat_get`,
-`fd_prestat_dir_name`, `environ_get`, `environ_sizes_get` and `proc_exit`.
+`fd_prestat_dir_name`, `environ_get`, `environ_sizes_get`, `proc_exit`,
+`clock_time_get` and `poll_oneoff`.
 That is enough for stdio and for files, and files are more than they sound:
 there is one preopen, `/`, so `/sd/data.txt` and `/dev/acm` arrive the same way.
 **A dongle is a file.** hibou.c opens the BleuIO with `open("/dev/acm", O_RDWR)`
 and talks to it with `read` and `write`, and an FTDI cable would work the same
 day a driver registers one.
 
+`sleep()` and `nanosleep()` work, through `poll_oneoff`. hibou.c needs them:
+the BleuIO wants a pause between AT+CENTRAL and the scan that follows, and
+without one the first command is echoed and the rest are ignored. `time()` works
+too, but counts from boot -- there is no calendar on this machine and nothing
+sets a date.
+
 Not implemented, and each is small when something needs it:
 
-  - `clock_time_get` -- any notion of the time of day, and `time()`
-  - `poll_oneoff`    -- `sleep()`, and waiting on more than one thing at once
   - `args_get`, `args_sizes_get` -- so a program gets no argv. Hardcode paths.
   - `random_get`     -- Rust's standard library wants this for its hash seeds
+  - polling several descriptors at once. A `poll_oneoff` on a descriptor is
+    answered as ready without looking, which is right while every read blocks.
 
 A read of a device blocks until there is something, which is why hibou.c has no
 timer and no polling: the loop simply reads. On the module side that same wait

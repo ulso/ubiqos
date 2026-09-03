@@ -318,6 +318,111 @@ m3ApiRawFunction(wasi_fd_filestat_get)
     m3ApiReturn(WASI_OK);
 }
 
+// --- TIME, AND WAITING ----------------------------------------------------
+// A tick is a millisecond and that is the whole of the clock here. There is no
+// calendar on this machine -- nothing sets a date and no battery keeps one --
+// so the realtime clock and the monotonic clock are the same count of
+// milliseconds since the board came up. A program that prints a timestamp will
+// print one measured from boot, which is honest and is what the machine knows.
+#define WASI_EINVAL 28
+
+m3ApiRawFunction(wasi_clock_time_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArg      (uint32_t  , id)
+    m3ApiGetArg      (uint64_t  , precision)
+    m3ApiGetArgMem   (uint64_t *, out)
+
+    m3ApiCheckMem(out, sizeof(uint64_t));
+    (void)id; (void)precision;
+
+    m3ApiWriteMem64(out, (uint64_t)myrtos_ticks_now() * 1000000ull);
+    m3ApiReturn(WASI_OK);
+}
+
+// poll_oneoff is WASI's only way to wait, and sleep() is what compiles to it:
+// one subscription on a clock, with a relative timeout. That is the case worth
+// implementing properly, and it is the case the BleuIO needed -- the dongle
+// wants a pause between AT+CENTRAL and the scan that follows it, and without
+// one the setup goes out faster than the chip can act on it.
+//
+// The structures are the fiddly part, so they are spelled out rather than
+// mapped onto C types: a subscription is 48 bytes with the union at 16, and an
+// event is 32. Everything is little endian and read a field at a time, because
+// the guest's memory is not aligned the way this side would like.
+//
+//   subscription   userdata u64 @0, tag u8 @8,
+//                  clock: id u32 @16, timeout u64 @24, precision u64 @32,
+//                         flags u16 @40   (bit 0 set = the timeout is absolute)
+//   event          userdata u64 @0, error u16 @8, type u8 @10
+//
+// A subscription on a file descriptor is answered as ready without looking.
+// That is not a fudge: a read here blocks until there is something, so a
+// program that polls and then reads gets exactly what it would have got, and
+// one that polls several descriptors at once would need machinery this host
+// does not have. Nothing has asked for it yet.
+#define WASI_SUB_SIZE   48u
+#define WASI_EVENT_SIZE 32u
+#define WASI_EVENTTYPE_CLOCK 0u
+
+m3ApiRawFunction(wasi_poll_oneoff)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (const uint8_t *, in)
+    m3ApiGetArgMem   (uint8_t *      , out)
+    m3ApiGetArg      (uint32_t       , nsubs)
+    m3ApiGetArgMem   (uint32_t *     , nevents)
+
+    if (!nsubs) { m3ApiWriteMem32(nevents, 0); m3ApiReturn(WASI_EINVAL); }
+    m3ApiCheckMem(in,  nsubs * WASI_SUB_SIZE);
+    m3ApiCheckMem(out, nsubs * WASI_EVENT_SIZE);
+    m3ApiCheckMem(nevents, sizeof(uint32_t));
+
+    // The longest clock timeout among the subscriptions is not what to wait
+    // for -- the SHORTEST is, because poll returns when the first of them is
+    // ready. A single sleep has one and the distinction does not arise, but
+    // getting it backwards would turn a 200 ms pause into whatever else was
+    // being waited on.
+    uint64_t wait_ns = 0;
+    bool have_clock = false, ready_now = false;
+
+    for (uint32_t i = 0; i < nsubs; i++) {
+        const uint8_t *sub = in + i * WASI_SUB_SIZE;
+        if (sub[8] != 0) { ready_now = true; continue; }      // a descriptor: ready
+
+        uint64_t timeout = m3ApiReadMem64(sub + 24);
+        uint16_t flags   = m3ApiReadMem16(sub + 40);
+        if (flags & 1u) {                                     // absolute, so subtract now
+            uint64_t now = (uint64_t)myrtos_ticks_now() * 1000000ull;
+            timeout = (timeout > now) ? timeout - now : 0;
+        }
+        if (!have_clock || timeout < wait_ns) wait_ns = timeout;
+        have_clock = true;
+    }
+
+    // A descriptor that is ready already means there is nothing to wait for.
+    if (have_clock && !ready_now && wait_ns) {
+        uint32_t ms = (uint32_t)(wait_ns / 1000000ull);
+        // Anything under a millisecond still yields: a program asking for a
+        // pause wants the processor to go elsewhere, however short the pause.
+        myrtos_sleep(ms ? ms : 1);
+    }
+
+    // One event per subscription, all of them reporting success. Zero the whole
+    // structure first: the fields this host does not fill are read by the guest
+    // regardless, and whatever was in its memory would be read as an error.
+    for (uint32_t i = 0; i < nsubs; i++) {
+        const uint8_t *sub = in  + i * WASI_SUB_SIZE;
+        uint8_t       *ev  = out + i * WASI_EVENT_SIZE;
+        for (uint32_t b = 0; b < WASI_EVENT_SIZE; b++) ev[b] = 0;
+        m3ApiWriteMem64(ev, m3ApiReadMem64(sub));             // userdata, echoed back
+        m3ApiWriteMem16(ev + 8, 0);                           // error: none
+        ev[10] = sub[8];                                      // the type asked for
+    }
+    m3ApiWriteMem32(nevents, nsubs);
+    m3ApiReturn(WASI_OK);
+}
+
 M3Result wasm_link_wasi(IM3Module module)
 {
     static const char *ns = "wasi_snapshot_preview1";
@@ -347,6 +452,10 @@ M3Result wasm_link_wasi(IM3Module module)
     r = m3_LinkRawFunction(module, ns, "fd_fdstat_get",       "i(i*)",      &wasi_fd_fdstat_get);
     if (r && r != m3Err_functionLookupFailed) return r;
     r = m3_LinkRawFunction(module, ns, "fd_filestat_get",     "i(i*)",      &wasi_fd_filestat_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "clock_time_get",       "i(iI*)",     &wasi_clock_time_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "poll_oneoff",          "i(**i*)",    &wasi_poll_oneoff);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     return m3Err_none;
