@@ -178,6 +178,8 @@ typedef struct __attribute__((packed, aligned(4))) {
                             // -> a0 = 0, -1 no such process or the ring is full
 #define SYS_ARM       53u   // a0 = path, a1 = pulse type (0 cancels)
                             // -> a0 = 0, -1 if there is no room to watch
+#define SYS_DISARM    54u   // drops every watch this process holds
+                            // -> a0 = how many there were
 // SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
@@ -421,6 +423,25 @@ static inline int32_t myrtos_pulse(int32_t pid, uint32_t type, uint32_t value)
 static inline int32_t myrtos_arm(int32_t path, uint32_t type)
 {
     return myrtos_syscall(SYS_ARM, (uint32_t)path, type, 0);
+}
+
+// Drop every watch at once, and every notification a watch has already sent
+// that is still waiting. Returns how many of both there were. For the pattern arming
+// exists for: several sources armed, and only whichever speaks first matters.
+// The others stay armed otherwise, and each fires one stray pulse into a
+// receive that is no longer expecting it -- one each, since a watch is one
+// shot, but arriving at whatever the program is doing by then.
+//
+// The pending ones matter as much as the watches. Several descriptors readable
+// in the same millisecond all fire in the same sweep, before the program has
+// run at all, so by the time it has its first pulse the others are already sent
+// and disarming the watches alone would change nothing.
+//
+// The eight slots are the system's, not this process's, so letting go of the
+// ones you have stopped caring about is a courtesy to everything else running.
+static inline int32_t myrtos_disarm_all(void)
+{
+    return myrtos_syscall(SYS_DISARM, 0, 0, 0);
 }
 
 // Send and block until the receiver replies. The return value is the reply's

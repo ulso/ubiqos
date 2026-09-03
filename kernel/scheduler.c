@@ -926,6 +926,36 @@ int32_t myrtos_arm_read(int32_t path, uint32_t type) {
     return 0;
 }
 
+// Every watch this process holds, dropped at once. The pattern it is for is
+// arming several sources and caring only about whichever speaks first: the
+// moment the first pulse arrives, the rest are of no interest, and each would
+// otherwise fire one stray pulse into a receive that is no longer expecting it.
+int32_t myrtos_disarm_reads(void) {
+    int32_t n = 0;
+    for (int i = 0; i < MYRTOS_MAX_ARMS; i++)
+        if (arms[i].pid == (int32_t)current_pid) { arms[i].pid = 0; n++; }
+
+    // And the ones that have already gone off. Dropping the watches alone was
+    // not enough and the board said so: two descriptors armed, both readable in
+    // the same tick, and the sweep fired both before the process ran at all.
+    // By the time it had its first pulse and asked to disarm, there was nothing
+    // left armed -- the answer was zero -- and the second pulse was already
+    // queued and arrived anyway.
+    //
+    // So this means "I have stopped listening for descriptors", pending ones
+    // included. Only pulses from pid 0 go, which today means only the ones a
+    // watch produced; a pulse from another process is somebody talking to you
+    // and is none of this call's business.
+    uint32_t i = 0;
+    while (i < pulse_count) {
+        if (pulses[i].dest != (int32_t)current_pid || pulses[i].from != 0) { i++; continue; }
+        for (uint32_t j = i + 1; j < pulse_count; j++) pulses[j - 1] = pulses[j];
+        pulse_count--;
+        n++;
+    }
+    return n;
+}
+
 static void arms_drop_for(int32_t pid) {
     for (int i = 0; i < MYRTOS_MAX_ARMS; i++)
         if (arms[i].pid == pid) arms[i].pid = 0;

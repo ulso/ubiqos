@@ -60,11 +60,18 @@ void module_main(int argc, char **argv) {
         myrtos_line_str(&line, "\n");
         myrtos_line_flush(MYRTOS_STDOUT, &line);
 
-        // One shot: read what turned up and ask again, which is the moment we
-        // have finished with the last one.
+        // First one wins: the rest are of no interest now, and each would
+        // otherwise fire one stray pulse into a receive that is no longer
+        // expecting it. This is what disarm_all is for.
+        int32_t dropped = myrtos_disarm_all();
+        myrtos_line_reset(&line);
+        myrtos_line_str(&line, "  first one wins; dropped ");
+        myrtos_line_u32(&line, (uint32_t)dropped);
+        myrtos_line_str(&line, " (watches and pulses already sent)\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &line);
+
         uint8_t ch = 0;
         if (myrtos_readable((int32_t)m.len) > 0) myrtos_read((int32_t)m.len, &ch, 1);
-        myrtos_arm((int32_t)m.len, m.type);
     }
 
     myrtos_arm(MYRTOS_STDIN, 0);
