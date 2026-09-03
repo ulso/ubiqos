@@ -30,7 +30,12 @@
 // configuration. Linked against newlib it is about 193 kB against the 512 kB
 // the SINGLE region reserves.
 
-// Thirty-two kilobytes, which is the stack the interpreter needs and no more.
+// Sixty-four kilobytes, which is the ceiling the module format allows, and the
+// interpreter wants it. A four-line wasm program ran inside thirty-two; a Rust
+// program with the standard library behind it has deeper call chains, and a
+// stack that runs off the end of this block writes straight into the PSRAM
+// pool next to it -- which showed up as the console filling with rubbish and
+// the shell redrawing its prompt for ever, with nothing logged anywhere.
 //
 // The two big frames are not on it, and getting that right took two crashes.
 // wasm3 has a flag, d_m3PreferStaticAlloc, that keeps M3Compilation and
@@ -45,7 +50,7 @@
 // the default 4096 and crashed hard enough to take USB with it; the second
 // tried 64 kB, still less than one frame; and mem_size is capped at 65536 by
 // the module format anyway, so the stack was never the way out.
-MYRTOS_MEM_SIZE(32 * 1024);
+MYRTOS_MEM_SIZE(64 * 1024);
 
 // m3_info.c is left out of the build: it is the debug and tracing half of
 // wasm3 and the only part that reaches newlib's stdio, which cannot work here.
