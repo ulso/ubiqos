@@ -223,33 +223,32 @@ void module_main(void)
     if (r) { fail("parse", r); goto free_rt; }
 
     MARK("parsed");
-
     r = m3_LoadModule(runtime, module);
-    if (r) { fail("load", r); goto free_rt; }
+    if (r) { fail("load", r); report_error_site(runtime); goto free_rt; }
 
     MARK("loaded");
+
+    // The imports the program asked for, before anything of it runs.
+    extern M3Result wasm_link_wasi(IM3Module module);
+    r = wasm_link_wasi(module);
+    if (r) { fail("link wasi", r); goto free_rt; }
+
+    MARK("wasi linked");
+
+    // _start is what a WASI program is entered at; its main runs underneath.
     IM3Function f;
-    r = m3_FindFunction(&f, runtime, "run");
-    if (r) {
-        fail("find run", r);
-        report_error_site(runtime);
-        goto free_rt;
-    }
+    r = m3_FindFunction(&f, runtime, "_start");
+    if (r) { fail("find _start", r); report_error_site(runtime); goto free_rt; }
 
-    MARK("found run");
+    MARK("running");
     r = m3_CallV(f);
-    if (r) { fail("call run", r); goto free_rt; }
 
-    int32_t value = 0;
-    r = m3_GetResultsV(f, &value);
-    if (r) { fail("result", r); goto free_rt; }
-    say_num("wasm: run() = ", value);
-
-    r = m3_FindFunction(&f, runtime, "add");
-    if (!r) r = m3_CallV(f, 3, 4);
-    if (!r) r = m3_GetResultsV(f, &value);
-    if (r) fail("add", r);
-    else   say_num("wasm: add(3,4) = ", value);
+    // Exiting is a trap by design -- proc_exit cannot return -- so the one the
+    // program asks for is not a failure.
+    extern bool wasm_exited;
+    extern uint32_t wasm_exit_code;
+    if (r && !wasm_exited) { fail("run", r); report_error_site(runtime); }
+    else say_num("wasm: exited with ", (int32_t)wasm_exit_code);
 
 free_rt:
     m3_FreeRuntime(runtime);
