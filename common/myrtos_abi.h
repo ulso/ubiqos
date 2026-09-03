@@ -249,6 +249,7 @@ typedef struct {
 #define MYRTOS_MSG_FS_STAT   12u   // data = myrtos_fs_stat_t
 #define MYRTOS_MSG_FS_LOADMOD 13u  // data = module name, without the extension
 #define MYRTOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
+#define MYRTOS_MSG_FS_EXEC   15u   // data = myrtos_fs_exec_t -> the new pid
 
 // How a file is being opened. The numbers are POSIX's, so myrtos_posix.h can
 // alias them rather than translate. The kernel acts on them: it refuses a file
@@ -267,6 +268,24 @@ typedef struct {
     const char *name;
     uint32_t    flags;
 } myrtos_fs_open_t;
+
+// Making a process of a module is not the small operation it looks like. A
+// single-instance module has to be copied to the address it was linked for,
+// and for the wasm interpreter that is a third of a megabyte out of flash and
+// into PSRAM -- two chip selects on one QSPI bus. Done inside a trap it is tens
+// of milliseconds with interrupts off, and on 3 Sep 2026 that killed the USB
+// bus every time the interpreter was started: three missed polls end a
+// transfer, and TinyUSB never asks the hub again. A tight loop in a trap is an
+// interrupt blackout whether or not anybody wrote it as one.
+//
+// So process creation is a service, like the filesystem and the WiFi
+// coprocessor, and for the same reason. The pointers here may be passed raw
+// because the sender blocks until the reply: its memory cannot move or go away
+// while the server is reading it.
+typedef struct {
+    const myrtos_module_header_t *module;
+    const char                   *args;
+} myrtos_fs_exec_t;
 
 // The WiFi coprocessor is a service too, for the same reason the filesystem is:
 // talking to it means waiting seconds for a scan, and waiting must not happen

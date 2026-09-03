@@ -32,6 +32,7 @@
 void myrtos_print(const char *s);
 // No header declares this one; main.c reaches for it the same way.
 int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const char *args);
+void    myrtos_cwd_inherit(int32_t parent, int32_t child);
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 const char *myrtos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
@@ -221,6 +222,29 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     // the server was doing: a reply means the last write has landed, which is
     // the difference between a clean volume and one the host will find halfway
     // through a directory update.
+    // Making a process, which is here rather than in the trap that asked for it
+    // because a single-instance module has to be copied to the address it was
+    // linked for, and that is a third of a megabyte from flash into PSRAM for
+    // the interpreter. In a trap the copy runs with interrupts off and the USB
+    // bus dies underneath it; here the rest of the machine keeps running.
+    //
+    // This server rather than a new one, because it is already the place where
+    // the slow parts of starting something live: a module read off the card
+    // arrives through MYRTOS_MSG_FS_LOADMOD a few lines from here.
+    //
+    // The descriptors and the working directory are inherited from the SENDER,
+    // not from this thread. It is the shell that is starting a command, and it
+    // is the shell's stdin the command should read.
+    case MYRTOS_MSG_FS_EXEC: {
+        const myrtos_fs_exec_t *e = (const myrtos_fs_exec_t*)m->data;
+        int32_t pid = myrtos_process_create(e->module, e->args);
+        if (pid >= 0) {
+            myrtos_io_inherit(from, pid);
+            myrtos_cwd_inherit(from, pid);
+        }
+        return pid;
+    }
+
     case MYRTOS_MSG_FS_USBDISK: {
         uintptr_t what = (uintptr_t)m->data;
         bool give_away = (what == 1);

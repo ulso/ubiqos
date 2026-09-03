@@ -57,6 +57,7 @@ static bool server_request(int32_t srv, uint32_t type, void *data) {
 // that lets a sender's buffer be passed by pointer at all.
 static myrtos_fs_fdio_t fdio_req[MYRTOS_MAX_PROCESSES];
 static myrtos_fs_open_t open_req[MYRTOS_MAX_PROCESSES];
+static myrtos_fs_exec_t exec_req[MYRTOS_MAX_PROCESSES];
 
 static bool fs_request(uint32_t type, void *data) {
     return server_request(myrtos_fs_server_pid(), type, data);
@@ -292,9 +293,29 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             const char *stored = myrtos_moddir_match(want);
             if (!stored) { frame->a0 = (uint32_t)-1; break; }
             const myrtos_module_header_t *m = myrtos_moddir_link(stored);
-// The arguments are passed at creation: they are copied into the
-// process's own memory before the frame is built, so a0 can point past them.
-            int32_t pid = m ? myrtos_process_create(m, (const char*)(uintptr_t)frame->a1) : -1;
+            if (!m) { frame->a0 = (uint32_t)-1; break; }
+
+// The creation itself goes to the filesystem server, because it is not the
+// small operation it looks like: a single-instance module is copied to the
+// address it was linked for, and for the interpreter that is a third of a
+// megabyte from flash into PSRAM. Here that would run with interrupts off for
+// tens of milliseconds and take the USB bus down with it -- a tight loop in a
+// trap is a blackout whether or not it says so. Over there it runs in a thread,
+// with everything else still able to run.
+//
+// The arguments are passed at creation: they are copied into the new process's
+// own memory before the frame is built, so a0 can point past them. Passing the
+// pointer raw is safe for the usual reason -- the send blocks, so this process
+// stands still while the server reads it.
+            myrtos_fs_exec_t *e = &exec_req[myrtos_current_pid()];
+            e->module = m;
+            e->args   = (const char*)(uintptr_t)frame->a1;
+            if (fs_request(MYRTOS_MSG_FS_EXEC, e)) return myrtos_switch(sp);
+
+// Before the server exists -- the boot path starts its first processes this
+// way -- there is nobody to ask, and nothing yet running that a blackout could
+// hurt.
+            int32_t pid = myrtos_process_create(m, e->args);
             if (pid >= 0) {
                   myrtos_io_inherit(myrtos_current_pid(), pid);
                   myrtos_cwd_inherit(myrtos_current_pid(), pid);
