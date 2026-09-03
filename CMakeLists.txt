@@ -626,7 +626,6 @@ myrtos_add_module(hibouair modules/hibouair/hibouair.c)
 myrtos_add_module(wasm modules/wasm/wasm.c
     modules/wasm/newlib_glue.c
     modules/wasm/hello_wasm.c
-    third_party/wasm3/m3_api_libc.c
     third_party/wasm3/m3_bind.c
     third_party/wasm3/m3_code.c
     third_party/wasm3/m3_compile.c
@@ -634,7 +633,6 @@ myrtos_add_module(wasm modules/wasm/wasm.c
     third_party/wasm3/m3_env.c
     third_party/wasm3/m3_exec.c
     third_party/wasm3/m3_function.c
-    third_party/wasm3/m3_info.c
     third_party/wasm3/m3_module.c
     third_party/wasm3/m3_parse.c
     third_party/wasm3/m3_validate.c

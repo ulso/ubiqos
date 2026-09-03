@@ -1,5 +1,4 @@
 #include "../../common/myrtos_abi.h"
-#include <stdio.h>          // newlib's, which the port layer feeds
 #include "wasm3.h"
 
 // wasm -- a WebAssembly host, so an application can be written in any language
@@ -47,12 +46,43 @@
 // the module format anyway, so the stack was never the way out.
 MYRTOS_MEM_SIZE(32 * 1024);
 
+// m3_info.c is left out of the build: it is the debug and tracing half of
+// wasm3 and the only part that reaches newlib's stdio, which cannot work here.
+// One symbol from it is referenced unconditionally, so it gets a body.
+void m3_PrintProfilerInfo(void) { }
+
 extern const unsigned char hello_wasm[];
 extern const unsigned int  hello_wasm_len;
 
+// Not printf. newlib's stdio needs an initialised reent structure and there is
+// no C startup here to build one, so _impure_ptr points at nothing and the
+// first call reads a FILE at a misaligned address. That is what crashed the
+// board three times: mcause 4 at lh a5,12(s1) inside _vfprintf_r, with s1 odd.
+//
+// myrtos_write_str is the kernel's own path and needs nothing set up.
+static void say(const char *a, const char *b)
+{
+    myrtos_write_str(MYRTOS_STDOUT, a);
+    if (b) myrtos_write_str(MYRTOS_STDOUT, b);
+    myrtos_write_str(MYRTOS_STDOUT, "\n");
+}
+
+static void say_num(const char *a, int32_t v)
+{
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, a);
+    if (v < 0) { myrtos_line_str(&l, "-"); v = -v; }
+    myrtos_line_u32(&l, (uint32_t)v);
+    myrtos_line_str(&l, "\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+}
+
 static void fail(const char *what, M3Result r)
 {
-    printf("wasm: %s: %s\n", what, r ? r : "(no reason given)");
+    myrtos_write_str(MYRTOS_STDOUT, "wasm: ");
+    say(what, r ? ": " : " failed");
+    if (r) say("  ", r);
 }
 
 // The module's own .bss, which nobody else will clear.
@@ -71,30 +101,47 @@ static void clear_bss(void)
         *p = 0;
 }
 
-// WHERE THIS STANDS, 3 Sep 2026: it crashes the board and the fault is not
-// found. Read this before running it.
+// WHERE THIS STANDS, 3 Sep 2026: it crashes the board and the fault is found
+// but not fixed. Read this before running it.
 //
-// It gets a long way. On the board it clears its bss, takes a heap from PSRAM,
+// It gets a long way: on the board it clears its bss, takes a heap from PSRAM,
 // creates an environment and a runtime, and parses the embedded module. Then it
-// dies, taking USB with it -- no console, no crash message, nothing to read.
+// takes a fatal trap and the machine parks in the trap handler's wfi loop.
 //
-// The interesting fact is that the point of death MOVES when memory sizes
-// change. With a 192 kB heap and d_m3MaxFunctionStackHeight at 8000 it died in
-// m3_FindFunction, one step after m3_LoadModule; with a 1 MB heap and the
-// height at 1024 it dies in m3_LoadModule itself. That is the signature of
-// something being written where it should not be, not of a clean allocation
-// failure -- an out-of-memory would fail in the same place every time.
+// THE FAULT, read with the probe rather than guessed:
 //
-// Three hypotheses were wrong before that, and each cost a power cycle:
-//   - the default 4 kB mem_size was too small (true, but not the whole story)
-//   - 64 kB would be enough (no: mem_size is capped at 65536 and one of wasm3's
-//     structures was 40 kB, which is why d_m3PreferStaticAlloc went back on)
-//   - a third 40 kB frame in the compile path (no: CompileFunction uses
-//     &runtime->compilation, which is in the malloc'd runtime)
+//     *** MYRTOS TRAP: unhandled exception ***
+//       mepc 293223096  mcause 4  mtval 0
 //
-// The next step is not another guess. The debug probe can read myrtos_crash,
-// which the trap handler fills in with the cause and the address before the
-// machine parks, and that turns this from hypotheses into a fact.
+// mcause 4 is a misaligned load, and mepc is 0x117A3AB8 -- inside this module.
+// It also explains why the point of death moved when memory sizes changed:
+// whether a given access lands on an odd address depends on where things fell.
+//
+// HOW TO READ IT AGAIN, because this took four attempts to learn. A fatal trap
+// never reaches the screen: myrtos_print puts the text in the console ring and
+// the task that draws it never runs again. The text is still in dmesg_buf, so
+//
+//     nm os_kernel.elf | grep dmesg_buf
+//     JLinkExe -device RP2350_RV32_0 -if SWD -autoconnect 1   then mem8 <addr> 2048
+//
+// gets it out. The trap handler also writes to the UART on GP44, which is the
+// other way to see it live.
+//
+// AND A MISTAKE NOT TO REPEAT: mepc must be looked up in the exact ELF that was
+// flashed. I looked it up in a rebuilt one and got a confident, wrong answer
+// about which function it was.
+//
+// Three hypotheses were wrong before the probe was used, and each cost a power
+// cycle: that the default 4 kB mem_size was the whole story; that 64 kB would
+// do (mem_size is capped at 65536 and one wasm3 structure is 40 kB, which is
+// why d_m3PreferStaticAlloc belongs ON for a SINGLE module); and that the
+// compile path had a third large stack frame (it does not -- CompileFunction
+// uses &runtime->compilation, which is in the malloc'd runtime).
+//
+// Since then m3_info.c and m3_api_libc.c are out of the build and this file no
+// longer calls printf. newlib's stdio needs an initialised reent structure and
+// there is no C startup here to build one, so it was a hazard whether or not it
+// was the cause.
 
 #define MARK(s) myrtos_write_str(MYRTOS_STDOUT, "wasm: " s "\n")
 
@@ -145,13 +192,13 @@ void module_main(void)
     int32_t value = 0;
     r = m3_GetResultsV(f, &value);
     if (r) { fail("result", r); goto free_rt; }
-    printf("wasm: run() = %ld\n", (long)value);
+    say_num("wasm: run() = ", value);
 
     r = m3_FindFunction(&f, runtime, "add");
     if (!r) r = m3_CallV(f, 3, 4);
     if (!r) r = m3_GetResultsV(f, &value);
     if (r) fail("add", r);
-    else   printf("wasm: add(3,4) = %ld\n", (long)value);
+    else   say_num("wasm: add(3,4) = ", value);
 
 free_rt:
     m3_FreeRuntime(runtime);
