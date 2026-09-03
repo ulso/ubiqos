@@ -25,7 +25,10 @@ static uint32_t heap_used;
 
 int wasm_heap_init(uint32_t bytes)
 {
-    heap_base = (char *)myrtos_alloc(bytes);
+    // From PSRAM: myrtos_alloc takes the SRAM pool, which is 32 kB in total and
+    // has under four free. The bulk pool is eight megabytes and is where a
+    // module that is not real-time belongs anyway.
+    heap_base = (char *)myrtos_alloc_bulk(bytes);
     if (!heap_base)
         return -1;
     heap_size = bytes;

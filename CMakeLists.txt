@@ -625,6 +625,7 @@ myrtos_add_module(hibouair modules/hibouair/hibouair.c)
 # they are correct, and newlib may be linked as it stands. See modules/wasm.
 myrtos_add_module(wasm modules/wasm/wasm.c
     modules/wasm/newlib_glue.c
+    modules/wasm/hello_wasm.c
     third_party/wasm3/m3_api_libc.c
     third_party/wasm3/m3_bind.c
     third_party/wasm3/m3_code.c
@@ -640,6 +641,15 @@ myrtos_add_module(wasm modules/wasm/wasm.c
     SINGLE)
 target_include_directories(wasm_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/wasm3)
 target_link_libraries(wasm_app PRIVATE m c gcc)
+# The two forty-kilobyte compiler structures stay out of the stack. A SINGLE
+# module may have writable data, so this costs nothing here -- and mem_size is
+# capped at 64 kB, which is less than one of them.
+target_compile_definitions(wasm_app PRIVATE d_m3PreferStaticAlloc=1
+# 8000 is wasm3's default and costs 40 kB in each of M3Compilation and
+# M3Runtime, because both hold arrays of that many entries. 1024 brings them to
+# under six, and it is the deepest operand stack a single wasm function may use
+# -- generous for anything a person writes by hand.
+    d_m3MaxFunctionStackHeight=1024)
 
 # The TCP/IP stack, NOT built yet -- see docs/lwip/README.md.
 #
@@ -777,6 +787,10 @@ add_custom_target(modules ALL
 #
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
+# wasm is deliberately not resident. It crashes the board when run -- see the
+# note in modules/wasm/wasm.c -- and a module that bricks the machine should not
+# sit in flash where a stray word at the prompt reaches it. Put it back when the
+# fault is found.
 set(MYRTOS_RESIDENT
     hibouair
     armtest
