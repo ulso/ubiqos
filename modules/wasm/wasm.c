@@ -232,7 +232,13 @@ void module_main(int argc, char **argv)
 
     // After clear_bss and not before it: stop_after lives in .bss, and setting
     // it first means setting it and then zeroing it.
-    stop_after = (argc >= 2) ? argv[1] : 0;
+    //
+    // An argument beginning with a slash is a file to run -- paths here name a
+    // volume first, so every real one starts that way -- and anything else is a
+    // stage to stop after. That keeps 'wasm /sd/hello.wasm' and 'wasm parse'
+    // apart without a flag letter for either.
+    const char *path = (argc >= 2 && argv[1][0] == '/') ? argv[1] : 0;
+    stop_after = (argc >= 2 && !path) ? argv[1] : 0;
     if (stop_here("bss")) return;
 
     // newlib's malloc has nowhere to grow until this is done. 192 kB from the
@@ -249,6 +255,43 @@ void module_main(int argc, char **argv)
 
     MARK("heap ready");
     if (stop_here("heap")) return;
+
+    // The program to run, off the card if one was named. It has to be read
+    // after the heap exists, and it has to stay allocated for as long as the
+    // module does: m3_ParseModule does not copy the bytes, it points into them,
+    // so freeing this before the run would leave wasm3 reading whatever came
+    // next. Hence the free at the very end and not here.
+    const unsigned char *code = hello_wasm;
+    unsigned int code_len = hello_wasm_len;
+    unsigned char *loaded = 0;
+    if (path) {
+        uint32_t size = 0;
+        if (myrtos_fs_stat(path, &size) < 0) { say("wasm: no such file: ", path); goto done; }
+        if (!size)                           { say("wasm: empty file: ", path);   goto done; }
+        loaded = (unsigned char*)malloc(size);
+        if (!loaded)                         { say("wasm: no room for ", path);   goto done; }
+
+        int32_t fd = myrtos_open(path);
+        if (fd < 0) { say("wasm: cannot open ", path); free(loaded); loaded = 0; goto done; }
+
+        // A read returns what it has rather than all that was asked for, so it
+        // is a loop and not a call. Zero means the end arrived early, which for
+        // a file whose size we just asked for means something else is writing
+        // it, and half a module is not worth trying to parse.
+        uint32_t got = 0;
+        while (got < size) {
+            int32_t n = myrtos_read(fd, loaded + got, size - got);
+            if (n <= 0) break;
+            got += (uint32_t)n;
+        }
+        myrtos_close(fd);
+        if (got != size) { say("wasm: short read on ", path); free(loaded); loaded = 0; goto done; }
+
+        code = loaded;
+        code_len = size;
+        say_num("wasm: read bytes: ", (int32_t)size);
+    }
+
     IM3Environment env = m3_NewEnvironment();
     if (!env) { myrtos_write_str(MYRTOS_STDOUT, "wasm: no environment\n"); return; }
 
@@ -260,7 +303,7 @@ void module_main(int argc, char **argv)
     MARK("runtime");
     if (stop_here("runtime")) goto free_rt;
     IM3Module module;
-    M3Result r = m3_ParseModule(env, &module, hello_wasm, hello_wasm_len);
+    M3Result r = m3_ParseModule(env, &module, code, code_len);
     if (r) { fail("parse", r); goto free_rt; }
 
     MARK("parsed");
@@ -298,4 +341,7 @@ free_rt:
     m3_FreeRuntime(runtime);
 free_env:
     m3_FreeEnvironment(env);
+done:
+    // Last, and only now: wasm3 was pointing into this the whole time.
+    if (loaded) free(loaded);
 }
