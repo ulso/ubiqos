@@ -208,8 +208,18 @@ typedef struct __attribute__((packed, aligned(4))) {
 //
 // A queue can therefore never be longer than there are processes, which is why
 // there is no filter on receive: the usual argument against selective receive is
-// the cost of scanning an unbounded mailbox, and this one is bounded at thirty
-// two. Receive takes whatever comes and the receiver dispatches on type.
+// the cost of scanning an unbounded mailbox, and this one is bounded at sixteen.
+// Receive takes whatever comes and the receiver dispatches on type.
+//
+// Arming is not the same thing and does not replace it. OSE's selective receive
+// filters at the taking-out end: signals you are not ready for stay queued, so
+// a state machine can leave them until it changes state. Arming filters at the
+// putting-in end -- which descriptors may speak to you at all -- and its point
+// is different: it brings sources that are not messages into the same waiting
+// place. What is genuinely missing here is the deferral. A receiver must take
+// what arrives and put aside anything it is not ready for itself, and for
+// messages there is at least myrtos_reply_to, which lets a server accept a
+// second request before answering the first.
 typedef struct {
     uint32_t type;    // what this is; the receiver switches on it
     uint32_t len;     // how much data points at
