@@ -96,6 +96,228 @@ m3ApiRawFunction(wasi_proc_exit)
     m3ApiTrap(m3Err_trapExit);
 }
 
+// --- FILES, WHICH ARE ALSO DEVICES ----------------------------------------
+//
+// WASI opens a path relative to a preopened directory: a runtime asks
+// fd_prestat_get about descriptors from 3 upwards until one says EBADF, and
+// resolves every path against what it found. So one preopen is offered, and it
+// is "/" -- the whole myrtos namespace. A program then opens /sd/notes.txt and
+// /dev/acm by the same call, which is the point: to a wasm program the BleuIO
+// is a file, and so is an FTDI dongle the day its driver registers one.
+#define WASI_PREOPEN_FD    3
+#define WASI_PREOPENTYPE_DIR 0
+
+#define WASI_ENOENT   44
+#define WASI_ENOTDIR  54
+#define WASI_EINVAL   28
+
+// The flags WASI states, and what myrtos calls the same things.
+#define WASI_O_CREAT     0x0001
+#define WASI_O_DIRECTORY 0x0002
+#define WASI_O_EXCL      0x0004
+#define WASI_O_TRUNC     0x0008
+#define WASI_FDFLAG_APPEND 0x0001
+
+#define WASI_RIGHT_FD_WRITE 0x0000000000000040ULL
+
+// What each descriptor was opened as. fd_filestat_get is asked how long a file
+// is and has only a number to go on, while the only thing here that can answer
+// -- myrtos_fs_stat -- wants a name. So the name is kept when it is known.
+// Sixteen is more open files than a wasm program has any business holding.
+#define WASI_MAX_TRACKED 16
+
+static struct { int32_t fd; char name[48]; } wasi_paths[WASI_MAX_TRACKED];
+
+static void wasi_remember(int32_t fd, const char *name)
+{
+    for (int i = 0; i < WASI_MAX_TRACKED; i++) {
+        if (wasi_paths[i].fd && wasi_paths[i].fd != fd) continue;
+        wasi_paths[i].fd = fd;
+        uint32_t n = 0;
+        while (name[n] && n < sizeof(wasi_paths[i].name) - 1) { wasi_paths[i].name[n] = name[n]; n++; }
+        wasi_paths[i].name[n] = 0;
+        return;
+    }
+}
+
+static const char *wasi_name_of(int32_t fd)
+{
+    for (int i = 0; i < WASI_MAX_TRACKED; i++)
+        if (wasi_paths[i].fd == fd) return wasi_paths[i].name;
+    return 0;
+}
+
+static void wasi_forget(int32_t fd)
+{
+    for (int i = 0; i < WASI_MAX_TRACKED; i++)
+        if (wasi_paths[i].fd == fd) wasi_paths[i].fd = 0;
+}
+
+m3ApiRawFunction(wasi_fd_prestat_get)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t   , fd)
+    m3ApiGetArgMem  (uint8_t *  , prestat)
+
+    if (fd != WASI_PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+
+    // { u8 tag; u32 name_len; } with the length at offset 4 after padding.
+    m3ApiCheckMem(prestat, 8);
+    m3ApiWriteMem32(prestat, WASI_PREOPENTYPE_DIR);
+    m3ApiWriteMem32(prestat + 4, 1);          // strlen("/")
+    m3ApiReturn(WASI_OK);
+}
+
+m3ApiRawFunction(wasi_fd_prestat_dir_name)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t , fd)
+    m3ApiGetArgMem  (char *   , path)
+    m3ApiGetArg     (uint32_t , path_len)
+
+    if (fd != WASI_PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+    if (path_len < 1)          m3ApiReturn(WASI_EINVAL);
+
+    m3ApiCheckMem(path, 1);
+    path[0] = '/';
+    m3ApiReturn(WASI_OK);
+}
+
+m3ApiRawFunction(wasi_path_open)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t   , dirfd)
+    m3ApiGetArg     (uint32_t   , dirflags)
+    m3ApiGetArgMem  (const char*, path)
+    m3ApiGetArg     (uint32_t   , path_len)
+    m3ApiGetArg     (uint32_t   , oflags)
+    m3ApiGetArg     (uint64_t   , rights_base)
+    m3ApiGetArg     (uint64_t   , rights_inheriting)
+    m3ApiGetArg     (uint32_t   , fdflags)
+    m3ApiGetArgMem  (uint32_t * , out_fd)
+
+    m3ApiCheckMem(path, path_len);
+    m3ApiCheckMem(out_fd, sizeof(uint32_t));
+
+    if (dirfd != WASI_PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+
+    // The name arrives without a terminator and relative to the preopen, which
+    // is the root -- so it is put back together here rather than trusted.
+    char name[80];
+    if (path_len + 2 > sizeof(name)) m3ApiReturn(WASI_EINVAL);
+    name[0] = '/';
+    for (uint32_t i = 0; i < path_len; i++) name[1 + i] = path[i];
+    name[1 + path_len] = 0;
+
+    uint32_t flags = (rights_base & WASI_RIGHT_FD_WRITE) ? MYRTOS_O_RDWR : MYRTOS_O_RDONLY;
+    if (oflags  & WASI_O_CREAT)      flags |= MYRTOS_O_CREAT;
+    if (oflags  & WASI_O_TRUNC)      flags |= MYRTOS_O_TRUNC;
+    if (fdflags & WASI_FDFLAG_APPEND) flags |= MYRTOS_O_APPEND;
+
+    int32_t fd = myrtos_open_flags(name, flags);
+    if (fd < 0) m3ApiReturn(WASI_ENOENT);
+
+    wasi_remember(fd, name);
+    m3ApiWriteMem32(out_fd, (uint32_t)fd);
+    m3ApiReturn(WASI_OK);
+}
+
+m3ApiRawFunction(wasi_fd_read)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t             , fd)
+    m3ApiGetArgMem  (const wasi_iovec_t * , iovs)
+    m3ApiGetArg     (uint32_t             , iovs_len)
+    m3ApiGetArgMem  (uint32_t *           , nread)
+
+    m3ApiCheckMem(iovs, iovs_len * sizeof(wasi_iovec_t));
+
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < iovs_len; i++) {
+        uint32_t off = m3ApiReadMem32(&iovs[i].buf);
+        uint32_t len = m3ApiReadMem32(&iovs[i].len);
+        if (!len) continue;
+
+        void *p = m3ApiOffsetToPtr(off);
+        m3ApiCheckMem(p, len);
+
+        int32_t n = myrtos_read((int32_t)fd, p, len);
+        if (n < 0) m3ApiReturn(WASI_EBADF);
+        total += (uint32_t)n;
+        if ((uint32_t)n < len) break;         // short read is the end of it
+    }
+
+    m3ApiCheckMem(nread, sizeof(uint32_t));
+    m3ApiWriteMem32(nread, total);
+    m3ApiReturn(WASI_OK);
+}
+
+m3ApiRawFunction(wasi_fd_close)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t, fd)
+    wasi_forget((int32_t)fd);
+    m3ApiReturn(myrtos_close((int32_t)fd) < 0 ? WASI_EBADF : WASI_OK);
+}
+
+m3ApiRawFunction(wasi_fd_seek)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t  , fd)
+    m3ApiGetArg     (int64_t   , offset)
+    m3ApiGetArg     (uint32_t  , whence)
+    m3ApiGetArgMem  (uint64_t *, out_pos)
+
+    int32_t pos = myrtos_seek((int32_t)fd, (int32_t)offset, (int32_t)whence);
+    if (pos < 0) m3ApiReturn(WASI_EBADF);
+
+    m3ApiCheckMem(out_pos, sizeof(uint64_t));
+    m3ApiWriteMem64(out_pos, (uint64_t)(uint32_t)pos);
+    m3ApiReturn(WASI_OK);
+}
+
+// Enough of it to satisfy a runtime asking what kind of thing a descriptor is.
+// Everything here is a character device as far as this says, which is true of
+// the console and the dongle and a useful lie about a file until seeking needs
+// to be advertised.
+m3ApiRawFunction(wasi_fd_fdstat_get)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t  , fd)
+    m3ApiGetArgMem  (uint8_t * , stat)
+
+    m3ApiCheckMem(stat, 24);
+    for (uint32_t i = 0; i < 24; i++) stat[i] = 0;
+    stat[0] = (fd == WASI_PREOPEN_FD) ? 3 : 2;   // directory, or character device
+    m3ApiReturn(WASI_OK);
+}
+
+// The size of what a descriptor is open on, which is what read_to_string asks
+// before it allocates. There is no fstat here, so it is found the old way:
+// seek to the end, note where that is, and seek back. A device answers zero and
+// that is correct -- a stream has no length.
+m3ApiRawFunction(wasi_fd_filestat_get)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t  , fd)
+    m3ApiGetArgMem  (uint8_t * , buf)
+
+    m3ApiCheckMem(buf, 64);
+    for (uint32_t i = 0; i < 64; i++) buf[i] = 0;
+
+    // By name, because that is what can be asked. A descriptor whose name is
+    // not known -- the console, or one this did not open -- answers zero, and
+    // for a stream that is the truth rather than a failure.
+    uint32_t size = 0;
+    const char *name = wasi_name_of((int32_t)fd);
+    if (name) myrtos_fs_stat(name, &size);
+
+    // { dev u64, ino u64, filetype u8, nlink u64, size u64, ... }
+    buf[16] = 4;                       // regular file
+    m3ApiWriteMem64(buf + 32, (uint64_t)size);
+    m3ApiReturn(WASI_OK);
+}
+
 M3Result wasm_link_wasi(IM3Module module)
 {
     static const char *ns = "wasi_snapshot_preview1";
@@ -108,6 +330,23 @@ M3Result wasm_link_wasi(IM3Module module)
     r = m3_LinkRawFunction(module, ns, "environ_get",       "i(**)",   &wasi_environ_get);
     if (r && r != m3Err_functionLookupFailed) return r;
     r = m3_LinkRawFunction(module, ns, "proc_exit",         "v(i)",    &wasi_proc_exit);
+    if (r && r != m3Err_functionLookupFailed) return r;
+
+    r = m3_LinkRawFunction(module, ns, "fd_prestat_get",      "i(i*)",      &wasi_fd_prestat_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_prestat_dir_name", "i(i*i)",     &wasi_fd_prestat_dir_name);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "path_open",           "i(ii*iiIIi*)", &wasi_path_open);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_read",             "i(i*i*)",    &wasi_fd_read);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_close",            "i(i)",       &wasi_fd_close);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_seek",             "i(iIi*)",    &wasi_fd_seek);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_fdstat_get",       "i(i*)",      &wasi_fd_fdstat_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_filestat_get",     "i(i*)",      &wasi_fd_filestat_get);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     return m3Err_none;
