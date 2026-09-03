@@ -772,6 +772,102 @@ void myrtos_wake_readers(void) {
 static void msg_unlink_all(int32_t pid);
 static void reap(uint32_t pid);
 
+// --- PULSES ----------------------------------------------------------------
+//
+// A pulse is a message small enough to copy: a type and a value, no pointer and
+// no reply. Sending one never blocks and never waits for anything, which is the
+// whole point -- it is what myrtos_send deliberately is not.
+//
+// The two exist side by side because they pay for different things. A send
+// blocks so that the receiver may read the sender's own memory without copying
+// it, and fifteen kernel paths are built on that. A pulse carries no pointer,
+// so there is nothing to keep alive and nothing to own: it is copied here and
+// the sender walks away. QNX draws the same line and calls them the same thing.
+//
+// The ring is global rather than per process. Per process would be tidier and
+// costs thirty-two times as much SRAM, which this machine does not have; the
+// framebuffer is already eighty-five per cent of it. A global ring means one
+// process can fill it and starve the rest, which is a real objection -- but a
+// pulse may be refused, unlike a message that a blocked sender is waiting on,
+// so the failure is visible to whoever caused it rather than silent.
+#define MYRTOS_MAX_PULSES 24
+
+typedef struct {
+    int32_t  dest;
+    int32_t  from;
+    uint32_t type;
+    uint32_t value;
+} pulse_t;
+
+static pulse_t pulses[MYRTOS_MAX_PULSES];
+static uint32_t pulse_count;
+
+static void pulse_into(myrtos_msg_t *out, int32_t from, uint32_t type, uint32_t value) {
+    out->type   = type;
+    out->len    = value;      // the value rides in len; a pulse has no buffer
+    out->data   = 0;
+    out->sender = from;
+}
+
+// Take the oldest pulse addressed to this process, if there is one.
+static bool pulse_take(int32_t pid, myrtos_msg_t *out) {
+    for (uint32_t i = 0; i < pulse_count; i++) {
+        if (pulses[i].dest != pid) continue;
+        pulse_into(out, pulses[i].from, pulses[i].type, pulses[i].value);
+        for (uint32_t j = i + 1; j < pulse_count; j++) pulses[j - 1] = pulses[j];
+        pulse_count--;
+        return true;
+    }
+    return false;
+}
+
+// Non-blocking, and it may be refused. -1 means the destination is not there or
+// the ring is full; the sender decides whether that matters.
+// No interrupt guard, for the same reason myrtos_msg_send has none: this runs
+// inside a trap, and a trap runs with mstatus.MIE clear. The day something wants
+// to send a pulse from an interrupt handler -- which is exactly what a device
+// arming a reader would want -- that stops being true and this needs one.
+int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
+    if (dest <= 0 || dest >= MAX_PROCESSES) return -1;
+
+    pcb_t *d = &process_table[dest];
+    if (d->state == PROC_STATE_FREE) return -1;
+
+    // Waiting for something to arrive: hand it over and wake it, exactly as a
+    // message does, including taking a timed receiver off the sleep list so the
+    // timer cannot wake it a second time.
+    if (d->state == PROC_STATE_WAIT_RECV) {
+        if (d->recv_timed) { sleep_remove(dest); d->recv_timed = false; }
+        pulse_into(d->msg_out, (int32_t)current_pid, type, value);
+        d->msg_out = 0;
+        // Zero, not a pid: a pulse is not replied to, and replying to zero
+        // fails. QNX says the same thing with the same number.
+        ((myrtos_frame_t*)(uintptr_t)d->saved_sp)->a0 = 0;
+        d->state = PROC_STATE_READY;
+        ready_enqueue(dest);
+        return 0;
+    }
+
+    if (pulse_count >= MYRTOS_MAX_PULSES) return -1;
+    pulses[pulse_count].dest  = dest;
+    pulses[pulse_count].from  = (int32_t)current_pid;
+    pulses[pulse_count].type  = type;
+    pulses[pulse_count].value = value;
+    pulse_count++;
+    return 0;
+}
+
+// Drop anything addressed to a process that has gone. Nobody is waiting on
+// these -- that is what makes them pulses -- so they simply disappear.
+static void pulse_drop_for(int32_t pid) {
+    uint32_t i = 0;
+    while (i < pulse_count) {
+        if (pulses[i].dest != pid) { i++; continue; }
+        for (uint32_t j = i + 1; j < pulse_count; j++) pulses[j - 1] = pulses[j];
+        pulse_count--;
+    }
+}
+
 // True when the sender has been queued and must now block.
 bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
     if (dest <= 0 || dest >= MAX_PROCESSES || !m) return false;
@@ -824,6 +920,11 @@ int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms) {
     // goes on serving. msg_serving is merely the most recent, for the simple
     // servers that answer before they ask again.
     pcb_t *me = &process_table[current_pid];
+
+    // Messages before pulses, because a message has a sender standing blocked
+    // behind it and a pulse has nobody. The cost is that a busy server can
+    // leave pulses waiting, which is the right way round: the process that is
+    // stuck is served first.
     if (me->msg_head >= 0) {
         int32_t from = me->msg_head;
         me->msg_head = process_table[from].msg_next;
@@ -833,6 +934,8 @@ int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms) {
         me->msg_serving = from;
         return from;
     }
+    if (pulse_take((int32_t)current_pid, out)) return 0;   // 0: do not reply
+
     if (ms == 0) return MYRTOS_RECV_TIMEOUT;   // a poll, which never blocks
 
     me->msg_out = out;
@@ -1000,6 +1103,7 @@ static void wake_waiters(uint32_t pid) {
 static void reap(uint32_t pid) {
     sleep_remove((int32_t)pid);                 // harmless if it was not asleep
     msg_unlink_all((int32_t)pid);               // release anyone waiting on us
+    pulse_drop_for((int32_t)pid);               // nobody is waiting on these
     myrtos_io_close_all(pid);
     if (process_table[pid].module) {            // a kernel thread has none
         myrtos_moddir_unlink(process_table[pid].module);

@@ -174,6 +174,8 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_REBOOT    50u   // starts the machine again; never returns
 #define SYS_USBDISK   51u   // a0 = 1 hand the card to the host, 0 take it back
                             // -> a0 = 0, or -1 if there is nothing to hand over
+#define SYS_PULSE     52u   // a0 = pid, a1 = type, a2 = value; never blocks
+                            // -> a0 = 0, -1 no such process or the ring is full
 // SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
@@ -365,6 +367,24 @@ static inline int32_t myrtos_console(void)
     if (p < 0)
         p = myrtos_open("term");
     return p;
+}
+
+// A pulse: small enough to copy, so it needs no reply and never blocks.
+//
+// This is the other half of the pair, and the two are for different things. A
+// send blocks so the receiver may read the sender's own memory without copying
+// it -- that blocking is what keeps the pointer valid, and fifteen kernel paths
+// depend on it. A pulse carries no pointer, so there is nothing to keep alive:
+// the type and the value are copied into the kernel and the sender walks away.
+// QNX makes the same distinction and calls it the same thing.
+//
+// It may be refused, which a message may not: -1 means the process is not there
+// or the kernel's ring is full. That is the honest consequence of not blocking.
+// A receiver tells the two apart by what myrtos_receive returns -- a pid for a
+// message, which must be replied to, and 0 for a pulse, which must not.
+static inline int32_t myrtos_pulse(int32_t pid, uint32_t type, uint32_t value)
+{
+    return myrtos_syscall(SYS_PULSE, (uint32_t)pid, type, value);
 }
 
 // Send and block until the receiver replies. The return value is the reply's
@@ -770,7 +790,18 @@ typedef struct {
 //
 // The cost is 88 bytes of kernel table per process, so the limit is set by what
 // is useful rather than by what fits.
-#define MYRTOS_MAX_PROCESSES 32
+// Sixteen, down from thirty-two, to pay for pulses -- 2816 bytes of process
+// table and 1536 of descriptor slots, which is the whole cost of the feature
+// and then some. The machine runs eight processes in ordinary use: the kernel,
+// four of its threads, two shells and whatever was typed. A pipeline with a
+// couple of background jobs is the case that could reach the ceiling.
+//
+// This is what running out of SRAM looks like from the inside. The framebuffer
+// is 307200 bytes of a 512 kB machine and cannot move -- writing a glyph to
+// PSRAM stalls the display's own reads and the monitor drops sync, which was
+// measured and is written down in video.c. So every feature from here is paid
+// for out of a table like this one.
+#define MYRTOS_MAX_PROCESSES 16
 
 // How much memory each process running this module is given: the command line,
 // argv, the thread-local block and the data area at the bottom, the stack from

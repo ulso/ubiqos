@@ -33,4 +33,14 @@ void module_main(int argc, char **argv) {
         myrtos_line_str(&line, "\n");
         myrtos_line_flush(MYRTOS_STDOUT, &line);
     }
+
+    // And a pulse, which is the other half of the pair: no pointer, no reply,
+    // and it does not block. The server sees it as a message from nobody --
+    // receive gives it 0 rather than a pid -- and must not answer it.
+    int32_t rc = myrtos_pulse(srv, 99, 0xbeef);
+    myrtos_line_reset(&line);
+    myrtos_line_str(&line, "msgcli: pulse sent, returned ");
+    myrtos_line_u32(&line, (uint32_t)rc);
+    myrtos_line_str(&line, " (and did not wait)\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &line);
 }

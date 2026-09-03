@@ -45,6 +45,25 @@ void module_main(int argc, char **argv) {
         myrtos_reply((int32_t)m.len);      // only now may the client touch it
     }
 
+    // The pulse the client sends last. receive returns 0 for it, not a pid,
+    // which is how a receiver tells a pulse from a message: a message has a
+    // sender standing blocked behind it and must be answered, a pulse has
+    // nobody and must not be. Replying to 0 fails, so getting it wrong is
+    // caught rather than silently leaving a process asleep for ever.
+    {
+        myrtos_msg_t pm;
+        int32_t from = myrtos_receive(&pm);
+        myrtos_line_reset(&line);
+        myrtos_line_str(&line, from == 0 ? "  a pulse: type " : "  NOT a pulse: type ");
+        myrtos_line_u32(&line, pm.type);
+        myrtos_line_str(&line, " value ");
+        myrtos_line_u32(&line, pm.len);
+        myrtos_line_str(&line, " from pid ");
+        myrtos_line_u32(&line, (uint32_t)pm.sender);
+        myrtos_line_str(&line, "\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &line);
+    }
+
     myrtos_wait(child);
 
     // --- and the same receive, with a deadline ------------------------------

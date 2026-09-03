@@ -92,17 +92,6 @@ void module_main(int argc, char **argv)
 
     printf("connected; ctrl-C to stop\n");
 
-    // Anything after the device name is sent as one line, so that a command
-    // that is always the same need not be typed every time.
-    if (argc > 2) {
-        for (int i = 2; i < argc; i++) {
-            if (i > 2)
-                myrtos_write(dev, " ", 1);
-            myrtos_write_str(dev, argv[i]);
-        }
-        myrtos_write(dev, "\r\n", 2);
-    }
-
     if (set_echo(dev, false) < 0) {
         printf("Failed to turn echo off.\n");
         return;
