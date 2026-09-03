@@ -619,6 +619,28 @@ myrtos_add_module(nice modules/nice/nice.c)
 myrtos_add_module(ps modules/ps/ps.c)
 myrtos_add_module(mkdir modules/mkdir/mkdir.c)
 myrtos_add_module(hibouair modules/hibouair/hibouair.c)
+
+# The WebAssembly host. SINGLE because wasm3's interpreter is tables of function
+# pointers and a shareable module may not hold one; at a fixed address in PSRAM
+# they are correct, and newlib may be linked as it stands. See modules/wasm.
+myrtos_add_module(wasm modules/wasm/wasm.c
+    modules/wasm/newlib_glue.c
+    third_party/wasm3/m3_api_libc.c
+    third_party/wasm3/m3_bind.c
+    third_party/wasm3/m3_code.c
+    third_party/wasm3/m3_compile.c
+    third_party/wasm3/m3_core.c
+    third_party/wasm3/m3_env.c
+    third_party/wasm3/m3_exec.c
+    third_party/wasm3/m3_function.c
+    third_party/wasm3/m3_info.c
+    third_party/wasm3/m3_module.c
+    third_party/wasm3/m3_parse.c
+    third_party/wasm3/m3_validate.c
+    SINGLE)
+target_include_directories(wasm_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/wasm3)
+target_link_libraries(wasm_app PRIVATE m c gcc)
+
 # The TCP/IP stack, NOT built yet -- see docs/lwip/README.md.
 #
 # It compiles, links and very nearly passes the position-independence check: 57
