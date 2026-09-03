@@ -123,9 +123,11 @@ void tuh_umount_cb(uint8_t addr) {
 static struct {
     uint8_t addr, instance;
     bool wanted, armed;
+    uint8_t idle;                // consecutive sweeps with nothing in flight
 } hid_poll[HID_SLOTS];
 
 uint32_t myrtos_hid_rearms;      // how many times the ask had to be repeated
+uint32_t myrtos_hid_recoveries;  // how many times a submitted transfer was lost
 
 static void hid_want(uint8_t addr, uint8_t instance) {
     for (int i = 0; i < HID_SLOTS; i++) {
@@ -147,12 +149,51 @@ static void hid_want(uint8_t addr, uint8_t instance) {
 
 // Called from the USB process, once round every pass. A refused ask costs one
 // more attempt a millisecond later rather than the keyboard.
+//
+// Watching 'armed' alone was not enough, and the gap took a second evening to
+// find. The flag records that the ASK was accepted -- that a transfer was handed
+// to the host stack -- and says nothing about whether it ever came back. A
+// transfer that is submitted and then lost leaves 'armed' true for ever and this
+// sweep skipping the slot for ever. Every flag reads healthy while the keyboard
+// is silent: on 3 Sep 2026 both slots stood wanted and armed, the bus was still
+// sending a start of frame every millisecond, and not one report had arrived
+// since the wasm interpreter ran.
+//
+// So the question goes to the stack rather than to our own bookkeeping.
+// tuh_hid_receive_ready is false while a transfer is genuinely outstanding -- an
+// idle keyboard answers each poll with a NAK and the transfer stays pending --
+// and true only when there is nothing in flight at all. True while this side
+// believes a report is on its way means the transfer is gone, and the ask has to
+// be made again.
+//
+// One ready sweep is not enough to act on: a report just handed over has a
+// window before the endpoint reads as busy, and re-arming inside it would submit
+// twice. Three consecutive milliseconds with nothing in flight is not a window.
+#define HID_IDLE_SWEEPS 3
+
+static void forget_held_keys(void);
+
 void myrtos_usbhost_rearm(void) {
     for (int i = 0; i < HID_SLOTS; i++) {
-        if (hid_poll[i].wanted && !hid_poll[i].armed) {
+        if (!hid_poll[i].wanted) continue;
+
+        if (!hid_poll[i].armed) {
             hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr, hid_poll[i].instance);
+            hid_poll[i].idle = 0;
             myrtos_hid_rearms++;
+            continue;
         }
+
+        if (!tuh_hid_receive_ready(hid_poll[i].addr, hid_poll[i].instance)) {
+            hid_poll[i].idle = 0;               // a transfer is out, as it should be
+            continue;
+        }
+        if (++hid_poll[i].idle < HID_IDLE_SWEEPS) continue;
+
+        hid_poll[i].idle = 0;
+        hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr, hid_poll[i].instance);
+        myrtos_hid_recoveries++;
+        forget_held_keys();
     }
 }
 
@@ -199,6 +240,24 @@ void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k) { keymap = k; }
 static uint8_t  repeat_key;      // 0 when nothing is held
 static uint8_t  repeat_mods;
 static uint32_t repeat_due;
+
+// The keys the previous report said were down. At file scope rather than inside
+// the callback because a lost transfer has to be able to clear it: see below.
+static uint8_t  was[6];
+
+// Everything this side believes about which keys are held, dropped.
+//
+// A key that was down when the reports stopped coming is not down now, and if it
+// still is, the next report will say so. Repeating it in the meantime turns one
+// lost transfer into an unbroken stream -- and the key that was down was Return,
+// because pressing Return is how the command that lost the report was started.
+// The shell obeyed it: an empty line, a prompt, for ever, over the same bottom
+// row of the screen. From the outside that is a dead keyboard with a flickering
+// prompt, and neither half looks like a missing USB transfer.
+static void forget_held_keys(void) {
+    repeat_key = 0;
+    for (int i = 0; i < 6; i++) was[i] = 0;
+}
 
 static uint8_t translate(uint8_t k, uint8_t mods);
 
@@ -351,8 +410,8 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
         // it arrives on every poll. Emitting all of them each time turned one
         // held key into a stream of them -- "hhjjjkkkk" for three keystrokes.
         // So each report is compared with the one before, and only keys that
-        // were not already down produce a character.
-        static uint8_t was[6];
+        // were not already down produce a character. 'was' is at file scope so
+        // that a lost transfer can clear it; see forget_held_keys.
 
         for (int i = 2; i < 8; i++) {
             uint8_t k = report[i];
