@@ -60,3 +60,21 @@ Not implemented, and each is small when something needs it:
 A read of a device blocks until there is something, which is why hibou.c has no
 timer and no polling: the loop simply reads. On the module side that same wait
 is `myrtos_arm` and a pulse; here it is one blocking call, and shorter for it.
+
+## What one costs
+
+Measured on 3 Sep 2026, all three doing the same job against the dongle:
+
+    tiny.wasm       925   raw WASI calls, no libc
+    hibou.wasm    13813   the same program written against POSIX
+    hibouair.mod   3124   the native module -- and it decodes and draws a table
+
+The middle number is the surprising one, and it is worth knowing where it goes.
+Almost all of it is a single function of 6.9 kB: dlmalloc. Opening a file makes
+wasi-libc build its preopen table on the heap, so any program that touches a
+file pays for the allocator. Dropping stdio for plain `write()` saved two
+kilobytes; dropping libc altogether saved twelve.
+
+So a program that talks to a device can be smaller than the module it replaces,
+and one that wants printf and the standard library will not be. Neither number
+is the interpreter, which is 190 kB and shared by every program that runs.
