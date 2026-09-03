@@ -65,8 +65,9 @@ is `myrtos_arm` and a pulse; here it is one blocking call, and shorter for it.
 
 Measured on 3 Sep 2026, all three doing the same job against the dongle:
 
-    tiny.wasm       925   raw WASI calls, no libc
-    hibou.wasm    13813   the same program written against POSIX
+    tiny.wasm       925   C, raw WASI calls, no libc
+    hibou.nim      4258   Nim, raw WASI calls, ARC, one nim command
+    hibou.wasm    13813   C, the same program written against POSIX
     hibouair.mod   3124   the native module -- and it decodes and draws a table
 
 The middle number is the surprising one, and it is worth knowing where it goes.
@@ -78,3 +79,9 @@ kilobytes; dropping libc altogether saved twelve.
 So a program that talks to a device can be smaller than the module it replaces,
 and one that wants printf and the standard library will not be. Neither number
 is the interpreter, which is 190 kB and shared by every program that runs.
+
+Nim sitting between the two is the pleasant surprise: a garbage-collected
+language with its runtime, four kilobytes, and it goes all the way to .wasm in
+one command because its backend is C and it will drive any C compiler you give
+it. All three of these were run on the board against the dongle -- the numbers
+are of programs that work, not of programs that link.
