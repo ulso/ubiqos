@@ -251,6 +251,13 @@ typedef struct {
 #define MYRTOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
 #define MYRTOS_MSG_FS_EXEC   15u   // data = myrtos_fs_exec_t -> the new pid
 
+// How long a name a directory listing may hand back, terminator included. FAT's
+// 8.3 needed twelve; VFAT's long names are read now, and ".wasm" alone does not
+// fit an 8.3 extension, so an application format needed more. Sixty-four is
+// what the filesystem keeps; OS-9 allowed twenty-nine and nobody found it
+// short. Anything that receives a name from a listing must have this much room.
+#define MYRTOS_DIRNAME_MAX 65u
+
 // How a file is being opened. The numbers are POSIX's, so myrtos_posix.h can
 // alias them rather than translate. The kernel acts on them: it refuses a file
 // that is not there unless one of the creating flags is given, empties it for
@@ -614,7 +621,7 @@ static inline int32_t myrtos_args(char *buf, uint32_t len)
 typedef struct {
     const char *path;
     uint32_t index;   // starts at zero
-    char *name;       // twelve bytes out: eleven characters and a NUL
+    char *name;       // MYRTOS_DIRNAME_MAX bytes out, NUL terminated
     uint32_t *size;   // out
 } myrtos_fs_dir_t;
 

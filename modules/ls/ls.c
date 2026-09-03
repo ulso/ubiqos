@@ -8,7 +8,23 @@
 // for whoever is doing the reading.
 
 // "SH      MOD" -> "sh.mod". A directory has no extension worth showing.
+// A directory entry arrives either as FAT's raw eleven characters -- "README
+// TXT", no dot, the extension implied by its position -- or as a name that is
+// already a name: a long one off the card, or a device's. They are told apart
+// exactly rather than by guessing, because a FAT short entry can never contain
+// a dot: the separator is not stored. Eleven characters with no dot is the one
+// case that needs expanding.
 static void pretty(const char *raw, char *out) {
+    uint32_t len = 0;
+    bool dotted = false;
+    while (raw[len]) { if (raw[len] == '.') dotted = true; len++; }
+    if (len != 11 || dotted) {
+        uint32_t i = 0;
+        for (; raw[i]; i++) out[i] = raw[i];
+        out[i] = 0;
+        return;
+    }
+
     int n = 0;
     for (int i = 0; i < 8 && raw[i] != ' '; i++) {
         char c = raw[i];
@@ -27,7 +43,7 @@ static void pretty(const char *raw, char *out) {
 void module_main(int argc, char **argv) {
     const char *path = (argc > 1) ? argv[1] : "";
     myrtos_line_t line;
-    char raw[12], name[14];
+    char raw[MYRTOS_DIRNAME_MAX], name[MYRTOS_DIRNAME_MAX + 2];
     uint32_t size;
     uint32_t files = 0, bytes = 0;
 
@@ -70,7 +86,10 @@ void module_main(int argc, char **argv) {
         // name can be, so a name never pushes its own size out of line.
         uint32_t n = 0;
         while (name[n]) n++;
-        while (n++ < 16) myrtos_line_str(&line, " ");
+        // A long name can be wider than the column, and then one space is what
+        // keeps the size from running into it.
+        if (n >= 16) myrtos_line_str(&line, " ");
+        else while (n++ < 16) myrtos_line_str(&line, " ");
 
         if (attr & MYRTOS_ATTR_DIRECTORY) {
             myrtos_line_str(&line, "<dir>");

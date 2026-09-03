@@ -70,7 +70,9 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
     while (in[i] && n < sizeof(buf) - 2) {
         if (in[i] == '/') { i++; continue; }
 
-        char comp[16];
+        // As long as a name may now be: a component cut short here would turn
+        // "/sd/a-long-name.wasm" into a path to something that is not there.
+        char comp[MYRTOS_DIRNAME_MAX];
         uint32_t c = 0;
         while (in[i] && in[i] != '/' && c < sizeof(comp) - 1) comp[c++] = in[i++];
         comp[c] = 0;
@@ -321,7 +323,7 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // The directory has to exist, and listing its first entry is the
         // cheapest way to ask: even an empty one still has "." in it, so a real
         // directory always answers. The root is taken on trust.
-        char name[12];
+        char name[MYRTOS_DIRNAME_MAX];
         uint32_t size = 0;
         if (abs[1]) {
             const char *rest;

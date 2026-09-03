@@ -1,5 +1,6 @@
 #include "fat32.h"
 #include "sdcard.h"
+#include "../common/myrtos_abi.h"   // for MYRTOS_DIRNAME_MAX
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -105,20 +106,91 @@ static bool name_matches(const uint8_t *entry, const char *name_83) {
     return true;
 }
 
+// --- LONG NAMES -----------------------------------------------------------
+// 8.3 is not a format anyone wants to ship applications in. ".wasm" does not
+// fit a three-character extension at all, so a file copied from a Mac arrives
+// as HELL~36.WAS -- it runs, but nobody would call that a filename.
+//
+// VFAT keeps the real name in extra directory entries placed BEFORE the short
+// one, each marked with attribute 0x0f and holding thirteen UTF-16 units at
+// three separate offsets, because the fields had to fit around a layout that
+// was already fixed. They are stored last fragment first, and byte 0 carries
+// the sequence number, with 0x40 set on the one that ends the name.
+//
+// Reading them is what this does. Writing them is not: creating a file still
+// makes an 8.3 name, and remove still looks one up, because erasing a long name
+// means erasing its fragments in step with the short entry and a mistake there
+// costs the volume. So a long-named file can be listed, opened and read, and
+// cannot yet be deleted from here. See the note above the writing half.
+//
+// Sixty-four characters. OS-9 allowed twenty-nine and nobody found it short.
+#define FAT_LFN_MAX 64
+
+typedef struct {
+    char name[FAT_LFN_MAX + 1];
+    bool valid;
+} lfn_t;
+
+static void lfn_reset(lfn_t *l) { l->valid = false; l->name[0] = 0; }
+
+static void lfn_take(lfn_t *l, const uint8_t *e) {
+    static const uint8_t off[13] = { 1,3,5,7,9, 14,16,18,20,22,24, 28,30 };
+    uint32_t seq = e[0] & 0x3fu;
+    if (!seq || (seq - 1) * 13u >= FAT_LFN_MAX) { lfn_reset(l); return; }
+
+    uint32_t base = (seq - 1) * 13u;
+    for (uint32_t i = 0; i < 13 && base + i < FAT_LFN_MAX; i++) {
+        uint16_t u = rd16(&e[off[i]]);
+        // Anything outside ASCII becomes a question mark rather than a truncated
+        // byte: a name that is visibly wrong is better than one that is silently
+        // half right and matches something it should not.
+        l->name[base + i] = (u == 0 || u == 0xffff) ? 0
+                          : (u < 128 ? (char)u : '?');
+    }
+    if (e[0] & 0x40u) {
+        uint32_t end = base + 13u;
+        if (end > FAT_LFN_MAX) end = FAT_LFN_MAX;
+        l->name[end] = 0;                 // for a name that exactly fills the last
+    }
+    l->valid = true;
+}
+
+// Long names are matched without regard to case, as every system that has them
+// does. The short name beside them stays upper case and exactly matched, so both
+// spellings of a file keep working.
+static bool same_name_ci(const char *a, const char *b) {
+    while (*a && *b) {
+        char x = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a;
+        char y = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+        if (x != y) return false;
+        a++; b++;
+    }
+    return *a == *b;
+}
+
 // Look a name up in one directory. Shared by every read path, so the walk
 // exists once rather than once per caller. The directory is a parameter now:
 // the root is just the one whose cluster the boot sector names.
 static bool find_entry(uint32_t dir_cluster, const char *name_83,
+                       const char *want_long,
                        uint32_t *cluster_out, uint32_t *size_out, uint8_t *attr_out) {
+    lfn_t lfn;
+    lfn_reset(&lfn);
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
             if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
             for (int e = 0; e < 512; e += 32) {
                 if (sector[e] == 0x00) return false;   // end of the directory
-                if (sector[e] == 0xe5) continue;       // deleted entry
-                if (sector[e + 11] == 0x0f) continue;  // long-name fragment
-                if (name_matches(&sector[e], name_83)) {
+                if (sector[e] == 0xe5) { lfn_reset(&lfn); continue; }   // deleted
+                if (sector[e + 11] == 0x0f) { lfn_take(&lfn, &sector[e]); continue; }
+
+                // The fragments belong to the short entry that follows them, so
+                // the match is made here and the accumulator cleared either way.
+                bool hit = name_matches(&sector[e], name_83)
+                        || (lfn.valid && want_long && same_name_ci(lfn.name, want_long));
+                lfn_reset(&lfn);
+                if (hit) {
                     *cluster_out = ((uint32_t)rd16(&sector[e + 20]) << 16) | rd16(&sector[e + 26]);
                     *size_out = rd32(&sector[e + 28]);
                     if (attr_out) *attr_out = sector[e + 11];
@@ -148,11 +220,16 @@ static const char *skip_slashes(const char *p) {
 // "." and ".." are spelled out here rather than left to the name converter,
 // which looks for a stem before the dot, finds none, and calls the whole thing
 // unusable. FAT stores them as a dot and ten spaces, and two dots and nine.
-static const char *component_83(const char *p, char *out_11) {
-    char part[16];
+static const char *component_83(const char *p, char *out_11, char *raw_out) {
+    char part[FAT_LFN_MAX + 1];
     uint32_t n = 0;
     while (*p && *p != '/' && n < sizeof(part) - 1) part[n++] = *p++;
     part[n] = 0;
+    if (raw_out) {
+        uint32_t i = 0;
+        for (; part[i]; i++) raw_out[i] = part[i];
+        raw_out[i] = 0;
+    }
     while (*p && *p != '/') p++;              // a longer component is truncated
 
     if (part[0] == '.' && (part[1] == 0 || (part[1] == '.' && part[2] == 0))) {
@@ -172,8 +249,8 @@ static bool resolve_dir(const char *path, uint32_t *dir_out) {
     uint32_t dir = root_cluster;
     const char *p = skip_slashes(path ? path : "");
     while (*p) {
-        char name[12];
-        const char *next = component_83(p, name);
+        char name[12], raw[FAT_LFN_MAX + 1];
+        const char *next = component_83(p, name, raw);
         if (!next) return false;
         if (name[0] == '.' && name[1] == ' ') {
             /* "." is where we already are */
@@ -181,11 +258,11 @@ static bool resolve_dir(const char *path, uint32_t *dir_out) {
             // The root has no ".." entry of its own, so failing to find one
             // means we are already at the top and stay there.
             uint32_t cl = 0, sz = 0; uint8_t attr = 0;
-            if (find_entry(dir, name, &cl, &sz, &attr))
+            if (find_entry(dir, name, 0, &cl, &sz, &attr))
                 dir = cl ? cl : root_cluster;            // FAT writes zero for the root
         } else {
             uint32_t cl = 0, sz = 0; uint8_t attr = 0;
-            if (!find_entry(dir, name, &cl, &sz, &attr)) return false;
+            if (!find_entry(dir, name, raw, &cl, &sz, &attr)) return false;
             if (!(attr & 0x10)) return false;            // a file cannot be walked through
             dir = cl;
         }
@@ -197,7 +274,8 @@ static bool resolve_dir(const char *path, uint32_t *dir_out) {
 
 // Resolve everything but the last component, which is handed back in 8.3 form.
 // "/docs/readme.txt" gives the cluster of docs and "README  TXT".
-static bool resolve_parent(const char *path, uint32_t *dir_out, char *leaf_83) {
+static bool resolve_parent(const char *path, uint32_t *dir_out, char *leaf_83,
+                           char *leaf_long) {
     const char *p = path ? path : "";
     const char *last = p, *scan = p;
     while (*scan) { if (*scan == '/') last = scan + 1; scan++; }
@@ -208,14 +286,21 @@ static bool resolve_parent(const char *path, uint32_t *dir_out, char *leaf_83) {
     parent[n] = 0;
 
     if (!resolve_dir(parent, dir_out)) return false;
-    return myrtos_fat_name_to_83(last, leaf_83);
+    if (leaf_long) {
+        uint32_t i = 0;
+        while (last[i] && i < FAT_LFN_MAX) { leaf_long[i] = last[i]; i++; }
+        leaf_long[i] = 0;
+    }
+    // A leaf that has no 8.3 form at all -- ".wasm" has none -- is still a
+    // perfectly good long name, so this is not the end of the lookup.
+    return myrtos_fat_name_to_83(last, leaf_83) || (leaf_long && leaf_long[0]);
 }
 
 int32_t myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len) {
     if (!mounted) return -1;
 
     uint32_t file_cluster = 0, file_size = 0;
-    if (!find_entry(root_cluster, name_83, &file_cluster, &file_size, 0)) return -1;
+    if (!find_entry(root_cluster, name_83, 0, &file_cluster, &file_size, 0)) return -1;
 
     if (!file_cluster) return -1;
     if (file_size > max_len) return -2;
@@ -280,11 +365,11 @@ int32_t myrtos_fat_stat(const char *path, uint32_t *size_out) {
     const char *p = path ? path : "";
     if (!p[0] || (p[0] == '/' && !p[1])) return 0x10;
 
-    uint32_t dir = 0; char name_83[12];
-    if (!resolve_parent(path, &dir, name_83)) return -1;
+    uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(path, &dir, name_83, leaf)) return -1;
 
     uint32_t cluster = 0, file_size = 0; uint8_t attr = 0;
-    if (!find_entry(dir, name_83, &cluster, &file_size, &attr)) return -1;
+    if (!find_entry(dir, name_83, leaf, &cluster, &file_size, &attr)) return -1;
     if (size_out) *size_out = file_size;
     return (int32_t)attr;
 }
@@ -330,11 +415,11 @@ int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint
     if (!mounted) return -1;
 
     if (!ra_valid || !same_path(path, ra_path)) {
-        uint32_t dir = 0; char name_83[12];
-        if (!resolve_parent(path, &dir, name_83)) return -1;
+        uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
+        if (!resolve_parent(path, &dir, name_83, leaf)) return -1;
 
         uint32_t cluster = 0, file_size = 0; uint8_t attr = 0;
-        if (!find_entry(dir, name_83, &cluster, &file_size, &attr)) return -1;
+        if (!find_entry(dir, name_83, leaf, &cluster, &file_size, &attr)) return -1;
         if (attr & 0x10) return -1;                      // a directory is not readable
 
         uint32_t n = 0;
@@ -386,18 +471,35 @@ int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
     uint32_t seen = 0, dir_cluster = 0;
     if (!resolve_dir(dirpath, &dir_cluster)) return -1;
 
+    lfn_t lfn;
+    lfn_reset(&lfn);
+
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
             if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return -1;
             for (int e = 0; e < 512; e += 32) {
                 if (sector[e] == 0x00) return -1;         // end of the directory
-                if (sector[e] == 0xe5) continue;          // deleted entry
-                if (sector[e + 11] == 0x0f) continue;     // long-name fragment
-                if (sector[e + 11] & 0x08) continue;      // volume label
-                if (sector[e + 11] & 0x02) continue;      // hidden
+                if (sector[e] == 0xe5) { lfn_reset(&lfn); continue; }
+                if (sector[e + 11] == 0x0f) { lfn_take(&lfn, &sector[e]); continue; }
+                if (sector[e + 11] & 0x08) { lfn_reset(&lfn); continue; }   // volume label
+                if (sector[e + 11] & 0x02) { lfn_reset(&lfn); continue; }   // hidden
+                bool have_long = lfn.valid && lfn.name[0];
+                char kept[FAT_LFN_MAX + 1];
+                if (have_long) { uint32_t i = 0; for (; lfn.name[i]; i++) kept[i] = lfn.name[i]; kept[i] = 0; }
+                lfn_reset(&lfn);
                 if (seen++ != index) continue;
-                for (int i = 0; i < 11; i++) name_out[i] = (char)sector[e + i];
-                name_out[11] = 0;
+
+                // The long name if the file has one, and the 8.3 name if not --
+                // callers get a name they can hand straight back to open, which
+                // is the only kind worth returning.
+                if (have_long) {
+                    uint32_t i = 0;
+                    for (; kept[i] && i < MYRTOS_DIRNAME_MAX - 1; i++) name_out[i] = kept[i];
+                    name_out[i] = 0;
+                } else {
+                    for (int i = 0; i < 11; i++) name_out[i] = (char)sector[e + i];
+                    name_out[11] = 0;
+                }
                 *size_out = rd32(&sector[e + 28]);
                 return (int32_t)(uint8_t)sector[e + 11];
             }
@@ -544,7 +646,7 @@ bool myrtos_fat_remove(const char *path) {
     if (!mounted) return false;
 
     uint32_t dir = 0; char name_83[12];
-    if (!resolve_parent(path, &dir, name_83)) return false;
+    if (!resolve_parent(path, &dir, name_83, 0)) return false;
 
     uint32_t lba, off;
     if (!dir_locate(dir, name_83, &lba, &off)) return false;
@@ -571,7 +673,7 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
     if (!mounted || !len) return -1;
 
     uint32_t dir = 0; char name_83[12];
-    if (!resolve_parent(path, &dir, name_83)) return -1;
+    if (!resolve_parent(path, &dir, name_83, 0)) return -1;
 
     uint32_t lba, off, first_cluster, size;
     if (dir_locate(dir, name_83, &lba, &off)) {
@@ -654,7 +756,7 @@ bool myrtos_fat_mkdir(const char *path) {
 
     uint32_t dir = 0;
     char name_83[12];
-    if (!resolve_parent(path, &dir, name_83)) return false;
+    if (!resolve_parent(path, &dir, name_83, 0)) return false;
 
     uint32_t lba, off;
     if (dir_locate(dir, name_83, &lba, &off)) return false;   // the name is taken
@@ -700,7 +802,7 @@ bool myrtos_fat_rmdir(const char *path) {
 
     uint32_t dir = 0;
     char name_83[12];
-    if (!resolve_parent(path, &dir, name_83)) return false;
+    if (!resolve_parent(path, &dir, name_83, 0)) return false;
     if (name_83[0] == '.') return false;              // never "." or ".."
 
     uint32_t lba, off;
