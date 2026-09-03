@@ -296,9 +296,29 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
             return -1;
         }
         if ((uintptr_t)module_ptr != MYRTOS_SINGLE_BASE) {
+            // A word at a time, and the reason is not tidiness.
+            //
+            // This runs inside a trap, so interrupts are off for the whole copy,
+            // and the copy is a third of a megabyte from flash into PSRAM -- two
+            // chip selects on the one QSPI bus. Byte by byte that was tens of
+            // milliseconds with nothing else able to run, and PIO-USB bit-bangs
+            // a bus that has to answer every millisecond. Three missed polls in
+            // a row end a transfer, and TinyUSB's hub driver never asks again:
+            // the hub went deaf every single time wasm was started, and took the
+            // keyboard behind it. 'wasm entry', which returns without executing
+            // a line of its own, was enough -- the loader had already done it.
+            //
+            // Four bytes per iteration is the cheap part of the fix. The real
+            // one is not doing unbounded work in a trap at all; see the note on
+            // long syscalls. This buys the margin back until that is faced.
+            uint32_t n = module_ptr->module_size;
+            uint32_t *d32 = (uint32_t*)MYRTOS_SINGLE_BASE;
+            const uint32_t *s32 = (const uint32_t*)module_ptr;
+            uint32_t words = n / 4;
+            for (uint32_t i = 0; i < words; i++) d32[i] = s32[i];
             uint8_t *dst = (uint8_t*)MYRTOS_SINGLE_BASE;
             const uint8_t *src = (const uint8_t*)module_ptr;
-            for (uint32_t i = 0; i < module_ptr->module_size; i++) dst[i] = src[i];
+            for (uint32_t i = words * 4; i < n; i++) dst[i] = src[i];
             run = (const myrtos_module_header_t*)MYRTOS_SINGLE_BASE;
         }
     }

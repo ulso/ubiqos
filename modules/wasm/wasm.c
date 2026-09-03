@@ -196,11 +196,44 @@ static void clear_bss(void)
 
 #define MARK(s) myrtos_write_str(MYRTOS_STDOUT, "wasm: " s "\n")
 
-void module_main(void)
+// Which step to stop after, so the one that costs the USB bus can be found.
+//
+// Running this interpreter kills the PIO USB host: the hub's status endpoint
+// ends at three failures and never recovers, and the keyboard's transactions
+// start failing in the same seconds. Nothing else on the machine does it --
+// four megabytes of PSRAM filled and verified by memtest leaves the bus
+// untouched -- so it is something in here and not the memory it uses.
+//
+// 'wasm heap', 'wasm env', 'wasm runtime', 'wasm parse', 'wasm load',
+// 'wasm link' each stop after that step. No argument runs the program.
+static const char *stop_after;
+
+static bool same(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+static bool stop_here(const char *stage) {
+    return stop_after && same(stop_after, stage);
+}
+
+void module_main(int argc, char **argv)
 {
+    // Before clear_bss, and so without using stop_after, which clear_bss would
+    // have zeroed: 'wasm entry' returns having done nothing at all. What has
+    // happened by then is the loader copying a third of a megabyte of module
+    // out of flash and into PSRAM -- both on the same QSPI bus -- and if that
+    // alone costs the USB bus, no line in this file is to blame.
+    if (argc >= 2 && same(argv[1], "entry")) return;
+
     MARK("entered");
     clear_bss();
     MARK("bss cleared");
+
+    // After clear_bss and not before it: stop_after lives in .bss, and setting
+    // it first means setting it and then zeroing it.
+    stop_after = (argc >= 2) ? argv[1] : 0;
+    if (stop_here("bss")) return;
 
     // newlib's malloc has nowhere to grow until this is done. 192 kB from the
     // pool, which for a module that is not real-time means PSRAM, where there are
@@ -215,23 +248,28 @@ void module_main(void)
     }
 
     MARK("heap ready");
+    if (stop_here("heap")) return;
     IM3Environment env = m3_NewEnvironment();
     if (!env) { myrtos_write_str(MYRTOS_STDOUT, "wasm: no environment\n"); return; }
 
     MARK("environment");
+    if (stop_here("env")) goto free_env;
     IM3Runtime runtime = m3_NewRuntime(env, 8192, NULL);
     if (!runtime) { myrtos_write_str(MYRTOS_STDOUT, "wasm: no runtime\n"); goto free_env; }
 
     MARK("runtime");
+    if (stop_here("runtime")) goto free_rt;
     IM3Module module;
     M3Result r = m3_ParseModule(env, &module, hello_wasm, hello_wasm_len);
     if (r) { fail("parse", r); goto free_rt; }
 
     MARK("parsed");
+    if (stop_here("parse")) goto free_rt;
     r = m3_LoadModule(runtime, module);
     if (r) { fail("load", r); report_error_site(runtime); goto free_rt; }
 
     MARK("loaded");
+    if (stop_here("load")) goto free_rt;
 
     // The imports the program asked for, before anything of it runs.
     extern M3Result wasm_link_wasi(IM3Module module);
@@ -239,6 +277,7 @@ void module_main(void)
     if (r) { fail("link wasi", r); goto free_rt; }
 
     MARK("wasi linked");
+    if (stop_here("link")) goto free_rt;
 
     // _start is what a WASI program is entered at; its main runs underneath.
     IM3Function f;
