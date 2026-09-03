@@ -78,11 +78,35 @@ static void say_num(const char *a, int32_t v)
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 }
 
+// An M3Result is a const char*, and printing it is what actually crashed the
+// board. m3_LoadModule returned an error, this walked the string to say which,
+// and the load faulted: mcause 5 at lbu a5,0(a3), inside here. The real problem
+// was the failed load; the crash was the reporting of it.
+//
+// So the pointer is shown before it is trusted, and only dereferenced if it
+// points somewhere this module owns.
+static bool result_readable(M3Result r)
+{
+    extern char __bss_start[], _end[];
+    unsigned long a = (unsigned long)r;
+    if (a >= MYRTOS_SINGLE_BASE && a < MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_RESERVE) return true;
+    if (a >= (unsigned long)__bss_start && a < (unsigned long)_end) return true;
+    return false;
+}
+
 static void fail(const char *what, M3Result r)
 {
-    myrtos_write_str(MYRTOS_STDOUT, "wasm: ");
-    say(what, r ? ": " : " failed");
-    if (r) say("  ", r);
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, "wasm: ");
+    myrtos_line_str(&l, what);
+    myrtos_line_str(&l, " failed, M3Result 0x");
+    myrtos_line_hex(&l, (uint32_t)(unsigned long)r);
+    myrtos_line_str(&l, "\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+
+    if (r && result_readable(r))  say("  ", r);
+    else if (r)                   say("  ", "(pointer is not in this module)");
 }
 
 // The module's own .bss, which nobody else will clear.
@@ -101,47 +125,46 @@ static void clear_bss(void)
         *p = 0;
 }
 
-// WHERE THIS STANDS, 3 Sep 2026: it crashes the board and the fault is found
-// but not fixed. Read this before running it.
+// WHERE THIS STANDS, 3 Sep 2026. It no longer crashes the board, and it does
+// not yet run a function.
 //
-// It gets a long way: on the board it clears its bss, takes a heap from PSRAM,
-// creates an environment and a runtime, and parses the embedded module. Then it
-// takes a fatal trap and the machine parks in the trap handler's wfi loop.
+//     wasm: parsed
+//     wasm: loaded
+//     wasm: find run failed, M3Result 0x00010000
 //
-// THE FAULT, read with the probe rather than guessed:
+// So wasm3 starts, takes a heap from PSRAM, parses the embedded module and
+// loads it. m3_FindFunction then fails, and what it returns is not one of
+// wasm3's error constants -- those are in this module's .data around
+// 0x117b02xx -- nor a pointer into the heap, which is in PSRAM below
+// 0x11780000. 0x00010000 is neither. That is the next thread to pull.
 //
-//     *** MYRTOS TRAP: unhandled exception ***
-//       mepc 293223096  mcause 4  mtval 0
+// The crashes before this were not wasm3 at all. They were this file's own
+// error reporting: an M3Result is a const char*, fail() walked it to say what
+// went wrong, and the load faulted. Three power cycles went on hypotheses --
+// the stack, then a bigger stack, then a third large frame that does not exist
+// -- before the probe was used, and the probe answered in one go.
 //
-// mcause 4 is a misaligned load, and mepc is 0x117A3AB8 -- inside this module.
-// It also explains why the point of death moved when memory sizes changed:
-// whether a given access lands on an odd address depends on where things fell.
+// HOW TO READ A CRASH HERE, since it took four attempts to learn:
 //
-// HOW TO READ IT AGAIN, because this took four attempts to learn. A fatal trap
-// never reaches the screen: myrtos_print puts the text in the console ring and
-// the task that draws it never runs again. The text is still in dmesg_buf, so
+//   A fatal trap never reaches the screen. myrtos_print puts the text in the
+//   console ring and the task that draws it never runs again, so the machine
+//   parks with the diagnosis written and undrawn. It is still in dmesg_buf:
 //
-//     nm os_kernel.elf | grep dmesg_buf
-//     JLinkExe -device RP2350_RV32_0 -if SWD -autoconnect 1   then mem8 <addr> 2048
+//     nm build/os_kernel.elf | grep dmesg_buf
+//     JLinkExe -device RP2350_RV32_0 -if SWD -autoconnect 1 -NoGui 1
+//     > mem8 <that address> 2048
 //
-// gets it out. The trap handler also writes to the UART on GP44, which is the
-// other way to see it live.
+//   The handler also writes to the UART on GP44, which shows it live.
 //
-// AND A MISTAKE NOT TO REPEAT: mepc must be looked up in the exact ELF that was
-// flashed. I looked it up in a rebuilt one and got a confident, wrong answer
-// about which function it was.
+//   And mepc must be looked up in the exact ELF that was flashed. build/flashed
+//   holds a copy for that reason; looking it up in a rebuilt one gave a
+//   confident wrong answer once already.
 //
-// Three hypotheses were wrong before the probe was used, and each cost a power
-// cycle: that the default 4 kB mem_size was the whole story; that 64 kB would
-// do (mem_size is capped at 65536 and one wasm3 structure is 40 kB, which is
-// why d_m3PreferStaticAlloc belongs ON for a SINGLE module); and that the
-// compile path had a third large stack frame (it does not -- CompileFunction
-// uses &runtime->compilation, which is in the malloc'd runtime).
-//
-// Since then m3_info.c and m3_api_libc.c are out of the build and this file no
-// longer calls printf. newlib's stdio needs an initialised reent structure and
-// there is no C startup here to build one, so it was a hazard whether or not it
-// was the cause.
+// What was learned and is worth keeping: d_m3PreferStaticAlloc belongs ON for a
+// SINGLE module, because mem_size is capped at 65536 and M3Compilation is
+// 40592 bytes on its own; m3_info.c and m3_api_libc.c stay out of the build,
+// being the only parts of wasm3 that reach newlib's stdio, which has no C
+// startup here to initialise it.
 
 #define MARK(s) myrtos_write_str(MYRTOS_STDOUT, "wasm: " s "\n")
 

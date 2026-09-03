@@ -785,11 +785,11 @@ add_custom_target(modules ALL
 #
 # lwipd is deliberately absent: it is a SINGLE module linked to a fixed address
 # and belongs nowhere near a concatenated image.
-# wasm is deliberately not resident. It crashes the board when run -- see the
-# note in modules/wasm/wasm.c -- and a module that bricks the machine should not
-# sit in flash where a stray word at the prompt reaches it. Put it back when the
-# fault is found.
+# wasm is resident again only while the fault is being chased -- it crashes the
+# board when run, see the note in modules/wasm/wasm.c. Take it out before
+# leaving the machine in a state anyone else will type at.
 set(MYRTOS_RESIDENT
+    wasm
     hibouair
     armtest
     usbdisk
