@@ -1,5 +1,6 @@
 #include "../../common/myrtos_abi.h"
 #include "wasm3.h"
+#include "m3_env.h"      // for looking inside the module while this is being chased
 
 // wasm -- a WebAssembly host, so an application can be written in any language
 // with a wasm backend and shipped as a file rather than as a myrtos module.
@@ -91,7 +92,29 @@ static bool result_readable(M3Result r)
     unsigned long a = (unsigned long)r;
     if (a >= MYRTOS_SINGLE_BASE && a < MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_RESERVE) return true;
     if (a >= (unsigned long)__bss_start && a < (unsigned long)_end) return true;
+    // And the heap: wasm3 copies export names and formats error messages there.
+    extern char *wasm_heap_extent(unsigned long *size);
+    unsigned long n = 0;
+    char *h = wasm_heap_extent(&n);
+    if (h && a >= (unsigned long)h && a < (unsigned long)h + n) return true;
     return false;
+}
+
+// Where wasm3 threw, which is more use than the result pointer: it records the
+// file and line of the throw site.
+static void report_error_site(IM3Runtime rt)
+{
+    M3ErrorInfo info;
+    m3_GetErrorInfo(rt, &info);
+    if (!info.line && !info.file) return;
+
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, "  thrown at line ");
+    myrtos_line_u32(&l, info.line);
+    myrtos_line_str(&l, "\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    if (result_readable(info.message)) say("  ", info.message);
 }
 
 static void fail(const char *what, M3Result r)
@@ -181,7 +204,7 @@ void module_main(void)
     // have: m3_NewRuntime asks for 8192 stack slots, which is 64 kB on its own,
     // M3Runtime is another 41, and the compiler allocates code pages on top.
     extern int wasm_heap_init(uint32_t bytes);
-    if (wasm_heap_init(1024u * 1024u) != 0) {
+    if (wasm_heap_init(4096u * 1024u) != 0) {
         myrtos_write_str(MYRTOS_STDOUT, "wasm: no room for a heap\n");
         return;
     }
@@ -200,13 +223,18 @@ void module_main(void)
     if (r) { fail("parse", r); goto free_rt; }
 
     MARK("parsed");
+
     r = m3_LoadModule(runtime, module);
     if (r) { fail("load", r); goto free_rt; }
 
     MARK("loaded");
     IM3Function f;
     r = m3_FindFunction(&f, runtime, "run");
-    if (r) { fail("find run", r); goto free_rt; }
+    if (r) {
+        fail("find run", r);
+        report_error_site(runtime);
+        goto free_rt;
+    }
 
     MARK("found run");
     r = m3_CallV(f);

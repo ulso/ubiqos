@@ -304,8 +304,25 @@ on entry, which is a few instructions.
 missing.** It is linked with `__global_pointer$` at 0x11793994, its own data in
 PSRAM, and has 421 `gp`-relative accesses. The kernel starts every process with
 `frame->gp = kernel_gp`, which is 0x2007f633 in SRAM -- so every one of those
-accesses would land in the kernel's small-data area. It has never been run
-successfully, so nobody found out.
+accesses would land in the kernel's small-data area.
+
+**And on 3 Sep 2026 somebody found out**, the hard way, with the WebAssembly
+host. Nobody asked for `gp`-relative addressing there: the RISC-V linker
+*relaxes* any access within reach of `__global_pointer$` into one, all by
+itself, and the wasm host came out with 752 of them. It behaved exactly as that
+implies -- a constant read back as 30 instead of 349, so the parser saw a
+thirty-byte module and stopped after two sections; an M3Result that was
+0x00010000 rather than a string; a misaligned load; and, because those accesses
+write as well as read, a machine that fell over into the trap handler.
+
+The fix is `-Wl,--no-relax` on every module link, and it is there now. The cost
+is a little code size where the linker would have shortened a call.
+
+Two things are worth taking from it. The relaxation leaves **no relocation
+behind**, so `check_module.py` cannot see it -- the module passes every check
+and is still wrong. And it only bites modules big enough for the linker to
+bother: `sh`, `ls`, `cat` and `hibouair` have zero `gp` accesses between them,
+which is why this sat undisturbed until something the size of wasm3 arrived.
 
 The data area sits inside the block `mem_size` asked for, after the command
 line and its argv vector. `myrtos_data_area(&size)` reports what is there --

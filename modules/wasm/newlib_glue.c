@@ -19,6 +19,10 @@
 // static arena would therefore be megabytes of zeroes in the .mod file. So it
 // is asked for at startup instead, from the pool -- which for a module that is
 // not real-time is PSRAM, where there is room to be generous.
+// Doubles are eight bytes and wasm3 stores them, so eight is the alignment to
+// keep rather than four.
+#define SBRK_ALIGN 8u
+
 static char  *heap_base;
 static uint32_t heap_size;
 static uint32_t heap_used;
@@ -31,19 +35,53 @@ int wasm_heap_init(uint32_t bytes)
     heap_base = (char *)myrtos_alloc_bulk(bytes);
     if (!heap_base)
         return -1;
+
+    // And the base itself, for the same reason: an aligned step from an odd
+    // start is still odd.
+    uint32_t skew = (uint32_t)((uintptr_t)heap_base & (SBRK_ALIGN - 1));
+    if (skew) { heap_base += SBRK_ALIGN - skew; bytes -= SBRK_ALIGN - skew; }
+
     heap_size = bytes;
     heap_used = 0;
     return 0;
 }
 
+// Eight-byte aligned, and that is not a detail.
+//
+// The first version advanced the break by exactly what was asked for, and a
+// request that is not a multiple of eight leaves every later block misaligned.
+// newlib's malloc passes that straight on, wasm3 puts structures there, and a
+// RISC-V without misaligned-access support traps on the first load -- which is
+// what mcause 4 was. Where it happened moved when heap sizes changed, because
+// which allocation lands askew depends on what came before it.
+//
+// Doubles are eight bytes and wasm3 stores them, so eight is the alignment to
+// keep rather than four.
+// What the heap covers, so the host can tell a pointer worth dereferencing from
+// one that is not. wasm3 puts export names and error messages here.
+char *wasm_heap_extent(unsigned long *size)
+{
+    if (size) *size = heap_size;
+    return heap_base;
+}
+
 void *_sbrk(int incr)
 {
-    if (!heap_base || incr < 0 || heap_used + (uint32_t)incr > heap_size) {
-        errno = ENOMEM;
-        return (void *)-1;
+    if (!heap_base) { errno = ENOMEM; return (void *)-1; }
+
+    // Giving memory back is allowed: newlib's malloc trims the top of the heap
+    // and refusing it made a shrink look like an error.
+    if (incr < 0) {
+        uint32_t give = (uint32_t)(-incr);
+        heap_used = give > heap_used ? 0 : heap_used - give;
+        return heap_base + heap_used;
     }
+
+    uint32_t want = ((uint32_t)incr + (SBRK_ALIGN - 1)) & ~(SBRK_ALIGN - 1);
+    if (heap_used + want > heap_size) { errno = ENOMEM; return (void *)-1; }
+
     char *p = heap_base + heap_used;
-    heap_used += (uint32_t)incr;
+    heap_used += want;
     return p;
 }
 

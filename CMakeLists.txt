@@ -199,8 +199,16 @@ function(myrtos_add_module name source)
     # from the ELF entry -- and its one loadable segment is read, write and
     # execute together, because that is what a module is. Sixty-six lines of
     # them per clean build is how a real warning goes unnoticed.
+    # --no-relax, and it is not an optimisation setting. The RISC-V linker
+    # relaxes any access within reach of __global_pointer$ into a gp-relative
+    # one, and a module's gp is not its own: the kernel starts every process
+    # with the kernel's gp, so a relaxed access reads and writes the kernel's
+    # small-data area instead of the module's. The wasm host had 752 of them
+    # and behaved exactly as that implies -- a constant read back as the wrong
+    # number, pointers that were not pointers, and a machine that fell over.
     target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-N
-                        -Wl,-e,0 -Wl,--no-warn-rwx-segments ${single_link})
+                        -Wl,-e,0 -Wl,--no-warn-rwx-segments -Wl,--no-relax
+                        ${single_link})
     if(single_flag)
         target_compile_options(${name}_app PRIVATE -fno-zero-initialized-in-bss)
     endif()
