@@ -50,6 +50,7 @@ extern int LINES, COLS;
 #define A_BOLD        ((chtype)0x20000)
 
 WINDOW *initscr(void);
+void curses_adopt_pwd(void);   // compat.c: start in the directory the shell was in
 int endwin(void);
 int raw(void);
 int noraw(void);
