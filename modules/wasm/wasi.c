@@ -23,6 +23,37 @@
 // A wasm program's pointers are offsets into its own linear memory, so every
 // one has to be translated before it is touched. m3ApiOffsetToPtr does that,
 // and m3ApiGetArgMem does it while reading an argument.
+// --- SIXTY-FOUR BITS, BYTE BY BYTE ----------------------------------------
+// Never store a 64-bit value into the guest's memory with one instruction.
+//
+// The guest may align its own structures perfectly and it still does not help:
+// the host pointer is the memory base plus the guest's offset, and the base is
+// only as aligned as whoever allocated it made it. Hazard3 does not do
+// misaligned accesses -- it traps with mcause 6 -- so an eight-byte store to a
+// four-byte-aligned address takes the machine down.
+//
+// It cost an evening. fd_readdir writes a dirent header whose first field is
+// 64 bits, and a program that did nothing but list a directory killed the USB
+// stack every time. The trap said mcause 6 and an address inside this module,
+// which is exactly what it was.
+static void wasi_put64(uint8_t *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8 * i));
+}
+
+static uint64_t wasi_get64(const uint8_t *p)
+{
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) v |= (uint64_t)p[i] << (8 * i);
+    return v;
+}
+
+static void wasi_put32(uint8_t *p, uint32_t v)
+{
+    for (int i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8 * i));
+}
+
+
 typedef struct {
     uint32_t buf;      // an offset, not a pointer
     uint32_t len;
@@ -272,7 +303,7 @@ m3ApiRawFunction(wasi_fd_seek)
     if (pos < 0) m3ApiReturn(WASI_EBADF);
 
     m3ApiCheckMem(out_pos, sizeof(uint64_t));
-    m3ApiWriteMem64(out_pos, (uint64_t)(uint32_t)pos);
+    wasi_put64((uint8_t *)out_pos, (uint64_t)(uint32_t)pos);
     m3ApiReturn(WASI_OK);
 }
 
@@ -314,7 +345,7 @@ m3ApiRawFunction(wasi_fd_filestat_get)
 
     // { dev u64, ino u64, filetype u8, nlink u64, size u64, ... }
     buf[16] = 4;                       // regular file
-    m3ApiWriteMem64(buf + 32, (uint64_t)size);
+    wasi_put64(buf + 32, (uint64_t)size);
     m3ApiReturn(WASI_OK);
 }
 
@@ -336,7 +367,7 @@ m3ApiRawFunction(wasi_clock_time_get)
     m3ApiCheckMem(out, sizeof(uint64_t));
     (void)id; (void)precision;
 
-    m3ApiWriteMem64(out, (uint64_t)myrtos_ticks_now() * 1000000ull);
+    wasi_put64((uint8_t *)out, (uint64_t)myrtos_ticks_now() * 1000000ull);
     m3ApiReturn(WASI_OK);
 }
 
@@ -390,7 +421,7 @@ m3ApiRawFunction(wasi_poll_oneoff)
         const uint8_t *sub = in + i * WASI_SUB_SIZE;
         if (sub[8] != 0) { ready_now = true; continue; }      // a descriptor: ready
 
-        uint64_t timeout = m3ApiReadMem64(sub + 24);
+        uint64_t timeout = wasi_get64(sub + 24);
         uint16_t flags   = m3ApiReadMem16(sub + 40);
         if (flags & 1u) {                                     // absolute, so subtract now
             uint64_t now = (uint64_t)myrtos_ticks_now() * 1000000ull;
@@ -415,7 +446,7 @@ m3ApiRawFunction(wasi_poll_oneoff)
         const uint8_t *sub = in  + i * WASI_SUB_SIZE;
         uint8_t       *ev  = out + i * WASI_EVENT_SIZE;
         for (uint32_t b = 0; b < WASI_EVENT_SIZE; b++) ev[b] = 0;
-        m3ApiWriteMem64(ev, m3ApiReadMem64(sub));             // userdata, echoed back
+        wasi_put64(ev, wasi_get64(sub));                      // userdata, echoed back
         m3ApiWriteMem16(ev + 8, 0);                           // error: none
         ev[10] = sub[8];                                      // the type asked for
     }
@@ -561,7 +592,7 @@ m3ApiRawFunction(wasi_path_filestat_get)
     for (uint32_t i = 0; i < 64; i++) buf[i] = 0;
     // { dev u64, ino u64, filetype u8, nlink u64, size u64, ... }
     buf[16] = (attr & MYRTOS_ATTR_DIRECTORY) ? 3 : 4;   // directory, else regular
-    m3ApiWriteMem64(buf + 32, (uint64_t)size);
+    wasi_put64(buf + 32, (uint64_t)size);
     m3ApiReturn(WASI_OK);
 }
 
