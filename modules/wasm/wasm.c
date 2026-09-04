@@ -217,6 +217,18 @@ static bool stop_here(const char *stage) {
     return stop_after && same(stop_after, stage);
 }
 
+// The stages, laid out flat. An array of arrays and not an array of pointers:
+// a pointer table needs a relocation per entry, which the module checker
+// refuses, and characters in a row need no addresses at all.
+static const char stages[8][8] = {
+    "entry", "bss", "heap", "env", "runtime", "parse", "load", "link",
+};
+
+static bool is_stage(const char *s) {
+    for (uint32_t i = 0; i < 8; i++) if (same(s, stages[i])) return true;
+    return false;
+}
+
 void module_main(int argc, char **argv)
 {
     // Before clear_bss, and so without using stop_after, which clear_bss would
@@ -230,6 +242,7 @@ void module_main(int argc, char **argv)
     if (myrtos_help(argc, argv,
             "usage: wasm [PATH.wasm] [ARGS...]\n       wasm STAGE\n\n"
             "Runs a WebAssembly program; the built-in one when given no path.\n"
+            "A relative path is taken from the current directory.\n"
             "STAGE is one of entry, bss, heap, env, runtime, parse, load, link\n"
             "and stops after that step, for bisecting a fault in the host.\n")) return;
 
@@ -240,11 +253,14 @@ void module_main(int argc, char **argv)
     // After clear_bss and not before it: stop_after lives in .bss, and setting
     // it first means setting it and then zeroing it.
     //
-    // An argument beginning with a slash is a file to run -- paths here name a
-    // volume first, so every real one starts that way -- and anything else is a
-    // stage to stop after. That keeps 'wasm /sd/hello.wasm' and 'wasm parse'
-    // apart without a flag letter for either.
-    const char *path = (argc >= 2 && argv[1][0] == '/') ? argv[1] : 0;
+    // The stages are a closed list, so anything that is not one of them is a
+    // file to run. It used to be decided the other way round -- a path had to
+    // begin with a slash, because paths named a volume first and every real one
+    // did. Then the shell learnt to stand in a directory, and "wasm atto.wasm"
+    // from inside /sd quietly ran the built-in program instead of saying it
+    // could not find anything. A wrong guess about which of two things an
+    // argument is should end in an error, not in running something else.
+    const char *path = (argc >= 2 && !is_stage(argv[1])) ? argv[1] : 0;
     stop_after = (argc >= 2 && !path) ? argv[1] : 0;
     if (stop_here("bss")) return;
 
