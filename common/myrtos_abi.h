@@ -21,7 +21,7 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    4
+#define MYRTOS_ABI_VERSION    5
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -138,7 +138,13 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t reloc_offset;   // to the table, and the length of the image
     uint32_t reloc_count;    // 32-bit words to fix up, zero if none
 
-    uint32_t header_crc;   // complement of the sum of the first twelve words
+    // What follows the image and is not in it. .bss and .sbss hold no bytes in
+    // the file -- they are NOBITS -- so a loader that copies the image has to
+    // add this much and zero it. A module with no writable data has none, which
+    // is every module that is shareable.
+    uint32_t bss_size;
+
+    uint32_t header_crc;   // complement of the sum of the first thirteen words
 } myrtos_module_header_t;
 
 // What has to be copied for a module to run. The relocation table is read

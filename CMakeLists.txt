@@ -178,7 +178,7 @@ function(myrtos_add_module name source)
         # absolute addresses and writable data at all. -fno-zero-initialized-in-bss
         # puts the zeroed globals in .data so they are in the image: objcopy drops
         # .bss, and a loader that copies module_size bytes would leave them out.
-        set(single_link "-Wl,-Ttext=0x11780034")   # MYRTOS_SINGLE_TEXT
+        set(single_link "-Wl,-Ttext=0x11780038")   # MYRTOS_SINGLE_TEXT
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
     add_executable(${name}_app ${source} ${ARGN})
@@ -324,7 +324,7 @@ function(myrtos_add_clang_module name source)
     set(single_compile "")
     if("SINGLE" IN_LIST ARGN)
         set(single_flag "--single")
-        set(single_link "-Ttext=0x11780034")   # MYRTOS_SINGLE_TEXT
+        set(single_link "-Ttext=0x11780038")   # MYRTOS_SINGLE_TEXT
         set(single_compile "-fno-zero-initialized-in-bss")
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
@@ -465,7 +465,7 @@ function(myrtos_add_d_module name source)
     set(single_link "")
     if("SINGLE" IN_LIST ARGN)
         set(single_flag "--single")
-        set(single_link "-Wl,-Ttext=0x11780034")   # MYRTOS_SINGLE_TEXT
+        set(single_link "-Wl,-Ttext=0x11780038")   # MYRTOS_SINGLE_TEXT
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
 
@@ -626,7 +626,7 @@ function(myrtos_add_zig_module name source)
     set(single_link "")
     if("SINGLE" IN_LIST ARGN)
         set(single_flag "--single")
-        set(single_link "-Wl,-Ttext=0x11780034")   # MYRTOS_SINGLE_TEXT
+        set(single_link "-Wl,-Ttext=0x11780038")   # MYRTOS_SINGLE_TEXT
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
 

@@ -109,6 +109,33 @@ def tls_layout(elf_path, nm_tool):
     return vaddr - min(bases), init, total
 
 
+def bss_after_image(elf_path, nm_tool, load_base, image_len):
+    """How far the allocated sections reach past what objcopy wrote.
+
+    .bss and .sbss are NOBITS: they have an address and a size and no bytes in
+    the file. A loader that copies the image has to add this much and zero it,
+    and a pointer into it is only inside the module if this is counted.
+    """
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-SW", elf_path],
+                         capture_output=True, text=True).stdout
+
+    end = load_base + image_len
+    for line in out.splitlines():
+        m = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-fA-F]+)\s+"
+                     r"[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\S+\s+(\S*)", line)
+        if not m:
+            continue
+        flags = m.group(5)
+        if "A" not in flags:
+            continue
+        addr, size = int(m.group(3), 16), int(m.group(4), 16)
+        if addr and addr + size > end:
+            end = addr + size
+    return end - (load_base + image_len)
+
+
 def collect_relocs(elf_path, nm_tool, load_base, image_len):
     """The linked addresses of every absolute word in the loadable image.
 
@@ -175,11 +202,11 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if len(name_bytes) % 4 != 0:
         name_bytes += b'\x00' * (4 - (len(name_bytes) % 4))
 
-# The header is 52 bytes: thirteen 32-bit words, with type_lang and attr_rev
+# The header is 56 bytes: fourteen 32-bit words, with type_lang and attr_rev
 # sharing one and revision and reserved sharing another. It must match
 # myrtos_module_header_t exactly; when this said 28 and the struct said 32,
 # exec_offset and name_offset landed four bytes into the code.
-    header_size = 52
+    header_size = 56
     exec_offset = 0 if module_type == "data" else header_size + entry_in_code
 
     # The module is header, code, then the name. The thread-local image needs no
@@ -198,6 +225,11 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # point into .bss, which is NOBITS and therefore past the end of the image
     # objcopy wrote. lwipd does exactly that. Relocation is for the modules that
     # do not know where they will land.
+    bss_size = 0
+    if elf_path and nm_tool:
+        bss_size = bss_after_image(elf_path, nm_tool,
+                                   elf_load_base(elf_path, nm_tool), len(code_bytes))
+
     reloc = []
     if elf_path and nm_tool and not single:
         base = elf_load_base(elf_path, nm_tool)
@@ -226,7 +258,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 4
+    MYRTOS_ABI_VERSION = 5
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
@@ -254,15 +286,15 @@ def create_module(input_bin_path, output_mod_path, module_name,
         exec_offset, mem_size,
         tls_offset, tls_init, tls_total,
         (0 << 16) | revision,
-        reloc_offset, reloc_count
+        reloc_offset, reloc_count, bss_size
     ]
     header_crc = (~sum(fields)) & 0xFFFFFFFF
 
-    header_bytes = struct.pack('<IIIHHIIIIIHHIII',
+    header_bytes = struct.pack('<IIIHHIIIIIHHIIII',
         MYRTOS_SYNC, module_size, name_offset,
         type_lang, attr_rev, exec_offset, mem_size,
         tls_offset, tls_init, tls_total,
-        revision, 0, reloc_offset, reloc_count, header_crc
+        revision, 0, reloc_offset, reloc_count, bss_size, header_crc
     )
     assert len(header_bytes) == header_size, "header is not %d bytes" % header_size
 
