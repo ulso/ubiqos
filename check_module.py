@@ -4,10 +4,12 @@
 Two properties decide whether a module can be loaded at an unknown address and
 shared between processes, and neither shows in the source:
 
-  1. No absolute addresses in allocated sections. PC-relative jumps and strings
-     travel with the module when it moves; a function pointer in a table does
-     not -- it is an absolute address the linker wrote in. In C that is a
-     `static const struct { void (*fn)(void); }`, in Rust every `dyn Trait`.
+  1. No absolute address the loader cannot fix. PC-relative jumps and strings
+     travel with the module wherever it goes and need nothing. A pointer in a
+     table does not travel -- it is an absolute address the linker wrote in --
+     but it is a 32-bit word in data, and the loader relocates those: they are
+     counted here and listed in the module's relocation table. Anything else
+     absolute has no such answer and is still refused.
 
   2. No writable sections. If .data or .bss are present in the module image,
      two processes sharing the code write to the same variables.
@@ -53,6 +55,13 @@ POSITION_INDEPENDENT = {
     "R_RISCV_PLT32",
 }
 
+# Absolute, and relocated at load time rather than refused. A 32-bit word in
+# data holding an address is the one absolute thing a module may contain: the
+# loader copies the module, adds where it landed to every word the table names,
+# and the pointer is right. It is also the only absolute relocation that PC-
+# relative code produces at all, which is why this set has one member.
+LOADER_FIXES = {"R_RISCV_32"}
+
 # Types this readelf cannot name, by number. Binutils prints "unrecognized: 3b"
 # where the name belongs, and refusing everything it cannot name would refuse a
 # relocation that is perfectly position independent. llvm-readelf names PLT32
@@ -83,6 +92,7 @@ def readelf_or_die(readelf, args, path):
 # looking for the wrong thing.
 not_pic = []
 not_shared = []
+relocated = []
 
 for obj in obj_files:
     out = readelf_or_die(readelf, ["-r"], obj)
@@ -108,6 +118,9 @@ for obj in obj_files:
         kind = m.group(1)
         if kind == "unrecognized:" and m.group(2) in BY_NUMBER:
             kind = BY_NUMBER[m.group(2)]
+        if kind in LOADER_FIXES:
+            relocated.append(f"{obj}: {kind} in {section}")
+            continue
         if kind not in POSITION_INDEPENDENT:
 # C++ puts the vtable in a section of its own whose name carries the mangled
 # class name. Demangled, the error is understandable without ABI knowledge.
@@ -175,4 +188,8 @@ if not_pic or not_shared:
     print("See docs/writing-modules.md.", file=sys.stderr)
     sys.exit(1)
 
-print(f"  {elf}: position independent and shareable")
+if relocated:
+    print(f"  {elf}: shareable, {len(relocated)} address"
+          f"{'es' if len(relocated) != 1 else ''} for the loader to fix")
+else:
+    print(f"  {elf}: position independent and shareable")

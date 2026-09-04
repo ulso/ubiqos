@@ -11,12 +11,12 @@
 // the command that set it and the next thing anything prints comes out in it --
 // which is the whole point, and also why "reset" has to exist.
 
-// An array of arrays, not an array of pointers. A pointer table needs a
-// relocation for every entry -- R_RISCV_32, which the module checker refuses --
-// because the addresses are not known until the module is loaded. Laying the
-// characters out flat means there are no addresses in it at all. Fourteen is
-// "brightmagenta" and its terminator.
-static const char names[16][14] = {
+// A table of pointers, which is what this wants to be. Every entry is an
+// absolute address the linker wrote in and the loader fixes up -- sixteen
+// relocations, four bytes each, carried on the card and not in RAM. It was an
+// array of arrays for as long as the loader could not do that, and every name
+// cost fourteen bytes whether it needed them or not.
+static const char *const names[16] = {
     "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
     "grey", "brightred", "brightgreen", "brightyellow",
     "brightblue", "brightmagenta", "brightcyan", "brightwhite",

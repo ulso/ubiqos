@@ -193,8 +193,13 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # the offset rather than the linked address is what makes a module that was
     # never relocated fail loudly -- the pointer is a small number and faults at
     # once -- instead of pointing somewhere plausible and wrong.
+    # Not for a single-instance module. It is linked at the address it will be
+    # copied to, so its absolute addresses are already right -- and they may
+    # point into .bss, which is NOBITS and therefore past the end of the image
+    # objcopy wrote. lwipd does exactly that. Relocation is for the modules that
+    # do not know where they will land.
     reloc = []
-    if elf_path and nm_tool:
+    if elf_path and nm_tool and not single:
         base = elf_load_base(elf_path, nm_tool)
         code = bytearray(code_bytes)
         for addr in collect_relocs(elf_path, nm_tool, base, len(code_bytes)):

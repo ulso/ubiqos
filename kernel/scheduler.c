@@ -36,6 +36,7 @@ typedef struct {
     uintptr_t entry_point;
     const myrtos_module_header_t *module;   // shared code, one copy for all
     void* mem_base;           // bottom of the allocation, private per process
+    void* code_base;          // a relocated copy of the module, if it needed one
     void* data_base;          // where the module's own state may start
     uint32_t data_size;       // how far it reaches before the stack comes down
     uint32_t mem_size;        // data + stack, as the module header asked for
@@ -201,6 +202,7 @@ void myrtos_scheduler_init(void) {
         process_table[i].pid = i;
         process_table[i].state = PROC_STATE_FREE;
         process_table[i].mem_base = NULL;
+        process_table[i].code_base = NULL;
         process_table[i].sleep_next = -1;
         process_table[i].recv_timed = false;
         process_table[i].next_ready = -1;
@@ -272,6 +274,37 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].state    = PROC_STATE_READY;
     ready_enqueue(slot);
     return slot;
+}
+
+// Turn a module's offsets back into addresses.
+//
+// make_module left every absolute word holding an offset from the start of the
+// module rather than the address the linker chose, so this adds where the copy
+// landed and does nothing else. There is one relocation type to handle on this
+// machine: with PC-relative code the only absolute thing a module can contain
+// is a pointer sitting in data, and that is a 32-bit word.
+//
+// The table is read where the module lies -- in flash, or wherever it was
+// loaded from the card -- and never travels into the copy.
+static void relocate_image(uint8_t *image, const myrtos_module_header_t *src)
+{
+    const uint8_t *table = (const uint8_t*)src + src->reloc_offset;
+
+    for (uint32_t i = 0; i < src->reloc_count; i++) {
+        // Byte at a time, both ends. Nothing promises the table itself or the
+        // word it names is four-byte aligned, and Hazard3 traps on a misaligned
+        // access rather than fixing it up.
+        const uint8_t *e = table + i * 4;
+        uint32_t at = (uint32_t)e[0] | ((uint32_t)e[1] << 8)
+                    | ((uint32_t)e[2] << 16) | ((uint32_t)e[3] << 24);
+
+        uint8_t *w = image + at;
+        uint32_t v = (uint32_t)w[0] | ((uint32_t)w[1] << 8)
+                   | ((uint32_t)w[2] << 16) | ((uint32_t)w[3] << 24);
+        v += (uint32_t)(uintptr_t)image;
+        w[0] = (uint8_t)v;         w[1] = (uint8_t)(v >> 8);
+        w[2] = (uint8_t)(v >> 16); w[3] = (uint8_t)(v >> 24);
+    }
 }
 
 int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
@@ -346,6 +379,37 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     if (!mem) {
         myrtos_print("Error: failed to allocate process memory.\n");
         return -1;
+    }
+
+    // A module carrying absolute addresses cannot run where it lies: it is in
+    // flash, and relocation writes. So it is copied and fixed up, and only such
+    // a module pays for it -- one with an empty table still runs in place, as
+    // every module did before this existed.
+    //
+    // A copy per process rather than one shared between them. It is the simple
+    // thing and the modules are a few kilobytes; sharing one relocated copy
+    // needs a reference count on something whose lifetime is not the process's,
+    // and that is worth having only once the cost shows up somewhere.
+    void *code_copy = 0;
+    if (run == module_ptr && module_ptr->reloc_count) {
+        uint32_t image = myrtos_module_image_size(module_ptr);
+        code_copy = myrtos_tlsf_malloc(myrtos_pool_for(module_ptr), image);
+        if (!code_copy) {
+            myrtos_print("Error: failed to allocate room to relocate a module.\n");
+            myrtos_tlsf_free(myrtos_pool_for(module_ptr), mem);
+            return -1;
+        }
+
+        uint32_t *d32 = (uint32_t*)code_copy;
+        const uint32_t *s32 = (const uint32_t*)module_ptr;
+        uint32_t words = image / 4;
+        for (uint32_t i = 0; i < words; i++) d32[i] = s32[i];
+        uint8_t *d8 = (uint8_t*)code_copy;
+        const uint8_t *s8 = (const uint8_t*)module_ptr;
+        for (uint32_t i = words * 4; i < image; i++) d8[i] = s8[i];
+
+        relocate_image((uint8_t*)code_copy, module_ptr);
+        run = (const myrtos_module_header_t*)code_copy;
     }
 
     // The command line at the bottom of the process's own area, followed by an
@@ -439,6 +503,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].entry_point = frame->mepc;
     process_table[slot].module = module_ptr;
     process_table[slot].mem_base = mem;
+    process_table[slot].code_base = code_copy;
     // The stack comes down into the same span, so this is what is available
     // rather than what is safe. A module that wants a lot asks for a bigger
     // mem_size; nothing here can tell how deep its calls will go.
@@ -1326,6 +1391,11 @@ static void reap(uint32_t pid) {
 
     myrtos_tlsf_free(pool_of(process_table[pid].mem_base),
                      process_table[pid].mem_base);
+    if (process_table[pid].code_base) {
+        myrtos_tlsf_free(pool_of(process_table[pid].code_base),
+                         process_table[pid].code_base);
+        process_table[pid].code_base = NULL;
+    }
     process_table[pid].state = PROC_STATE_FREE;
     process_table[pid].mem_base = NULL;
 
