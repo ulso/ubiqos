@@ -39,6 +39,9 @@ static void say(const char *a, const char *b, uint32_t n, bool with_n) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: fill FILE BYTES\n\nWrites BYTES of test pattern.\n")) return;
+
     uint32_t total;
     if (argc != 3 || !parse_u32(argv[2], &total) || !total) {
         myrtos_write_str(MYRTOS_STDERR, "usage: fill FILE BYTES\n");

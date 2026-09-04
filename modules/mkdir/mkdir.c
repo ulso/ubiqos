@@ -7,6 +7,9 @@
 // what mkdir does everywhere without -p, and the recursive form can be added
 // when something wants it.
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: mkdir DIRECTORY\n")) return;
+
     myrtos_line_t line;
 
     if (argc < 2) {

@@ -40,6 +40,9 @@ static bool same(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: usbdisk [off | force]\n\nHands the card to the host as a disk.\n  off     take it back\n  force   take it back even if the host has not ejected it\n")) return;
+
     uint32_t what = 1;                  // hand it over
 
     if (argc > 1) {

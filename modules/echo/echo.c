@@ -3,6 +3,9 @@
 // echo -- prints its arguments separated by spaces. The first utility to use
 // argc and argv rather than the raw command line.
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: echo [TEXT...]\n\nPrints its arguments separated by spaces.\n")) return;
+
     myrtos_line_t line;
     myrtos_line_reset(&line);
 

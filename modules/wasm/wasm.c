@@ -226,6 +226,13 @@ void module_main(int argc, char **argv)
     // alone costs the USB bus, no line in this file is to blame.
     if (argc >= 2 && same(argv[1], "entry")) return;
 
+    // Before clear_bss too, for the same reason: nothing here needs .bss.
+    if (myrtos_help(argc, argv,
+            "usage: wasm [PATH.wasm] [ARGS...]\n       wasm STAGE\n\n"
+            "Runs a WebAssembly program; the built-in one when given no path.\n"
+            "STAGE is one of entry, bss, heap, env, runtime, parse, load, link\n"
+            "and stops after that step, for bisecting a fault in the host.\n")) return;
+
     MARK("entered");
     clear_bss();
     MARK("bss cleared");

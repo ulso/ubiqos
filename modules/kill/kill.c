@@ -18,6 +18,9 @@ static uint32_t to_u32(const char *s, bool *ok) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: kill [-9] <pid> ...\n\nAsks the process to end. One that catches the interrupt is told and\nhas half a second to stop itself.\n  -9   end it at once, asking nothing\n")) return;
+
     myrtos_line_t l;
 
     int first = 1;

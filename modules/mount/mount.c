@@ -25,6 +25,9 @@ static bool same(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: mount [sdio]\n\nMounts the card, over SPI unless sdio is asked for.\n")) return;
+
     uint32_t bus = MYRTOS_MOUNT_SPI;
 
     if (argc > 1) {

@@ -5,6 +5,9 @@
 // Separate from rm, as it is everywhere: deleting a whole tree because a name
 // was mistyped is not something a utility should be able to do by accident.
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: rmdir DIRECTORY\n\nIt must be empty.\n")) return;
+
     myrtos_line_t line;
 
     if (argc < 2) {

@@ -36,6 +36,9 @@ static bool parse_cell(const char *s, uint32_t *w, uint32_t *h) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: font [WxH]\n\nShows the console fonts, or selects one.\n")) return;
+
     myrtos_line_t line;
     myrtos_confont_t cur;
 

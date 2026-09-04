@@ -27,6 +27,9 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: head FILE [OFFSET]\n\nThe first lines of a file, starting OFFSET bytes in if given.\n")) return;
+
     uint32_t skip = 0;
     if (argc >= 3 && !parse_u32(argv[2], &skip)) {
         fputs("head: SKIP must be a number\n", stderr);

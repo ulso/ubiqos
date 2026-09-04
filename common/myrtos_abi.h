@@ -1295,4 +1295,34 @@ static inline int32_t myrtos_write_str(int32_t path, const char *s)
     return myrtos_write(path, s, n);
 }
 
+// --help, and -h, for a utility that takes arguments.
+//
+// True when the caller asked, having already printed the text, so a module opens
+// with one line:
+//
+//     if (myrtos_help(argc, argv, "usage: rm FILE...\n")) return;
+//
+// Every argument is looked at rather than only the first: "rm -f --help" is a
+// question, and a utility that acted on -f before noticing would be surprising.
+//
+// The text belongs beside the code it describes. Several of these utilities
+// already had a usage line and printed it only when something went wrong, which
+// is the one moment a person is least able to read it.
+static inline bool myrtos_help(int argc, char **argv, const char *usage)
+{
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        bool ask = (a[0] == '-' && a[1] == 'h' && !a[2]);
+        if (!ask && a[0] == '-' && a[1] == '-') {
+            const char *w = "help";
+            const char *q = a + 2;
+            while (*w && *q == *w) { w++; q++; }
+            ask = !*w && !*q;
+        }
+        if (ask) { myrtos_write_str(MYRTOS_STDOUT, usage); return true; }
+    }
+    return false;
+}
+
+
 #endif

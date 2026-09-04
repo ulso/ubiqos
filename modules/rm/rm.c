@@ -4,6 +4,9 @@
 // knows the root, so a directory could be unlinked but never inspected first.
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: rm FILE...\n")) return;
+
     if (argc < 2) {
         myrtos_write_str(MYRTOS_STDERR, "usage: rm FILE...\n");
         return;

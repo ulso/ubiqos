@@ -17,6 +17,9 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: spin [PRIORITY] MILLISECONDS\n\nBurns processor time, for testing the scheduler.\n")) return;
+
     // With one argument it leaves its priority alone, which is what makes it
     // useful for showing that a child inherits: if spin set its own, there
     // would be no way to tell inheriting from overriding.

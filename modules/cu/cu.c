@@ -31,6 +31,9 @@ static int32_t pump(int32_t from, int32_t to) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: cu <device> [line to send]\n\nTalks to a serial device. Ctrl-C to stop.\n")) return;
+
     if (argc < 2) {
         myrtos_write_str(MYRTOS_STDOUT, "usage: cu <device> [line to send]\r\n");
         return;

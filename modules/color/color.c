@@ -57,6 +57,9 @@ static void chart(int32_t c) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: color <text> [<background>], or color reset\n")) return;
+
     const int32_t c = MYRTOS_STDOUT;
 
     if (argc < 2) {

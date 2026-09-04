@@ -41,6 +41,9 @@ static void pretty(const char *raw, char *out) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: ls [DIRECTORY]\n\nLists a directory, or the current one when given no path.\n")) return;
+
     const char *path = (argc > 1) ? argv[1] : "";
     myrtos_line_t line;
     char raw[MYRTOS_DIRNAME_MAX], name[MYRTOS_DIRNAME_MAX + 2];

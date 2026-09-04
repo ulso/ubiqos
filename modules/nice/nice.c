@@ -20,6 +20,9 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: nice PRIORITY COMMAND [ARGS...]\n\nRuns a command at another priority. 0 is idle, 31 the most urgent.\n")) return;
+
     uint32_t prio;
     if (argc < 3 || !parse_u32(argv[1], &prio)) {
         myrtos_write_str(MYRTOS_STDERR, "usage: nice PRIORITY COMMAND [ARGS...]\n");

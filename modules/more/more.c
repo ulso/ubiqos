@@ -42,6 +42,9 @@ static bool pause_here(int *left, int rows) {
 
 void module_main(int argc, char **argv)
 {
+    if (myrtos_help(argc, argv,
+            "usage: more [FILE]\n\nA screenful at a time; standard input when no file is named.\nSpace for the next screen, q to stop.\n")) return;
+
     FILE *f = stdin;
     bool ours = false;
 

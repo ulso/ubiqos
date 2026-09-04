@@ -16,6 +16,9 @@ MYRTOS_LIBC_DEFINE
 //     pecho -n 40 hello        forty lines, to fill and flush the 512-byte buffer
 void module_main(int argc, char **argv)
 {
+    if (myrtos_help(argc, argv,
+            "usage: pecho [-o] [-n COUNT] TEXT...\n\necho through printf, for testing stdio and redirection.\n  -o        open /dev/acm first\n  -n COUNT  repeat the line COUNT times\n")) return;
+
     int arg = 1;
     unsigned long times = 1;
 

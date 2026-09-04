@@ -17,6 +17,9 @@ static void fail(const char *what, const char *name) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: cp SOURCE DEST\n")) return;
+
     if (argc != 3) {
         myrtos_write_str(MYRTOS_STDERR, "usage: cp SOURCE DEST\n");
         return;

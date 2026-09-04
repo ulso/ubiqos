@@ -11,6 +11,9 @@ static bool is(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: wifi [scan | connect | ip]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one; the password is typed on this machine's own\n            keyboard and never appears as an argument\n  ip        the address it was given\n")) return;
+
     myrtos_line_t line;
     char version[16];
 

@@ -16,6 +16,9 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: sleep MILLISECONDS\n")) return;
+
     uint32_t ms;
     if (argc != 2 || !parse_u32(argv[1], &ms)) {
         myrtos_write_str(MYRTOS_STDERR, "usage: sleep MILLISECONDS\n");

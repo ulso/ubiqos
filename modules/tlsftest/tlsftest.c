@@ -135,6 +135,9 @@ static bool digits_only(const char *s) {
 
 void module_main(int argc, char **argv)
 {
+    if (myrtos_help(argc, argv,
+            "usage: tlsftest [bulk] [OPERATIONS]\n\n  (none)     the SRAM pool, which real-time modules get\n  bulk       the PSRAM pool, where large allocations live\n  OPERATIONS a longer run; two at once test the locking\n")) return;
+
     start_counting();
     use_bulk = argc > 1 && argv[1][0] == 'b';
 

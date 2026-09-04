@@ -17,6 +17,9 @@ MYRTOS_LIBC_DEFINE
 MYRTOS_MEM_SIZE(8192);
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: write [-a] FILE TEXT...\n\nPuts its arguments into a file, separated by spaces.\n  -a   append instead of replacing\n")) return;
+
     int arg = 1;
     const char *mode = "w";
 

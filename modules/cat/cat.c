@@ -33,6 +33,9 @@ static void complain(const char *name) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: cat FILE...\n\nWrites each file to standard output.\n")) return;
+
     // No arguments means standard input, as cat has always done -- which is
     // also the only way to see that "< file" reached the child, since every
     // other utility here takes its file by name.

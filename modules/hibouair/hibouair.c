@@ -279,6 +279,9 @@ static void consume(const uint8_t *p, uint32_t n)
 
 void module_main(int argc, char **argv)
 {
+    if (myrtos_help(argc, argv,
+            "usage: hibouair\n\nScans for HibouAir sensors on the BleuIO dongle and shows a live\ntable. Ctrl-C tells the dongle to stop and exits.\n")) return;
+
     (void)argc; (void)argv;
 
     int32_t dev = myrtos_open("/dev/acm");

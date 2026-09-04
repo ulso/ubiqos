@@ -24,6 +24,9 @@ static bool eq(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
+    if (myrtos_help(argc, argv,
+            "usage: memtest [leak | bulk KB]\n\n  (none)     allocate, write, grow, verify, release\n  leak       allocate and exit without freeing, on purpose\n  bulk KB    take KB from PSRAM, fill it, read it back\n")) return;
+
     if (argc == 2 && eq(argv[1], "leak")) {
         for (int i = 0; i < 4; i++) {
             if (!myrtos_alloc(2000)) { say("leak: allocation refused", 0, false); return; }
