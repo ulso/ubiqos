@@ -157,7 +157,7 @@ m3ApiRawFunction(wasi_proc_exit)
 // Sixteen is more open files than a wasm program has any business holding.
 #define WASI_MAX_TRACKED 16
 
-static struct { int32_t fd; bool is_dir; char name[48]; } wasi_paths[WASI_MAX_TRACKED];
+static struct { int32_t fd; bool is_dir; bool doomed; char name[48]; } wasi_paths[WASI_MAX_TRACKED];
 
 static void wasi_remember_kind(int32_t fd, const char *name, bool is_dir)
 {
@@ -165,6 +165,7 @@ static void wasi_remember_kind(int32_t fd, const char *name, bool is_dir)
         if (wasi_paths[i].fd && wasi_paths[i].fd != fd) continue;
         wasi_paths[i].fd = fd;
         wasi_paths[i].is_dir = is_dir;
+        wasi_paths[i].doomed = false;
         uint32_t n = 0;
         while (name[n] && n < sizeof(wasi_paths[i].name) - 1) { wasi_paths[i].name[n] = name[n]; n++; }
         wasi_paths[i].name[n] = 0;
@@ -195,6 +196,51 @@ static void wasi_forget(int32_t fd)
 {
     for (int i = 0; i < WASI_MAX_TRACKED; i++)
         if (wasi_paths[i].fd == fd) wasi_paths[i].fd = 0;
+}
+
+static bool wasi_names_equal(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+// Unlinking a file that is still open. POSIX keeps such a file alive until the
+// last descriptor closes, and programs lean on it harder than they look: Atto's
+// completion opens its temp file, unlinks it immediately so that nothing is
+// left behind however it exits, and only then reads the names back through the
+// descriptor it kept. A FAT directory entry has nowhere to record "gone but
+// still open" -- the entry is the file, and removing it makes every later read
+// fail -- so the removal is held here until the descriptor closes. Measured on
+// the board before it was written: a read through a descriptor opened before
+// the write still works, and the same read after an unlink returns -1.
+static bool wasi_doom(const char *name)
+{
+    bool held = false;
+    for (int i = 0; i < WASI_MAX_TRACKED; i++)
+        if (wasi_paths[i].fd && wasi_names_equal(wasi_paths[i].name, name)) {
+            wasi_paths[i].doomed = true;
+            held = true;
+        }
+    return held;
+}
+
+// A program that exits without closing leaves its doomed names behind, since
+// the close that was to carry them out never comes. The kernel reclaims the
+// descriptors; this reclaims the files.
+void wasi_sweep_doomed(void)
+{
+    for (int i = 0; i < WASI_MAX_TRACKED; i++)
+        if (wasi_paths[i].fd && wasi_paths[i].doomed) {
+            myrtos_fs_remove(wasi_paths[i].name);
+            wasi_paths[i].fd = 0;
+        }
+}
+
+static bool wasi_is_doomed(int32_t fd)
+{
+    for (int i = 0; i < WASI_MAX_TRACKED; i++)
+        if (wasi_paths[i].fd == fd) return wasi_paths[i].doomed;
+    return false;
 }
 
 m3ApiRawFunction(wasi_fd_prestat_get)
@@ -316,8 +362,22 @@ m3ApiRawFunction(wasi_fd_close)
 {
     m3ApiReturnType (uint32_t)
     m3ApiGetArg     (uint32_t, fd)
+
+    // A name held back by an unlink is removed now, after the close, which is
+    // the moment POSIX says the file stops existing.
+    char victim[48];
+    victim[0] = 0;
+    if (wasi_is_doomed((int32_t)fd)) {
+        const char *n = wasi_name_of((int32_t)fd);
+        uint32_t i = 0;
+        if (n) { while (n[i] && i < sizeof victim - 1) { victim[i] = n[i]; i++; } }
+        victim[i] = 0;
+    }
+
     wasi_forget((int32_t)fd);
-    m3ApiReturn(myrtos_close((int32_t)fd) < 0 ? WASI_EBADF : WASI_OK);
+    int32_t r = myrtos_close((int32_t)fd);
+    if (victim[0]) myrtos_fs_remove(victim);
+    m3ApiReturn(r < 0 ? WASI_EBADF : WASI_OK);
 }
 
 m3ApiRawFunction(wasi_fd_seek)
@@ -637,6 +697,7 @@ m3ApiRawFunction(wasi_path_unlink_file)
 
     char name[80];
     if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
+    if (wasi_doom(name)) m3ApiReturn(WASI_OK);
     if (myrtos_fs_remove(name) < 0) m3ApiReturn(WASI_ENOENT);
     m3ApiReturn(WASI_OK);
 }

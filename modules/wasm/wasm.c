@@ -352,6 +352,11 @@ void module_main(int argc, char **argv)
     if (r && !wasm_exited) { fail("run", r); report_error_site(runtime); }
     else say_num("wasm: exited with ", (int32_t)wasm_exit_code);
 
+    // Files the program unlinked while they were open. They outlive it only
+    // because the close that was to remove them never came.
+    extern void wasi_sweep_doomed(void);
+    wasi_sweep_doomed();
+
 free_rt:
     m3_FreeRuntime(runtime);
 free_env:
