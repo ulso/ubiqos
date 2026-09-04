@@ -407,7 +407,18 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
     for (uint32_t i = 0; i < device_count; i++) {
         if (!str_eq(devices[i].name, name)) continue;
         for (int p = 0; p < MYRTOS_MAX_PATHS; p++) {
+            // A slot is free when it holds NOTHING. Testing only for a device
+            // was the bug: a descriptor onto a file has no device, so opening a
+            // device took the slot a redirected stdout was sitting in and wrote
+            // over it. "hibouair > /tmp/f" then had its own dongle on
+            // descriptor 1, so every line it printed went out to the BleuIO --
+            // no file was created, and nothing appeared on the console either,
+            // which is exactly what it looked like from outside.
+            //
+            // myrtos_io_open_file had it right all along, and the two now agree.
             if (paths[owner_pid][p].device) continue;
+            if (paths[owner_pid][p].file >= 0) continue;
+            if (paths[owner_pid][p].pipe >= 0) continue;
             if (devices[i].driver->open() != 0) return -1;
             paths[owner_pid][p].device = &devices[i];
             paths[owner_pid][p].file = -1;

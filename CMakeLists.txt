@@ -734,6 +734,7 @@ myrtos_add_module(reboot modules/reboot/reboot.c)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
+myrtos_add_module(pecho modules/pecho/pecho.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
 myrtos_add_module(usbecho modules/usbecho/usbecho.c)
@@ -984,6 +985,7 @@ set(MYRTOS_RESIDENT
     lsmod
     free
     usbstat
+    pecho
     zhello
     msgtest
     msgcli
