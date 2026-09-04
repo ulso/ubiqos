@@ -92,8 +92,48 @@ m3ApiRawFunction(wasi_fd_write)
     m3ApiReturn(WASI_OK);
 }
 
-// No environment. Saying so plainly is what lets a runtime start: it asks for
-// the sizes first and allocates nothing when they are zero.
+// The environment is two variables, and they are both the screen.
+//
+// A wasm guest has no ioctl and no terminal to ask, so a curses program has no
+// way to find out how big the console is -- Atto drew thirty lines of eighty
+// columns on a screen of forty by a hundred and six, because that is what the
+// shim had been told to assume. The size goes where a program already looks for
+// it: LINES and COLUMNS. Nothing about that is particular to myrtos, which is
+// the point.
+#define WASI_ENV_COUNT 2
+
+static char     wasi_env_buf[48];
+static uint32_t wasi_env_off[WASI_ENV_COUNT];
+static uint32_t wasi_env_len;
+
+static uint32_t wasi_env_put(uint32_t at, const char *key, uint32_t value)
+{
+    for (const char *k = key; *k; k++) wasi_env_buf[at++] = *k;
+    wasi_env_buf[at++] = '=';
+
+    char digits[8];
+    uint32_t n = 0;
+    do { digits[n++] = (char)('0' + value % 10); value /= 10; } while (value && n < sizeof digits);
+    while (n) wasi_env_buf[at++] = digits[--n];
+
+    wasi_env_buf[at++] = 0;
+    return at;
+}
+
+// Asked again on every call, because the font can change under a running
+// program and the grid changes with it.
+static void wasi_env_prepare(void)
+{
+    myrtos_confont_t f;
+    uint32_t rows = 30, cols = 80;
+    if (myrtos_console_font_info(-1, &f) >= 0) { rows = f.rows; cols = f.cols; }
+
+    uint32_t at = 0;
+    wasi_env_off[0] = at; at = wasi_env_put(at, "LINES", rows);
+    wasi_env_off[1] = at; at = wasi_env_put(at, "COLUMNS", cols);
+    wasi_env_len = at;
+}
+
 m3ApiRawFunction(wasi_environ_sizes_get)
 {
     m3ApiReturnType  (uint32_t)
@@ -102,14 +142,25 @@ m3ApiRawFunction(wasi_environ_sizes_get)
 
     m3ApiCheckMem(count, sizeof(uint32_t));
     m3ApiCheckMem(buf_size, sizeof(uint32_t));
-    m3ApiWriteMem32(count, 0);
-    m3ApiWriteMem32(buf_size, 0);
+    wasi_env_prepare();
+    wasi_put32((uint8_t *)count, WASI_ENV_COUNT);
+    wasi_put32((uint8_t *)buf_size, wasi_env_len);
     m3ApiReturn(WASI_OK);
 }
 
 m3ApiRawFunction(wasi_environ_get)
 {
     m3ApiReturnType (uint32_t)
+    m3ApiGetArgMem  (uint32_t *, env)
+    m3ApiGetArgMem  (char *    , env_buf)
+
+    wasi_env_prepare();
+    m3ApiCheckMem(env, WASI_ENV_COUNT * sizeof(uint32_t));
+    m3ApiCheckMem(env_buf, wasi_env_len);
+
+    for (uint32_t i = 0; i < wasi_env_len; i++) env_buf[i] = wasi_env_buf[i];
+    for (uint32_t i = 0; i < WASI_ENV_COUNT; i++)
+        wasi_put32((uint8_t *)(env + i), m3ApiPtrToOffset(env_buf + wasi_env_off[i]));
     m3ApiReturn(WASI_OK);
 }
 
