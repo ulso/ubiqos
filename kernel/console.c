@@ -480,6 +480,38 @@ static void do_csi(uint8_t final)
         wrap_pending = false;
 }
 
+// UTF-8 in, one glyph out.
+//
+// The font has a glyph for every code point up to U+00FF and none above it, so
+// a longer sequence is swallowed whole and drawn as a single question mark
+// rather than as a row of them. A byte that cannot begin a sequence is drawn as
+// itself: a file written before this machine spoke UTF-8 still shows something,
+// and a stray high byte is better seen than silently dropped.
+static uint32_t utf8_cp;
+static uint32_t utf8_need;
+
+static void feed_text(uint8_t c)
+{
+    if (utf8_need) {
+        if ((c & 0xc0) == 0x80) {
+            utf8_cp = (utf8_cp << 6) | (c & 0x3f);
+            if (--utf8_need) return;
+            draw_char(utf8_cp < 256 ? (char)utf8_cp : '?');
+            return;
+        }
+        // Truncated. Draw what is missing and go on to consider this byte,
+        // which is the start of something else.
+        utf8_need = 0;
+        draw_char('?');
+    }
+
+    if (c < 0x80)             { draw_char((char)c); return; }
+    if ((c & 0xe0) == 0xc0)   { utf8_cp = c & 0x1f; utf8_need = 1; return; }
+    if ((c & 0xf0) == 0xe0)   { utf8_cp = c & 0x0f; utf8_need = 2; return; }
+    if ((c & 0xf8) == 0xf0)   { utf8_cp = c & 0x07; utf8_need = 3; return; }
+    draw_char((char)c);
+}
+
 // One byte into the terminal. The cursor is lifted here rather than in
 // draw_char so that an escape that moves or erases lifts it too -- otherwise it
 // would be left behind, inverted, wherever it happened to be standing.
@@ -492,10 +524,11 @@ static void console_feed(uint8_t c)
 
     switch (esc_state) {
     case ST_NORMAL:
-        if (c == 0x1b)
+        if (c == 0x1b) {
+            utf8_need = 0;   // an escape cuts a half-finished character short
             esc_state = ST_ESC;
-        else
-            draw_char((char)c);
+        } else
+            feed_text(c);
         return;
 
     case ST_ESC:

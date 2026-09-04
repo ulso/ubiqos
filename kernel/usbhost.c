@@ -355,10 +355,25 @@ static uint8_t translate(uint8_t k, uint8_t mods);
 // something better with it -- clearing the line -- than the kernel can.
 bool myrtos_io_interrupt(const char *device_name);
 
+void myrtos_usbhost_push_str(const char *sq);   // defined below
+
+// The keymap holds one byte per key and cannot hold anything else: a layout is
+// a table of characters, and a-ring is one character. What leaves here is UTF-8,
+// because that is what the machine reads and writes -- everything from U+0080
+// to U+00FF is two bytes, so a-ring goes out as two.
+//
+// Both halves or neither. A lone lead byte in the queue would be read as a
+// broken character, and there is no way to take it back.
 static void emit(uint8_t c) {
     if (c == 3 && (myrtos_io_interrupt("con") || myrtos_io_interrupt("kbd")))
         return;
-    push(c);
+    if (c < 0x80) { push(c); return; }
+
+    char pair[3];
+    pair[0] = (char)(0xc0 | (c >> 6));
+    pair[1] = (char)(0x80 | (c & 0x3f));
+    pair[2] = 0;
+    myrtos_usbhost_push_str(pair);
 }
 
 // The arrows and their neighbours, as the escape sequences every terminal has
