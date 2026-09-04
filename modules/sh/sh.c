@@ -70,6 +70,8 @@ static void build_prompt(editor_t *e) {
 // miscount cannot accumulate.
 static uint32_t view_width(editor_t *e);
 static uint32_t view_start(editor_t *e);
+static uint32_t columns_to(editor_t *e, uint32_t at);
+static uint32_t byte_of_column(editor_t *e, uint32_t col);
 
 static void redraw(editor_t *e) {
     if (e->quiet) return;            // a script has nobody to draw for
@@ -80,13 +82,12 @@ static void redraw(editor_t *e) {
     myrtos_line_flush(e->out, &l);
 
     uint32_t start = view_start(e), w = view_width(e);
-    uint32_t shown = e->len - start;
-    if (shown > w) shown = w;
+    uint32_t shown = byte_of_column(e, columns_to(e, start) + w) - start;
     if (shown) myrtos_write(e->out, e->line + start, shown);
 
     myrtos_line_reset(&l);
     myrtos_line_str(&l, "\x1b[K\r\x1b[");
-    myrtos_line_u32(&l, e->prompt_len + (e->pos - start) + 1);
+    myrtos_line_u32(&l, e->prompt_len + (columns_to(e, e->pos) - columns_to(e, start)) + 1);
     myrtos_line_str(&l, "G");
     myrtos_line_flush(e->out, &l);
 }
@@ -119,9 +120,34 @@ static uint32_t view_width(editor_t *e) {
     return (e->width > e->prompt_len + 1) ? e->width - e->prompt_len - 1 : 1;
 }
 
+// Bytes and columns stopped being the same thing the day the machine spoke
+// UTF-8. A-ring is two bytes and one glyph, so a cursor placed by counting
+// bytes stands one column too far right for every accented character before
+// it, and a backspace that removes one byte leaves half a character behind.
+// The line stays a byte buffer -- everything that runs a command wants bytes --
+// and these three say where the characters are in it.
+static bool utf8_cont(char c) { return ((unsigned char)c & 0xc0) == 0x80; }
+
+static uint32_t columns_to(editor_t *e, uint32_t at) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < at && i < e->len; i++) if (!utf8_cont(e->line[i])) n++;
+    return n;
+}
+
+// The byte at which the nth character begins, or the end of the line.
+static uint32_t byte_of_column(editor_t *e, uint32_t col) {
+    uint32_t i = 0;
+    for (uint32_t n = 0; n < col && i < e->len; n++) {
+        i++;
+        while (i < e->len && utf8_cont(e->line[i])) i++;
+    }
+    return i;
+}
+
 static uint32_t view_start(editor_t *e) {
     uint32_t w = view_width(e);
-    return (e->pos < w) ? 0 : e->pos - w + 1;
+    uint32_t cur = columns_to(e, e->pos);
+    return (cur < w) ? 0 : byte_of_column(e, cur - w + 1);
 }
 
 static void set_line(editor_t *e, const char *src) {
@@ -544,12 +570,28 @@ void module_main(int argc, char **argv) {
             switch (ch) {
             case 'A': browse_back(e);    redraw(e); break;
             case 'B': browse_forward(e); redraw(e); break;
-            case 'C': if (e->pos < e->len) { e->pos++; redraw(e); } break;
-            case 'D': if (e->pos)         { e->pos--; redraw(e); } break;
+            case 'C':
+                if (e->pos < e->len) {
+                    e->pos++;
+                    while (e->pos < e->len && utf8_cont(e->line[e->pos])) e->pos++;
+                    redraw(e);
+                }
+                break;
+            case 'D':
+                if (e->pos) {
+                    e->pos--;
+                    while (e->pos && utf8_cont(e->line[e->pos])) e->pos--;
+                    redraw(e);
+                }
+                break;
             case 'H': e->pos = 0;      redraw(e); break;
             case 'F': e->pos = e->len; redraw(e); break;
             case '~':
-                if (csi_num == 3) { delete_at(e, e->pos); redraw(e); }   // Delete
+                if (csi_num == 3) {                                      // Delete
+                    delete_at(e, e->pos);
+                    while (e->pos < e->len && utf8_cont(e->line[e->pos])) delete_at(e, e->pos);
+                    redraw(e);
+                }
                 else if (csi_num == 1 || csi_num == 7) { e->pos = 0;      redraw(e); }
                 else if (csi_num == 4 || csi_num == 8) { e->pos = e->len; redraw(e); }
                 break;
@@ -608,11 +650,21 @@ void module_main(int argc, char **argv) {
         } else if (ch == 12) {           // Ctrl-L, but only on an empty line
             if (!e->len) { myrtos_write_str(e->out, "\x1b[2J\x1b[H"); redraw(e); }
         } else if (ch == 8 || ch == 127) {
-            if (e->pos) { e->pos--; delete_at(e, e->pos); redraw(e); }
+            // Back over a whole character: the continuation bytes first, then
+            // the one that started it.
+            if (e->pos) {
+                bool more;
+                do {
+                    e->pos--;
+                    more = utf8_cont(e->line[e->pos]);
+                    delete_at(e, e->pos);
+                } while (more && e->pos);
+                redraw(e);
+            }
         } else if (ch >= ' ' && ch < 0x7f) {
             insert(e, (char)ch);
             redraw(e);
-        } else if (ch >= 0xa0) {         // Latin-1: the letters a Swedish layout gives
+        } else if (ch >= 0x80) {         // a byte of a UTF-8 character
             insert(e, (char)ch);
             redraw(e);
         }
