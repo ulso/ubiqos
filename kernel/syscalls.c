@@ -10,6 +10,8 @@
 #include "moddir.h"
 #include "tlsf.h"
 #include "crashlog.h"
+#include "hardware/structs/rosc.h"
+#include "pico/time.h"
 
 void myrtos_print(const char *s);
 void myrtos_putc(char c);
@@ -532,6 +534,32 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
             break;
+        case SYS_RANDOM: {
+            // The ring oscillator's random bit, thirty-two of them to a word.
+            //
+            // The SDK has get_rand_32, and it was tried first: pico_rand brings
+            // a board id, a hash of RAM and a 128-bit generator with it, and
+            // cost four kilobytes of a C heap that has 4580 bytes spare. This
+            // reads the same oscillator directly and costs nothing.
+            //
+            // Sampled fast the bit correlates with itself, so the microsecond
+            // timer is mixed in -- and even so this is entropy for seeding a
+            // hash or picking an identifier, not for a key. Nothing here should
+            // pretend otherwise.
+            uint8_t *out = (uint8_t*)(uintptr_t)frame->a0;
+            uint32_t want = frame->a1;
+            if (!out) { frame->a0 = 0; break; }
+            if (want > 256) want = 256;          // see the note in the header
+            uint32_t n = 0;
+            while (n < want) {
+                uint32_t r = 0;
+                for (int b = 0; b < 32; b++) r = (r << 1) | (rosc_hw->randombit & 1u);
+                r ^= (uint32_t)time_us_64();
+                for (int b = 0; b < 4 && n < want; b++) out[n++] = (uint8_t)(r >> (8 * b));
+            }
+            frame->a0 = n;
+            break;
+        }
         case SYS_USBINFO: {
             extern uint32_t myrtos_usbhost_info(uint32_t what);
             frame->a0 = myrtos_usbhost_info(frame->a0);

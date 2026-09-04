@@ -423,6 +423,104 @@ m3ApiRawFunction(wasi_poll_oneoff)
     m3ApiReturn(WASI_OK);
 }
 
+// --- ARGUMENTS AND RANDOMNESS ---------------------------------------------
+// The program's own arguments, so "wasm /sd/prog.wasm one two" reaches the
+// program as argv. Without these a guest gets nothing and has to hardcode every
+// path -- which is what the examples had to do until now.
+//
+// argv[0] is the program, as everywhere since Unix, and the rest is whatever
+// followed it on the command line. The host module hands them over before the
+// guest starts; see wasm_set_args in wasm.c.
+static const char  *arg_prog = "program";
+static int          arg_extra;
+static char       **arg_list;
+
+void wasm_set_args(const char *prog, int argc, char **argv)
+{
+    if (prog && prog[0]) arg_prog = prog;
+    arg_extra = (argc > 0) ? argc : 0;
+    arg_list  = argv;
+}
+
+static const char *arg_at(uint32_t i) { return i ? arg_list[i - 1] : arg_prog; }
+
+static uint32_t arg_len(uint32_t i)
+{
+    const char *s = arg_at(i);
+    uint32_t n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static uint32_t arg_count(void) { return 1u + (uint32_t)arg_extra; }
+
+static uint32_t arg_bytes(void)
+{
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < arg_count(); i++) total += arg_len(i) + 1;
+    return total;
+}
+
+m3ApiRawFunction(wasi_args_sizes_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (uint32_t * , count)
+    m3ApiGetArgMem   (uint32_t * , buf_size)
+
+    m3ApiCheckMem(count, sizeof(uint32_t));
+    m3ApiCheckMem(buf_size, sizeof(uint32_t));
+    m3ApiWriteMem32(count, arg_count());
+    m3ApiWriteMem32(buf_size, arg_bytes());
+    m3ApiReturn(WASI_OK);
+}
+
+// The vector holds OFFSETS into the guest's memory, not host pointers, so each
+// one is converted back on the way in. Getting that wrong gives a program an
+// argv full of addresses from this side of the sandbox.
+m3ApiRawFunction(wasi_args_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (uint32_t * , argv)
+    m3ApiGetArgMem   (char *     , buf)
+
+    m3ApiCheckMem(argv, arg_count() * sizeof(uint32_t));
+    m3ApiCheckMem(buf, arg_bytes());
+
+    char *w = buf;
+    for (uint32_t i = 0; i < arg_count(); i++) {
+        m3ApiWriteMem32(&argv[i], m3ApiPtrToOffset(w));
+        const char *s = arg_at(i);
+        uint32_t n = arg_len(i);
+        for (uint32_t k = 0; k < n; k++) *w++ = s[k];
+        *w++ = 0;
+    }
+    m3ApiReturn(WASI_OK);
+}
+
+// Rust's standard library asks for this before main runs: its hash maps are
+// seeded from it, so a program that never mentions randomness still needs it to
+// start. The kernel reads the ring oscillator's random bit and mixes in the
+// microsecond timer -- entropy enough to seed a hash, and not a key.
+//
+// It fills at most 256 bytes a call, because the call is a trap and a trap runs
+// with interrupts off, so this loops rather than asking for everything at once.
+m3ApiRawFunction(wasi_random_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (uint8_t * , buf)
+    m3ApiGetArg      (uint32_t  , len)
+
+    m3ApiCheckMem(buf, len);
+
+    uint32_t done = 0;
+    while (done < len) {
+        int32_t n = myrtos_random(buf + done, len - done);
+        if (n <= 0) m3ApiReturn(WASI_EINVAL);
+        done += (uint32_t)n;
+    }
+    m3ApiReturn(WASI_OK);
+}
+
 M3Result wasm_link_wasi(IM3Module module)
 {
     static const char *ns = "wasi_snapshot_preview1";
@@ -456,6 +554,12 @@ M3Result wasm_link_wasi(IM3Module module)
     r = m3_LinkRawFunction(module, ns, "clock_time_get",       "i(iI*)",     &wasi_clock_time_get);
     if (r && r != m3Err_functionLookupFailed) return r;
     r = m3_LinkRawFunction(module, ns, "poll_oneoff",          "i(**i*)",    &wasi_poll_oneoff);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "args_sizes_get",       "i(**)",      &wasi_args_sizes_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "args_get",             "i(**)",      &wasi_args_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "random_get",           "i(*i)",      &wasi_random_get);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     return m3Err_none;

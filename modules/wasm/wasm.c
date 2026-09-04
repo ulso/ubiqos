@@ -256,6 +256,14 @@ void module_main(int argc, char **argv)
     MARK("heap ready");
     if (stop_here("heap")) return;
 
+    // What the guest will see as its own argv. argv[0] is the program, and the
+    // rest is whatever followed it on the command line -- so
+    // "wasm /sd/prog.wasm one two" reaches the program as three arguments.
+    extern void wasm_set_args(const char *prog, int argc, char **argv);
+    wasm_set_args(path ? path : "wasm",
+                  path ? argc - 2 : 0,
+                  path ? argv + 2 : 0);
+
     // The program to run, off the card if one was named. It has to be read
     // after the heap exists, and it has to stay allocated for as long as the
     // module does: m3_ParseModule does not copy the bytes, it points into them,

@@ -200,6 +200,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_KILL      40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
 #define SYS_FOREGRND  41u   // a0 = path, a1 = pid or 0 -> a0 = 0 ok, -1 no path
 #define SYS_USBINFO   55u   // a0 = what -> a0 = that field of the USB host state
+#define SYS_RANDOM    56u   // a0 = buffer, a1 = length -> a0 = bytes filled
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -1177,6 +1178,19 @@ static inline int32_t myrtos_moddir_get(uint32_t index, myrtos_modinfo_t *out)
 static inline int32_t myrtos_meminfo(uint32_t what)
 {
     return myrtos_syscall(SYS_MEMINFO, what, 0, 0);
+}
+
+// Random bytes, from the ring oscillator's own random bit with the microsecond
+// timer mixed in. Genuine hardware entropy, and enough to seed a hash or pick an
+// identifier -- not enough to make a key out of, and it does not claim to be.
+//
+// It fills at most 256 bytes per call and says how many it managed, so the
+// caller loops. That is not a limitation of the source but of where the work
+// happens: a system call runs in a trap with interrupts off, and an unbounded
+// loop in a trap is the mistake this system has made more than once.
+static inline int32_t myrtos_random(void *buf, uint32_t len)
+{
+    return myrtos_syscall(SYS_RANDOM, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
 static inline uint32_t myrtos_usbinfo(uint32_t what)

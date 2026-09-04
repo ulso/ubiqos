@@ -11,12 +11,13 @@ The cost is one shared 190 kB interpreter, and nothing per program.
 
 ## What the host provides
 
-Fourteen WASI calls, implemented in [../wasi.c](../wasi.c):
+Seventeen WASI calls, implemented in [../wasi.c](../wasi.c):
 
     fd_write   fd_read    fd_close    fd_seek      fd_fdstat_get
     fd_filestat_get       path_open   fd_prestat_get
     fd_prestat_dir_name   environ_get environ_sizes_get
     proc_exit  clock_time_get         poll_oneoff
+    args_get   args_sizes_get         random_get
 
 That is enough for stdio, for files, and for waiting. Files are more than they
 sound: there is **one preopen, `/`**, so `/sd/data.txt` and `/dev/acm` arrive
@@ -31,12 +32,15 @@ A read of a device blocks until there is something. That is why none of these
 examples poll: the loop simply reads. On the module side the same wait is
 `myrtos_arm` and a pulse; here it is one blocking call, and shorter for it.
 
-Not implemented, each small when something needs it:
+A program gets its arguments: `wasm /sd/argrand.wasm one two three` arrives as
+four, with the path as `argv[0]`. And `getentropy()` works -- the kernel reads
+the ring oscillator's random bit and mixes in the microsecond timer, which is
+entropy enough to seed a hash or pick an identifier and is not a key. Rust needs
+both of these before `main` runs, whether or not the program mentions them.
 
-  - `args_get`, `args_sizes_get` -- a program gets no argv. Hardcode paths.
-  - `random_get` -- Rust's standard library wants it for its hash seeds.
-  - polling several descriptors at once. A `poll_oneoff` on a descriptor is
-    answered as ready without looking, which is right while every read blocks.
+Not implemented, and small when something needs it: polling several descriptors
+at once. A `poll_oneoff` on a descriptor is answered as ready without looking,
+which is right while every read blocks.
 
 ## Building
 
@@ -98,8 +102,8 @@ installed; `rustup target add wasm32-wasip1` if it is not.
 
     rustc --target wasm32-wasip1 -O prog.rs -o prog.wasm
 
-Ordinary `std` works: `std::fs::read_to_string` and `File::open` both do.
-Anything that seeds a hash map will want `random_get`, which is not implemented.
+Ordinary `std` works: `std::fs::read_to_string` and `File::open` both do, and so
+does anything that seeds a hash map -- `random_get` is there now.
 
 ### Not emscripten
 
@@ -109,6 +113,13 @@ WASI**. There is no `path_open` in the import list at all, and a program answers
 as though the file were missing. Measured on 3 Sep 2026 against a real file
 under `wasm3 --dir /`: it said "no dongle". Since the point of these programs is
 that a device is a file, emscripten is the wrong tool for them.
+
+### Arguments and entropy -- argrand.c
+
+    $CLANG --target=wasm32-wasip1 --sysroot=$SYSROOT -Os argrand.c -o argrand.wasm
+
+Prints its argv and sixteen random bytes. Seven imports, and the smallest useful
+check that the host gives a program what a language runtime expects.
 
 ### TinyGo
 
