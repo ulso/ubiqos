@@ -68,6 +68,9 @@ static void build_prompt(editor_t *e) {
 // of it in case what was there before was longer, then put the cursor where it
 // belongs. Absolute column addressing rather than a count of moves, so a
 // miscount cannot accumulate.
+static uint32_t view_width(editor_t *e);
+static uint32_t view_start(editor_t *e);
+
 static void redraw(editor_t *e) {
     if (e->quiet) return;            // a script has nobody to draw for
     myrtos_line_t l;
@@ -76,23 +79,49 @@ static void redraw(editor_t *e) {
     myrtos_line_str(&l, e->prompt);
     myrtos_line_flush(e->out, &l);
 
-    if (e->len) myrtos_write(e->out, e->line, e->len);
+    uint32_t start = view_start(e), w = view_width(e);
+    uint32_t shown = e->len - start;
+    if (shown > w) shown = w;
+    if (shown) myrtos_write(e->out, e->line + start, shown);
 
     myrtos_line_reset(&l);
     myrtos_line_str(&l, "\x1b[K\r\x1b[");
-    myrtos_line_u32(&l, e->prompt_len + e->pos + 1);
+    myrtos_line_u32(&l, e->prompt_len + (e->pos - start) + 1);
     myrtos_line_str(&l, "G");
     myrtos_line_flush(e->out, &l);
 }
 
-// How much of a command fits. A line that runs past the right edge wraps, and
-// then the carriage return in redraw comes back to the start of the wrapped
-// part rather than the start of the line -- so rather than draw it wrong, the
-// editor stops taking characters. A long path therefore needs a cd first, which
-// is what one would do anyway.
+// How much of a command fits: the buffer, and nothing else.
+//
+// This used to be the width of the screen less the prompt. A line that runs past
+// the right edge wraps, and then the carriage return in redraw comes back to the
+// start of the wrapped part rather than the start of the line -- so rather than
+// draw it wrong the editor simply stopped taking characters, and the note here
+// said that a long path needs a cd first.
+//
+// Fair enough while every name was 8.3. It stopped being fair the day the
+// filesystem grew long names: "write /sd/a-long-filename.txt" and something to
+// put in it passes eighty columns easily, and the line was then cut without a
+// word -- the file was created, under the right name, holding half the text.
+// Refusing to draw is worse than scrolling.
 static uint32_t room(editor_t *e) {
-    uint32_t r = (e->width > e->prompt_len + 1) ? e->width - e->prompt_len - 1 : 1;
-    return r < LINE_MAX - 1 ? r : LINE_MAX - 1;
+    (void)e;
+    return LINE_MAX - 1;
+}
+
+// What is on screen, and where it starts.
+//
+// The line scrolls sideways under a prompt that stays put, the way a narrow
+// terminal has always done it. The window moves only when the cursor would
+// otherwise leave it, so it stands still while a line is edited in the middle
+// and follows only at the edges.
+static uint32_t view_width(editor_t *e) {
+    return (e->width > e->prompt_len + 1) ? e->width - e->prompt_len - 1 : 1;
+}
+
+static uint32_t view_start(editor_t *e) {
+    uint32_t w = view_width(e);
+    return (e->pos < w) ? 0 : e->pos - w + 1;
 }
 
 static void set_line(editor_t *e, const char *src) {
