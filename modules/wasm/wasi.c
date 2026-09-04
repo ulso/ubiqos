@@ -92,7 +92,7 @@ m3ApiRawFunction(wasi_fd_write)
     m3ApiReturn(WASI_OK);
 }
 
-// The environment is two variables, and they are both the screen.
+// The environment: the screen, and where the guest starts from.
 //
 // A wasm guest has no ioctl and no terminal to ask, so a curses program has no
 // way to find out how big the console is -- Atto drew thirty lines of eighty
@@ -100,11 +100,20 @@ m3ApiRawFunction(wasi_fd_write)
 // shim had been told to assume. The size goes where a program already looks for
 // it: LINES and COLUMNS. Nothing about that is particular to myrtos, which is
 // the point.
-#define WASI_ENV_COUNT 2
+#define WASI_ENV_COUNT 3
 
-static char     wasi_env_buf[48];
+static char     wasi_env_buf[96];
 static uint32_t wasi_env_off[WASI_ENV_COUNT];
 static uint32_t wasi_env_len;
+
+static uint32_t wasi_env_str(uint32_t at, const char *key, const char *value)
+{
+    for (const char *k = key; *k; k++) wasi_env_buf[at++] = *k;
+    wasi_env_buf[at++] = '=';
+    for (const char *v = value; *v; v++) wasi_env_buf[at++] = *v;
+    wasi_env_buf[at++] = 0;
+    return at;
+}
 
 static uint32_t wasi_env_put(uint32_t at, const char *key, uint32_t value)
 {
@@ -128,9 +137,20 @@ static void wasi_env_prepare(void)
     uint32_t rows = 30, cols = 80;
     if (myrtos_console_font_info(-1, &f) >= 0) { rows = f.rows; cols = f.cols; }
 
+    // Where the guest starts from. wasi-libc begins at the preopen root and has
+    // no way to be told otherwise, so a program that means to honour the
+    // directory it was started in reads PWD and changes to it -- which is what
+    // PWD is for. Without it "note.txt" means "/note.txt" whatever the shell's
+    // cwd was, and saving under a bare name fails.
+    char cwd[48];
+    cwd[0] = '/'; cwd[1] = 0;
+    myrtos_getcwd(cwd, sizeof cwd);
+    if (!cwd[0]) { cwd[0] = '/'; cwd[1] = 0; }
+
     uint32_t at = 0;
     wasi_env_off[0] = at; at = wasi_env_put(at, "LINES", rows);
     wasi_env_off[1] = at; at = wasi_env_put(at, "COLUMNS", cols);
+    wasi_env_off[2] = at; at = wasi_env_str(at, "PWD", cwd);
     wasi_env_len = at;
 }
 
