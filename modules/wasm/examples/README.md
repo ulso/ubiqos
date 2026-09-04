@@ -178,6 +178,15 @@ here. But a program like this does not want a terminal database: it wants to
 move the cursor, write text, clear to the end of a line and read a key, and each
 of those is an escape sequence the console already understands.
 
+Two things a curses shim gets wrong until someone uses it. **Carriage return
+has to become newline** -- that is what curses does on input unless a program
+calls `nonl()`, and Atto inserts a line break on 10 while answering "Not bound"
+to 13, which is what a keyboard sends. And **the screen is not a size you can
+assume**: a guest has no ioctl and no terminal to ask, so the host publishes the
+console's grid as `LINES` and `COLUMNS` in the environment and `initscr` reads
+them there. Thirty by eighty on a screen of forty by a hundred and six is a
+third of the screen left dark.
+
 So `curses/` is not a port. It is the twenty-one calls Atto uses, written
 directly over ANSI, in about 140 lines. Any other curses program that stays
 inside them runs for the same reason.
