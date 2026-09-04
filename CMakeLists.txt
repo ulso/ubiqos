@@ -737,7 +737,17 @@ myrtos_add_module(usbstat modules/usbstat/usbstat.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
 myrtos_add_module(usbecho modules/usbecho/usbecho.c)
-myrtos_add_module(sh modules/sh/sh.c RT)
+# Not RT, and it never should have been. A real-time module's memory comes out
+# of the SRAM pool, and two shells at four kilobytes each -- plus the one the
+# startup script needs -- were most of that pool. On 4 Sep 2026 the pool ran out
+# and /sd/startup could not be given a shell to run it in.
+#
+# A shell has no timing constraint worth the name: it is blocked on a read
+# almost all of the time, and when it runs it runs briefly. Its stack belongs in
+# PSRAM with ls and cat and everything else that is merely a program. spinrt and
+# keys stay RT, because measuring a scheduler and reading raw keystrokes are
+# what the flag is for.
+myrtos_add_module(sh modules/sh/sh.c)
 myrtos_add_module(ls modules/ls/ls.c)
 myrtos_add_module(cat modules/cat/cat.c)
 myrtos_add_module(head modules/head/head.c)

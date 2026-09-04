@@ -26,6 +26,7 @@ void module_main(void) {
     kv("keys pushed:    ", myrtos_usbinfo(MYRTOS_USB_KEYSIN));
     kv("rearms:         ", myrtos_usbinfo(MYRTOS_USB_REARMS));
     kv("recoveries:     ", myrtos_usbinfo(MYRTOS_USB_RECOVERIES));
+    kv("cdc re-arms:    ", myrtos_usbinfo(MYRTOS_USB_CDCREARMS));
 
     uint32_t rk = myrtos_usbinfo(MYRTOS_USB_REPEATKEY);
     myrtos_line_t l;

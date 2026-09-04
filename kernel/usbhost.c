@@ -172,8 +172,80 @@ static void hid_want(uint8_t addr, uint8_t instance) {
 #define HID_IDLE_SWEEPS 3
 
 static void forget_held_keys(void);
+int32_t myrtos_usbhost_cdc_index(void);
+
+// The CDC side has the same disease and, unlike the hub, a cure that is public.
+//
+// cdch_xfer_cb opens with TU_ASSERT(event == XFER_RESULT_SUCCESS) -- upstream's
+// own comment above it reads "TODO handle stall response, retry failed transfer"
+// -- so one failed transfer returns before the line that queues the next one,
+// and the dongle goes deaf. Seen on 4 Sep 2026: the assertion at cdc_host.c:679,
+// endpoint 0x81 of the device reading NOTHING QUEUED with three failures, while
+// the hub and the keyboard beside it were untouched.
+//
+// It does not heal by itself, and the reason is a loop that never closes.
+// tu_edpt_stream_read queues the next transfer after every read, so an active
+// reader keeps the stream alive -- but the kernel only calls acm_read when
+// acm_readable says there is something, and with the stream dead there never is.
+//
+// UNPROVEN AGAINST THE REAL FAULT, and that is worth saying. An endpoint with
+// nothing queued is usually not broken at all: when a reader goes away the FIFO
+// fills, and tu_edpt_stream_read_xfer stops asking for more until there is room
+// again. That is flow control, it heals the moment somebody reads, and it is why
+// this refuses to act while the FIFO holds anything. The genuine fault -- the
+// one with three failures behind it -- could not be provoked to order, so what
+// follows was reasoned out rather than watched. myrtos_cdc_rearms is there to
+// say whether it ever fires.
+//
+// tuh_cdc_read_clear queues it again. The claim inside fails harmlessly when the
+// endpoint is genuinely busy, which is what makes this safe to call speculatively
+// -- and it is what the hub's own re-arm lacked, which is why that one asserted
+// and was taken out again. It also empties the receive FIFO, so it is only
+// called when the FIFO is empty and there is nothing to lose.
+// The stall is detected in the PIO layer and not from the return of
+// tuh_cdc_read_clear, which says whether the FIFO was emptied and not whether a
+// transfer was queued -- counting that would have counted every sweep for ever.
+// An IN endpoint of the CDC device with nothing queued is the state, and it has
+// to be seen twice sixty-four milliseconds apart, so that the window where PIO
+// has finished and the host stack has not yet noticed cannot be mistaken for it.
+uint32_t myrtos_cdc_rearms;
+
+static void cdc_rearm(void) {
+    static uint8_t idle_sweeps;
+
+    int32_t idx = myrtos_usbhost_cdc_index();
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) { idle_sweeps = 0; return; }
+    if (tuh_cdc_read_available((uint8_t)idx))      { idle_sweeps = 0; return; }
+
+    tuh_itf_info_t info;
+    if (!tuh_cdc_itf_get_info((uint8_t)idx, &info)) { idle_sweeps = 0; return; }
+
+    bool stalled = false;
+    for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
+        const endpoint_t *e = PIO_USB_ENDPOINT(i);
+        if (e->dev_addr != info.daddr) continue;
+        if (!(e->ep_num & 0x80u)) continue;
+        // Bulk, and only bulk. A CDC device has three IN endpoints -- control,
+        // the interrupt one it reports line state on, and the bulk one the data
+        // arrives over -- and the first two are legitimately idle almost always.
+        // Matching any of them fired this sixty times in the first four seconds.
+        if (e->attr != 2) continue;
+        if (!e->has_transfer) stalled = true;
+    }
+    if (!stalled)             { idle_sweeps = 0; return; }
+    if (++idle_sweeps < 2)    return;
+
+    idle_sweeps = 0;
+    tuh_cdc_read_clear((uint8_t)idx);
+    myrtos_cdc_rearms++;
+}
 
 void myrtos_usbhost_rearm(void) {
+    // Not every pass. A healthy endpoint is busy and the claim simply fails, so
+    // this costs little either way, but sixty times a second is enough.
+    static uint8_t cdc_countdown;
+    if (!cdc_countdown--) { cdc_countdown = 63; cdc_rearm(); }
+
     for (int i = 0; i < HID_SLOTS; i++) {
         if (!hid_poll[i].wanted) continue;
 
@@ -483,6 +555,7 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
 uint32_t myrtos_usbhost_info(uint32_t what) {
     if (what == MYRTOS_USB_REARMS)     return myrtos_hid_rearms;
     if (what == MYRTOS_USB_RECOVERIES) return myrtos_hid_recoveries;
+    if (what == MYRTOS_USB_CDCREARMS)  return myrtos_cdc_rearms;
     if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
     if (what == MYRTOS_USB_KEYSIN)     return head;
 

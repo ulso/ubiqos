@@ -281,7 +281,17 @@ static void myrtos_bulk_pool_init(void) {
 // could live in the eight megabytes of PSRAM sitting idle beside it. There are
 // eight of these four-kilobyte steps left. It is now the only change worth
 // making here.
-#define MYRTOS_HEAP_SIZE (32 * 1024)
+// Twenty-eight, down from thirty-two on 4 Sep 2026. The USB host's CDC recovery
+// pushed the C heap under the floor the build checks for, and .bss sits on a
+// page boundary after .data -- so this moves in four kilobyte steps whatever the
+// real shortfall was.
+//
+// The first attempt at this took the page and left the pool too small: the two
+// shells were real-time modules, so their memory came from here, and the one
+// /sd/startup needs could not be allocated. The answer was not a bigger pool but
+// a shell that is not real-time -- see the note beside sh in CMakeLists.txt.
+// With them in PSRAM this has nearly eight kilobytes free where it had 1748.
+#define MYRTOS_HEAP_SIZE (28 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
