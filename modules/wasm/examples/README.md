@@ -44,9 +44,12 @@ which is right while every read blocks.
 
 ## Building
 
-All of these need the WASI sysroot and the compiler-rt builtins:
+The clang route needs the WASI sysroot and the compiler-rt builtins:
 
     brew install wasi-libc wasi-runtimes
+
+`zig cc` needs neither -- it carries both -- and is below if you would rather
+install one thing than three.
 
 `wasi-runtimes` is the easily missed half. Without it the link fails looking for
 `libclang_rt.builtins.a`, and its version has to match the LLVM in use.
@@ -72,6 +75,39 @@ C: it will not build for the host and cannot use a library that expects a libc.
 
 `-fno-builtin` is not optional: without it clang recognises the hand-written
 string-length loop and replaces it with a call to `strlen`, which is not linked.
+
+### C, with zig instead -- and nothing to install
+
+`zig cc` is a complete C compiler with wasi-libc and the compiler-rt builtins
+already inside it. No sysroot, no `brew install`, no version to keep in step
+with an LLVM: one binary builds all three C examples here.
+
+    zig cc --target=wasm32-wasi -Os -Wl,-z,stack-size=65536 \
+           hibou.c -o hibou.wasm
+
+**That stack-size is not optional.** Zig asks for a sixteen megabyte wasm stack
+by default, which lands in the file as 257 pages of initial linear memory -- and
+the host answers `load failed ... memory allocation failed`, because the heap it
+has to give is four megabytes and the board has eight in total. Sixty-four
+kilobytes brings the file back to two pages and it runs. It is the only
+difference between the two toolchains that matters, and it costs a puzzled
+minute to find because the error names memory rather than the stack.
+
+The libc-free build works the same way, with `--target=wasm32-freestanding`:
+
+    zig cc --target=wasm32-freestanding -Oz -fno-builtin -nostdlib \
+           -Wl,--no-entry -Wl,--export=_start -Wl,--strip-all \
+           tiny.c -o tiny.wasm
+
+Zig's wasi-libc is the smaller of the two, and by a margin worth knowing:
+
+    hibou.c     13813 with clang and Homebrew's wasi-libc
+                 8096 with zig cc
+    argrand.c   23823 clang        24291 zig
+    tiny.c        925 clang          932 zig
+
+So the difference is all in the libc, and it shows up only where the libc is
+actually used. Both were run on the board, against the dongle.
 
 ### Nim -- hibou.nim
 
