@@ -344,6 +344,70 @@ m3ApiRawFunction(wasi_fd_prestat_dir_name)
     m3ApiReturn(WASI_OK);
 }
 
+// Where a guest's path actually points.
+//
+// A path arrives with the preopen stripped off, and the preopen is the root, so
+// "note.txt" and "/note.txt" reach here as the same bytes -- no call in WASI
+// tells them apart. wasi-libc keeps the working directory inside the guest,
+// where the host has no way to set it, so the host decides here instead. That
+// is why this is not left to each program: it cannot be.
+//
+// The rule is exact rather than a guess, because myrtos's root holds volumes
+// and nothing else. The first component of an absolute path is always a volume
+// name, so if it is one the path is absolute. If it is not, there is no such
+// thing at the root and the path can only mean the directory the process is
+// standing in -- which is what a shell would have decided.
+static bool wasi_first_is_volume(const char *path, uint32_t len)
+{
+    char vol[MYRTOS_DIRNAME_MAX + 1];
+    uint32_t n = 0;
+    vol[n++] = '/';
+    for (uint32_t i = 0; i < len && path[i] != '/'; i++) {
+        if (n >= sizeof vol - 1) return false;
+        vol[n++] = path[i];
+    }
+    vol[n] = 0;
+    if (n == 1) return true;               // the root itself
+
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(vol, &size);
+    return attr >= 0 && (attr & MYRTOS_ATTR_DIRECTORY);
+}
+
+static bool wasi_path_name(const char *path, uint32_t len, char *out, uint32_t cap)
+{
+    // "." and "./x" name the directory the process is standing in. wasi-libc
+    // passes them through untouched -- it has no working directory to fold them
+    // into -- so they are folded here with everything else.
+    while (len >= 2 && path[0] == '.' && path[1] == '/') { path += 2; len -= 2; }
+    bool here = (len == 0) || (len == 1 && path[0] == '.');
+    if (here) len = 0;
+
+    if (here || !wasi_first_is_volume(path, len)) {
+        char cwd[MYRTOS_DIRNAME_MAX + 1];
+        cwd[0] = 0;
+        myrtos_getcwd(cwd, sizeof cwd);
+        if (cwd[0] && !(cwd[0] == '/' && !cwd[1])) {
+            uint32_t n = 0;
+            while (cwd[n]) { if (n >= cap - 1) return false; out[n] = cwd[n]; n++; }
+            if (len) {
+                if (n + len + 2 > cap) return false;
+                out[n++] = '/';
+                for (uint32_t i = 0; i < len; i++) out[n + i] = path[i];
+                n += len;
+            }
+            out[n] = 0;
+            return true;
+        }
+    }
+
+    if (len + 2 > cap) return false;
+    out[0] = '/';
+    for (uint32_t i = 0; i < len; i++) out[1 + i] = path[i];
+    out[1 + len] = 0;
+    return true;
+}
+
 m3ApiRawFunction(wasi_path_open)
 {
     m3ApiReturnType (uint32_t)
@@ -362,13 +426,11 @@ m3ApiRawFunction(wasi_path_open)
 
     if (dirfd != WASI_PREOPEN_FD) m3ApiReturn(WASI_EBADF);
 
-    // The name arrives without a terminator and relative to the preopen, which
-    // is the root -- so it is put back together here rather than trusted.
+    // The name arrives without a terminator and with the preopen stripped off,
+    // so it is put back together here rather than trusted -- and which
+    // directory it is put back together against is wasi_path_name's business.
     char name[80];
-    if (path_len + 2 > sizeof(name)) m3ApiReturn(WASI_EINVAL);
-    name[0] = '/';
-    for (uint32_t i = 0; i < path_len; i++) name[1 + i] = path[i];
-    name[1 + path_len] = 0;
+    if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
 
     // A directory is opened too, because a program that completes a filename
     // has to read one. myrtos has no directory-open of its own -- a directory is
@@ -719,15 +781,6 @@ m3ApiRawFunction(wasi_random_get)
 // only new work is putting the path back together, which path_open already
 // does the same way -- the name arrives without a terminator and relative to
 // the preopen, so the leading slash is added here.
-static bool wasi_path_name(const char *path, uint32_t len, char *out, uint32_t cap)
-{
-    if (len + 2 > cap) return false;
-    out[0] = '/';
-    for (uint32_t i = 0; i < len; i++) out[1 + i] = path[i];
-    out[1 + len] = 0;
-    return true;
-}
-
 m3ApiRawFunction(wasi_path_filestat_get)
 {
     m3ApiReturnType (uint32_t)

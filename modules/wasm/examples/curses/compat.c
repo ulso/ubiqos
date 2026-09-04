@@ -17,15 +17,17 @@
 #include <dirent.h>
 #include <stdlib.h>
 
-// The directory the program was started in. wasi-libc begins at the preopen
-// root and offers no way to be told otherwise, so a bare "note.txt" means
-// "/note.txt" however the shell was standing, and saving under a plain name
-// fails. PWD is where a program is expected to look, and adopting it is the
-// whole of what a shell would have done.
+// The directory the program was started in, so that getcwd tells the truth.
 //
-// initscr calls it. As a constructor it did not take effect -- saving under a
-// bare name still failed -- and something a program depends on is worth an
-// explicit call rather than a guess about when the runtime runs it.
+// Opening a file no longer needs this: the host resolves a name that is not a
+// volume against the process's directory, which is the only place it can be
+// done for every guest at once. What still needs it is a program that asks
+// where it is standing -- system() below expands a bare pattern in getcwd's
+// answer, and without this it would answer "/".
+//
+// initscr calls it. As a constructor it did not take effect, and something a
+// program depends on is worth an explicit call rather than a guess about when
+// the runtime gets round to it.
 void curses_adopt_pwd(void)
 {
     const char *p = getenv("PWD");
