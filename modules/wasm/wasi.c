@@ -521,6 +521,78 @@ m3ApiRawFunction(wasi_random_get)
     m3ApiReturn(WASI_OK);
 }
 
+// --- BY NAME RATHER THAN BY DESCRIPTOR ------------------------------------
+// A program that manages files rather than merely reading them needs these:
+// Atto stats a file before opening it and unlinks the temporary one it makes
+// for completion. Both go to the same myrtos calls the fd versions use; the
+// only new work is putting the path back together, which path_open already
+// does the same way -- the name arrives without a terminator and relative to
+// the preopen, so the leading slash is added here.
+static bool wasi_path_name(const char *path, uint32_t len, char *out, uint32_t cap)
+{
+    if (len + 2 > cap) return false;
+    out[0] = '/';
+    for (uint32_t i = 0; i < len; i++) out[1 + i] = path[i];
+    out[1 + len] = 0;
+    return true;
+}
+
+m3ApiRawFunction(wasi_path_filestat_get)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t   , dirfd)
+    m3ApiGetArg     (uint32_t   , flags)
+    m3ApiGetArgMem  (const char*, path)
+    m3ApiGetArg     (uint32_t   , path_len)
+    m3ApiGetArgMem  (uint8_t *  , buf)
+
+    (void)flags;
+    m3ApiCheckMem(path, path_len);
+    m3ApiCheckMem(buf, 64);
+    if (dirfd != WASI_PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+
+    char name[80];
+    if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
+
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(name, &size);
+    if (attr < 0) m3ApiReturn(WASI_ENOENT);
+
+    for (uint32_t i = 0; i < 64; i++) buf[i] = 0;
+    // { dev u64, ino u64, filetype u8, nlink u64, size u64, ... }
+    buf[16] = (attr & MYRTOS_ATTR_DIRECTORY) ? 3 : 4;   // directory, else regular
+    m3ApiWriteMem64(buf + 32, (uint64_t)size);
+    m3ApiReturn(WASI_OK);
+}
+
+m3ApiRawFunction(wasi_path_unlink_file)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t   , dirfd)
+    m3ApiGetArgMem  (const char*, path)
+    m3ApiGetArg     (uint32_t   , path_len)
+
+    m3ApiCheckMem(path, path_len);
+    if (dirfd != WASI_PREOPEN_FD) m3ApiReturn(WASI_EBADF);
+
+    char name[80];
+    if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
+    if (myrtos_fs_remove(name) < 0) m3ApiReturn(WASI_ENOENT);
+    m3ApiReturn(WASI_OK);
+}
+
+// Every descriptor here blocks, and there is no other mode to set. Answering
+// yes to a program that asks for one is the right answer: it asked to be sure,
+// and being told no would send a libc down a path that has no meaning here.
+m3ApiRawFunction(wasi_fd_fdstat_set_flags)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t, fd)
+    m3ApiGetArg     (uint32_t, flags)
+    (void)fd; (void)flags;
+    m3ApiReturn(WASI_OK);
+}
+
 M3Result wasm_link_wasi(IM3Module module)
 {
     static const char *ns = "wasi_snapshot_preview1";
@@ -560,6 +632,12 @@ M3Result wasm_link_wasi(IM3Module module)
     r = m3_LinkRawFunction(module, ns, "args_get",             "i(**)",      &wasi_args_get);
     if (r && r != m3Err_functionLookupFailed) return r;
     r = m3_LinkRawFunction(module, ns, "random_get",           "i(*i)",      &wasi_random_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "path_filestat_get",    "i(ii*i*)",   &wasi_path_filestat_get);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "path_unlink_file",     "i(i*i)",     &wasi_path_unlink_file);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_fdstat_set_flags",  "i(ii)",      &wasi_fd_fdstat_set_flags);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     return m3Err_none;

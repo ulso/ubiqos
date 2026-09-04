@@ -11,13 +11,14 @@ The cost is one shared 190 kB interpreter, and nothing per program.
 
 ## What the host provides
 
-Seventeen WASI calls, implemented in [../wasi.c](../wasi.c):
+Twenty WASI calls, implemented in [../wasi.c](../wasi.c):
 
     fd_write   fd_read    fd_close    fd_seek      fd_fdstat_get
     fd_filestat_get       path_open   fd_prestat_get
     fd_prestat_dir_name   environ_get environ_sizes_get
     proc_exit  clock_time_get         poll_oneoff
     args_get   args_sizes_get         random_get
+    path_filestat_get     path_unlink_file       fd_fdstat_set_flags
 
 That is enough for stdio, for files, and for waiting. Files are more than they
 sound: there is **one preopen, `/`**, so `/sd/data.txt` and `/dev/acm` arrive
@@ -161,6 +162,41 @@ check that the host gives a program what a language runtime expects.
 
 `tinygo build -target=wasi -o prog.wasm prog.go` should work on the same
 fourteen calls. Not tried here -- the four measured below were, on the board.
+
+## An editor: Atto, and a curses small enough to carry
+
+[Atto](https://github.com/hughbarney/atto) is an emacs in about two thousand
+lines of C. It builds and runs here, edits a file on the card and saves it back.
+
+    git clone --depth 1 https://github.com/hughbarney/atto.git
+    zig cc --target=wasm32-wasi -Os -Wl,-z,stack-size=131072 \
+           -I curses atto/*.c curses/curses.c curses/compat.c -o atto.wasm
+
+61 kB. The only thing in Atto that needs an operating system is curses, and WASI
+has no ncurses -- terminfo is a database describing terminals none of which are
+here. But a program like this does not want a terminal database: it wants to
+move the cursor, write text, clear to the end of a line and read a key, and each
+of those is an escape sequence the console already understands.
+
+So `curses/` is not a port. It is the twenty-one calls Atto uses, written
+directly over ANSI, in about 140 lines. Any other curses program that stays
+inside them runs for the same reason.
+
+Two things made it easy, and they are worth knowing before choosing a program to
+bring across. Atto reads **raw bytes** and matches escape sequences in its own
+key table, so there is no `KEY_UP` to synthesise and no terminfo to consult. And
+output is **buffered until refresh** -- that is not an optimisation but the
+difference between a usable editor and one that visibly crawls, since a redraw
+is a few thousand characters and one write syscall each would be a few thousand
+traps.
+
+What does not work is filename completion on TAB. Atto shells out to
+`echo prefix* >tmpfile`, and a wasm guest can neither run a command nor list a
+directory -- `fd_readdir` is not implemented here. `curses/compat.c` makes it
+inert rather than fatal: `mkstemp` really makes a file in /tmp, because a failed
+one calls Atto's `fatal()` and takes the editor down, and `system` does nothing
+and says it worked, so TAB completes to nothing. Making it work means
+`fd_readdir` and a glob, worth doing the day something else wants a directory.
 
 ## Reading a program's imports
 
