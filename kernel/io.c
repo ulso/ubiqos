@@ -583,6 +583,7 @@ int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t 
 // instead, and here it ends the process the shell said was in front.
 
 int32_t myrtos_process_kill(int32_t pid);
+bool    myrtos_intr_request(int32_t pid);
 
 int32_t myrtos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid) {
     myrtos_path_t *p = path_of(path, owner_pid);
@@ -602,7 +603,6 @@ bool myrtos_io_interrupt(const char *name) {
         if (!str_eq(devices[i].name, name)) continue;
         int32_t victim = devices[i].foreground;
         if (victim <= 0) return false;
-        devices[i].foreground = -1;
 
         // Echoed the way a terminal has always echoed it, and written before
         // interrupts go off: a write to the console can wait for room, and
@@ -612,8 +612,18 @@ bool myrtos_io_interrupt(const char *name) {
 
         // This runs in the USB thread, not in a trap, so the scheduler's queues
         // are not otherwise ours to touch.
+        //
+        // A process that asked to hear about the key is told and given a moment
+        // to end itself -- a scanner writes Ctrl-C to its dongle and closes it,
+        // which killing outright would skip. The foreground stays set in that
+        // case so a second press escalates, and the deadline in the scheduler
+        // ends it regardless if it does not go.
         uint32_t st = save_and_disable_interrupts();
-        myrtos_process_kill(victim);
+        bool told = myrtos_intr_request(victim);
+        if (!told) {
+            devices[i].foreground = -1;
+            myrtos_process_kill(victim);
+        }
         restore_interrupts(st);
         return true;
     }

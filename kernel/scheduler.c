@@ -61,6 +61,12 @@ typedef struct {
     myrtos_msg_t msg;         // WAIT_REPLY: what this sender is offering
     myrtos_msg_t *msg_out;    // WAIT_RECV: where the message is to be delivered
 
+    // Ctrl-C, for a process that asked to hear about it rather than be ended by
+    // it. Zero means it did not ask and the key kills, which is what every
+    // command here wants. See myrtos_intr_request.
+    uint32_t intr_pulse;      // the pulse type to send, 0 for none
+    int32_t  intr_deadline;   // tick to kill at once asked, -1 when not asked
+
     // Where relative paths start. Kept as text rather than a cluster number so
     // that it can be shown, and so a directory removed underneath a process
     // fails at the next lookup instead of silently becoming somewhere else.
@@ -257,6 +263,8 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].cwd[0] = '/';
     process_table[slot].cwd[1] = 0;
     process_table[slot].args     = NULL;
+    process_table[slot].intr_pulse    = 0;
+    process_table[slot].intr_deadline = -1;
     process_table[slot].sleep_next = -1;
     process_table[slot].recv_timed = false;
     process_table[slot].allocs = NULL;
@@ -454,6 +462,14 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // exception is the kernel, which creates the first process from the idle
     // level -- inheriting that would leave the shell below everything.
     process_table[slot].allocs = NULL;
+    // A slot is reused, so these are set rather than assumed. The first version
+    // put them in myrtos_kernel_thread by mistake and left process_create alone,
+    // and a fresh slot's zero deadline read as "already asked" -- so Ctrl-C
+    // killed a process that had asked to be told about it, silently and every
+    // time.
+    process_table[slot].intr_pulse    = 0;
+    process_table[slot].intr_deadline = -1;
+
     process_table[slot].priority = (current_pid == KERNEL_PID)
                                  ? MYRTOS_PRIO_DEFAULT
                                  : process_table[current_pid].priority;
@@ -902,6 +918,75 @@ static int32_t pulse_deliver(int32_t dest, int32_t from, uint32_t type, uint32_t
     pulses[pulse_count].value = value;
     pulse_count++;
     return 0;
+}
+
+// --- THE INTERRUPT KEY ----------------------------------------------------
+//
+// Ctrl-C ends a process, and for nearly everything that is right: cat has
+// nothing to say about being stopped. But a program driving a device may have
+// something to undo -- the BleuIO scans until it is told to stop, and a scanner
+// that is killed leaves the dongle scanning into a machine that is no longer
+// listening.
+//
+// Unix answers this with a signal. QNX answers it with a pulse, and so does
+// this: a process that has asked is TOLD, in the same receive it already uses
+// for everything else, and ends itself. A program written in the arming style --
+// hibouair is -- needs no new wait for this, because the pulse arrives where it
+// is already looking.
+//
+// Three things make it safe. Asking is opt-in, so every existing command still
+// dies on the key with no change. The deadline means a process that does not go
+// is killed anyway, because Ctrl-C must always work in the end. And a second
+// Ctrl-C kills at once, which is what a person does when the first did nothing.
+#define MYRTOS_INTR_GRACE_TICKS 500
+
+extern volatile uint32_t myrtos_ticks;
+int32_t myrtos_process_kill(int32_t pid);
+
+// Named apart from the ABI's myrtos_catch_intr, which is an inline this file
+// also sees through modules.h.
+int32_t myrtos_intr_catch(uint32_t type) {
+    if (current_pid <= 0) return -1;
+    process_table[current_pid].intr_pulse = type;
+    return 0;
+}
+
+// True when the process was told and should be given its grace. False when it
+// must be killed -- because it never asked, or because it was asked already and
+// this is the second press.
+bool myrtos_intr_request(int32_t pid) {
+    if (pid <= 0 || pid >= MAX_PROCESSES) return false;
+    pcb_t *p = &process_table[pid];
+    if (p->state == PROC_STATE_FREE) return false;
+    if (!p->intr_pulse) return false;
+    if (p->intr_deadline >= 0) return false;          // asked once already
+
+    // Never zero: zero is what an uninitialised slot holds, and this must not
+    // be mistaken for one.
+    uint32_t at = myrtos_ticks + MYRTOS_INTR_GRACE_TICKS;
+    p->intr_deadline = (int32_t)(at ? at : 1u);
+    pulse_deliver(pid, 0, p->intr_pulse, 0);          // from the kernel, as arming does
+    return true;
+}
+
+// Called from the tick. A process that was asked and stayed is ended.
+//
+// intr_pulse is tested first and that is not belt and braces. A kernel thread is
+// not built by myrtos_process_create, so its fields keep the zeroes the static
+// table was born with -- and a deadline of zero is in the past. The first
+// version tested the deadline alone and killed the USB thread, the filesystem
+// server and everything else on the very first tick, half a second after the
+// board came up. Only a process that asked can have a deadline that means
+// anything.
+void myrtos_intr_tick(void) {
+    for (int i = 1; i < MAX_PROCESSES; i++) {
+        pcb_t *p = &process_table[i];
+        if (p->state == PROC_STATE_FREE) continue;
+        if (!p->intr_pulse || p->intr_deadline <= 0) continue;
+        if ((int32_t)(myrtos_ticks - (uint32_t)p->intr_deadline) < 0) continue;
+        p->intr_deadline = -1;
+        myrtos_process_kill(i);
+    }
 }
 
 int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {

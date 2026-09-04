@@ -119,6 +119,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             // simpler and enough at keyboard speed.
             myrtos_wake_readers();
             myrtos_sleep_tick();
+            { extern void myrtos_intr_tick(void); myrtos_intr_tick(); }
 // The interrupt stays pending until mtimecmp moves forward. Without
 // this it recurs immediately and the machine does nothing else.
             myrtos_timer_rearm();
@@ -534,6 +535,11 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 ? myrtos_process_count()
                 : (uint32_t)myrtos_tlsf_largest_free(myrtos_mem_pool);
             break;
+        case SYS_CATCHINTR: {
+            extern int32_t myrtos_intr_catch(uint32_t type);
+            frame->a0 = (uint32_t)myrtos_intr_catch(frame->a0);
+            break;
+        }
         case SYS_RANDOM: {
             // The ring oscillator's random bit, thirty-two of them to a word.
             //

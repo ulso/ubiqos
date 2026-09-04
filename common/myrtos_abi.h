@@ -201,6 +201,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 #define SYS_FOREGRND  41u   // a0 = path, a1 = pid or 0 -> a0 = 0 ok, -1 no path
 #define SYS_USBINFO   55u   // a0 = what -> a0 = that field of the USB host state
 #define SYS_RANDOM    56u   // a0 = buffer, a1 = length -> a0 = bytes filled
+#define SYS_CATCHINTR 57u   // a0 = pulse type, 0 to go back to being killed
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -1189,6 +1190,22 @@ static inline int32_t myrtos_meminfo(uint32_t what)
 // caller loops. That is not a limitation of the source but of where the work
 // happens: a system call runs in a trap with interrupts off, and an unbounded
 // loop in a trap is the mistake this system has made more than once.
+// Hear about Ctrl-C instead of being ended by it.
+//
+// The key then arrives as a pulse of this type, from pid 0, in whatever receive
+// the process already uses -- so a program written in the arming style needs no
+// new wait for it. What it must do is end itself: half a second later the kernel
+// ends it anyway, and a second press ends it at once. That is deliberate. An
+// interrupt key that a program can refuse is not an interrupt key.
+//
+// Meant for a process that has something to undo. A scanner tells its dongle to
+// stop scanning; the dongle is otherwise left running into a machine that is no
+// longer listening.
+static inline int32_t myrtos_catch_intr(uint32_t pulse_type)
+{
+    return myrtos_syscall(SYS_CATCHINTR, pulse_type, 0, 0);
+}
+
 static inline int32_t myrtos_random(void *buf, uint32_t len)
 {
     return myrtos_syscall(SYS_RANDOM, (uint32_t)(uintptr_t)buf, len, 0);

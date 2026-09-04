@@ -33,6 +33,7 @@
 #define HIBOU_BEACON   0x05u        // the frame that carries readings; there is
                                     // another that alternates with it and does not
 #define PULSE_ACM      1
+#define PULSE_INTR     2   // ctrl-C, asked for with myrtos_catch_intr
 #define MAX_SENSORS    8
 #define REDRAW_MS      2000
 
@@ -295,6 +296,12 @@ void module_main(int argc, char **argv)
         return;
     }
 
+    // Ctrl-C arrives as a pulse rather than ending the process, so the dongle
+    // can be told to stop before we go. Killed outright it would keep scanning
+    // and keep talking into a machine that is no longer listening -- and the
+    // next program to open it would find a stream already running.
+    myrtos_catch_intr(PULSE_INTR);
+
     printf("scanning; ctrl-C to stop\n\n");
 
     uint32_t next_draw = myrtos_ticks_now() + REDRAW_MS;
@@ -313,6 +320,17 @@ void module_main(int argc, char **argv)
         }
         if (from != 0)                  // a real message; not ours to answer
             continue;
+
+        if (m.type == PULSE_INTR) {
+            // The dongle stops scanning on a bare Ctrl-C, the same key that
+            // brought us here. Half a second is what the kernel allows before
+            // it ends the process regardless, which is far more than this needs.
+            static const char stop[] = "\x03";
+            myrtos_write(dev, stop, 1);
+            myrtos_sleep(100);
+            printf("\nhibouair: told the dongle to stop\n");
+            break;
+        }
 
         int32_t n = myrtos_read(dev, buf, sizeof(buf));
         if (n < 0) {
