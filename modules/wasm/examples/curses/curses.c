@@ -7,6 +7,7 @@
 // per refresh is one trap per redraw.
 #include "curses.h"
 #include <unistd.h>
+#include <stdlib.h>
 
 WINDOW *stdscr = (WINDOW *)1;   // a handle, never dereferenced
 WINDOW *curscr = (WINDOW *)2;   // and the other one curses exposes
@@ -15,7 +16,9 @@ int COLS  = 80;
 
 // Big enough for a whole screen of text with an escape sequence on every line,
 // so a redraw never has to flush halfway and tear.
-static char  out[8192];
+// One screen of text with an escape sequence on every line. A hundred and six
+// columns by forty rows is over four thousand characters before the escapes.
+static char  out[16384];
 static unsigned out_len;
 
 static void put(const char *s)
@@ -44,7 +47,27 @@ int refresh(void)
     return OK;
 }
 
-WINDOW *initscr(void) { put("\x1b[2J\x1b[H"); refresh(); return stdscr; }
+// How big the screen is. There is no ioctl here and no terminal to ask, so the
+// size arrives in the environment as LINES and COLUMNS -- which is where curses
+// looks for it everywhere else too when a terminal will not say. The defaults
+// above stand if nothing sets them.
+static int env_int(const char *name, int fallback)
+{
+    const char *v = getenv(name);
+    if (!v) return fallback;
+    int n = 0;
+    while (*v >= '0' && *v <= '9') n = n * 10 + (*v++ - '0');
+    return n > 0 ? n : fallback;
+}
+
+WINDOW *initscr(void)
+{
+    LINES = env_int("LINES", LINES);
+    COLS  = env_int("COLUMNS", COLS);
+    put("\x1b[2J\x1b[H");
+    refresh();
+    return stdscr;
+}
 
 // The cursor comes back, and the screen is left clean. An editor that exits
 // leaving the cursor hidden and the last colour set is an editor that breaks
@@ -129,6 +152,12 @@ int getch(void)
     unsigned char c;
     refresh();
     if (read(0, &c, 1) != 1) return ERR;
+
+    // Carriage return becomes newline, which is what curses does on input
+    // unless a program asks it not to with nonl(). Programs lean on it: Atto
+    // inserts a line break on 10 and answers "Not bound" to 13, and 13 is what
+    // a keyboard sends.
+    if (c == '\r') return '\n';
     return (int)c;
 }
 
