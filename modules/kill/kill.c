@@ -20,15 +20,29 @@ static uint32_t to_u32(const char *s, bool *ok) {
 void module_main(int argc, char **argv) {
     myrtos_line_t l;
 
-    if (argc < 2) {
-        myrtos_write_str(MYRTOS_STDOUT, "usage: kill <pid> ...\r\n");
+    int first = 1;
+    bool now = false;
+
+    // -9 ends without asking. Without it a process that called
+    // myrtos_catch_intr is told and given half a second to end itself, which is
+    // how a background scanner gets to tell its dongle to stop -- Ctrl-C cannot
+    // reach it, because a background process is nobody's foreground.
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '9' && !argv[1][2]) {
+        now = true;
+        first = 2;
+    }
+
+    if (argc < first + 1) {
+        myrtos_write_str(MYRTOS_STDOUT, "usage: kill [-9] <pid> ...\r\n");
         return;
     }
 
-    for (int i = 1; i < argc; i++) {
+    for (int i = first; i < argc; i++) {
         bool ok;
         uint32_t pid = to_u32(argv[i], &ok);
-        if (ok && myrtos_kill((int32_t)pid) == 0) continue;
+        int32_t r = ok ? (now ? myrtos_kill_now((int32_t)pid)
+                              : myrtos_kill((int32_t)pid)) : -1;
+        if (r == 0) continue;
 
         myrtos_line_reset(&l);
         myrtos_line_str(&l, "kill: ");

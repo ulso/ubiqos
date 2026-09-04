@@ -381,9 +381,17 @@ static bool load_module_from_card(const char *name) {
     if (!ops || !ops->stat || !ops->read_at) return false;
 
     // 8.3, and the card holds it uppercase: sh.mod is SH.MOD.
+    //
+    // A name past eight characters is refused rather than cut. This used to copy
+    // the first eight and drop the rest, so "hibouair&" -- a mistyped command
+    // line, with the ampersand meant for the shell -- loaded hibouair.mod and
+    // started the scanner. The only sign was the log saying "Loaded hibouair&
+    // from /sd", which reads like success. A module name is eight characters;
+    // nine is a mistake, and the answer to a mistake is no.
     char file[13];
     uint32_t n = 0;
-    while (name[n] && n < 8) {
+    while (name[n]) {
+        if (n >= 8) return false;
         char c = name[n];
         file[n] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
         n++;

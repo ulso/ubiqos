@@ -741,9 +741,19 @@ static inline int32_t myrtos_readable(int32_t path)
 // A process blocked on a server does not go away at once: the server is holding
 // a pointer into its memory, so it stops running immediately and is taken apart
 // when the reply comes. It shows as "zomb" in ps until then.
+// Ask a process to end. One that called myrtos_catch_intr is told and given
+// half a second to go on its own -- the same treatment Ctrl-C gives, and the
+// only way a background process can stop cleanly, since it is nobody's
+// foreground and the key cannot reach it. Everything else ends at once.
 static inline int32_t myrtos_kill(int32_t pid)
 {
     return myrtos_syscall(SYS_KILL, (uint32_t)pid, 0, 0);
+}
+
+// End it now, asking nothing. What -9 has always meant.
+static inline int32_t myrtos_kill_now(int32_t pid)
+{
+    return myrtos_syscall(SYS_KILL, (uint32_t)pid, 1, 0);
 }
 
 // Say which process the interrupt key on this path's terminal should end, and

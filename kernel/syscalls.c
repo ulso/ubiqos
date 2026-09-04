@@ -471,6 +471,13 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 myrtos_process_exit();
                 return myrtos_switch(sp);
             }
+            // The same courtesy Ctrl-C got: a process that asked to hear about
+            // being ended is told, and has half a second to do it itself. That
+            // is the only way a background process can ever stop cleanly -- it
+            // is nobody's foreground, so the key cannot reach it. a1 set is the
+            // one that does not ask, which is what -9 has always meant.
+            extern bool myrtos_intr_request(int32_t pid);
+            if (!frame->a1 && myrtos_intr_request(victim)) { frame->a0 = 0; break; }
             frame->a0 = (uint32_t)myrtos_process_kill(victim);
             break;
         }

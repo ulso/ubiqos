@@ -238,7 +238,10 @@ static const char *component_83(const char *p, char *out_11, char *raw_out) {
         out_11[11] = 0;
         return p;
     }
-    if (!myrtos_fat_name_to_83(part, out_11)) return 0;
+    // A component with no 8.3 form is not an error: it is a long name, and
+    // raw_out carries it for find_entry to match. out_11 stays blank, which
+    // matches nothing, so the two spellings cannot be confused.
+    if (!myrtos_fat_name_to_83(part, out_11) && !(raw_out && raw_out[0])) return 0;
     return p;
 }
 
@@ -511,24 +514,47 @@ int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
 // Turn a name as a person types it into the raw 8.3 form the directory holds:
 // "readme.txt" becomes "README  TXT". Without this every utility would have to
 // know how FAT pads names, which is the filesystem's business and not theirs.
+// False when the name has no 8.3 form at all, and out_11 is then left blank
+// rather than half filled.
+//
+// This used to truncate: a stem past eight characters simply lost its tail, and
+// so did an extension past three. That is how "hibouair&" -- a mistyped command,
+// with the ampersand meant for the shell -- became "HIBOUAIR" and ran
+// hibouair.mod. A typo started the right program for the wrong reason, and the
+// only sign of it was the loader saying "Loaded hibouair& from /sd".
+//
+// A partial name must never match, because a match is an identity. Callers that
+// have the name as the user typed it fall back to it -- resolve_parent hands
+// back both spellings and find_entry tries each -- and callers that do not, the
+// module loader among them, get the refusal they should have had.
 bool myrtos_fat_name_to_83(const char *user, char *out_11) {
     for (int i = 0; i < 11; i++) out_11[i] = ' ';
     out_11[11] = 0;
 
-    int i = 0;
-    while (*user && *user != '.' && i < 8) {
-        char c = *user++;
-        out_11[i++] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
-    }
-    while (*user && *user != '.') user++;               // a longer stem is truncated
-    if (!*user) return i > 0;
+    const char *dot = 0;
+    for (const char *q = user; *q; q++) if (*q == '.') dot = q;
 
-    user++;                                             // past the dot
-    for (int j = 0; *user && j < 3; j++) {
-        char c = *user++;
+    uint32_t stem = dot ? (uint32_t)(dot - user) : 0;
+    if (!dot) { const char *q = user; while (*q) q++; stem = (uint32_t)(q - user); }
+    uint32_t ext = 0;
+    if (dot) { const char *q = dot + 1; while (*q) { ext++; q++; } }
+
+    if (!stem || stem > 8 || ext > 3) return false;
+
+    // One dot only. "a.b.c" has no short form either, and silently taking the
+    // last of them would be the same kind of guess.
+    for (const char *q = user; *q; q++)
+        if (*q == '.' && q != dot) return false;
+
+    for (uint32_t i = 0; i < stem; i++) {
+        char c = user[i];
+        out_11[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+    }
+    for (uint32_t j = 0; j < ext; j++) {
+        char c = dot[1 + j];
         out_11[8 + j] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
     }
-    return i > 0;
+    return true;
 }
 
 // --- WRITING --------------------------------------------------------------
