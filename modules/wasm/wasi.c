@@ -157,18 +157,31 @@ m3ApiRawFunction(wasi_proc_exit)
 // Sixteen is more open files than a wasm program has any business holding.
 #define WASI_MAX_TRACKED 16
 
-static struct { int32_t fd; char name[48]; } wasi_paths[WASI_MAX_TRACKED];
+static struct { int32_t fd; bool is_dir; char name[48]; } wasi_paths[WASI_MAX_TRACKED];
 
-static void wasi_remember(int32_t fd, const char *name)
+static void wasi_remember_kind(int32_t fd, const char *name, bool is_dir)
 {
     for (int i = 0; i < WASI_MAX_TRACKED; i++) {
         if (wasi_paths[i].fd && wasi_paths[i].fd != fd) continue;
         wasi_paths[i].fd = fd;
+        wasi_paths[i].is_dir = is_dir;
         uint32_t n = 0;
         while (name[n] && n < sizeof(wasi_paths[i].name) - 1) { wasi_paths[i].name[n] = name[n]; n++; }
         wasi_paths[i].name[n] = 0;
         return;
     }
+}
+
+static void wasi_remember(int32_t fd, const char *name)
+{
+    wasi_remember_kind(fd, name, false);
+}
+
+static bool wasi_is_dir(int32_t fd)
+{
+    for (int i = 0; i < WASI_MAX_TRACKED; i++)
+        if (wasi_paths[i].fd == fd) return wasi_paths[i].is_dir;
+    return false;
 }
 
 static const char *wasi_name_of(int32_t fd)
@@ -239,6 +252,22 @@ m3ApiRawFunction(wasi_path_open)
     name[0] = '/';
     for (uint32_t i = 0; i < path_len; i++) name[1 + i] = path[i];
     name[1 + path_len] = 0;
+
+    // A directory is opened too, because a program that completes a filename
+    // has to read one. myrtos has no directory-open of its own -- a directory is
+    // a thing you list, not a thing you hold -- so /dev/null stands in as the
+    // handle and the remembered name does the work. The descriptor is a real
+    // one, which is what matters: fd_close closes it like any other, and nothing
+    // downstream has to know it is special.
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(name, &size);
+    if (attr >= 0 && (attr & MYRTOS_ATTR_DIRECTORY)) {
+        int32_t dfd = myrtos_open("/dev/null");
+        if (dfd < 0) m3ApiReturn(WASI_EBADF);
+        wasi_remember_kind(dfd, name, true);
+        m3ApiWriteMem32(out_fd, (uint32_t)dfd);
+        m3ApiReturn(WASI_OK);
+    }
 
     uint32_t flags = (rights_base & WASI_RIGHT_FD_WRITE) ? MYRTOS_O_RDWR : MYRTOS_O_RDONLY;
     if (oflags  & WASI_O_CREAT)      flags |= MYRTOS_O_CREAT;
@@ -319,7 +348,7 @@ m3ApiRawFunction(wasi_fd_fdstat_get)
 
     m3ApiCheckMem(stat, 24);
     for (uint32_t i = 0; i < 24; i++) stat[i] = 0;
-    stat[0] = (fd == WASI_PREOPEN_FD) ? 3 : 2;   // directory, or character device
+    stat[0] = (fd == WASI_PREOPEN_FD || wasi_is_dir((int32_t)fd)) ? 3 : 2;
     m3ApiReturn(WASI_OK);
 }
 
@@ -624,6 +653,129 @@ m3ApiRawFunction(wasi_fd_fdstat_set_flags)
     m3ApiReturn(WASI_OK);
 }
 
+
+// --- READING A DIRECTORY --------------------------------------------------
+// The call a filename completion needs, and the last thing that stood between
+// Atto's TAB and a list of names.
+//
+// The cookie is the entry number, which is exactly what myrtos_fs_dir_at wants,
+// so the two agree without any bookkeeping in between. Each entry is a
+// twenty-four byte header and then the name, packed one after another; a header
+// that does not fit is simply not written, and a caller that gets less than it
+// asked for knows to come back with the last cookie.
+//
+//   dirent { next u64 @0, ino u64 @8, namlen u32 @16, type u8 @20, pad[3] }
+#define WASI_DIRENT_SIZE 24
+
+// A directory entry needs an inode number, and a FAT directory has none to
+// give. Zero is not the neutral answer it looks like: wasi-libc reads it as
+// "unknown, go and find out", calls fstatat relative to the directory
+// descriptor, and silently drops every entry whose lookup fails. A hash of the
+// path is stable across a listing, distinct between directories, and never
+// zero, which is all a caller can ask of it.
+static uint64_t wasi_inode(const char *dir, const char *name)
+{
+    uint64_t h = 1469598103934665603ULL;
+    for (const char *p = dir; *p; p++)  { h ^= (uint8_t)*p; h *= 1099511628211ULL; }
+    h ^= '/'; h *= 1099511628211ULL;
+    for (const char *p = name; *p; p++) { h ^= (uint8_t)*p; h *= 1099511628211ULL; }
+    return h ? h : 1;
+}
+
+// "SH      MOD" -> "sh.mod". The kernel hands back what FAT stores, and a
+// guest needs a name it can pass straight back to open(). The test is ls's, and
+// exact rather than a guess: a FAT short entry never contains a dot, because
+// the separator is implied by position and not stored, so eleven characters
+// with no dot is the one case that needs expanding.
+static void wasi_pretty(const char *raw, char *out)
+{
+    uint32_t len = 0;
+    bool dotted = false;
+    while (raw[len]) { if (raw[len] == '.') dotted = true; len++; }
+    if (len != 11 || dotted) {
+        uint32_t i = 0;
+        for (; raw[i]; i++) out[i] = raw[i];
+        out[i] = 0;
+        return;
+    }
+
+    uint32_t n = 0;
+    for (int i = 0; i < 8 && raw[i] != ' '; i++) {
+        char c = raw[i];
+        out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    if (raw[8] != ' ') {
+        out[n++] = '.';
+        for (int i = 8; i < 11 && raw[i] != ' '; i++) {
+            char c = raw[i];
+            out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+        }
+    }
+    out[n] = 0;
+}
+
+m3ApiRawFunction(wasi_fd_readdir)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArg     (uint32_t , fd)
+    m3ApiGetArgMem  (uint8_t *, buf)
+    m3ApiGetArg     (uint32_t , buf_len)
+    m3ApiGetArg     (uint64_t , cookie)
+    m3ApiGetArgMem  (uint32_t*, bufused)
+
+    m3ApiCheckMem(buf, buf_len);
+    m3ApiCheckMem(bufused, sizeof(uint32_t));
+
+    // A tracked directory first, and the preopen only if the descriptor is not
+    // one. The two collide: WASI_PREOPEN_FD is 3 and 3 is also the first
+    // descriptor the kernel hands a guest, so asking about the preopen first
+    // listed the root whatever directory had been opened. It is a collision
+    // worth remembering -- fd_prestat_get answers for 3 as the preopen while
+    // everything else may legitimately have 3 as a file.
+    const char *dir = wasi_is_dir((int32_t)fd) ? wasi_name_of((int32_t)fd)
+                    : (fd == WASI_PREOPEN_FD ? "/" : 0);
+    if (!dir) {
+        wasi_put32((uint8_t *)bufused, 0);
+        m3ApiReturn(WASI_EBADF);
+    }
+
+    uint32_t used = 0;
+    uint32_t index = (uint32_t)cookie;
+
+    for (;;) {
+        char raw[MYRTOS_DIRNAME_MAX], name[MYRTOS_DIRNAME_MAX + 2];
+        uint32_t size = 0;
+        int32_t attr = myrtos_fs_dir_at(dir, index, raw, &size);
+        if (attr < 0) break;
+        wasi_pretty(raw, name);
+
+        uint32_t namlen = 0;
+        while (name[namlen]) namlen++;
+        if (used + WASI_DIRENT_SIZE > buf_len) break;
+
+        uint8_t *e = buf + used;
+        for (uint32_t i = 0; i < WASI_DIRENT_SIZE; i++) e[i] = 0;
+        wasi_put64(e, (uint64_t)(index + 1));                 // the next cookie
+        wasi_put64(e + 8, wasi_inode(dir, name));
+        wasi_put32(e + 16, namlen);
+        e[20] = (attr & MYRTOS_ATTR_DIRECTORY) ? 3 : 4;
+        used += WASI_DIRENT_SIZE;
+
+        // A name that does not fit is still counted: the caller sees a short
+        // buffer, comes back with a bigger one, and gets the whole entry then.
+        uint32_t room = (buf_len > used) ? buf_len - used : 0;
+        uint32_t take = (namlen < room) ? namlen : room;
+        for (uint32_t i = 0; i < take; i++) buf[used + i] = (uint8_t)name[i];
+        used += take;
+        if (take < namlen) break;
+
+        index++;
+    }
+
+    wasi_put32((uint8_t *)bufused, used);
+    m3ApiReturn(WASI_OK);
+}
+
 M3Result wasm_link_wasi(IM3Module module)
 {
     static const char *ns = "wasi_snapshot_preview1";
@@ -669,6 +821,8 @@ M3Result wasm_link_wasi(IM3Module module)
     r = m3_LinkRawFunction(module, ns, "path_unlink_file",     "i(i*i)",     &wasi_path_unlink_file);
     if (r && r != m3Err_functionLookupFailed) return r;
     r = m3_LinkRawFunction(module, ns, "fd_fdstat_set_flags",  "i(ii)",      &wasi_fd_fdstat_set_flags);
+    if (r && r != m3Err_functionLookupFailed) return r;
+    r = m3_LinkRawFunction(module, ns, "fd_readdir",           "i(i*iI*)",   &wasi_fd_readdir);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     return m3Err_none;
