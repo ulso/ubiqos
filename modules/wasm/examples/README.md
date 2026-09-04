@@ -182,14 +182,12 @@ here. But a program like this does not want a terminal database: it wants to
 move the cursor, write text, clear to the end of a line and read a key, and each
 of those is an escape sequence the console already understands.
 
-**The machine is Latin-1 and the program is UTF-8.** The keyboard descriptor
-sends Latin-1 and the console's font draws it, while a C program that calls
-`setlocale` and counts bytes reads 0xE5 as the start of a three-byte sequence
-and swallows the two characters after it. `curses.c` is the seam: UTF-8 towards
-the guest, Latin-1 towards the console. The consequence is that a file the
-editor saves holds UTF-8, which `cat` renders as two characters per a-ring --
-the alternative was a broken display, and choosing one encoding for the whole
-machine is the real answer.
+**The machine speaks UTF-8**, so a program that calls `setlocale` and counts
+bytes needs nothing translated on its way in or out. That was not true until
+this editor asked for it: the keyboard sent Latin-1 and the console's font was
+indexed by the same byte, and Atto read an a-ring as the start of a three-byte
+sequence. The seam that briefly sat in `curses.c` is gone; the console decodes
+UTF-8 and the keyboard sends it.
 
 Two things a curses shim gets wrong until someone uses it. **Carriage return
 has to become newline** -- that is what curses does on input unless a program
