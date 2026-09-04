@@ -376,27 +376,34 @@ static bool wasi_first_is_volume(const char *path, uint32_t len)
 
 static bool wasi_path_name(const char *path, uint32_t len, char *out, uint32_t cap)
 {
-    // "." and "./x" name the directory the process is standing in. wasi-libc
-    // passes them through untouched -- it has no working directory to fold them
-    // into -- so they are folded here with everything else.
+    // "./x" names the directory the process is standing in, and wasi-libc passes
+    // it through untouched -- it has no working directory to fold it into -- so
+    // it is folded away here and then resolved like any other bare name.
     while (len >= 2 && path[0] == '.' && path[1] == '/') { path += 2; len -= 2; }
-    bool here = (len == 0) || (len == 1 && path[0] == '.');
-    if (here) len = 0;
 
-    if (here || !wasi_first_is_volume(path, len)) {
+    // A bare "." is the one name that cannot be honoured, and it is the root
+    // that wins it. An absolute "/" arrives as "." as well: wasi-libc puts it
+    // there because the *at calls take no empty path, and by then the two are
+    // the same request. Asking for "/" and being given a directory that is not
+    // the root is the worse of the two answers, so "." lists the volumes.
+    if (len == 0 || (len == 1 && path[0] == '.')) {
+        if (cap < 2) return false;
+        out[0] = '/';
+        out[1] = 0;
+        return true;
+    }
+
+    if (!wasi_first_is_volume(path, len)) {
         char cwd[MYRTOS_DIRNAME_MAX + 1];
         cwd[0] = 0;
         myrtos_getcwd(cwd, sizeof cwd);
         if (cwd[0] && !(cwd[0] == '/' && !cwd[1])) {
             uint32_t n = 0;
             while (cwd[n]) { if (n >= cap - 1) return false; out[n] = cwd[n]; n++; }
-            if (len) {
-                if (n + len + 2 > cap) return false;
-                out[n++] = '/';
-                for (uint32_t i = 0; i < len; i++) out[n + i] = path[i];
-                n += len;
-            }
-            out[n] = 0;
+            if (n + len + 2 > cap) return false;
+            out[n++] = '/';
+            for (uint32_t i = 0; i < len; i++) out[n + i] = path[i];
+            out[n + len] = 0;
             return true;
         }
     }
