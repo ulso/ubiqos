@@ -169,14 +169,27 @@ fourteen calls. Not tried here -- the four measured below were, on the board.
 lines of C. It builds and runs here, edits a file on the card and saves it back.
 
     git clone --depth 1 https://github.com/hughbarney/atto.git
-    zig cc --target=wasm32-wasi -Os -Wl,-z,stack-size=131072 \
+    zig cc --target=wasm32-wasi -Os -funsigned-char -Wl,-z,stack-size=131072 \
            -I curses atto/*.c curses/curses.c curses/compat.c -o atto.wasm
+
+`-funsigned-char` is not optional. Atto guards its insert with `*input > 31`,
+and on a signed char an a-ring is negative -- every accented character came back
+"Not bound".
 
 61 kB. The only thing in Atto that needs an operating system is curses, and WASI
 has no ncurses -- terminfo is a database describing terminals none of which are
 here. But a program like this does not want a terminal database: it wants to
 move the cursor, write text, clear to the end of a line and read a key, and each
 of those is an escape sequence the console already understands.
+
+**The machine is Latin-1 and the program is UTF-8.** The keyboard descriptor
+sends Latin-1 and the console's font draws it, while a C program that calls
+`setlocale` and counts bytes reads 0xE5 as the start of a three-byte sequence
+and swallows the two characters after it. `curses.c` is the seam: UTF-8 towards
+the guest, Latin-1 towards the console. The consequence is that a file the
+editor saves holds UTF-8, which `cat` renders as two characters per a-ring --
+the alternative was a broken display, and choosing one encoding for the whole
+machine is the real answer.
 
 Two things a curses shim gets wrong until someone uses it. **Carriage return
 has to become newline** -- that is what curses does on input unless a program
