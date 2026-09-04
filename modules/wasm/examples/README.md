@@ -190,13 +190,32 @@ difference between a usable editor and one that visibly crawls, since a redraw
 is a few thousand characters and one write syscall each would be a few thousand
 traps.
 
-What does not work is filename completion on TAB. Atto shells out to
-`echo prefix* >tmpfile`, and a wasm guest can neither run a command nor list a
-directory -- `fd_readdir` is not implemented here. `curses/compat.c` makes it
-inert rather than fatal: `mkstemp` really makes a file in /tmp, because a failed
-one calls Atto's `fatal()` and takes the editor down, and `system` does nothing
-and says it worked, so TAB completes to nothing. Making it work means
-`fd_readdir` and a glob, worth doing the day something else wants a directory.
+Filename completion on TAB works, and getting there took three separate
+things. Atto shells out to `echo prefix* >tmpfile` and reads the names back, so
+`curses/compat.c` supplies both halves a wasm guest has no way to do: `mkstemp`
+really makes a file in /tmp -- a failed one calls Atto's `fatal()` and takes the
+editor down -- and `system` recognises that one command shape, expands the
+pattern itself with `opendir`/`readdir`, and writes the names where the shell
+would have put them. Atto never learns the difference.
+
+Under it, the host needed `fd_readdir`, and two things about it are worth
+knowing before writing one. A dirent header starts with a 64-bit field, and
+storing it with a plain 64-bit write traps on Hazard3 with mcause 6 unless the
+buffer happens to be aligned -- a guest chooses that address, so it does not.
+And `d_ino` must not be left zero: it looks like the honest answer for a
+filesystem that has no inodes, but wasi-libc reads zero as "unknown, go and find
+out", calls `fstatat` relative to the directory descriptor, and silently drops
+every entry whose lookup fails. Twenty entries went into the buffer and none
+came out. A hash of the path is stable, distinct, and never zero.
+
+The third was `unlink`. Atto opens its temp file, unlinks it at once so nothing
+survives however it exits, and only then reads through the descriptor it kept.
+POSIX keeps such a file alive until the last close; a FAT directory entry has
+nowhere to record "gone but still open". So the host holds the removal until the
+descriptor closes, and sweeps whatever is left when the program exits.
+
+`wls.c` is the small program that made this findable: `ls` and nothing else, so
+that when a directory listing comes back empty there is only one place to look.
 
 ## Reading a program's imports
 
