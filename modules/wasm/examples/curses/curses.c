@@ -27,41 +27,12 @@ static void emit(unsigned char c)
     out[out_len++] = (char)c;
 }
 
-// The guest thinks in UTF-8 and myrtos thinks in Latin-1, and this is the seam.
-//
-// It is not a preference on either side: the console's font draws Latin-1 and
-// the keyboard descriptor sends it, while a C program that calls setlocale and
-// counts bytes -- Atto does both -- reads a byte of 0xE5 as the start of a
-// three-byte sequence and swallows the two characters after it. Translating
-// here costs nothing and leaves both sides believing what they already believe.
-//
-// Only the two leads that can hold Latin-1 are decoded. Anything above U+00FF
-// has no glyph on this console, so it becomes a question mark rather than a
-// scatter of them.
-static int           utf8_held;   // the second byte of an incoming character
-static unsigned char utf8_lead;
-static unsigned      utf8_left;
-
+// Bytes go through untouched. The console reads UTF-8 and the keyboard sends
+// it, so a program that thinks in UTF-8 -- which any C program calling
+// setlocale does -- needs nothing translated on its behalf.
 static void put(const char *s)
 {
-    while (*s) {
-        unsigned char c = (unsigned char)*s++;
-
-        if (utf8_lead) {
-            emit((unsigned char)(((utf8_lead & 0x1f) << 6) | (c & 0x3f)));
-            utf8_lead = 0;
-        } else if (utf8_left) {
-            utf8_left--;
-        } else if (c < 0x80) {
-            emit(c);
-        } else if (c == 0xc2 || c == 0xc3) {
-            utf8_lead = c;
-        } else if (c >= 0xc4 && c < 0xf8) {
-            utf8_left = (c < 0xe0) ? 1 : (c < 0xf0) ? 2 : 3;
-            emit('?');
-        }
-        // A stray continuation byte is dropped: there is nothing to add it to.
-    }
+    while (*s) emit((unsigned char)*s++);
 }
 
 static void put_num(int v)
@@ -70,10 +41,7 @@ static void put_num(int v)
     int n = 0;
     if (v < 0) v = 0;
     do { b[n++] = (char)('0' + v % 10); v /= 10; } while (v);
-    while (n) {
-        if (out_len >= sizeof out) { (void)write(1, out, out_len); out_len = 0; }
-        out[out_len++] = b[--n];
-    }
+    while (n) emit((unsigned char)b[--n]);
 }
 
 int refresh(void)
@@ -192,12 +160,6 @@ int standend(void)    { put("\x1b[0m"); return OK; }
 int getch(void)
 {
     unsigned char c;
-
-    // The second byte of a character the keyboard sent as one. Handed over
-    // before anything is read and without flushing: nothing has changed on the
-    // screen since the first byte went out.
-    if (utf8_held) { int held = utf8_held; utf8_held = 0; return held; }
-
     refresh();
     if (read(0, &c, 1) != 1) return ERR;
 
@@ -206,14 +168,6 @@ int getch(void)
     // inserts a line break on 10 and answers "Not bound" to 13, and 13 is what
     // a keyboard sends.
     if (c == '\r') return '\n';
-
-    // Latin-1 in, UTF-8 out -- the other half of the seam in put(). Everything
-    // from U+0080 to U+00FF is two bytes there, so the second is held back and
-    // handed over on the next call.
-    if (c >= 0x80) {
-        utf8_held = 0x80 | (c & 0x3f);
-        return 0xc0 | (c >> 6);
-    }
     return (int)c;
 }
 
