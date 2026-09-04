@@ -564,6 +564,132 @@ function(myrtos_add_d_module name source)
         COMMENT "Building module ${name}.mod (D)")
 endfunction()
 
+# --- ZIG MODULES ----------------------------------------------------------
+# Zig reaches this target with nothing installed but zig itself, and needs no
+# flag to get thread-local storage right: `threadlocal var` on a freestanding
+# riscv32 gives TPREL_HI20/ADD/LO12_I, which is what a shareable module needs
+# and what check_module.py already allows. LDC needs --fthread-model=local-exec
+# to say the same thing.
+#
+# What it cannot do is make EVERY variable thread-local. A plain module-scope
+# `var` lands in .data and is shared between every process running the module,
+# and the checker refuses it -- the same discipline C has with __thread, with
+# better habits, since `var` at module scope stands out in Zig where a static
+# does not in C. D remains the only language here whose default is right.
+#
+# ReleaseSmall rather than ReleaseFast: it strips, and it keeps the panic
+# handler from dragging in formatting machinery that has nowhere to print.
+find_program(MYRTOS_ZIG zig HINTS /opt/homebrew/bin /usr/local/bin)
+
+set(MYRTOS_ZIG_ARCH -target riscv32-freestanding
+                    -mcpu=generic_rv32+m+a+c+zba+zbb+zbs)
+# -mcmodel=medium is -mcmodel=medany: without it Zig addresses a global with
+# R_RISCV_HI20/LO12_I, an absolute address, and check_module.py refuses the
+# module. It is the same flag every C module here is built with, and the first
+# Zig build was rejected for exactly the reason the checker exists.
+set(MYRTOS_ZIG_FLAGS -OReleaseSmall -mcmodel=medium -fno-PIC -fno-PIE
+                     -fno-stack-check -fno-stack-protector)
+
+set(MYRTOS_ZIG_OK FALSE)
+if(MYRTOS_ZIG)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/zig_probe.zig
+         "export fn probe() u32 { return 0; }\n")
+    execute_process(
+        COMMAND ${MYRTOS_ZIG} build-obj ${MYRTOS_ZIG_ARCH} ${MYRTOS_ZIG_FLAGS}
+                -femit-bin=${CMAKE_CURRENT_BINARY_DIR}/zig_probe.o
+                ${CMAKE_CURRENT_BINARY_DIR}/zig_probe.zig
+        RESULT_VARIABLE zprobe_rc OUTPUT_QUIET ERROR_VARIABLE zprobe_err)
+    if(zprobe_rc EQUAL 0)
+        set(MYRTOS_ZIG_OK TRUE)
+        message(STATUS "Zig module toolchain: ${MYRTOS_ZIG}")
+    else()
+        message(STATUS "zig found but cannot build for this target; Zig modules skipped")
+        message(STATUS "  ${zprobe_err}")
+    endif()
+else()
+    message(STATUS "No zig found; Zig modules skipped")
+endif()
+
+# Same signature and the same RT / SINGLE options as the others.
+function(myrtos_add_zig_module name source)
+    if(NOT MYRTOS_ZIG_OK)
+        message(STATUS "Skipping Zig module ${name}: no usable zig")
+        return()
+    endif()
+
+    set(rt_flag "")
+    if("RT" IN_LIST ARGN)
+        set(rt_flag "--rt")
+        list(REMOVE_ITEM ARGN "RT")
+    endif()
+    set(single_flag "")
+    set(single_link "")
+    if("SINGLE" IN_LIST ARGN)
+        set(single_flag "--single")
+        set(single_link "-Wl,-Ttext=0x1178002c")   # MYRTOS_SINGLE_TEXT
+        list(REMOVE_ITEM ARGN "SINGLE")
+    endif()
+
+    set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_zig)
+    file(MAKE_DIRECTORY ${objdir})
+
+    # common/myrtos.zig is reached as the module "myrtos", so a source says
+    # @import("myrtos") and not a path -- the same shape D's `import myrtos`
+    # has. One zig invocation produces one object; Zig follows the imports.
+    set(zobj ${objdir}/${name}.o)
+    add_custom_command(
+        OUTPUT ${zobj}
+        COMMAND ${MYRTOS_ZIG} build-obj ${MYRTOS_ZIG_ARCH} ${MYRTOS_ZIG_FLAGS}
+                --dep myrtos
+                -Mroot=${CMAKE_CURRENT_SOURCE_DIR}/${source}
+                -Mmyrtos=${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.zig
+                -femit-bin=${zobj}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${source}
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.zig
+        COMMENT "Compiling ${name} with zig")
+
+    # -N so the writable sections are not page-aligned: without it .tbss lands a
+    # page past the code and objcopy pads four kilobytes of zeroes into every
+    # module that has a thread-local.
+    set(elf ${objdir}/${name}.elf)
+    add_custom_command(
+        OUTPUT ${elf}
+        COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH} -nostdlib
+                -Wl,-m,elf32lriscv -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
+                -Wl,--no-relax ${single_link} ${zobj} -o ${elf}
+        DEPENDS ${zobj}
+        COMMENT "Linking ${name} (Zig)")
+
+    add_custom_command(
+        OUTPUT ${objdir}/${name}.checked
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+                ${single_flag} ${CMAKE_READELF} ${zobj} ${elf}
+        COMMAND ${CMAKE_COMMAND} -E touch ${objdir}/${name}.checked
+        DEPENDS ${elf} ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+        COMMENT "Checking that ${name} is position independent")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        COMMAND ${CMAKE_OBJCOPY} -O binary ${elf} ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        DEPENDS ${objdir}/${name}.checked
+        COMMENT "Extracting raw position-independent machine code from ${name}")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${single_flag}
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+                "${name}"
+                ${elf}
+                ${CMAKE_NM}
+                module_main
+                ${rt_flag}
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+        COMMENT "Building module ${name}.mod (Zig)")
+endfunction()
+
 # A data module has no entry point: it IS its bytes.
 function(myrtos_add_data_module name source)
     add_executable(${name}_app ${source})
@@ -608,6 +734,7 @@ myrtos_add_module(reboot modules/reboot/reboot.c)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
+myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
 myrtos_add_module(usbecho modules/usbecho/usbecho.c)
 myrtos_add_module(sh modules/sh/sh.c RT)
@@ -847,6 +974,7 @@ set(MYRTOS_RESIDENT
     lsmod
     free
     usbstat
+    zhello
     msgtest
     msgcli
 )

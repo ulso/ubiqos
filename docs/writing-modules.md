@@ -973,6 +973,51 @@ directory", because an empty one has no first entry to list and neither has one
 that is not there. `stat` can tell them apart, so now it does.
 
 
+## In Zig, the rule is C's, with better habits
+
+Zig has no way to make every variable thread-local -- that is D's alone, below.
+What it has is `threadlocal var`, which is `__thread` by another name:
+
+```zig
+const m = @import("myrtos");
+
+threadlocal var calls: u32 = 0;      // per-process
+var shared: u32 = 0;                 // .data, and the checker refuses it
+
+export fn module_main(argc: i32, argv: [*][*:0]const u8) void {
+    calls += 1;
+    m.writeStr(m.STDOUT, "hello from Zig\n");
+}
+```
+
+So the discipline is the same as C's, and the difference is in what the language
+encourages. `const` is the ordinary thing at module scope in Zig; a `var` there
+is unusual enough to notice in review, where a `static` in C is not. Declare it
+with `myrtos_add_zig_module` and everything downstream is identical.
+
+Zig needs `zig` and nothing else -- no sysroot, no separate linker -- and it
+already emits `TPREL_HI20`, `TPREL_ADD` and `TPREL_LO12_I` for a thread-local on
+a freestanding riscv32 target, with no flag asked for. LDC needs
+`--fthread-model=local-exec` to say the same thing.
+
+### The two flags that do matter
+
+`-mcmodel=medium`, which is `-mcmodel=medany`. Without it Zig addresses a global
+with `R_RISCV_HI20`/`LO12_I` -- an absolute address, the one thing a module may
+not contain -- and `check_module.py` refuses it. That is exactly what happened on
+the first build, and exactly why the checker exists.
+
+`-OReleaseSmall` rather than `-OReleaseFast`: it strips, and it keeps the panic
+handler from pulling in formatting machinery that has nowhere to print.
+
+### What the compiler assumes is there
+
+`common/myrtos.zig` supplies `strlen`, `memcpy`, `memmove` and `memset`. Zig
+recognises a hand-written loop and replaces it with a call to the C library, so
+the first build of zhello failed on an undefined `strlen` that appears nowhere
+in its source. clang does the same, and a freestanding module has no libc to
+fall back on.
+
 ## In D, the problem does not arise at all
 
 The whole of this document is about one thing: a module may not have writable
