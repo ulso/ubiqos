@@ -117,11 +117,10 @@ static bool name_matches(const uint8_t *entry, const char *name_83) {
 // was already fixed. They are stored last fragment first, and byte 0 carries
 // the sequence number, with 0x40 set on the one that ends the name.
 //
-// Reading them is what this does. Writing them is not: creating a file still
-// makes an 8.3 name, and remove still looks one up, because erasing a long name
-// means erasing its fragments in step with the short entry and a mistake there
-// costs the volume. So a long-named file can be listed, opened and read, and
-// cannot yet be deleted from here. See the note above the writing half.
+// This half reads them. The writing half creates and erases them, and the
+// machinery for that is with the other write operations further down: fragments
+// have to be laid out and torn down in step with the short entry they belong to,
+// and a mistake there costs the volume rather than one file.
 //
 // Sixty-four characters. OS-9 allowed twenty-nine and nobody found it short.
 #define FAT_LFN_MAX 64
@@ -589,45 +588,193 @@ static void fat_free_chain(uint32_t cluster) {
 
 // Locate a directory entry and say where on the card it lives, so the size and
 // starting cluster can be written back after the data is on disk.
-static bool dir_locate(uint32_t dir_cluster, const char *name_83,
-                       uint32_t *lba_out, uint32_t *off_out) {
-    while (dir_cluster < 0x0ffffff8) {
-        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            uint32_t lba = cluster_to_lba(dir_cluster) + s;
-            if (!myrtos_sd_read_block(lba, sector)) return false;
-            for (int e = 0; e < 512; e += 32) {
-                if (sector[e] == 0x00) return false;
-                if (sector[e] == 0xe5) continue;
-                if (sector[e + 11] == 0x0f) continue;
-                if (name_matches(&sector[e], name_83)) {
-                    *lba_out = lba; *off_out = (uint32_t)e;
-                    return true;
-                }
-            }
+// --- DIRECTORY ENTRIES, COUNTED FROM THE START ----------------------------
+// A file with a long name occupies several consecutive entries: the fragments
+// of its name and then the short entry they belong to. That run can straddle a
+// sector and can straddle a cluster, so nothing here may hold on to an (lba,
+// offset) pair and step it forward by hand.
+//
+// Instead an entry is addressed by its number counted from the start of the
+// directory, and dir_at walks to it. Several walks where one would do, and every
+// one of them obviously correct -- the trade this half of the file makes
+// everywhere, for the reason at the top of it.
+//
+// fat_get, never fat_next_cluster: the latter reads the FAT into `sector`, which
+// is where the directory entry being worked on is sitting.
+static bool dir_at(uint32_t dir_cluster, uint32_t index,
+                   uint32_t *lba_out, uint32_t *off_out) {
+    const uint32_t per_sector = 512 / 32;
+    while (dir_cluster >= 2 && dir_cluster < 0x0ffffff8) {
+        uint32_t per_cluster = sectors_per_cluster * per_sector;
+        if (index < per_cluster) {
+            *lba_out = cluster_to_lba(dir_cluster) + index / per_sector;
+            *off_out = (index % per_sector) * 32;
+            return true;
         }
-        dir_cluster = fat_next_cluster(dir_cluster);
+        index -= per_cluster;
+        dir_cluster = fat_get(dir_cluster);
     }
     return false;
 }
 
-// A free slot: a deleted entry, or the never-used one that ends the directory.
-// The root directory is a cluster chain like any other, so it can be extended
-// when it fills up.
-static bool dir_alloc_slot(uint32_t dir_cluster, uint32_t *lba_out, uint32_t *off_out) {
-    uint32_t last = dir_cluster;
+// Every fragment carries this, computed over the eleven bytes of the short name
+// it belongs to. It is what ties a run of fragments to its entry: a system that
+// finds the checksum disagreeing knows the long name is stale and falls back to
+// the short one. Getting it wrong does not corrupt anything, it just means
+// nothing else will ever show the long name.
+static uint8_t lfn_checksum(const uint8_t *name_83) {
+    uint8_t sum = 0;
+    for (int i = 0; i < 11; i++)
+        sum = (uint8_t)(((sum & 1u) << 7) + (sum >> 1) + name_83[i]);
+    return sum;
+}
 
-    while (dir_cluster < 0x0ffffff8) {
+// Whether a name needs fragments at all.
+//
+// Lowercase deliberately does not count. A short name is stored upper case and
+// this filesystem's listing lowercases it on the way out, so "readme.txt" comes
+// back as it went in -- and writing fragments for every file would double the
+// size of every directory to preserve something already preserved. What needs
+// them is a name FAT genuinely cannot hold: a stem past eight, an extension
+// past three, more than one dot, or a character 8.3 has no room for.
+static bool needs_lfn(const char *name) {
+    const char *dot = 0;
+    for (const char *p = name; *p; p++) if (*p == '.') dot = p;
+
+    uint32_t stem = 0, ext = 0;
+    for (const char *p = name; *p; p++) {
+        char c = *p;
+        if (c == '.') { if (p != dot) return true; continue; }
+        if (c == ' ' || c == '+' || c == ',' || c == ';' ||
+            c == '=' || c == '[' || c == ']') return true;
+        if ((unsigned char)c < 0x20 || (unsigned char)c > 0x7e) return true;
+        if (dot && p > dot) ext++; else stem++;
+    }
+    return stem == 0 || stem > 8 || ext > 3;
+}
+
+static char short_char(char c) {
+    if (c >= 'a' && c <= 'z') return (char)(c - 'a' + 'A');
+    if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;
+    if (c == '-' || c == '_' || c == '~' || c == '!' || c == '#' ||
+        c == '$' || c == '%' || c == '&' || c == '@' || c == '^') return c;
+    return '_';
+}
+
+// The 8.3 alias, "PROGRA~1" fashion. Every long name must have one, because it
+// is what the rest of the volume identifies the file by -- the fragments are
+// decoration on top of an ordinary entry.
+//
+// The tail eats into the stem rather than being added to it. Eight characters
+// is eight characters, and a name built past that is a name another system will
+// not agree with.
+static void short_from_long(const char *name, uint32_t tail, char *out_11) {
+    for (int i = 0; i < 11; i++) out_11[i] = ' ';
+    out_11[11] = 0;
+
+    const char *dot = 0;
+    for (const char *p = name; *p; p++) if (*p == '.') dot = p;
+
+    char digits[6];
+    uint32_t nd = 0, t = tail;
+    do { digits[nd++] = (char)('0' + t % 10); t /= 10; } while (t && nd < sizeof(digits));
+
+    uint32_t room = (nd + 1 < 8) ? 8 - (nd + 1) : 1;
+    uint32_t i = 0;
+    for (const char *p = name; *p && i < room; p++) {
+        if (dot && p >= dot) break;
+        if (*p == ' ' || *p == '.') continue;
+        out_11[i++] = short_char(*p);
+    }
+    out_11[i++] = '~';
+    while (nd && i < 8) out_11[i++] = digits[--nd];
+
+    if (dot) {
+        uint32_t j = 0;
+        for (const char *p = dot + 1; *p && j < 3; p++) out_11[8 + j++] = short_char(*p);
+    }
+}
+
+// Find an entry by either spelling, and say where its whole run begins.
+//
+// first_idx is what deletion needs: the first fragment, or the short entry
+// itself when there are none. The accumulator is cleared at every short entry
+// whether it matched or not, because a fragment left over from one file must
+// never be read as part of another's name.
+static bool dir_find(uint32_t dir_cluster, const char *name_83, const char *want_long,
+                     uint32_t *lba_out, uint32_t *off_out,
+                     uint32_t *first_idx, uint32_t *short_idx) {
+    lfn_t lfn;
+    lfn_reset(&lfn);
+    uint32_t index = 0, run_start = 0;
+    bool in_run = false;
+
+    while (dir_cluster >= 2 && dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
             uint32_t lba = cluster_to_lba(dir_cluster) + s;
             if (!myrtos_sd_read_block(lba, sector)) return false;
-            for (int e = 0; e < 512; e += 32) {
-                if (sector[e] != 0x00 && sector[e] != 0xe5) continue;
-                *lba_out = lba; *off_out = (uint32_t)e;
-                return true;
+            for (uint32_t e = 0; e < 512; e += 32, index++) {
+                if (sector[e] == 0x00) return false;
+                if (sector[e] == 0xe5) { lfn_reset(&lfn); in_run = false; continue; }
+                if (sector[e + 11] == 0x0f) {
+                    if (!in_run) { run_start = index; in_run = true; }
+                    lfn_take(&lfn, &sector[e]);
+                    continue;
+                }
+                bool hit = name_matches(&sector[e], name_83)
+                        || (lfn.valid && want_long && same_name_ci(lfn.name, want_long));
+                if (hit) {
+                    *lba_out = lba;
+                    *off_out = e;
+                    if (short_idx) *short_idx = index;
+                    if (first_idx) *first_idx = in_run ? run_start : index;
+                    return true;                 // `sector` still holds this entry
+                }
+                lfn_reset(&lfn);
+                in_run = false;
+            }
+        }
+        dir_cluster = fat_get(dir_cluster);
+    }
+    return false;
+}
+
+static bool dir_locate(uint32_t dir_cluster, const char *name_83,
+                       uint32_t *lba_out, uint32_t *off_out) {
+    return dir_find(dir_cluster, name_83, 0, lba_out, off_out, 0, 0);
+}
+
+// A short name no other entry in this directory holds. Windows does exactly
+// this, and for the same reason: the alias has to be unique or two files answer
+// to one name.
+static bool unique_short(uint32_t dir_cluster, const char *name, char *out_11) {
+    for (uint32_t n = 1; n < 1000; n++) {
+        short_from_long(name, n, out_11);
+        uint32_t lba, off;
+        if (!dir_locate(dir_cluster, out_11, &lba, &off)) return true;
+    }
+    return false;
+}
+
+// Enough consecutive free entries for a whole run. A free entry is a deleted one
+// or the never-used one that ends the directory, and everything past that is
+// free too -- so a run that reaches the end simply continues into the cluster
+// added here.
+static bool dir_alloc_run(uint32_t dir_cluster, uint32_t count, uint32_t *first_idx) {
+    uint32_t index = 0, run = 0, run_start = 0;
+    uint32_t last = dir_cluster;
+
+    while (dir_cluster >= 2 && dir_cluster < 0x0ffffff8) {
+        for (uint32_t s = 0; s < sectors_per_cluster; s++) {
+            if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
+            for (uint32_t e = 0; e < 512; e += 32, index++) {
+                if (sector[e] != 0x00 && sector[e] != 0xe5) { run = 0; continue; }
+                if (!run) run_start = index;
+                if (++run == count) { *first_idx = run_start; return true; }
             }
         }
         last = dir_cluster;
-        dir_cluster = fat_next_cluster(dir_cluster);
+        dir_cluster = fat_get(dir_cluster);
     }
 
     uint32_t fresh = fat_alloc();
@@ -636,8 +783,96 @@ static bool dir_alloc_slot(uint32_t dir_cluster, uint32_t *lba_out, uint32_t *of
     for (uint32_t s = 0; s < sectors_per_cluster; s++) {
         if (!myrtos_sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
     }
-    *lba_out = cluster_to_lba(fresh);
-    *off_out = 0;
+    *first_idx = run ? run_start : index;
+    return true;
+}
+
+// The fragments, written where dir_alloc_run said they fit.
+//
+// They lie on the card in reverse: the fragment holding the END of the name is
+// stored first, marked with 0x40, and the one holding the beginning sits right
+// before the short entry. Thirteen UTF-16 units each, at three separate offsets,
+// because the fields had to fit around a layout that was already fixed.
+//
+// After the name's last character comes one 0x0000 and then 0xffff to the end of
+// the fragment. A name that exactly fills its last fragment gets neither, which
+// is why the terminator is written by position rather than after the loop.
+static bool dir_write_lfn(uint32_t dir_cluster, uint32_t first_idx,
+                          const char *name, const char *short_11, uint32_t frags) {
+    static const uint8_t off[13] = { 1,3,5,7,9, 14,16,18,20,22,24, 28,30 };
+    uint8_t sum = lfn_checksum((const uint8_t *)short_11);
+
+    uint32_t len = 0;
+    while (name[len]) len++;
+
+    for (uint32_t k = 0; k < frags; k++) {
+        uint32_t seq = frags - k;                  // what lands at first_idx + k
+        uint32_t lba, o;
+        if (!dir_at(dir_cluster, first_idx + k, &lba, &o)) return false;
+        if (!myrtos_sd_read_block(lba, sector)) return false;
+
+        uint8_t *e = &sector[o];
+        for (int i = 0; i < 32; i++) e[i] = 0;
+        e[0]  = (uint8_t)(seq | (k == 0 ? 0x40u : 0u));
+        e[11] = 0x0f;
+        e[13] = sum;
+
+        uint32_t base = (seq - 1) * 13u;
+        for (uint32_t i = 0; i < 13; i++) {
+            uint32_t at = base + i;
+            uint16_t u = (at < len) ? (uint16_t)(uint8_t)name[at]
+                       : (at == len) ? 0u : 0xffffu;
+            wr16(&e[off[i]], u);
+        }
+        if (!myrtos_sd_write_block(lba, sector)) return false;
+    }
+    return true;
+}
+
+// Delete a whole run, fragments first and the short entry last.
+//
+// The order is the safe one. Stopping halfway leaves the short entry intact and
+// the file reachable under its 8.3 name, which is untidy and harmless. The other
+// way round would leave fragments with no entry of their own, and the next file
+// created in those slots would wear the dead file's name.
+static bool dir_erase_run(uint32_t dir_cluster, uint32_t first, uint32_t last) {
+    for (uint32_t i = first; i <= last; i++) {
+        uint32_t lba, off;
+        if (!dir_at(dir_cluster, i, &lba, &off)) return false;
+        if (!myrtos_sd_read_block(lba, sector)) return false;
+        sector[off] = 0xe5;
+        if (!myrtos_sd_write_block(lba, sector)) return false;
+    }
+    return true;
+}
+
+// Make the entry for a new name: the fragments if it needs them, then the short
+// entry, which the caller fills in and writes. Hands back where that entry is.
+//
+// The short entry goes last on purpose. Fragments followed by nothing are
+// skipped by every reader; a short entry followed by nothing is a file.
+static bool dir_create(uint32_t dir_cluster, const char *name_83, const char *leaf_long,
+                       uint32_t *lba_out, uint32_t *off_out) {
+    char short_11[12];
+    uint32_t frags = 0;
+
+    if (leaf_long && leaf_long[0] && needs_lfn(leaf_long)) {
+        uint32_t len = 0;
+        while (leaf_long[len]) len++;
+        frags = (len + 12) / 13;
+        if (!unique_short(dir_cluster, leaf_long, short_11)) return false;
+    } else {
+        for (int i = 0; i < 12; i++) short_11[i] = name_83[i];
+    }
+
+    uint32_t first = 0;
+    if (!dir_alloc_run(dir_cluster, frags + 1, &first)) return false;
+    if (frags && !dir_write_lfn(dir_cluster, first, leaf_long, short_11, frags)) return false;
+
+    if (!dir_at(dir_cluster, first + frags, lba_out, off_out)) return false;
+    if (!myrtos_sd_read_block(*lba_out, sector)) return false;
+    for (int i = 0; i < 11; i++) sector[*off_out + i] = (uint8_t)short_11[i];
+    for (int i = 11; i < 32; i++) sector[*off_out + i] = 0;
     return true;
 }
 
@@ -645,20 +880,20 @@ bool myrtos_fat_remove(const char *path) {
     myrtos_fat_forget_read_cache();
     if (!mounted) return false;
 
-    uint32_t dir = 0; char name_83[12];
-    if (!resolve_parent(path, &dir, name_83, 0)) return false;
+    uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(path, &dir, name_83, leaf)) return false;
 
-    uint32_t lba, off;
-    if (!dir_locate(dir, name_83, &lba, &off)) return false;
+    uint32_t lba, off, first, last;
+    if (!dir_find(dir, name_83, leaf, &lba, &off, &first, &last)) return false;
     if (sector[off + 11] & 0x10) return false;          // a directory, not a file
 
     uint32_t cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
 
-    // The entry goes first. If the power fails between the two, a directory that
-    // no longer names the file leaks clusters; the other order would leave a
-    // name pointing at clusters handed to somebody else.
-    sector[off] = 0xe5;
-    if (!myrtos_sd_write_block(lba, sector)) return false;
+    // The entries go first, all of them. If the power fails between this and the
+    // next line, a directory that no longer names the file leaks clusters; the
+    // other order would leave a name pointing at clusters handed to somebody
+    // else. Within the run, fragments before the short entry -- see dir_erase_run.
+    if (!dir_erase_run(dir, first, last)) return false;
 
     fat_free_chain(cluster);
     return true;
@@ -672,18 +907,16 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
     myrtos_fat_forget_read_cache();
     if (!mounted || !len) return -1;
 
-    uint32_t dir = 0; char name_83[12];
-    if (!resolve_parent(path, &dir, name_83, 0)) return -1;
+    uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(path, &dir, name_83, leaf)) return -1;
 
     uint32_t lba, off, first_cluster, size;
-    if (dir_locate(dir, name_83, &lba, &off)) {
+    if (dir_find(dir, name_83, leaf, &lba, &off, 0, 0)) {
         if (sector[off + 11] & 0x10) return -1;         // a directory
         first_cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
         size = rd32(&sector[off + 28]);
     } else {
-        if (!dir_alloc_slot(dir, &lba, &off)) return -1;
-        for (int i = 0; i < 11; i++) sector[off + i] = (uint8_t)name_83[i];
-        for (int i = 11; i < 32; i++) sector[off + i] = 0;
+        if (!dir_create(dir, name_83, leaf, &lba, &off)) return -1;
         first_cluster = 0;
         size = 0;
         if (!myrtos_sd_write_block(lba, sector)) return -1;
@@ -755,11 +988,11 @@ bool myrtos_fat_mkdir(const char *path) {
     if (!mounted) return false;
 
     uint32_t dir = 0;
-    char name_83[12];
-    if (!resolve_parent(path, &dir, name_83, 0)) return false;
+    char name_83[12], leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(path, &dir, name_83, leaf)) return false;
 
     uint32_t lba, off;
-    if (dir_locate(dir, name_83, &lba, &off)) return false;   // the name is taken
+    if (dir_find(dir, name_83, leaf, &lba, &off, 0, 0)) return false;   // taken
 
     uint32_t fresh = fat_alloc();
     if (!fresh) return false;
@@ -781,9 +1014,7 @@ bool myrtos_fat_mkdir(const char *path) {
     wr16(&sector[32 + 26], (uint16_t)(up & 0xffff));
     if (!myrtos_sd_write_block(cluster_to_lba(fresh), sector)) return false;
 
-    if (!dir_alloc_slot(dir, &lba, &off)) return false;
-    for (int i = 0; i < 11; i++) sector[off + i] = (uint8_t)name_83[i];
-    for (int i = 11; i < 32; i++) sector[off + i] = 0;
+    if (!dir_create(dir, name_83, leaf, &lba, &off)) return false;
     sector[off + 11] = 0x10;
     wr16(&sector[off + 20], (uint16_t)(fresh >> 16));
     wr16(&sector[off + 26], (uint16_t)(fresh & 0xffff));
@@ -801,12 +1032,12 @@ bool myrtos_fat_rmdir(const char *path) {
     if (!mounted) return false;
 
     uint32_t dir = 0;
-    char name_83[12];
-    if (!resolve_parent(path, &dir, name_83, 0)) return false;
+    char name_83[12], leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(path, &dir, name_83, leaf)) return false;
     if (name_83[0] == '.') return false;              // never "." or ".."
 
-    uint32_t lba, off;
-    if (!dir_locate(dir, name_83, &lba, &off)) return false;
+    uint32_t lba, off, first, last;
+    if (!dir_find(dir, name_83, leaf, &lba, &off, &first, &last)) return false;
     if (!(sector[off + 11] & 0x10)) return false;     // a file, not a directory
 
     uint32_t cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
@@ -832,9 +1063,7 @@ bool myrtos_fat_rmdir(const char *path) {
     }
     if (!empty) return false;
 
-    if (!myrtos_sd_read_block(lba, sector)) return false;
-    sector[off] = 0xe5;
-    if (!myrtos_sd_write_block(lba, sector)) return false;
+    if (!dir_erase_run(dir, first, last)) return false;
 
     fat_free_chain(cluster);
     return true;

@@ -155,9 +155,9 @@ lines of Python walking section 2 of the file beats installing a toolchain:
     usbdisk off
     wasm /sd/hibou.wasm
 
-Long names work: the filesystem reads VFAT long entries, so `hibou.wasm` is
-`hibou.wasm` and not `HIBO~1.WAS`. Writing them does not yet, which is why the
-copy comes from the host rather than from the board.
+Long names work in both directions: the filesystem reads and writes VFAT long
+entries, so `hibou.wasm` is `hibou.wasm` and not `HIBO~1.WAS`, whether it was
+copied from the host or created on the board.
 
 `wasm` with no argument runs the program built into the module. An argument
 beginning with `/` is a path; anything else is a stage name -- `entry`, `bss`,
