@@ -109,6 +109,40 @@ def tls_layout(elf_path, nm_tool):
     return vaddr - min(bases), init, total
 
 
+def collect_relocs(elf_path, nm_tool, load_base, image_len):
+    """The linked addresses of every absolute word in the loadable image.
+
+    With PC-relative code the only absolute thing a module can contain is a
+    pointer sitting in data -- a table of strings, a vtable, a pointer to a
+    variable -- and every one of those is an R_RISCV_32. Nothing else needs the
+    loader's help, which is why the table is short and the loader is four lines.
+
+    --emit-relocs keeps the relocations in the linked file. Their Offset column
+    is the virtual address of the word to patch, so anything outside the image
+    belongs to a debug section and is not ours.
+    """
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-rW", elf_path],
+                         capture_output=True, text=True).stdout
+
+    found = []
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or "R_RISCV_32" not in parts[2]:
+            continue
+        # R_RISCV_32 is the name; R_RISCV_32_PCREL is not, and is relative.
+        if parts[2] != "R_RISCV_32":
+            continue
+        try:
+            addr = int(parts[0], 16)
+        except ValueError:
+            continue
+        if load_base <= addr < load_base + image_len:
+            found.append(addr)
+    return sorted(set(found))
+
+
 def create_module(input_bin_path, output_mod_path, module_name,
                   elf_path=None, nm_tool=None, entry_symbol="module_main",
                   revision=1, realtime=False, single=False,
@@ -141,10 +175,11 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if len(name_bytes) % 4 != 0:
         name_bytes += b'\x00' * (4 - (len(name_bytes) % 4))
 
-# The header is 40 bytes: ten 32-bit words, with type_lang and attr_rev sharing
-# one. It must match myrtos_module_header_t exactly; when this said 28 and the
-# struct said 32, exec_offset and name_offset landed four bytes into the code.
-    header_size = 44
+# The header is 52 bytes: thirteen 32-bit words, with type_lang and attr_rev
+# sharing one and revision and reserved sharing another. It must match
+# myrtos_module_header_t exactly; when this said 28 and the struct said 32,
+# exec_offset and name_offset landed four bytes into the code.
+    header_size = 52
     exec_offset = 0 if module_type == "data" else header_size + entry_in_code
 
     # The module is header, code, then the name. The thread-local image needs no
@@ -152,7 +187,31 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # just says where in it.
     tls_offset = (header_size + tls_in_code) if tls_init else 0
     name_offset = header_size + len(code_bytes)
-    module_size = name_offset + len(name_bytes)
+
+    # Absolute pointers become offsets from the start of the module, and the
+    # loader turns them back into addresses by adding where it put it. Storing
+    # the offset rather than the linked address is what makes a module that was
+    # never relocated fail loudly -- the pointer is a small number and faults at
+    # once -- instead of pointing somewhere plausible and wrong.
+    reloc = []
+    if elf_path and nm_tool:
+        base = elf_load_base(elf_path, nm_tool)
+        code = bytearray(code_bytes)
+        for addr in collect_relocs(elf_path, nm_tool, base, len(code_bytes)):
+            at = addr - base
+            value = int.from_bytes(code[at:at + 4], "little")
+            if not (base <= value < base + len(code_bytes)):
+                raise SystemExit(
+                    "%s: absolute pointer at 0x%08x holds 0x%08x, which is "
+                    "outside the module image -- the loader could not relocate "
+                    "it" % (module_name, addr, value))
+            code[at:at + 4] = (header_size + value - base).to_bytes(4, "little")
+            reloc.append(header_size + at)
+        code_bytes = bytes(code)
+
+    reloc_offset = name_offset + len(name_bytes)
+    reloc_count = len(reloc)
+    module_size = reloc_offset + 4 * reloc_count
 
 # Defaults for the myrtos-specific fields
     MYRTOS_TYPE_PROGRAM = 1
@@ -162,7 +221,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 3
+    MYRTOS_ABI_VERSION = 4
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
@@ -189,15 +248,16 @@ def create_module(input_bin_path, output_mod_path, module_name,
         (attr_rev << 16) | type_lang,
         exec_offset, mem_size,
         tls_offset, tls_init, tls_total,
-        (0 << 16) | revision
+        (0 << 16) | revision,
+        reloc_offset, reloc_count
     ]
     header_crc = (~sum(fields)) & 0xFFFFFFFF
 
-    header_bytes = struct.pack('<IIIHHIIIIIHHI',
+    header_bytes = struct.pack('<IIIHHIIIIIHHIII',
         MYRTOS_SYNC, module_size, name_offset,
         type_lang, attr_rev, exec_offset, mem_size,
         tls_offset, tls_init, tls_total,
-        revision, 0, header_crc
+        revision, 0, reloc_offset, reloc_count, header_crc
     )
     assert len(header_bytes) == header_size, "header is not %d bytes" % header_size
 
@@ -219,10 +279,13 @@ def create_module(input_bin_path, output_mod_path, module_name,
         f.write(header_bytes)
         f.write(code_bytes)
         f.write(name_bytes)
+        for off in reloc:
+            f.write(struct.pack('<I', off))
 
     print(f"  module '{module_name}' revision {revision}, "
           f"{module_size} bytes, {tls_total} thread-local"
           f"{f', {mem_size} bytes of memory' if mem_size != 4096 else ''}"
+          f"{f', {reloc_count} relocations' if reloc_count else ''}"
           f"{', real-time' if realtime else ''}"
           f"{', single instance' if single else ''}")
 

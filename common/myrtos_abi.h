@@ -21,7 +21,7 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    3
+#define MYRTOS_ABI_VERSION    4
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -125,8 +125,28 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint16_t revision;
     uint16_t reserved;
 
-    uint32_t header_crc;   // complement of the sum of the first ten words
+    // Where the absolute addresses are. The loader copies the image, then adds
+    // the address it landed at to every word this names -- which is the whole
+    // of relocation on this machine, because with PC-relative code the only
+    // absolute thing left is a pointer sitting in data.
+    //
+    // The table is the tail of the module and is NOT part of the image: the
+    // loader copies reloc_offset bytes and reads the table from where the
+    // module lies. So a pointer table costs four bytes per entry on the card
+    // and nothing at all in RAM. With no entries, reloc_offset is module_size
+    // and the copy is exactly what it always was.
+    uint32_t reloc_offset;   // to the table, and the length of the image
+    uint32_t reloc_count;    // 32-bit words to fix up, zero if none
+
+    uint32_t header_crc;   // complement of the sum of the first twelve words
 } myrtos_module_header_t;
+
+// What has to be copied for a module to run. The relocation table is read
+// where the module already lies and never travels with it.
+static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
+{
+    return h->reloc_count ? h->reloc_offset : h->module_size;
+}
 
 // --- SYSTEM CALLS ---------------------------------------------------------
 // a7 carries the number, a0-a2 the arguments, a0 comes back with the result.
@@ -363,7 +383,7 @@ typedef struct {
 // one header further on, and that is the address the linker must be told. Get
 // this wrong and every absolute address is off by the size of the header, which
 // shows up as a misaligned store somewhere unrelated. make_module checks it.
-#define MYRTOS_SINGLE_HEADER    44u
+#define MYRTOS_SINGLE_HEADER    52u
 #define MYRTOS_SINGLE_TEXT      (MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_HEADER)
 
 // The call itself. It is identical in every module, so it belongs here.
