@@ -253,14 +253,13 @@ endfunction()
 # --- The second toolchain -------------------------------------------------
 # Clang and lld, beside GCC rather than instead of it, chosen per module.
 #
-# There is one reason to want it and it is C++ with virtual functions. A vtable
-# is a table of pointers, which is the one thing a shareable module may not
-# contain, so every virtual call has been out of reach. Clang's
-# -fexperimental-relative-c++-abi-vtables stores the distance from each slot to
-# its function instead of the address, which is exactly what the module format
-# needs -- and GNU ld cannot link the result, so it is clang *and* lld or
-# neither. See the closing sections of docs/writing-modules.md for the
-# measurements.
+# There was one reason to want it and it was C++ with virtual functions: a
+# vtable is a table of pointers, which a module could not contain until the
+# loader could relocate. Clang's -fexperimental-relative-c++-abi-vtables stored
+# the distance from each slot to its function instead of the address, and was
+# never quite enough -- an object still holds an absolute pointer to its vtable,
+# so a static one was refused anyway. The loader settles it: a plain vtable is
+# four addresses it fixes at load, and the flag is gone. vtdemo is the proof.
 #
 # CMake has one compiler per project, so these modules are built by hand with
 # custom commands rather than add_executable. They go through the same
@@ -303,7 +302,7 @@ endif()
 set(MYRTOS_CLANG_C_FLAGS   -std=gnu23 -fno-jump-tables)
 set(MYRTOS_CLANG_CXX_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics
                            -fno-use-cxa-atexit
-                           -fno-jump-tables -fexperimental-relative-c++-abi-vtables)
+                           -fno-jump-tables)
 
 # Same signature and same RT / SINGLE options as myrtos_add_module. A module
 # built this way is not different in kind; it was only compiled by the other
@@ -727,6 +726,7 @@ endfunction()
 
 myrtos_add_module(counter modules/counter/counter.c)
 myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
+myrtos_add_clang_module(vtdemo modules/vtdemo/vtdemo.cpp)
 myrtos_add_d_module(dhello modules/dhello/dhello.d)
 myrtos_add_module(armtest modules/armtest/armtest.c)
 myrtos_add_module(usbdisk modules/usbdisk/usbdisk.c)
@@ -881,6 +881,7 @@ myrtos_add_data_module(acmdesc modules/acm_desc/acm_desc.c)
 add_custom_target(modules ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
             ${CMAKE_CURRENT_BINARY_DIR}/cxxdemo.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/vtdemo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/lsmod.mod
             ${CMAKE_CURRENT_BINARY_DIR}/free.mod
             ${CMAKE_CURRENT_BINARY_DIR}/echo.mod
@@ -937,6 +938,8 @@ add_custom_target(modules ALL
 # board when run, see the note in modules/wasm/wasm.c. Take it out before
 # leaving the machine in a state anyone else will type at.
 set(MYRTOS_RESIDENT
+    cxxdemo
+    vtdemo
     wasm
     hibouair
     armtest
