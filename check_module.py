@@ -26,10 +26,11 @@ import subprocess, sys, re
 # A module marked SINGLE is linked at a fixed address and may only run once, so
 # neither objection below applies to it: absolute addresses are correct because
 # the address is known, and its writable data is shared with nobody.
+# A module marked SINGLE still has writable data of its own, which is what the
+# attribute means. What it no longer has is a fixed address, so the relocation
+# check below applies to it exactly as to any other module.
 argv = [a for a in sys.argv if a != "--single"]
 single = len(argv) != len(sys.argv)
-if single:
-    sys.exit(0)
 
 readelf, obj_files, elf = argv[1], argv[2:-1], argv[-1]
 
@@ -55,12 +56,16 @@ POSITION_INDEPENDENT = {
     "R_RISCV_PLT32",
 }
 
-# Absolute, and relocated at load time rather than refused. A 32-bit word in
-# data holding an address is the one absolute thing a module may contain: the
-# loader copies the module, adds where it landed to every word the table names,
-# and the pointer is right. It is also the only absolute relocation that PC-
-# relative code produces at all, which is why this set has one member.
-LOADER_FIXES = {"R_RISCV_32"}
+# Absolute, and relocated at load time rather than refused. The loader copies
+# the module and writes each of these from the target the table carries.
+#
+# The first is a 32-bit word in data holding an address, and for a module that
+# links no library it is the only one: -mcmodel=medany makes its own code
+# PC-relative. The other three are instructions reaching a global absolutely
+# with lui, which is what newlib and libgcc do -- they arrive prebuilt in the
+# toolchain's default code model, and nothing about a module's own flags
+# changes that.
+LOADER_FIXES = {"R_RISCV_32", "R_RISCV_HI20", "R_RISCV_LO12_I", "R_RISCV_LO12_S"}
 
 # Types this readelf cannot name, by number. Binutils prints "unrecognized: 3b"
 # where the name belongs, and refusing everything it cannot name would refuse a
@@ -177,14 +182,14 @@ if not_pic:
            "if-chain returning string literals, a static function pointer, or a\n"
            "C++ vtable.")
 
-if not_shared:
+if not_shared and not single:
     report("MODULE IS NOT SHAREABLE:", not_shared,
            "A writable section is a variable, and one copy of this code serves\n"
            "every process running it -- so they would all be writing to the same\n"
            "one. This is not a relocation problem and no compiler flag fixes it.\n"
            "Use __thread for per-process state, or the data area.")
 
-if not_pic or not_shared:
+if not_pic or (not_shared and not single):
     print("See docs/writing-modules.md.", file=sys.stderr)
     sys.exit(1)
 

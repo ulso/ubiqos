@@ -93,10 +93,14 @@ static void say_num(const char *a, int32_t v)
 // points somewhere this module owns.
 static bool result_readable(M3Result r)
 {
-    extern char __bss_start[], _end[];
+    // The module itself, wherever the loader put it. This used to name the
+    // fixed region a single-instance module was linked at; there is no such
+    // address any more, and __executable_start to _end spans the whole of what
+    // was copied -- code, strings and bss alike. Both symbols are the linker's
+    // and are addressed PC-relatively, so they follow the module.
+    extern char __executable_start[], _end[];
     unsigned long a = (unsigned long)r;
-    if (a >= MYRTOS_SINGLE_BASE && a < MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_RESERVE) return true;
-    if (a >= (unsigned long)__bss_start && a < (unsigned long)_end) return true;
+    if (a >= (unsigned long)__executable_start && a < (unsigned long)_end) return true;
     // And the heap: wasm3 copies export names and formats error messages there.
     extern char *wasm_heap_extent(unsigned long *size);
     unsigned long n = 0;

@@ -199,11 +199,12 @@ static void myrtos_bulk_pool_init(void) {
         return;
     }
     psram_bytes = (uint32_t)psram_get_size();
-    // The half megabyte at MYRTOS_SINGLE_BASE is kept back: it is where a
-    // single-instance module is linked and loaded, and the allocator must not
-    // hand it out. On a smaller PSRAM than the one this was sized for the region
-    // is simply not there, and such a module will be refused rather than
-    // scribbled over the pool.
+    // Half a megabyte at the top is still kept back, and for now that is
+    // deliberate caution rather than a need: nothing is linked there any more,
+    // since a single-instance module is copied and relocated like any other.
+    // Handing it to the allocator is a separate change from relocating those
+    // modules, and mixing the two made a board that would not boot impossible
+    // to attribute. Reclaim it once the rest is known good.
     uint32_t pool_bytes = psram_bytes;
     if (MYRTOS_PSRAM_BASE + psram_bytes >= MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_RESERVE)
         pool_bytes = MYRTOS_SINGLE_BASE - MYRTOS_PSRAM_BASE;

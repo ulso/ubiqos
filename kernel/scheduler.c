@@ -276,34 +276,79 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     return slot;
 }
 
-// Turn a module's offsets back into addresses.
+// Write the addresses a module could not know until it was loaded.
 //
-// make_module left every absolute word holding an offset from the start of the
-// module rather than the address the linker chose, so this adds where the copy
-// landed and does nothing else. There is one relocation type to handle on this
-// machine: with PC-relative code the only absolute thing a module can contain
-// is a pointer sitting in data, and that is a 32-bit word.
+// The table says where and of what kind; make_module put both there because
+// neither can be recovered from the module itself. A pointer in data holds no
+// clue once it is an offset, and an instruction pair holds twenty bits in one
+// place and twelve in another with no way back to the whole.
 //
-// The table is read where the module lies -- in flash, or wherever it was
-// loaded from the card -- and never travels into the copy.
+// Four kinds, and only the first exists in a module that links no library. The
+// other three are what newlib and libgcc bring: they come prebuilt in the
+// toolchain's default code model and reach globals absolutely with lui, and the
+// very first one of those to be executed -- calloc reading _impure_ptr -- is
+// what took the board down when this handled only the first kind.
+//
+// Byte at a time throughout, and not out of caution. A HI20 sits wherever the
+// instruction stream put it, and compressed instructions mean that is often a
+// two-byte boundary; Hazard3 traps on a word access to one rather than fixing
+// it up.
+#define RELOC_ABS32   0
+#define RELOC_HI20    1
+#define RELOC_LO12_I  2
+#define RELOC_LO12_S  3
+
+static uint32_t reloc_get32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void reloc_put32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;         p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
 static void relocate_image(uint8_t *image, const myrtos_module_header_t *src)
 {
     const uint8_t *table = (const uint8_t*)src + src->reloc_offset;
+    uint32_t base = (uint32_t)(uintptr_t)image;
 
     for (uint32_t i = 0; i < src->reloc_count; i++) {
-        // Byte at a time, both ends. Nothing promises the table itself or the
-        // word it names is four-byte aligned, and Hazard3 traps on a misaligned
-        // access rather than fixing it up.
-        const uint8_t *e = table + i * 4;
-        uint32_t at = (uint32_t)e[0] | ((uint32_t)e[1] << 8)
-                    | ((uint32_t)e[2] << 16) | ((uint32_t)e[3] << 24);
+        uint32_t w0 = reloc_get32(table + i * 8);
+        uint32_t v  = base + reloc_get32(table + i * 8 + 4);
 
-        uint8_t *w = image + at;
-        uint32_t v = (uint32_t)w[0] | ((uint32_t)w[1] << 8)
-                   | ((uint32_t)w[2] << 16) | ((uint32_t)w[3] << 24);
-        v += (uint32_t)(uintptr_t)image;
-        w[0] = (uint8_t)v;         w[1] = (uint8_t)(v >> 8);
-        w[2] = (uint8_t)(v >> 16); w[3] = (uint8_t)(v >> 24);
+        uint8_t *p = image + (w0 & 0x0fffffffu);
+        switch (w0 >> 28) {
+        case RELOC_ABS32:
+            reloc_put32(p, v);
+            break;
+
+        // U-type: the top twenty bits, rounded so that the signed twelve-bit
+        // half added afterwards lands on the intended address.
+        case RELOC_HI20:
+            reloc_put32(p, (reloc_get32(p) & 0x00000fffu)
+                         | ((v + 0x800u) & 0xfffff000u));
+            break;
+
+        // I-type: imm[11:0] in the top twelve bits of the instruction.
+        case RELOC_LO12_I:
+            reloc_put32(p, (reloc_get32(p) & 0x000fffffu)
+                         | ((v & 0xfffu) << 20));
+            break;
+
+        // S-type: the same twelve bits, split -- imm[11:5] high, imm[4:0] in
+        // the middle, with the register fields untouched between them.
+        case RELOC_LO12_S: {
+            uint32_t lo = v & 0xfffu;
+            reloc_put32(p, (reloc_get32(p) & ~0xfe000f80u)
+                         | ((lo >> 5) << 25) | ((lo & 0x1fu) << 7));
+            break;
+        }
+        default:
+            break;
+        }
     }
 }
 
@@ -325,44 +370,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         }
     }
 
-    // A single-instance module is linked at MYRTOS_SINGLE_BASE and has to run
-    // from there: its absolute addresses assume it, and its writable data only
-    // works because that address is in RAM. Copy the image there and jump into
-    // the copy. Everything else -- the directory entry, the unlink at exit --
-    // still refers to the module where it lives.
     const myrtos_module_header_t *run = module_ptr;
-    if (module_ptr && !((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT)) {
-        if (module_ptr->module_size > MYRTOS_SINGLE_RESERVE) {
-            myrtos_print("  refused: single-instance module does not fit its region\n");
-            return -1;
-        }
-        if ((uintptr_t)module_ptr != MYRTOS_SINGLE_BASE) {
-            // A word at a time, and the reason is not tidiness.
-            //
-            // This runs inside a trap, so interrupts are off for the whole copy,
-            // and the copy is a third of a megabyte from flash into PSRAM -- two
-            // chip selects on the one QSPI bus. Byte by byte that was tens of
-            // milliseconds with nothing else able to run, and PIO-USB bit-bangs
-            // a bus that has to answer every millisecond. Three missed polls in
-            // a row end a transfer, and TinyUSB's hub driver never asks again:
-            // the hub went deaf every single time wasm was started, and took the
-            // keyboard behind it. 'wasm entry', which returns without executing
-            // a line of its own, was enough -- the loader had already done it.
-            //
-            // Four bytes per iteration is the cheap part of the fix. The real
-            // one is not doing unbounded work in a trap at all; see the note on
-            // long syscalls. This buys the margin back until that is faced.
-            uint32_t n = module_ptr->module_size;
-            uint32_t *d32 = (uint32_t*)MYRTOS_SINGLE_BASE;
-            const uint32_t *s32 = (const uint32_t*)module_ptr;
-            uint32_t words = n / 4;
-            for (uint32_t i = 0; i < words; i++) d32[i] = s32[i];
-            uint8_t *dst = (uint8_t*)MYRTOS_SINGLE_BASE;
-            const uint8_t *src = (const uint8_t*)module_ptr;
-            for (uint32_t i = words * 4; i < n; i++) dst[i] = src[i];
-            run = (const myrtos_module_header_t*)MYRTOS_SINGLE_BASE;
-        }
-    }
 
     int32_t slot = -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {      // 0 is the kernel
@@ -381,35 +389,59 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         return -1;
     }
 
-    // A module carrying absolute addresses cannot run where it lies: it is in
-    // flash, and relocation writes. So it is copied and fixed up, and only such
-    // a module pays for it -- one with an empty table still runs in place, as
-    // every module did before this existed.
+    // A module is copied when it cannot run where it lies. That is so for two
+    // reasons and they are separate: it carries absolute addresses, which
+    // relocation must write, and flash cannot be written; or it is not
+    // re-entrant, which means it has writable data of its own and needs a copy
+    // per process rather than one shared. A re-entrant module with an empty
+    // table still runs in place, as every module did before this existed.
     //
     // A copy per process rather than one shared between them. It is the simple
     // thing and the modules are a few kilobytes; sharing one relocated copy
     // needs a reference count on something whose lifetime is not the process's,
     // and that is worth having only once the cost shows up somewhere.
+    bool reentrant = ((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT) != 0;
     void *code_copy = 0;
-    if (run == module_ptr && module_ptr->reloc_count) {
+    if (!reentrant || module_ptr->reloc_count) {
         uint32_t image = myrtos_module_image_size(module_ptr);
-        code_copy = myrtos_tlsf_malloc(myrtos_pool_for(module_ptr), image);
+        uint32_t total = image + module_ptr->bss_size;
+
+        // Sixteen bytes, and the allocator is not why.
+        //
+        // A module's sections carry their own alignment -- wasm's .sdata and
+        // .bss both want eight -- and every one of them is measured from wherever
+        // the copy lands. At the fixed address a single-instance module used to
+        // be loaded at, half a megabyte aligned, that was free. From an
+        // allocator it is not: an eight-byte load against a copy that landed
+        // four-past-eight is a misaligned access, and Hazard3 does not fix those
+        // up, it traps. That is what killed the board between "heap ready" and
+        // "environment" -- wasm3's first 64-bit field.
+        code_copy = myrtos_tlsf_malloc(myrtos_pool_for(module_ptr), total + 15);
         if (!code_copy) {
             myrtos_print("Error: failed to allocate room to relocate a module.\n");
             myrtos_tlsf_free(myrtos_pool_for(module_ptr), mem);
             return -1;
         }
+        uint8_t *aligned = (uint8_t*)(((uintptr_t)code_copy + 15) & ~(uintptr_t)15);
 
-        uint32_t *d32 = (uint32_t*)code_copy;
+        uint32_t *d32 = (uint32_t*)aligned;
         const uint32_t *s32 = (const uint32_t*)module_ptr;
         uint32_t words = image / 4;
         for (uint32_t i = 0; i < words; i++) d32[i] = s32[i];
-        uint8_t *d8 = (uint8_t*)code_copy;
+        uint8_t *d8 = aligned;
         const uint8_t *s8 = (const uint8_t*)module_ptr;
         for (uint32_t i = words * 4; i < image; i++) d8[i] = s8[i];
 
-        relocate_image((uint8_t*)code_copy, module_ptr);
-        run = (const myrtos_module_header_t*)code_copy;
+        // What the file does not carry. .bss and .sbss have a size and no
+        // bytes, and a module is entitled to find them zero.
+        for (uint32_t i = image; i < total; i++) d8[i] = 0;
+
+        relocate_image(aligned, module_ptr);
+
+
+        // run is the aligned copy; code_base keeps the allocation itself, which
+        // is what has to be given back.
+        run = (const myrtos_module_header_t*)aligned;
     }
 
     // The command line at the bottom of the process's own area, followed by an

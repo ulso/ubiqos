@@ -21,7 +21,7 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    5
+#define MYRTOS_ABI_VERSION    6
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -125,10 +125,17 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint16_t revision;
     uint16_t reserved;
 
-    // Where the absolute addresses are. The loader copies the image, then adds
-    // the address it landed at to every word this names -- which is the whole
-    // of relocation on this machine, because with PC-relative code the only
-    // absolute thing left is a pointer sitting in data.
+    // Where the absolute addresses are, and what shape each one has. Eight
+    // bytes an entry: the site and a four-bit kind in one word, the target
+    // offset in the next, both counted from the start of the module.
+    //
+    // Four kinds. A module's own code is PC-relative under -mcmodel=medany, so
+    // for a module that links nothing there is only kind 0, a pointer sitting
+    // in data. But newlib and libgcc arrive prebuilt in the toolchain's default
+    // code model and address globals absolutely with lui, which is kinds 1 to
+    // 3 -- and none of those can be repaired from the instruction alone,
+    // because twelve bits of immediate do not carry a target back. Hence the
+    // target in the table rather than in the code.
     //
     // The table is the tail of the module and is NOT part of the image: the
     // loader copies reloc_offset bytes and reads the table from where the
@@ -136,7 +143,7 @@ typedef struct __attribute__((packed, aligned(4))) {
     // and nothing at all in RAM. With no entries, reloc_offset is module_size
     // and the copy is exactly what it always was.
     uint32_t reloc_offset;   // to the table, and the length of the image
-    uint32_t reloc_count;    // 32-bit words to fix up, zero if none
+    uint32_t reloc_count;    // eight-byte entries, zero if none
 
     // What follows the image and is not in it. .bss and .sbss hold no bytes in
     // the file -- they are NOBITS -- so a loader that copies the image has to

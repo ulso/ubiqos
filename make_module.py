@@ -109,6 +109,28 @@ def tls_layout(elf_path, nm_tool):
     return vaddr - min(bases), init, total
 
 
+def max_alignment(elf_path, nm_tool):
+    """The strictest alignment any loaded section asks for."""
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-SW", elf_path],
+                         capture_output=True, text=True).stdout
+    want = 1
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or not line.lstrip().startswith("["):
+            continue
+        if parts[2] not in ("PROGBITS", "NOBITS"):
+            continue
+        if "A" not in line[line.rfind(parts[2]):]:
+            continue
+        try:
+            want = max(want, int(parts[-1]))
+        except ValueError:
+            pass
+    return want
+
+
 def bss_after_image(elf_path, nm_tool, load_base, image_len):
     """How far the allocated sections reach past what objcopy wrote.
 
@@ -136,37 +158,73 @@ def bss_after_image(elf_path, nm_tool, load_base, image_len):
     return end - (load_base + image_len)
 
 
-def collect_relocs(elf_path, nm_tool, load_base, image_len):
-    """The linked addresses of every absolute word in the loadable image.
+def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_size):
+    """Every absolute address in the loadable image, with what to do about it.
 
-    With PC-relative code the only absolute thing a module can contain is a
-    pointer sitting in data -- a table of strings, a vtable, a pointer to a
-    variable -- and every one of those is an R_RISCV_32. Nothing else needs the
-    loader's help, which is why the table is short and the loader is four lines.
+    Four kinds, and they are not interchangeable. R_RISCV_32 is a 32-bit word in
+    data holding an address. The other three are instructions: a module's own
+    code is PC-relative under -mcmodel=medany, but newlib and libgcc arrive
+    prebuilt in the toolchain's default code model and address globals
+    absolutely with lui -- 282 of them in wasm, and the first one reached killed
+    the board. HI20 carries the top twenty bits of a target and LO12_I/LO12_S
+    the bottom twelve; none can be repaired from the instruction alone, since
+    twelve bits do not carry a target back. So the table records the target and
+    the loader writes the whole field.
 
-    --emit-relocs keeps the relocations in the linked file. Their Offset column
-    is the virtual address of the word to patch, so anything outside the image
-    belongs to a debug section and is not ours.
+    Which sections are loaded is read from the file rather than inferred from
+    addresses: a debug section has address zero, so its offsets start near zero
+    and run to its own length -- tens of kilobytes -- which overlaps the address
+    range of the image and looks exactly like a relocation inside it.
     """
     import subprocess, re
     prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+
+    sec = subprocess.run([prefix + "readelf", "-SW", elf_path],
+                         capture_output=True, text=True).stdout
+    allocated = set()
+    for line in sec.splitlines():
+        m = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+[0-9a-fA-F]+\s+"
+                     r"[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+\S+\s+(\S*)", line)
+        if m and "A" in m.group(2):
+            allocated.add(m.group(1))
+
+    KIND = {"R_RISCV_32": 0, "R_RISCV_HI20": 1,
+            "R_RISCV_LO12_I": 2, "R_RISCV_LO12_S": 3}
+
     out = subprocess.run([prefix + "readelf", "-rW", elf_path],
                          capture_output=True, text=True).stdout
 
     found = []
+    section = None
     for line in out.splitlines():
-        parts = line.split()
-        if len(parts) < 3 or "R_RISCV_32" not in parts[2]:
+        m = re.match(r"Relocation section '(\S+)'", line)
+        if m:
+            name = m.group(1)
+            target = name[5:] if name.startswith(".rela") else name[4:]
+            section = target if target in allocated else None
             continue
-        # R_RISCV_32 is the name; R_RISCV_32_PCREL is not, and is relative.
-        if parts[2] != "R_RISCV_32":
+        if not section:
             continue
-        try:
-            addr = int(parts[0], 16)
-        except ValueError:
+
+        # Offset  Info  Type  Sym.Value  Sym.Name + Addend -- and the addend is
+        # in hex, without an 0x to say so.
+        m = re.match(r"\s*([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+(\S+)\s+"
+                     r"([0-9a-fA-F]+)\s+\S+\s*\+\s*([0-9a-fA-F]+)\s*$", line)
+        if not m or m.group(2) not in KIND:
             continue
-        if load_base <= addr < load_base + image_len:
-            found.append(addr)
+
+        site = int(m.group(1), 16)
+        value = int(m.group(3), 16) + int(m.group(4), 16)
+        if not (load_base <= site < load_base + image_len):
+            continue
+        if not (load_base <= value < load_base + image_len + bss_size):
+            raise SystemExit(
+                "%s at 0x%08x points at 0x%08x, outside the module -- the "
+                "loader could not relocate it" % (m.group(2), site, value))
+
+        found.append((header_size + site - load_base,
+                      KIND[m.group(2)],
+                      header_size + value - load_base))
     return sorted(set(found))
 
 
@@ -220,35 +278,32 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # the offset rather than the linked address is what makes a module that was
     # never relocated fail loudly -- the pointer is a small number and faults at
     # once -- instead of pointing somewhere plausible and wrong.
-    # Not for a single-instance module. It is linked at the address it will be
-    # copied to, so its absolute addresses are already right -- and they may
-    # point into .bss, which is NOBITS and therefore past the end of the image
-    # objcopy wrote. lwipd does exactly that. Relocation is for the modules that
-    # do not know where they will land.
     bss_size = 0
     if elf_path and nm_tool:
         bss_size = bss_after_image(elf_path, nm_tool,
                                    elf_load_base(elf_path, nm_tool), len(code_bytes))
+        # The loader aligns a copied module to sixteen. A section wanting more
+        # than that would land wrong wherever the allocator put it, and the
+        # symptom is a misaligned access somewhere with nothing to do with the
+        # cause -- so it is refused here, where the number is known.
+        want = max_alignment(elf_path, nm_tool)
+        if want > 16:
+            raise SystemExit(
+                "%s: a section needs %d-byte alignment and the loader gives 16"
+                % (module_name, want))
 
+    # Every module, single-instance included. A pointer into .bss is inside the
+    # module as long as bss_size is counted -- lwipd has one, and it is what
+    # made relocating these look impossible before the size was measured.
     reloc = []
-    if elf_path and nm_tool and not single:
-        base = elf_load_base(elf_path, nm_tool)
-        code = bytearray(code_bytes)
-        for addr in collect_relocs(elf_path, nm_tool, base, len(code_bytes)):
-            at = addr - base
-            value = int.from_bytes(code[at:at + 4], "little")
-            if not (base <= value < base + len(code_bytes)):
-                raise SystemExit(
-                    "%s: absolute pointer at 0x%08x holds 0x%08x, which is "
-                    "outside the module image -- the loader could not relocate "
-                    "it" % (module_name, addr, value))
-            code[at:at + 4] = (header_size + value - base).to_bytes(4, "little")
-            reloc.append(header_size + at)
-        code_bytes = bytes(code)
+    if elf_path and nm_tool:
+        reloc = collect_relocs(elf_path, nm_tool,
+                               elf_load_base(elf_path, nm_tool),
+                               len(code_bytes), header_size, bss_size)
 
     reloc_offset = name_offset + len(name_bytes)
     reloc_count = len(reloc)
-    module_size = reloc_offset + 4 * reloc_count
+    module_size = reloc_offset + 8 * reloc_count
 
 # Defaults for the myrtos-specific fields
     MYRTOS_TYPE_PROGRAM = 1
@@ -258,7 +313,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 5
+    MYRTOS_ABI_VERSION = 6
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
@@ -298,26 +353,15 @@ def create_module(input_bin_path, output_mod_path, module_name,
     )
     assert len(header_bytes) == header_size, "header is not %d bytes" % header_size
 
-    # A single-instance module is linked at the address it will be loaded at, and
-    # the whole file is copied there -- so the code must be linked one header
-    # further on than the base. Getting it wrong shifts every absolute address by
-    # the size of the header, which surfaces as a misaligned store somewhere with
-    # nothing to do with the cause. Check it here, where both numbers are known.
-    if single:
-        want = 0x11780000 + header_size
-        load_base = elf_load_base(elf_path, nm_tool)
-        if load_base != want:
-            raise SystemExit(
-                "single-instance module is linked at 0x%08x, expected 0x%08x "
-                "(MYRTOS_SINGLE_BASE + %d-byte header) -- fix -Wl,-Ttext"
-                % (load_base, want, header_size))
-
     with open(output_mod_path, "wb") as f:
         f.write(header_bytes)
         f.write(code_bytes)
         f.write(name_bytes)
-        for off in reloc:
-            f.write(struct.pack('<I', off))
+        # Site and kind in one word, target in the next. A module is far short
+        # of the 256 MB the site field allows, so four bits are free for the
+        # kind and an entry stays eight bytes.
+        for site, kind, target in reloc:
+            f.write(struct.pack('<II', (kind << 28) | site, target))
 
     print(f"  module '{module_name}' revision {revision}, "
           f"{module_size} bytes, {tls_total} thread-local"
