@@ -131,6 +131,36 @@ def max_alignment(elf_path, nm_tool):
     return want
 
 
+def has_writable_data(elf_path, nm_tool):
+    """Whether the module carries a writable section of its own.
+
+    .tdata and .tbss do not count and are the point of the exception: they are
+    one copy per process already, which is what tp is for. Anything else that
+    is writable belongs to the module image, and a module that has one cannot
+    run out of flash where every process would share it.
+    """
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-SW", elf_path],
+                         capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        m = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+[0-9a-fA-F]+\s+"
+                     r"[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\S+\s+(\S*)", line)
+        if not m:
+            continue
+        name, kind, size, flags = m.group(1), m.group(2), int(m.group(3), 16), m.group(4)
+        if name in (".tdata", ".tbss"):
+            continue
+        # Not code. .text comes out WAX because a module is linked -N, which
+        # makes one loadable segment by design rather than a writable variable.
+        # A data section is WA without the X, and check_module.py has said so in
+        # a comment since before this existed.
+        if "A" in flags and "W" in flags and "X" not in flags and size \
+                and kind in ("PROGBITS", "NOBITS"):
+            return True
+    return False
+
+
 def bss_after_image(elf_path, nm_tool, load_base, image_len):
     """How far the allocated sections reach past what objcopy wrote.
 
@@ -151,6 +181,13 @@ def bss_after_image(elf_path, nm_tool, load_base, image_len):
             continue
         flags = m.group(5)
         if "A" not in flags:
+            continue
+        # .tdata and .tbss are the thread-local block, which the kernel places
+        # and zeroes from tls_offset and tls_total. Counting them here would
+        # make the copy larger than the module and, worse, would say a module
+        # has writable data of its own when the whole point of tp is that it
+        # does not.
+        if m.group(1) in (".tdata", ".tbss"):
             continue
         addr, size = int(m.group(3), 16), int(m.group(4), 16)
         if addr and addr + size > end:
@@ -313,7 +350,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 6
+    MYRTOS_ABI_VERSION = 7
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
@@ -321,6 +358,11 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # process. A module without it has writable data shared between instances,
     # so the kernel allows only one instance to exist.
     attrs = (0 if single else 1) | (2 if realtime else 0)
+
+    # Three reasons for one answer: writable data, addresses to fix, or a .bss
+    # to zero. Any of them means the module cannot run where it lies.
+    if reloc or bss_size or (elf_path and nm_tool and has_writable_data(elf_path, nm_tool)):
+        attrs |= 4
     attr_rev  = (attrs << 8) | MYRTOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
 # trap frame is 128 bytes, so 4 kB leaves ample depth for call chains -- and it

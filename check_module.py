@@ -182,14 +182,19 @@ if not_pic:
            "if-chain returning string literals, a static function pointer, or a\n"
            "C++ vtable.")
 
+# Writable data is no longer refused. It used to be, because one copy of the
+# code in flash served every process and they would have shared it; a module
+# that has any is marked MYRTOS_ATTR_PRIVATE and given a copy of its own, so a
+# static variable is simply a variable. It is still worth saying, because a
+# module without one costs no memory at all.
 if not_shared and not single:
-    report("MODULE IS NOT SHAREABLE:", not_shared,
-           "A writable section is a variable, and one copy of this code serves\n"
-           "every process running it -- so they would all be writing to the same\n"
-           "one. This is not a relocation problem and no compiler flag fixes it.\n"
-           "Use __thread for per-process state, or the data area.")
+    seen = set()
+    for p in not_shared:
+        if p in seen: continue
+        seen.add(p)
+        print("  %s -- needs a copy per process" % p)
 
-if not_pic or (not_shared and not single):
+if not_pic:
     print("See docs/writing-modules.md.", file=sys.stderr)
     sys.exit(1)
 

@@ -389,20 +389,20 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         return -1;
     }
 
-    // A module is copied when it cannot run where it lies. That is so for two
-    // reasons and they are separate: it carries absolute addresses, which
-    // relocation must write, and flash cannot be written; or it is not
-    // re-entrant, which means it has writable data of its own and needs a copy
-    // per process rather than one shared. A re-entrant module with an empty
-    // table still runs in place, as every module did before this existed.
+    // A module is copied when it cannot run where it lies, and the module says
+    // so itself: MYRTOS_ATTR_PRIVATE is set at build time for anything with
+    // writable data, addresses to fix, or a .bss to zero. A module with none of
+    // those runs straight out of flash and costs no memory at all, which is
+    // most of them.
     //
     // A copy per process rather than one shared between them. It is the simple
     // thing and the modules are a few kilobytes; sharing one relocated copy
     // needs a reference count on something whose lifetime is not the process's,
     // and that is worth having only once the cost shows up somewhere.
     bool reentrant = ((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT) != 0;
+    bool needs_copy = ((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_PRIVATE) != 0;
     void *code_copy = 0;
-    if (!reentrant || module_ptr->reloc_count) {
+    if (!reentrant || needs_copy) {
         uint32_t image = myrtos_module_image_size(module_ptr);
         uint32_t total = image + module_ptr->bss_size;
 

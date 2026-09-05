@@ -295,14 +295,15 @@ else()
 endif()
 
 # -std=gnu23 because clang defaults to a C where bool is not a keyword.
-# -fno-jump-tables because a large switch otherwise becomes a table of absolute
-# addresses -- sh comes out with 97 R_RISCV_32 without it and none with it.
-# GCC is given neither and has simply never emitted a jump table here, which is
-# luck rather than design; check_module.py would catch it either way.
-set(MYRTOS_CLANG_C_FLAGS   -std=gnu23 -fno-jump-tables)
+#
+# -fno-jump-tables is gone. It was here because a large switch becomes a table
+# of absolute addresses -- sh came out with 97 R_RISCV_32 with it removed --
+# and absolute addresses were once refused outright. The loader fixes them now,
+# so the compiler may generate the code it thinks is best and pay four bytes a
+# case for it on the card.
+set(MYRTOS_CLANG_C_FLAGS   -std=gnu23)
 set(MYRTOS_CLANG_CXX_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics
-                           -fno-use-cxa-atexit
-                           -fno-jump-tables)
+                           -fno-use-cxa-atexit)
 
 # Same signature and same RT / SINGLE options as myrtos_add_module. A module
 # built this way is not different in kind; it was only compiled by the other

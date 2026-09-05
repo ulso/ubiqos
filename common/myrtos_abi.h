@@ -21,7 +21,7 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    6
+#define MYRTOS_ABI_VERSION    7
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -31,6 +31,19 @@
 // way, so nothing about the header's shape had to change.
 #define MYRTOS_ATTR_REENTRANT 0x01
 #define MYRTOS_ATTR_REALTIME  0x02   // keep this module's memory in SRAM
+
+// This module cannot run where it lies and needs a copy of its own. It is set
+// for anything with writable data, anything with relocations to apply, and
+// anything with a .bss to zero -- three reasons for one answer, worked out when
+// the module is built rather than three tests at load time.
+//
+// It is what lets a module be written as ordinary C. A static variable used to
+// be refused, because one copy of the code in flash served every process and
+// they would all have shared it; with a copy per process it is simply a
+// variable. Position-independent code is still worth having and still costs
+// nothing -- a module without this bit runs straight out of flash, as most of
+// them do -- but it is no longer the price of admission.
+#define MYRTOS_ATTR_PRIVATE   0x04
 
 // Type, in the high byte of type_lang.
 #define MYRTOS_TYPE_PROGRAM   1
@@ -154,11 +167,19 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t header_crc;   // complement of the sum of the first thirteen words
 } myrtos_module_header_t;
 
-// What has to be copied for a module to run. The relocation table is read
-// where the module already lies and never travels with it.
+// What has to be copied for a module to run: the header and the code, and
+// nothing after them.
+//
+// Not the name, and that is not a saving but a correctness matter. The file is
+// header, code, name, table -- but in memory .bss begins immediately after the
+// code, which is exactly where the name sits in the file. Copying the name and
+// zeroing past it put a module's variables on top of its own name: vtdemo's
+// counter read 0x65647476, which is "vtde". So the image ends at name_offset,
+// bss_size follows it, and the name is read where the module lies rather than
+// carried along. The relocation table is read there too.
 static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 {
-    return h->reloc_count ? h->reloc_offset : h->module_size;
+    return h->name_offset;
 }
 
 // --- SYSTEM CALLS ---------------------------------------------------------
