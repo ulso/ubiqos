@@ -449,6 +449,8 @@ typedef struct {
 #define MYRTOS_SINGLE_TEXT      (MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_HEADER)
 
 // The call itself. It is identical in every module, so it belongs here.
+#if defined(__riscv)
+
 static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c)
 {
     register uint32_t r_id __asm__("a7") = id;
@@ -459,6 +461,32 @@ static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32
     __asm__ volatile("ecall" : "+r"(r_a0) : "r"(r_id), "r"(r_a1), "r"(r_a2) : "memory");
     return (int32_t)r_a0;
 }
+
+#elif defined(__arm__) || defined(__thumb__)
+
+// The same call under other letters: the number in r7 and the arguments in r0
+// to r2, which is where Linux's ARM EABI has always put them. The answer comes
+// back in r0 because the core pops the stacked r0 the handler wrote into.
+//
+// r7 rather than r12 because r12 is the intra-procedure scratch register and
+// belongs to the compiler and the linker's veneers. r7 is the frame pointer
+// only when there is one, and modules are built at -O2 where there is not --
+// a module built at -O0 would fail to compile here rather than misbehave,
+// which is the right way round.
+static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c)
+{
+    register uint32_t r_id __asm__("r7") = id;
+    register uint32_t r_a0 __asm__("r0") = a;
+    register uint32_t r_a1 __asm__("r1") = b;
+    register uint32_t r_a2 __asm__("r2") = c;
+
+    __asm__ volatile("svc 0" : "+r"(r_a0) : "r"(r_id), "r"(r_a1), "r"(r_a2) : "memory");
+    return (int32_t)r_a0;
+}
+
+#else
+#error "myrtos does not know how to make a system call on this machine"
+#endif
 
 static inline int32_t myrtos_open_flags(const char *name, uint32_t flags)
 {
