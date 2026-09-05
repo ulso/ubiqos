@@ -196,8 +196,9 @@ void myrtos_print_hex(uint32_t v);
 // the kernel -- it has no such call chain -- so it asks to be terminated
 // instead.
 static void myrtos_process_return(void) {
-    register uint32_t id __asm__("a7") = SYS_EXIT;
-    __asm__ volatile("ecall" : : "r"(id) : "memory");
+    // The same call any module makes, through the same stub -- which knows
+    // which instruction its machine traps with, so this does not have to.
+    myrtos_syscall(SYS_EXIT, 0, 0, 0);
     for (;;) { __asm__ volatile("wfi"); }
 }
 
@@ -224,8 +225,15 @@ void myrtos_scheduler_init(void) {
     process_table[KERNEL_PID].priority = MYRTOS_PRIO_IDLE;
     process_table[KERNEL_PID].state = PROC_STATE_RUNNING;
     current_pid = KERNEL_PID;
+    // What the kernel is running with, so that a process can be given the same.
+    // Neither register exists on ARM: the kernel is reached through svc rather
+    // than through gp, and a kernel thread has no thread-local block to point
+    // r9 at -- so both stay zero there, which is what a process with no data
+    // area of its own should see.
+#ifdef __riscv
     __asm__ volatile("mv %0, gp" : "=r"(myrtos_kernel_gp));
     __asm__ volatile("mv %0, tp" : "=r"(kernel_tp));
+#endif
     myrtos_print("Real-time process scheduler initialized.\n");
 }
 

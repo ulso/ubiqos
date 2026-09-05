@@ -397,7 +397,15 @@ void myrtos_kernel_main(void) {
 
     // Interrupts must be enabled globally before USB starts; individual sources
     // are enabled by whoever needs them. The timer would otherwise do it later.
+    //
+    // One bit in a control register on either machine, reached by its own
+    // instruction: mstatus.MIE here, PRIMASK there, and cpsie is how ARM clears
+    // the latter.
+#ifdef __riscv
     __asm__ volatile("csrs mstatus, %0" : : "r"(1u << 3));
+#else
+    __asm__ volatile("cpsie i" ::: "memory");
+#endif
 
     myrtos_usb_init();
 
@@ -407,8 +415,7 @@ void myrtos_kernel_main(void) {
     extern volatile uint32_t myrtos_trap_count;
     extern volatile uint32_t myrtos_last_mcause;
     uint32_t before = myrtos_trap_count;
-    register uint32_t sys_id __asm__("a7") = 0;   // SYS_NULL
-    __asm__ volatile("ecall" : : "r"(sys_id));
+    myrtos_syscall(SYS_NULL, 0, 0, 0);
     if (myrtos_trap_count == before + 1 && (myrtos_last_mcause & 0x7fffffffu) == 11) {
         myrtos_print("Trap vector self-test passed: ecall taken and resumed.\n");
     } else {

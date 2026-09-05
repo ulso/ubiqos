@@ -218,7 +218,8 @@ def bss_after_image(elf_path, nm_tool, load_base, image_len):
     return end - (load_base + image_len)
 
 
-def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_size):
+def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_size,
+                   image):
     """Every absolute address in the loadable image, with what to do about it.
 
     Four kinds, and they are not interchangeable. R_RISCV_32 is a 32-bit word in
@@ -248,8 +249,12 @@ def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_siz
         if m and "A" in m.group(2):
             allocated.add(m.group(1))
 
-    KIND = {"R_RISCV_32": 0, "R_RISCV_HI20": 1,
-            "R_RISCV_LO12_I": 2, "R_RISCV_LO12_S": 3}
+    # Kind 0 is a whole address sitting in a word, and both machines have it:
+    # RISC-V puts one in a pointer, ARM puts one in a literal pool. Kinds 1 to 3
+    # are RISC-V's instruction pairs and have no ARM counterpart, because
+    # Thumb-2 does not build addresses out of immediates.
+    KIND = {"R_RISCV_32": 0, "R_ARM_ABS32": 0,
+            "R_RISCV_HI20": 1, "R_RISCV_LO12_I": 2, "R_RISCV_LO12_S": 3}
 
     out = subprocess.run([prefix + "readelf", "-rW", elf_path],
                          capture_output=True, text=True).stdout
@@ -266,18 +271,42 @@ def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_siz
         if not section:
             continue
 
-        # Offset  Info  Type  Sym.Value  Sym.Name + Addend -- and the addend is
-        # in hex, without an 0x to say so.
-        m = re.match(r"\s*([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+(\S+)\s+"
-                     r"([0-9a-fA-F]+)\s+\S+\s*\+\s*([0-9a-fA-F]+)\s*$", line)
+        # Offset  Info  Type  [Sym.Value  Sym.Name + Addend]
+        #
+        # The tail is there for RELA, which RISC-V emits, and absent for REL,
+        # which ARM emits and which keeps the addend in the word instead. So the
+        # tail is optional here, and where the target comes from depends on the
+        # kind rather than on the format: a whole address in a word can simply
+        # be read back, and only the instruction pairs need the symbol.
+        #
+        # Getting this wrong was silent. color came out with twenty-five
+        # R_ARM_ABS32 in the linked file and an empty table in the module.
+        # The symbol value is there in both formats; only the "+ addend" is
+        # RELA's. Requiring the plus made every ARM line fail to match at all,
+        # which is how twenty-five relocations became an empty table.
+        m = re.match(r"\s*([0-9a-fA-F]+)\s+[0-9a-fA-F]+\s+(\S+)"
+                     r"(?:\s+([0-9a-fA-F]+)\s+\S+"
+                     r"(?:\s*\+\s*([0-9a-fA-F]+))?)?\s*$", line)
         if not m or m.group(2) not in KIND:
             continue
 
         site = int(m.group(1), 16)
-        value = int(m.group(3), 16) + int(m.group(4), 16)
+        if KIND[m.group(2)] == 0:
+            at = site - load_base
+            if not (0 <= at and at + 4 <= image_len):
+                continue
+            value = int.from_bytes(image[at:at + 4], "little")
+        elif m.group(3) is None or m.group(4) is None:
+            raise SystemExit("%s at 0x%08x has no symbol and addend to relocate "
+                             "against" % (m.group(2), site))
+        else:
+            value = int(m.group(3), 16) + int(m.group(4), 16)
         if not (load_base <= site < load_base + image_len):
             continue
-        if not (load_base <= value < load_base + image_len + bss_size):
+        # One past the end is inside. _end and __bss_end__ name the address
+        # after the last byte, which is where a heap starts and exactly what a
+        # pointer to it should hold; wasm has one and a strict < refused it.
+        if not (load_base <= value <= load_base + image_len + bss_size):
             raise SystemExit(
                 "%s at 0x%08x points at 0x%08x, outside the module -- the "
                 "loader could not relocate it" % (m.group(2), site, value))
@@ -359,7 +388,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if elf_path and nm_tool:
         reloc = collect_relocs(elf_path, nm_tool,
                                elf_load_base(elf_path, nm_tool),
-                               len(code_bytes), header_size, bss_size)
+                               len(code_bytes), header_size, bss_size, code_bytes)
 
     reloc_offset = name_offset + len(name_bytes)
     reloc_count = len(reloc)

@@ -43,9 +43,19 @@ endif()
 if(MYRTOS_ARCH STREQUAL "riscv")
     set(MYRTOS_MODULE_CFLAGS  -mcmodel=medany)
     set(MYRTOS_MODULE_LDFLAGS -Wl,-m,elf32lriscv -Wl,--no-relax)
+    set(MYRTOS_MODULE_ARCH_SOURCES)
 else()
-    set(MYRTOS_MODULE_CFLAGS)
+    # -ffixed-r9 keeps the register the compiler may not have. r9 carries the
+    # thread pointer, which RISC-V has in tp and ARM has nowhere -- so the
+    # platform register holds it and the compiler must be told to leave it be.
+    # Without this a module reads someone else's thread-local eventually.
+    set(MYRTOS_MODULE_CFLAGS  -ffixed-r9)
     set(MYRTOS_MODULE_LDFLAGS)
+
+    # And the function the compiler calls to read it. __thread on ARM is not an
+    # instruction but a call to __aeabi_read_tp, which the platform supplies --
+    # so every module carries the two instructions that answer it.
+    set(MYRTOS_MODULE_ARCH_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/common/arm/tp.S)
 endif()
 
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
@@ -234,7 +244,7 @@ function(myrtos_add_module name source)
         set(single_link "")   # relocated like every other module
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
-    add_executable(${name}_app ${source} ${ARGN})
+    add_executable(${name}_app ${source} ${ARGN} ${MYRTOS_MODULE_ARCH_SOURCES})
     target_compile_options(${name}_app PRIVATE
         -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2
         # -fno-use-cxa-atexit puts the destructors of globals in .fini_array

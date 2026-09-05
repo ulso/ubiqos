@@ -13,9 +13,16 @@
 MYRTOS_LIBC_DEFINE
 MYRTOS_MEM_SIZE(8192);
 
-// mcycle, not the millisecond tick: an allocation is supposed to be O(1), which
-// at 125 MHz means the tick cannot see it at all. Everything here runs in
-// machine mode, so the counter is readable directly.
+// Cycles, not the millisecond tick: an allocation is supposed to be O(1), which
+// at 125 MHz means the tick cannot see it at all.
+//
+// Both machines have a free cycle counter and both hide it behind a switch that
+// is off at reset -- which is the same trap in two places, because a zero that
+// means "not counting" looks exactly like a zero that means "too fast to see".
+// That is what the first run of this test reported.
+#if defined(__riscv)
+
+// Everything here runs in machine mode, so the counter is readable directly.
 static inline uint32_t cycles(void)
 {
     uint32_t c;
@@ -23,14 +30,34 @@ static inline uint32_t cycles(void)
     return c;
 }
 
-// The counters come up inhibited on this core, so mcycle reads the same value
-// every time and every measurement is zero. That is what the first run of this
-// test reported, and a zero that means "not counting" looks exactly like a zero
-// that means "too fast to see".
 static inline void start_counting(void)
 {
-    __asm__ volatile("csrw 0x320, zero");    // mcountinhibit
+    __asm__ volatile("csrw 0x320, zero");    // mcountinhibit: stop inhibiting
 }
+
+#else
+
+// The debug unit's cycle counter. It needs two switches rather than one: the
+// trace block is powered down until DEMCR says otherwise, and the counter
+// itself is then enabled in DWT_CTRL. Reading it without both gives a steady
+// zero and no complaint.
+#define DEMCR      (*(volatile uint32_t *)0xE000EDFCu)
+#define DWT_CTRL   (*(volatile uint32_t *)0xE0001000u)
+#define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004u)
+
+#define DEMCR_TRCENA      (1u << 24)
+#define DWT_CTRL_CYCCNTENA (1u << 0)
+
+static inline uint32_t cycles(void) { return DWT_CYCCNT; }
+
+static inline void start_counting(void)
+{
+    DEMCR |= DEMCR_TRCENA;
+    DWT_CYCCNT = 0;
+    DWT_CTRL |= DWT_CTRL_CYCCNTENA;
+}
+
+#endif
 
 // Thread-local, not a plain static: a shareable module may have no writable
 // data, and check_module.py refused this file until it said so.

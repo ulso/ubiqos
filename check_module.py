@@ -54,6 +54,25 @@ POSITION_INDEPENDENT = {
     # linked with lld, the three slots read 0x62, 0x66, 0x6a where the absolute
     # build has 0x000100f8, 0x000100fc, 0x00010100.
     "R_RISCV_PLT32",
+
+    # And ARM's, which are fewer because Thumb-2 reaches globals through
+    # literal pools rather than through instruction pairs: the absolute address
+    # ends up as a word in .text, not as bits inside two instructions.
+    "R_ARM_NONE", "R_ARM_V4BX",
+    "R_ARM_REL32", "R_ARM_PREL31",
+    "R_ARM_CALL", "R_ARM_JUMP24",
+    "R_ARM_THM_CALL", "R_ARM_THM_JUMP24", "R_ARM_THM_JUMP19",
+    "R_ARM_THM_JUMP11", "R_ARM_THM_JUMP8",
+    "R_ARM_THM_PC12", "R_ARM_THM_PC8", "R_ARM_THM_PC11",
+
+    # Thread-local, in the local-exec model: the offset of the variable within
+    # the block the thread pointer names, fixed at link time and carrying no
+    # address at all. RISC-V's TPREL relocations above say the same thing.
+    #
+    # The other TLS models are deliberately absent. Initial-exec and
+    # global-dynamic reach the variable through a GOT, which a module has no
+    # room for and no loader to fill; being refused here says so at the build.
+    "R_ARM_TLS_LE32",
 }
 
 # Absolute, and relocated at load time rather than refused. The loader copies
@@ -65,7 +84,14 @@ POSITION_INDEPENDENT = {
 # with lui, which is what newlib and libgcc do -- they arrive prebuilt in the
 # toolchain's default code model, and nothing about a module's own flags
 # changes that.
-LOADER_FIXES = {"R_RISCV_32", "R_RISCV_HI20", "R_RISCV_LO12_I", "R_RISCV_LO12_S"}
+LOADER_FIXES = {"R_RISCV_32", "R_RISCV_HI20", "R_RISCV_LO12_I", "R_RISCV_LO12_S",
+                # ARM needs one. A literal pool holds the address as a plain
+                # word, which is the same thing R_RISCV_32 is and is fixed the
+                # same way. movw/movt pairs would be ARM's answer to HI20/LO12
+                # and are deliberately NOT here: the loader cannot write them
+                # yet, and being refused at the build is better than being
+                # accepted and left wrong.
+                "R_ARM_ABS32"}
 
 # Types this readelf cannot name, by number. Binutils prints "unrecognized: 3b"
 # where the name belongs, and refusing everything it cannot name would refuse a
@@ -118,7 +144,11 @@ for obj in obj_files:
         if not m or not section:
             continue
 # Debug information is never loaded.
-        if section.startswith(".rela.debug") or section.startswith(".rela.eh_frame"):
+        # .rel and .rela both, because the two machines differ: RISC-V emits
+        # RELA with an explicit addend, ARM emits REL and keeps the addend in
+        # the word being relocated. Matching only ".rela.debug" let every debug
+        # relocation in an ARM object through, and echo alone reported six.
+        if re.match(r"\.rela?\.(debug|eh_frame)", section):
             continue
         kind = m.group(1)
         if kind == "unrecognized:" and m.group(2) in BY_NUMBER:
