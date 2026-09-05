@@ -4,9 +4,31 @@
 # from a file that is in the repository. That is exactly what a stale cache
 # holding a wrong SDK path could not survive, and one of those cost an afternoon.
 #
-# One line is edited despite what the banner says. The import set toolchainVersion
-# to 15_2_Rel1, which is arm-none-eabi and cannot build this at all. If an
-# extension update ever writes it back, that is what to look for.
+# One line is edited despite what the banner says: toolchainVersion is chosen
+# from MYRTOS_ARCH below rather than written in. The import set it to 15_2_Rel1
+# once, which is arm-none-eabi, and for a RISC-V build that cannot compile a
+# line. If an extension update ever writes it back, that is what to look for.
+
+# Which machine. -DMYRTOS_ARCH=arm builds for the RP2350's Cortex-M33 cores
+# instead of its Hazard3 ones.
+#
+# It has to be decided here, before anything else, because the SDK's toolchain
+# and platform are settled at import and cannot be changed afterwards -- and
+# because pico-vscode.cmake reads the toolchain's NAME to guess the platform.
+# Everything further down that differs by machine follows from this one word.
+set(MYRTOS_ARCH riscv CACHE STRING "riscv (Hazard3) or arm (Cortex-M33)")
+set_property(CACHE MYRTOS_ARCH PROPERTY STRINGS riscv arm)
+
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(myrtosToolchain RISCV_ZCB_RPI_2_2_0_3)
+    set(myrtosPlatform  rp2350-riscv)
+elseif(MYRTOS_ARCH STREQUAL "arm")
+    set(myrtosToolchain 15_2_Rel1)
+    set(myrtosPlatform  rp2350-arm-s)
+else()
+    message(FATAL_ERROR "MYRTOS_ARCH is '${MYRTOS_ARCH}'; it must be riscv or arm")
+endif()
+
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
@@ -14,7 +36,7 @@ else()
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.3.0)
-set(toolchainVersion RISCV_ZCB_RPI_2_2_0_3)   # NOT 15_2_Rel1: that one is arm-none-eabi
+set(toolchainVersion ${myrtosToolchain})
 set(picotoolVersion 2.3.0)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
@@ -25,8 +47,10 @@ endif()
 # Select the development board for your hardware
 set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Board type")
 
-# Force the whole Pico SDK to build for the RP2350 in RISC-V mode
-set(PICO_PLATFORM rp2350-riscv CACHE STRING "Pico platform")
+# Force the whole Pico SDK to the same machine MYRTOS_ARCH chose. The two must
+# agree: the SDK's own assembly, its interrupt handling and its crt0 are all
+# built from this.
+set(PICO_PLATFORM ${myrtosPlatform} CACHE STRING "Pico platform")
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -58,6 +82,16 @@ pico_sdk_init()
 # ============================================================================
 # 1. BUILD THE OPERATING SYSTEM KERNEL (myrtos)
 # ============================================================================
+# The machine's own half of the kernel. On RISC-V the trap vector is one file
+# and the timer lives at the bottom of scheduler.c, where it reads the machine
+# timer directly; on ARM the vector is its own file and SysTick is another,
+# because neither is the same device.
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(MYRTOS_ARCH_KERNEL_SOURCES kernel/scheduler.S)
+else()
+    set(MYRTOS_ARCH_KERNEL_SOURCES kernel/arm/scheduler.S kernel/arm/timer.c)
+endif()
+
 add_executable(os_kernel 
     kernel/crashlog.c
     kernel/vfs.c
@@ -75,7 +109,7 @@ add_executable(os_kernel
     kernel/usbdev.c
     kernel/usb_descriptors.c
         kernel/usbmsc.c
-    kernel/scheduler.S
+    ${MYRTOS_ARCH_KERNEL_SOURCES}
     kernel/pio/pioprobe.c
     kernel/usbhost.c
     kernel/video.c

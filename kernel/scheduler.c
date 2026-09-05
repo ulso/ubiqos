@@ -1477,6 +1477,12 @@ int32_t myrtos_process_kill(int32_t pid) {
 }
 
 // --- THE MACHINE TIMER ----------------------------------------------------
+//
+// Only on this machine. Cortex-M33 has SysTick and a separate free-running
+// counter, and kernel/arm/timer.c answers the same three questions with them --
+// so this whole section is the RISC-V half of a pair, not a general facility.
+#ifdef __riscv
+
 // Hazard3 has a standard RISC-V machine timer in SIO. mtime counts from the
 // tick generator that runtime_init sets to one pulse per microsecond, and an
 // interrupt fires when mtime reaches mtimecmp.
@@ -1518,3 +1524,5 @@ void myrtos_timer_init(uint32_t interval_ticks) {
 }
 
 uint64_t myrtos_timer_now(void) { return mtime_read(); }
+
+#endif   // __riscv
