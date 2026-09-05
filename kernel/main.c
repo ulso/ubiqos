@@ -320,6 +320,23 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
         return false;
     }
 
+    // Which machine the code is for. A module built elsewhere has a matching
+    // sync word and a matching checksum and nothing else in common with this
+    // kernel, so the first instruction would be the first sign -- and it would
+    // arrive with nothing to connect it to its cause. A data module has no
+    // instructions and is not asked.
+    if ((header->type_lang >> 8) != MYRTOS_TYPE_DATA) {
+        uint32_t arch = MYRTOS_ARCH_OF(header->type_lang);
+        if (arch != MYRTOS_ARCH_HERE) {
+            myrtos_print("  module is for machine ");
+            myrtos_print_u32(arch);
+            myrtos_print(", this kernel runs ");
+            myrtos_print_u32(MYRTOS_ARCH_HERE);
+            myrtos_print("\n");
+            return false;
+        }
+    }
+
     uint32_t *raw_ptr = (uint32_t*)header;
     uint32_t checksum = 0;
     // The header is 56 bytes, hence fourteen words, and the fourteenth IS the

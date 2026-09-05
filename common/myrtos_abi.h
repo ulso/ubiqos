@@ -21,7 +21,7 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    7
+#define MYRTOS_ABI_VERSION    8
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -44,6 +44,34 @@
 // nothing -- a module without this bit runs straight out of flash, as most of
 // them do -- but it is no longer the price of admission.
 #define MYRTOS_ATTR_PRIVATE   0x04
+
+// Which machine the code in a module is for, in the high nibble of type_lang's
+// low byte -- the language keeps the low nibble, as it did, and nothing has
+// ever read more than four bits of it.
+//
+// Without this a module built for one architecture looks entirely valid to a
+// kernel built for another: the sync word matches, the header checksum matches,
+// and the first instruction is nonsense. The failure would arrive with nothing
+// to connect it to its cause, which is the worst kind to leave lying about for
+// a port that has not happened yet.
+//
+// It is derived from the object file rather than declared, so it cannot be
+// stated wrongly. Zero means nobody said, and a module with code is refused for
+// it; a data module has no instructions and is not asked.
+#define MYRTOS_ARCH_NONE      0
+#define MYRTOS_ARCH_RV32      1
+#define MYRTOS_ARCH_ARM32     2   // Thumb-2, M-profile
+
+#define MYRTOS_ARCH_OF(tl)    (((tl) >> 4) & 0x0f)
+#define MYRTOS_LANG_OF(tl)    ((tl) & 0x0f)
+
+#ifdef __riscv
+#define MYRTOS_ARCH_HERE      MYRTOS_ARCH_RV32
+#elif defined(__arm__) || defined(__thumb__)
+#define MYRTOS_ARCH_HERE      MYRTOS_ARCH_ARM32
+#else
+#define MYRTOS_ARCH_HERE      MYRTOS_ARCH_NONE
+#endif
 
 // Type, in the high byte of type_lang.
 #define MYRTOS_TYPE_PROGRAM   1
@@ -117,7 +145,7 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t sync_code;     // MYRTOS_SYNC_CODE
     uint32_t module_size;   // the whole module, header included
     uint32_t name_offset;   // to the name string
-    uint16_t type_lang;     // type (program, driver) and language
+    uint16_t type_lang;     // type, and the machine and language below it
     uint16_t attr_rev;      // attributes and ABI version
     uint32_t exec_offset;   // to the entry point
     uint32_t mem_size;      // RAM per process: data at the bottom, stack from the top

@@ -109,6 +109,29 @@ def tls_layout(elf_path, nm_tool):
     return vaddr - min(bases), init, total
 
 
+def elf_machine(elf_path, nm_tool):
+    """Which machine the object file is for, taken from the ELF header.
+
+    Derived rather than declared: a build that is told its architecture can be
+    told the wrong one, and the whole reason this field exists is that nothing
+    downstream would notice.
+    """
+    import subprocess
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-h", elf_path],
+                         capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        if "Machine:" not in line:
+            continue
+        what = line.split(":", 1)[1].strip()
+        if "RISC-V" in what:
+            return 1                      # MYRTOS_ARCH_RV32
+        if what.startswith("ARM"):
+            return 2                      # MYRTOS_ARCH_ARM32
+        raise SystemExit("unknown machine in %s: %s" % (elf_path, what))
+    return 0                              # MYRTOS_ARCH_NONE
+
+
 def max_alignment(elf_path, nm_tool):
     """The strictest alignment any loaded section asks for."""
     import subprocess, re
@@ -346,11 +369,14 @@ def create_module(input_bin_path, output_mod_path, module_name,
     MYRTOS_TYPE_PROGRAM = 1
     MYRTOS_TYPE_DATA    = 3
     kind = MYRTOS_TYPE_DATA if module_type == "data" else MYRTOS_TYPE_PROGRAM
-    type_lang = (kind << 8) | 1  # high byte: type, low byte: language (C)
+    # High byte: type. Low byte: the machine in the high nibble, the language in
+    # the low one. Both fit in four bits and always have.
+    arch = elf_machine(elf_path, nm_tool) if (elf_path and nm_tool) else 0
+    type_lang = (kind << 8) | (arch << 4) | 1
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 7
+    MYRTOS_ABI_VERSION = 8
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
