@@ -246,12 +246,12 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     uintptr_t stack_top = ((uintptr_t)mem + stack_bytes) & ~(uintptr_t)15;
     myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
     for (uint32_t i = 0; i < sizeof(myrtos_frame_t) / 4; i++) ((uint32_t*)frame)[i] = 0;
-    frame->mepc = (uint32_t)(uintptr_t)entry;
+    frame->pc = (uint32_t)(uintptr_t)entry;
     frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
     frame->gp   = kernel_gp;
     frame->tp   = kernel_tp;      // a kernel thread has no data area to point at
 
-    process_table[slot].entry_point = frame->mepc;
+    process_table[slot].entry_point = frame->pc;
     process_table[slot].module   = NULL;      // nothing to unlink when it ends
     process_table[slot].mem_base = mem;
     process_table[slot].data_base = NULL;     // a kernel thread keeps its state
@@ -514,9 +514,9 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         ((uint32_t*)frame)[i] = 0;
     }
     // When the scheduler picks the process, the vector restores these values
-    // and mret jumps to mepc. That is how a process starts: as though it had
+    // and the return jumps to pc. That is how a process starts: as though it had
     // just been interrupted immediately before its first instruction.
-    frame->mepc = (uint32_t)((uintptr_t)run + run->exec_offset);
+    frame->pc = (uint32_t)((uintptr_t)run + run->exec_offset);
     frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
     frame->a0   = (uint32_t)argc;             // main(int argc, ...)
     frame->a1   = (uint32_t)(uintptr_t)argv;  //          ..., char **argv)
@@ -532,7 +532,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // baked into the code all count from here.
     frame->tp   = (uint32_t)tls_base;
 
-    process_table[slot].entry_point = frame->mepc;
+    process_table[slot].entry_point = frame->pc;
     process_table[slot].module = module_ptr;
     process_table[slot].mem_base = mem;
     process_table[slot].code_base = code_copy;

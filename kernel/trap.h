@@ -3,20 +3,23 @@
 
 #include <stdint.h>
 
-// Must match the save order in myrtos_trap_vector (scheduler.S) exactly.
-// FRAME_SIZE there is 144, i.e. 33 words plus padding to 16-byte alignment.
-typedef struct {
-    uint32_t ra, gp, tp;
-    uint32_t t0, t1, t2;
-    uint32_t s0, s1;
-    uint32_t a0, a1, a2, a3, a4, a5, a6, a7;
-    uint32_t s2, s3, s4, s5, s6, s7, s8, s9, s10, s11;
-    uint32_t t3, t4, t5, t6;
-    uint32_t mepc, mcause, mtval;
-    uint32_t _pad[3];
-} myrtos_frame_t;
-
-_Static_assert(sizeof(myrtos_frame_t) == 144, "the frame must match FRAME_SIZE");
+// The frame, and the few questions the shared code asks about a trap, come
+// from whichever machine this is being built for. Everything below the include
+// is the same on both.
+//
+// The frames themselves are not alike and there is no use pretending: RISC-V
+// saves thirty-three words because it must save them all, and Cortex-M33 saves
+// eighteen because the core pushes the other half itself. What is alike is the
+// contract -- the handler is given a frame and answers with the frame to resume
+// -- and the names the syscall ABI uses: the number in a7, the arguments in a0
+// to a2, the answer in a0.
+#if defined(__riscv)
+#include "riscv/trap.h"
+#elif defined(__arm__) || defined(__thumb__)
+#include "arm/trap.h"
+#else
+#error "myrtos does not know this machine"
+#endif
 
 uint32_t myrtos_switch(uint32_t current_sp);
 void myrtos_process_exit(void);

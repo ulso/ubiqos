@@ -90,12 +90,6 @@ extern tlsf_pool_t myrtos_mem_pool;
 
 // The system call numbers come from common/myrtos_abi.h, shared with modules.
 
-#define MCAUSE_INTERRUPT_BIT    0x80000000u
-#define MCAUSE_CODE_MASK        0x7fffffffu
-#define MCAUSE_ECALL_M          11u
-#define MCAUSE_BREAKPOINT        3u
-#define MCAUSE_MACHINE_TIMER     7u
-#define MCAUSE_MACHINE_EXTERNAL 11u
 
 volatile uint32_t myrtos_ticks = 0;
 volatile uint32_t myrtos_trap_count = 0;
@@ -108,11 +102,11 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     uint32_t sp = (uint32_t)(uintptr_t)frame;
 
     myrtos_trap_count++;
-    myrtos_last_mcause = frame->mcause;
-    myrtos_last_mepc = frame->mepc;
+    myrtos_last_mcause = frame->cause;
+    myrtos_last_mepc = frame->pc;
 
-    if (frame->mcause & MCAUSE_INTERRUPT_BIT) {
-        if ((frame->mcause & MCAUSE_CODE_MASK) == MCAUSE_MACHINE_TIMER) {
+    if (MYRTOS_TRAP_IS_INTERRUPT(frame)) {
+        if (MYRTOS_TRAP_IS_TIMER(frame)) {
             myrtos_ticks++;
             // A blocked reader is woken here rather than by the driver: TinyUSB
             // delivers into its own buffers, and asking once per tick is both
@@ -129,10 +123,11 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         return sp;
     }
 
-    if ((frame->mcause & MCAUSE_CODE_MASK) == MCAUSE_ECALL_M) {
-// mepc points at the ecall instruction itself. Without this step
+    if (MYRTOS_TRAP_IS_SYSCALL(frame)) {
+// The pc points at the call instruction on one machine and past it on the
+// other, so stepping over it is the machine's business. Without it
 // mret returns to the same instruction and the machine loops.
-        frame->mepc += 4;
+        MYRTOS_TRAP_SKIP(frame);
 
         switch (frame->a7) {
         case SYS_NULL:
@@ -210,7 +205,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 // No room. Same shape as a blocking read: step back onto the
                 // ecall and wait, so the call is simply made again with its
                 // arguments intact once the device can take something.
-                frame->mepc -= 4;
+                MYRTOS_TRAP_REDO(frame);
                 myrtos_block_on_write(wpath);
                 return myrtos_switch(sp);
             }
@@ -218,7 +213,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         }
         case SYS_SEND: {
-            // No mepc rewind here, unlike a blocking read: the call is not made
+            // No rewind here, unlike a blocking read: the call is not made
             // again. The reply writes its status straight into this frame's a0 and
             // the process resumes as though send had returned normally.
             if (!myrtos_msg_send((int32_t)frame->a0,
@@ -277,11 +272,11 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             if (n == 0 && myrtos_current_pid() != 0) {
-                // Nothing there. Step mepc back onto the ecall and block: when
+                // Nothing there. Step back onto the call and block: when
                 // the process runs again it re-executes the call with its
                 // arguments still in place, so nothing has to be remembered
                 // about a half-finished read.
-                frame->mepc -= 4;
+                MYRTOS_TRAP_REDO(frame);
                 myrtos_block_on_read(path);
                 return myrtos_switch(sp);
             }
@@ -661,32 +656,32 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     // The tally matters as much as the step. A stack that asserts on every poll
     // would otherwise look like a machine that works, so the first one is
     // printed and all of them are counted.
-    if (frame->mcause == MCAUSE_BREAKPOINT) {
+    if (MYRTOS_TRAP_IS_BREAKPOINT(frame)) {
         if (!myrtos_asserts_seen) {
-            myrtos_crash_note(MYRTOS_CRASH_ASSERT, frame->mepc, 0, 0);
+            myrtos_crash_note(MYRTOS_CRASH_ASSERT, frame->pc, 0, 0);
             // Hex, because the only thing anyone does with this number is
             // look it up with addr2line. Printed in decimal it cost a round
             // trip to convert, the first time it ever fired in front of a user.
             myrtos_print("\n*** MYRTOS: assertion at ");
-            myrtos_print_hex(frame->mepc);
+            myrtos_print_hex(frame->pc);
             myrtos_print(", stepped over ***\n");
         }
         myrtos_asserts_seen++;
-        myrtos_assert_last = frame->mepc;
-        uint16_t insn = *(const uint16_t *)(uintptr_t)frame->mepc;
-        frame->mepc += ((insn & 3u) == 3u) ? 4u : 2u;
+        myrtos_assert_last = frame->pc;
+        uint16_t insn = *(const uint16_t *)(uintptr_t)frame->pc;
+        frame->pc += ((insn & 3u) == 3u) ? 4u : 2u;
         return sp;
     }
 
     // Write it down before saying anything, because saying it goes through the
     // console -- and a fault this early is usually a fault on the way to having
     // one. What the probe reads must not depend on the screen ever working.
-    myrtos_crash_note(MYRTOS_CRASH_TRAP, frame->mepc, frame->mcause, frame->mtval);
+    myrtos_crash_note(MYRTOS_CRASH_TRAP, frame->pc, frame->cause, MYRTOS_TRAP_FAULT(frame));
 
     myrtos_print("\n*** MYRTOS TRAP: unhandled exception ***\n");
-    myrtos_print("  mepc ");   myrtos_print_u32(frame->mepc);
-    myrtos_print("  mcause "); myrtos_print_u32(frame->mcause);
-    myrtos_print("  mtval ");  myrtos_print_u32(frame->mtval);
+    myrtos_print("  pc ");     myrtos_print_u32(frame->pc);
+    myrtos_print("  cause ");  myrtos_print_u32(frame->cause);
+    myrtos_print("  fault ");  myrtos_print_u32(MYRTOS_TRAP_FAULT(frame));
     myrtos_print("\n");
     for (;;) {
         __asm__ volatile("wfi");
