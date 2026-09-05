@@ -48,4 +48,24 @@ _Static_assert(sizeof(myrtos_frame_t) == 144, "the frame must match FRAME_SIZE")
 // The address that faulted, which this machine hands over in the frame.
 #define MYRTOS_TRAP_FAULT(f)  ((f)->fault)
 
+// The global pointer every process runs with. Captured from the kernel once at
+// startup, because on this machine gp addresses the kernel's own small data and
+// a process that does not have it cannot call into the kernel at all.
+extern uint32_t myrtos_kernel_gp;
+
+// Lay out a frame so that resuming it starts the process, as though it had been
+// interrupted immediately before its first instruction. That is the whole trick
+// and it is why there is no separate "start a process" path in the scheduler.
+static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
+                                      uintptr_t ret, uint32_t a0, uint32_t a1,
+                                      uint32_t tls)
+{
+    f->pc = (uint32_t)entry;
+    f->ra = (uint32_t)ret;
+    f->a0 = a0;
+    f->a1 = a1;
+    f->gp = myrtos_kernel_gp;
+    f->tp = tls;
+}
+
 #endif

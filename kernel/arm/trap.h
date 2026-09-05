@@ -67,4 +67,40 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 #define ARM_SCB_BFAR  (*(volatile uint32_t *)0xE000ED38u)
 #define MYRTOS_TRAP_FAULT(f)  ((void)(f), ARM_SCB_BFAR)
 
+// Thread mode, on the process stack, with no floating-point state stacked --
+// which is the only shape myrtos produces, since the FPU is left switched off
+// and every module soft-floats as it does on the other machine.
+#define ARM_EXC_RETURN_THREAD_PSP  0xFFFFFFFDu
+
+// The Thumb bit in xPSR. Without it the first instruction faults, and the fault
+// says nothing about why.
+#define ARM_XPSR_THUMB             0x01000000u
+
+// Lay out a frame so that resuming it starts the process, as though it had been
+// interrupted immediately before its first instruction.
+//
+// Three things here have no counterpart on RISC-V. The stacked pc must have bit
+// zero CLEAR even though every Thumb function pointer has it set -- the
+// instruction set comes from xPSR, and a pc with the bit still in it faults.
+// EXC_RETURN has to be manufactured, because there was no exception to take one
+// from. And there is no gp: the kernel is reached through svc rather than
+// through a register.
+//
+// r9 stands in for tp. It is the static base by ARM convention, it is saved and
+// restored with the frame like any other register, and __aeabi_read_tp is a
+// two-instruction function that hands it back -- which is what the compiler
+// calls for __thread.
+static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
+                                      uintptr_t ret, uint32_t a0, uint32_t a1,
+                                      uint32_t tls)
+{
+    f->pc   = (uint32_t)entry & ~1u;
+    f->lr   = (uint32_t)ret;
+    f->a0   = a0;
+    f->a1   = a1;
+    f->r9   = tls;
+    f->xpsr = ARM_XPSR_THUMB;
+    f->exc_return = ARM_EXC_RETURN_THREAD_PSP;
+}
+
 #endif

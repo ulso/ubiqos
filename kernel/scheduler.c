@@ -179,7 +179,11 @@ static int32_t sleep_head = -1;
 // and the kernel's own C code addresses its small globals relative to it. A new
 // process must inherit them: otherwise the trap vector restores the process's
 // zeroed gp when it traps into the kernel, and the handler writes at random.
-static uint32_t kernel_gp, kernel_tp;
+// Not static: the machine's own header lays out a starting frame and needs it.
+// gp addresses the kernel's small data on RISC-V, so a process without it
+// cannot call into the kernel at all.
+uint32_t myrtos_kernel_gp;
+static uint32_t kernel_tp;
 
 extern tlsf_pool_t myrtos_mem_pool;
 void myrtos_print(const char *s);
@@ -220,7 +224,7 @@ void myrtos_scheduler_init(void) {
     process_table[KERNEL_PID].priority = MYRTOS_PRIO_IDLE;
     process_table[KERNEL_PID].state = PROC_STATE_RUNNING;
     current_pid = KERNEL_PID;
-    __asm__ volatile("mv %0, gp" : "=r"(kernel_gp));
+    __asm__ volatile("mv %0, gp" : "=r"(myrtos_kernel_gp));
     __asm__ volatile("mv %0, tp" : "=r"(kernel_tp));
     myrtos_print("Real-time process scheduler initialized.\n");
 }
@@ -246,10 +250,10 @@ int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     uintptr_t stack_top = ((uintptr_t)mem + stack_bytes) & ~(uintptr_t)15;
     myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
     for (uint32_t i = 0; i < sizeof(myrtos_frame_t) / 4; i++) ((uint32_t*)frame)[i] = 0;
-    frame->pc = (uint32_t)(uintptr_t)entry;
-    frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
-    frame->gp   = kernel_gp;
-    frame->tp   = kernel_tp;      // a kernel thread has no data area to point at
+    // A kernel thread takes no arguments and has no data area of its own, so it
+    // is given the kernel's own thread pointer.
+    myrtos_frame_start(frame, (uintptr_t)entry,
+                       (uintptr_t)myrtos_process_return, 0, 0, kernel_tp);
 
     process_table[slot].entry_point = frame->pc;
     process_table[slot].module   = NULL;      // nothing to unlink when it ends
@@ -516,21 +520,21 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // When the scheduler picks the process, the vector restores these values
     // and the return jumps to pc. That is how a process starts: as though it had
     // just been interrupted immediately before its first instruction.
-    frame->pc = (uint32_t)((uintptr_t)run + run->exec_offset);
-    frame->ra   = (uint32_t)(uintptr_t)myrtos_process_return;
-    frame->a0   = (uint32_t)argc;             // main(int argc, ...)
-    frame->a1   = (uint32_t)(uintptr_t)argv;  //          ..., char **argv)
-    frame->gp   = kernel_gp;
-
-    // The thread pointer carries the data area. That is what tp is for: this
-    // process's own storage, which is thread-local storage with our layout
-    // rather than the compiler's. Nothing else uses it -- .tdata and .tbss are
-    // both empty -- and the trap frame already saves and restores it per
-    // process, so a module reads its own state with one instruction instead of
-    // a system call. It is OS-9's U register, in the register meant for it.
-    // tp is the thread-local block, not the raw area: the offsets the linker
+    // The last argument is the thread pointer, and it carries the data area:
+    // this process's own storage, which is thread-local storage with our layout
+    // rather than the compiler's. The trap frame saves and restores it per
+    // process, so a module reads its own state without a system call -- one
+    // instruction on RISC-V, where tp is a register, and a two-instruction call
+    // to __aeabi_read_tp on ARM, where r9 stands in for it. It is OS-9's U
+    // register either way.
+    //
+    // It is the thread-local block and not the raw area: the offsets the linker
     // baked into the code all count from here.
-    frame->tp   = (uint32_t)tls_base;
+    myrtos_frame_start(frame, (uintptr_t)run + run->exec_offset,
+                       (uintptr_t)myrtos_process_return,
+                       (uint32_t)argc,                     // main(int argc, ...)
+                       (uint32_t)(uintptr_t)argv,          //     ..., char **argv)
+                       (uint32_t)tls_base);
 
     process_table[slot].entry_point = frame->pc;
     process_table[slot].module = module_ptr;
