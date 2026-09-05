@@ -29,6 +29,25 @@ else()
     message(FATAL_ERROR "MYRTOS_ARCH is '${MYRTOS_ARCH}'; it must be riscv or arm")
 endif()
 
+# What a module is compiled and linked with that only one machine understands.
+#
+# -mcmodel=medany makes RISC-V address its own statics PC-relatively, which is
+# what let a module be loaded anywhere before the loader could relocate. ARM has
+# no code model to choose: Thumb-2 reaches globals through literal pools, and
+# those are the absolute words the loader now fixes.
+#
+# --no-relax is not an optimisation setting, and the note further down says why.
+# It is the RISC-V linker's, and arm-none-eabi's ld does not know the option at
+# all. -m elf32lriscv likewise: the driver picks its own emulation, so ARM is
+# given nothing and gets it right.
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(MYRTOS_MODULE_CFLAGS  -mcmodel=medany)
+    set(MYRTOS_MODULE_LDFLAGS -Wl,-m,elf32lriscv -Wl,--no-relax)
+else()
+    set(MYRTOS_MODULE_CFLAGS)
+    set(MYRTOS_MODULE_LDFLAGS)
+endif()
+
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
@@ -217,7 +236,7 @@ function(myrtos_add_module name source)
     endif()
     add_executable(${name}_app ${source} ${ARGN})
     target_compile_options(${name}_app PRIVATE
-        -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
+        -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2
         # -fno-use-cxa-atexit puts the destructors of globals in .fini_array
         # instead of registering them with __cxa_atexit, which would want that
         # function and __dso_handle from a C library that is not here. Measured:
@@ -240,8 +259,8 @@ function(myrtos_add_module name source)
     # small-data area instead of the module's. The wasm host had 752 of them
     # and behaved exactly as that implies -- a constant read back as the wrong
     # number, pointers that were not pointers, and a machine that fell over.
-    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-N
-                        -Wl,-e,0 -Wl,--no-warn-rwx-segments -Wl,--no-relax -Wl,--emit-relocs
+    target_link_options(${name}_app PRIVATE -nostdlib ${MYRTOS_MODULE_LDFLAGS} -Wl,-N
+                        -Wl,-e,0 -Wl,--no-warn-rwx-segments -Wl,--emit-relocs
                         ${single_link})
     if(single_flag)
         target_compile_options(${name}_app PRIVATE -fno-zero-initialized-in-bss)
@@ -282,6 +301,11 @@ function(myrtos_add_module name source)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
         COMMENT "Building module ${name}.mod")
+
+    # Built, and therefore able to be resident. A module whose toolchain is
+    # not on this machine never reaches here, and the flash image asks this
+    # list rather than assuming every name in MYRTOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
 endfunction()
 
 # --- The second toolchain -------------------------------------------------
@@ -310,7 +334,12 @@ find_program(MYRTOS_LLD     ld.lld  HINTS /opt/homebrew/bin /opt/homebrew/opt/ll
 # of a broken build.
 separate_arguments(MYRTOS_TARGET_ARCH NATIVE_COMMAND "${CMAKE_C_FLAGS}")
 set(MYRTOS_CLANG_OK FALSE)
-if(MYRTOS_CLANG AND MYRTOS_CLANGXX AND MYRTOS_LLD)
+# The probe below offers a riscv32 triple, so it can only answer for one
+# machine. Giving clang an ARM target as well is worth doing and is not this
+# commit; until then gcc builds every module on ARM, which it can.
+if(NOT MYRTOS_ARCH STREQUAL "riscv")
+    message(STATUS "Clang modules are riscv-only so far; gcc builds them on ${MYRTOS_ARCH}")
+elseif(MYRTOS_CLANG AND MYRTOS_CLANGXX AND MYRTOS_LLD)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c "int probe(void){return 0;}\n")
     execute_process(
         COMMAND ${MYRTOS_CLANG} --target=riscv32-unknown-elf ${MYRTOS_TARGET_ARCH}
@@ -380,7 +409,7 @@ function(myrtos_add_clang_module name source)
         add_custom_command(
             OUTPUT ${obj}
             COMMAND ${cc} --target=riscv32-unknown-elf ${MYRTOS_TARGET_ARCH}
-                    -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2
+                    -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2
                     ${lang_flags} ${single_compile}
                     -c ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
@@ -425,6 +454,11 @@ function(myrtos_add_clang_module name source)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
         COMMENT "Building module ${name}.mod (clang)")
+
+    # Built, and therefore able to be resident. A module whose toolchain is
+    # not on this machine never reaches here, and the flash image asks this
+    # list rather than assuming every name in MYRTOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
 endfunction()
 
 # --- The third toolchain --------------------------------------------------
@@ -461,7 +495,9 @@ set(MYRTOS_LDC_FLAGS -betterC -Oz --relocation-model=static --code-model=medium
                      --fthread-model=local-exec)
 
 set(MYRTOS_LDC_OK FALSE)
-if(MYRTOS_LDC)
+if(NOT MYRTOS_ARCH STREQUAL "riscv")
+    message(STATUS "D modules are riscv-only so far; skipped on ${MYRTOS_ARCH}")
+elseif(MYRTOS_LDC)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.d
          "module ldc_probe;\nextern(C) int probe() @nogc nothrow { return 0; }\n")
     execute_process(
@@ -596,6 +632,11 @@ function(myrtos_add_d_module name source)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
         COMMENT "Building module ${name}.mod (D)")
+
+    # Built, and therefore able to be resident. A module whose toolchain is
+    # not on this machine never reaches here, and the flash image asks this
+    # list rather than assuming every name in MYRTOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
 endfunction()
 
 # --- ZIG MODULES ----------------------------------------------------------
@@ -625,7 +666,9 @@ set(MYRTOS_ZIG_FLAGS -OReleaseSmall -mcmodel=medium -fno-PIC -fno-PIE
                      -fno-stack-check -fno-stack-protector)
 
 set(MYRTOS_ZIG_OK FALSE)
-if(MYRTOS_ZIG)
+if(NOT MYRTOS_ARCH STREQUAL "riscv")
+    message(STATUS "Zig modules are riscv-only so far; skipped on ${MYRTOS_ARCH}")
+elseif(MYRTOS_ZIG)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/zig_probe.zig
          "export fn probe() u32 { return 0; }\n")
     execute_process(
@@ -722,14 +765,19 @@ function(myrtos_add_zig_module name source)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
         COMMENT "Building module ${name}.mod (Zig)")
+
+    # Built, and therefore able to be resident. A module whose toolchain is
+    # not on this machine never reaches here, and the flash image asks this
+    # list rather than assuming every name in MYRTOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
 endfunction()
 
 # A data module has no entry point: it IS its bytes.
 function(myrtos_add_data_module name source)
     add_executable(${name}_app ${source})
     target_compile_options(${name}_app PRIVATE
-        -fno-pic -mcmodel=medany -fno-common -ffreestanding -nostdlib -O2)
-    target_link_options(${name}_app PRIVATE -nostdlib -Wl,-m,elf32lriscv -Wl,-e,0
+        -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2)
+    target_link_options(${name}_app PRIVATE -nostdlib ${MYRTOS_MODULE_LDFLAGS} -Wl,-e,0
                         -Wl,--no-warn-rwx-segments)
 
     add_custom_command(TARGET ${name}_app POST_BUILD
@@ -757,6 +805,11 @@ function(myrtos_add_data_module name source)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
         COMMENT "Building data module ${name}.mod")
+
+    # Built, and therefore able to be resident. A module whose toolchain is
+    # not on this machine never reaches here, and the flash image asks this
+    # list rather than assuming every name in MYRTOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
 endfunction()
 
 myrtos_add_module(counter modules/counter/counter.c)
@@ -1028,10 +1081,26 @@ set(MYRTOS_RESIDENT
     msgtest
     msgcli
 )
+# What is resident is the intersection of what was asked for and what exists.
+#
+# MYRTOS_RESIDENT names modules; whether a module is built depends on whether
+# its toolchain is on this machine. Asking for one that was skipped used to end
+# in "missing and no known rule to make it", which says nothing about ldc2 not
+# being installed -- and it would have said that on a RISC-V machine without
+# ldc2 just as readily as on ARM. Names are dropped here, and said out loud.
+get_property(myrtos_built GLOBAL PROPERTY MYRTOS_BUILT_MODULES)
 set(resident_mods "")
+set(resident_absent "")
 foreach(m ${MYRTOS_RESIDENT})
-    list(APPEND resident_mods ${CMAKE_CURRENT_BINARY_DIR}/${m}.mod)
+    if(m IN_LIST myrtos_built)
+        list(APPEND resident_mods ${CMAKE_CURRENT_BINARY_DIR}/${m}.mod)
+    else()
+        list(APPEND resident_absent ${m})
+    endif()
 endforeach()
+if(resident_absent)
+    message(STATUS "Not resident, not built here: ${resident_absent}")
+endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/modules.bin
