@@ -1,14 +1,24 @@
 # Writing modules
 
-A myrtos module is loaded at an address nobody knew when it was compiled, and
-one copy of it is shared by every process running it. Both facts come from the
-same requirement: **the module may not contain absolute addresses**, and it may
-not contain writable data.
+A myrtos module is loaded at an address nobody knew when it was compiled. It may
+still contain absolute addresses and writable data -- the loader fixes the first
+and gives the module a copy of its own for the second -- but a module that has
+neither is markedly cheaper, and most are written that way on purpose.
 
-The build checks this. [`check_module.py`](../check_module.py) reads the
-relocations out of the object files and refuses the module if an allocated
-section holds an absolute reference. Without that check the fault shows up as a
-crash after loading, at an address that means nothing.
+**The cheap module runs where it lies.** One copy in flash serves every process,
+nothing is allocated, and starting it cannot fail for want of memory. Forty-nine
+of the fifty-three modules in this tree are like that.
+
+**A module with either gets a copy per process.** `make_module.py` marks it
+`MYRTOS_ATTR_PRIVATE` -- for writable data, for addresses to relocate, or for a
+`.bss` to zero -- and the kernel copies it out of flash and fixes it up before
+the process starts. That is what makes a `static` variable an ordinary variable
+and a C++ vtable an ordinary vtable, at the price of the module's own size in
+RAM for as long as it runs.
+
+[`check_module.py`](../check_module.py) still reads the relocations out of the
+object files, but it now counts what the loader will fix and refuses only what
+it cannot: an absolute relocation of a kind the loader does not know.
 
 This document is about the one constraint that surprises people, because the
 source that breaks it looks entirely ordinary.
@@ -129,15 +139,16 @@ data and its stack. `myrtos_alloc`, `myrtos_free` and `myrtos_realloc` ask for
 more. The kernel records which process each block belongs to, so a process that
 dies -- including one that dies without tidying up -- returns everything.
 
-The two rules meet here. A module may not have writable statics, so this is
-refused by the build:
+A writable static is allowed and costs the module a copy per process:
 
 ```c
-static void *buffer;            // .sbss -- rejected
+static void *buffer;            // .sbss -- the module now needs a copy
 void module_main(void) { buffer = myrtos_alloc(1000); }
 ```
 
-Keep the pointer on the stack, or in the data area the header reserved:
+For a pointer used inside one function that is a poor trade -- the module's whole
+image is copied so that four bytes may be written. Keep it on the stack, or in
+the data area the header reserved:
 
 ```c
 void module_main(void) {
@@ -153,19 +164,23 @@ release another's memory, or the kernel's.
 ## Several source files, and where state goes
 
 A module can be split across files -- pass the extra sources to
-`myrtos_add_module` after the first. Add `__thread` to any variable that has to
-be per process:
+`myrtos_add_module` after the first. There are two ways to give a variable one
+value per process, and they differ by about a thousand to one:
 
 ```c
-static int counter;             // rejected: one copy, shared by every process
-static __thread int counter;    // one per process, and it works across files
+static int counter;             // works: the module gets a copy per process
+static __thread int counter;    // works: four bytes per process, module shared
 ```
 
-`static` does two things: it hides the name and it gives static storage. It is
-the storage that is refused, so making the variable global does not help --
-`int counter;` lands in `.bss` just the same, and is exported besides. One copy
-of the code is shared by every process running it, so the variable would be
-shared too.
+Both are correct. `__thread` puts the variable in a block the kernel allocates
+per process and points `tp` at, which costs the bytes of the variable. A plain
+`static` makes the module writable, so every process running it needs its own
+copy of the whole image -- a few hundred bytes for a small utility, seven
+kilobytes for the shell.
+
+Prefer `__thread` for state a module carries, and reach for a plain `static`
+when the code is clearer for it or when something else has already made the
+module private anyway.
 
 `__thread` changes where it lives, not how it is written. The linker gathers
 the thread-local variables from every source file into one block and gives each
@@ -449,16 +464,17 @@ silently: the module built, loaded and registered, and then could not be run,
 because no name anyone could type would ever match it. The build refuses it
 now, and says what the name would have become.
 
-## The other rule
+## The other cost
 
-A module may not have writable data. `.data`, `.bss`, `.sdata` and `.sbss` must
-all be empty, because two processes sharing the code would write to the same
-variables. Anything a process needs to keep goes in its own memory area, which
-the module header asks for with `mem_size`.
+Writable data is what decides whether a module is shared or copied. `.data`,
+`.bss`, `.sdata` and `.sbss` empty means one copy in flash serves every process;
+anything in them means each process needs an image of its own, because otherwise
+they would all be writing to the same variables.
 
-A `static int counter;` in a module is refused by the same check. Note which
-section it lands in: small objects go to `.sbss` rather than `.bss` on this
-target, which is why the check looks at all four.
+That used to be a rule and is now a price. `check_module.py` says which section
+the data landed in and that the module will need a copy, and the build carries
+on. Note which section a small object goes to: `.sbss` rather than `.bss` on
+this target, which is why all four are looked at.
 
     MODULE IS NOT POSITION INDEPENDENT:
       badtest_app.elf: writable section .sbss is present
@@ -499,13 +515,13 @@ default four kilobytes that is small, and `MYRTOS_MEM_SIZE` raises the ceiling
 when it is not.
 
 **strtok is the one that catches people out.** Written the usual way it keeps a
-`static char *` between calls, and the module is refused:
+`static char *` between calls, and four bytes of hidden state make the whole
+module private:
 
-    MODULE IS NOT SHAREABLE:
-      d.elf: writable section .sbss is present
+      d.elf: writable section .sbss is present -- needs a copy per process
 
-A program that brings its own `strtok` is refused for exactly that reason.
-`myrtos_string.h` keeps that state in `__thread` instead, and offers `strtok_r`,
+A program that brings its own `strtok` pays that for four bytes.
+`myrtos_string.h` keeps the state in `__thread` instead, and offers `strtok_r`,
 which keeps it in the caller's own variable and needs nothing hidden at all.
 
 **The rule of thumb: `__thread` for code you write, `SINGLE` for code you
@@ -519,16 +535,16 @@ instance running at a time, which for a utility is no price.
 `static` or not makes no difference. It changes linkage, not storage, and what
 the module format cares about is storage. Measured, both compilers agreeing:
 
-| At file scope | Verdict | Why |
+| At file scope | Costs | Why |
 |---|---|---|
-| `int g;` | refused | `.bss`, writable and shared |
-| `int g = 7;` | refused | `.data`, the same |
-| `const int t[] = {...}` | fine | `.rodata`, shared deliberately |
-| `const char *n[] = {...}` | refused | a table of addresses |
-| `const char n[2][4] = {...}` | fine | characters, no addresses |
-| `__thread int g;` | fine | one per process, through `tp` |
+| `int g;` | a copy per process | `.bss`, writable |
+| `int g = 7;` | a copy per process | `.data`, the same |
+| `const int t[] = {...}` | nothing | `.rodata`, shared deliberately |
+| `const char *n[] = {...}` | 8 bytes an entry, on the card | a table of addresses |
+| `const char n[2][4] = {...}` | nothing | characters, no addresses |
+| `__thread int g;` | its own size, per process | one per process, through `tp` |
 
-The refusals are for two different reasons, and they are different *properties*:
+The two costs are different in kind, and they are different *properties*:
 
 **Position independent** means the module holds no absolute addresses, so it
 runs wherever it is loaded. That is about relocations, and it is what
@@ -580,30 +596,34 @@ So `-fno-pic -mcmodel=medany` means the same thing to both: statics are reached
 PC-relatively, and per-process variables go through `tp` exactly as this document
 describes. Nothing about the module format changes.
 
-What must be refused still is, under both:
+What each of these costs is the same under both:
 
-    static int counter;                  .bss -- writable, and two processes
-                                         sharing the code would share it
-    static const char *const names[]     R_RISCV_32 in .rela.rodata
+    static int counter;                  .bss -- writable, so the module is
+                                         copied per process
+    static const char *const names[]     R_RISCV_32 in .rela.rodata, fixed by
+                                         the loader
 
-A writable static is not a relocation problem and no compiler flag fixes it. It
-is refused because the module is *shared*, and that is a property of how myrtos
+The two are different in kind and it is worth keeping them apart. The
+relocation is fixed by the loader and costs eight bytes on the card. The
+writable static is not a relocation problem and no compiler flag touches it: it
+decides whether the module can be shared, which is a property of how myrtos
 loads it rather than of how the code was built.
 
-### Clang, and the relative vtables that would fix this
+### Clang, and the relative vtables that were the way round this
 
 Tried, and worth writing down. Homebrew's LLVM 23 has a riscv32 backend, and
-**every C module here compiles with it and passes `check_module.py`** given two
-flags beyond the ones GCC gets: `-std=gnu23`, because clang defaults to an older
-C where `bool` is not a keyword, and `-fno-jump-tables`.
+**every C module here compiles with it and passes `check_module.py`** given one
+flag beyond the ones GCC gets: `-std=gnu23`, because clang defaults to an older
+C where `bool` is not a keyword.
 
-That second one is the interesting failure. `sh` came out with 97 `R_RISCV_32`
-in `.rela.rodata`, all pointing at one label: clang had turned a `switch` into a
-table of absolute addresses. It is the same shape as a hand-written table of
-function pointers and refused for the same reason. Worth noting that **GCC is
-not given `-fno-jump-tables` either** -- it has simply not emitted one yet, which
-is luck rather than design. The checker would catch it, as a puzzling build
-failure rather than a bug.
+There was a second, `-fno-jump-tables`, and its story is the whole change in
+miniature. `sh` came out with 97 `R_RISCV_32` in `.rela.rodata`, all pointing at
+one label: clang had turned a `switch` into a table of absolute addresses, the
+same shape as a hand-written table of function pointers. That was refused, so
+the flag was given and the code the compiler wanted was not generated. The
+loader relocates such a table now, so the flag is gone and the 97 addresses cost
+776 bytes on the card. GCC was never given the flag and has simply not emitted a
+jump table here, which was always luck rather than design.
 
 On vtables, clang has `-fexperimental-relative-c++-abi-vtables`, which is real
 and does exactly what it says. Measured on a virtual call the compiler cannot
@@ -662,16 +682,19 @@ A class with three virtual methods and no static instance now gets:
 
     vt.elf: position independent and shareable
 
-The same source through gcc is refused on `.rela.rodata._ZTV4Base`. **That is
-the first C++ with virtual functions this module format can accept at all.**
-Every existing module still passes unchanged.
+The same source through gcc was refused on `.rela.rodata._ZTV4Base`, and for a
+while this was the only way to have virtual functions at all.
 
-One caution that has nothing to do with vtables: a **static instance** of such a
-class puts an absolute vtable pointer in its own `.data`, and is writable data
-besides. Relative vtables fix the table, not the object.
+**It was never quite enough, and the loader has since made it unnecessary.**
+Relative vtables fix the table, not the object: a static instance of such a
+class still puts an absolute pointer to its vtable in its own `.data`. Measured
+on a real virtual call -- six `R_RISCV_32` with plain vtables, two with relative
+ones, never none. The flag is gone, and so is `-fno-jump-tables`; a plain vtable
+is four addresses the loader fixes, and `vtdemo` is the module that shows it.
 
-The C flags are unchanged and still both needed. Re-measured on `sh`: 97
-`R_RISCV_32` without `-fno-jump-tables`, none with it.
+The measurement that justified `-fno-jump-tables` still stands and now points
+the other way: `sh` has 97 `R_RISCV_32` without it. That is 776 bytes of table
+on the card in exchange for the code the compiler wanted to generate.
 
 ## Choosing the compiler, per module
 
@@ -727,15 +750,16 @@ implied because the first write brings a file into being.
 
     __thread int errno;
 
-exactly as a C library would define it for you. It cannot be a plain static: a
-shareable module may not have writable data. In `cat` it costs four bytes of
-`.tbss`, and each process running the module gets its own -- which is more
-nearly right than a global errno would be in a single address space.
+exactly as a C library would define it for you. A plain static would work too
+and would cost `cat` a copy of itself per process; four bytes of `.tbss` costs
+almost nothing, and each process running the module gets its own -- which is
+more nearly right than a global errno would be in a single address space.
 
 Still missing before a real port: `FILE` and stdio, `malloc`, `string.h`,
-`ctype.h`. And the larger obstacle is not the API but the module format -- see
-"The other rule" above. Code with file-scope variables comes in as a `SINGLE`
-module, which is allowed writable data at the price of one instance at a time.
+`ctype.h`. What used to stand in the way besides was the module format -- code
+with file-scope variables had to come in as a `SINGLE` module, one instance at a
+time. It does not any more: such code is an ordinary module that is copied per
+process, and only its size decides whether that matters.
 
 ## stdio, and where a FILE lives
 
@@ -816,9 +840,9 @@ its size, because the kernel knows it but through no call a module can make, and
 
 `modules/libctest/libctest.c` checks all of it against what the standard says
 and prints ok or FAIL per line, because eyeballing printf output is how a wrong
-width goes unnoticed for a year. It is also a worked example of the rule above:
-its failure counter had to become `static __thread`, since `check_module.py`
-refused the file while it was a plain static.
+width goes unnoticed for a year. Its failure counter is `static __thread`, which
+it had to be when a plain static was refused outright; it stays that way because
+four bytes of thread-local is a better trade than a copy of the module.
 
 Still absent: floating point in printf and scanf, `qsort`, `time`, and `"+"`
 stream modes.
@@ -1020,15 +1044,14 @@ fall back on.
 
 ## In D, the problem does not arise at all
 
-The whole of this document is about one thing: a module may not have writable
-data, because one copy of the code serves every process running it. In C that
-means `__thread` on every variable that needs to be per-process, a checker to
-catch the ones that were forgotten, and the sections above explaining what goes
-wrong when they are.
+Much of this document is about one thing: a variable a module keeps should be
+per-process, and the cheap way to get that is thread-local storage. In C it
+means `__thread` on each such variable, and remembering to write it -- a plain
+static works, but pays for four bytes with a copy of the whole module.
 
 D puts every module-level and static variable in thread-local storage unless it
 is marked `__gshared`. Not as an option -- as the language's default. So the
-rule this document exists to teach is, in D, the thing you get by writing
+habit this document exists to teach is, in D, the thing you get by writing
 nothing at all.
 
 ```d

@@ -7,9 +7,13 @@
 //! The variable is the point. `calls` below is `threadlocal`, and Zig gives that
 //! TPREL relocations on a freestanding riscv32 target with no flag asked for --
 //! the same ones __thread produces in C, and the ones LDC only produces when
-//! told --fthread-model=local-exec. Take the keyword away and it becomes an
-//! ordinary shared static, and check_module.py refuses the module. Zig has no
-//! way to make every variable thread-local; that remains D's alone.
+//! told --fthread-model=local-exec.
+//!
+//! Take the keyword away and it becomes an ordinary shared static. That is
+//! allowed: the module is marked private and copied per process, so the count
+//! is still per process -- but a copy of the whole module is a poor way to buy
+//! four bytes. Zig has no way to make every variable thread-local; that remains
+//! D's alone.
 const m = @import("myrtos");
 
 comptime {

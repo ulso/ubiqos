@@ -6,11 +6,13 @@
 //
 // That last one is the point of D being here at all. `calls` below is an
 // ordinary module-level variable with no annotation, and D puts it in
-// thread-local storage: the object comes out with .tbss and no .bss, and
-// check_module.py calls the module shareable. The same declaration in C is a
-// writable static, is shared between every process running the module, and is
-// refused. In C the fix is __thread on each variable and a checker to catch
-// what was forgotten; in D there is nothing to forget.
+// thread-local storage: the object comes out with .tbss and no .bss, so the
+// module stays shared -- one copy in flash for every process running it.
+//
+// The same declaration in C is a writable static. That works too now, and costs
+// the module a copy of itself per process to hold four bytes. In C the cheap
+// way is __thread on each variable and remembering to write it; in D there is
+// nothing to remember.
 module dhello;
 
 import myrtos;
