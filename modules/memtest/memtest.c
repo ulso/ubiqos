@@ -5,6 +5,7 @@
 //   memtest         allocate, write, grow, verify, release
 //   memtest leak    allocate and exit without freeing, on purpose
 //   memtest bulk N  take N kB from PSRAM, fill it, read it back
+//   memtest reserve  write and verify the half megabyte the pool withholds
 //
 // The second mode is the interesting one: run free before and after and the
 // largest block should be unchanged, because dying returns what dying takes.
@@ -25,7 +26,7 @@ static bool eq(const char *a, const char *b) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: memtest [leak | bulk KB]\n\n  (none)     allocate, write, grow, verify, release\n  leak       allocate and exit without freeing, on purpose\n  bulk KB    take KB from PSRAM, fill it, read it back\n")) return;
+            "usage: memtest [leak | bulk KB | reserve]\n\n  (none)     allocate, write, grow, verify, release\n  leak       allocate and exit without freeing, on purpose\n  bulk KB    take KB from PSRAM, fill it, read it back\n  reserve    write and verify the region the pool withholds\n")) return;
 
     if (argc == 2 && eq(argv[1], "leak")) {
         for (int i = 0; i < 4; i++) {
@@ -33,6 +34,43 @@ void module_main(int argc, char **argv) {
         }
         say("leaked 4 x 2000 bytes on purpose", 0, false);
         return;                      // no frees; the kernel must reclaim
+    }
+
+    // The region at MYRTOS_SINGLE_BASE, which the bulk pool is told to stop
+    // short of. Nothing is linked there and nothing allocates from it, so it can
+    // be written freely -- and the question it answers is whether the top of
+    // PSRAM is really there, which handing it to the allocator would otherwise
+    // ask at boot with no way to see the answer.
+    //
+    // The pattern is derived from the address, so a region that aliases a lower
+    // one fails on the read-back rather than passing quietly.
+    if (argc == 2 && eq(argv[1], "reserve")) {
+        volatile uint32_t *p = (volatile uint32_t *)MYRTOS_SINGLE_BASE;
+        uint32_t words = MYRTOS_SINGLE_RESERVE / 4;
+
+        say("writing ", MYRTOS_SINGLE_RESERVE / 1024, true);
+        for (uint32_t i = 0; i < words; i++)
+            p[i] = ((uint32_t)(uintptr_t)&p[i]) ^ 0xa5a5a5a5u;
+
+        uint32_t bad = 0, first = 0;
+        for (uint32_t i = 0; i < words; i++) {
+            uint32_t want = ((uint32_t)(uintptr_t)&p[i]) ^ 0xa5a5a5a5u;
+            if (p[i] != want) {
+                if (!bad) first = (uint32_t)(uintptr_t)&p[i];
+                bad++;
+            }
+        }
+        if (bad) {
+            say("words wrong: ", bad, true);
+            say("first at ", first, true);
+        } else {
+            say("all of it reads back what was written", 0, false);
+        }
+
+        // And the two ends, in case the middle is fine and the edges are not.
+        say("first word ", p[0], true);
+        say("last word  ", p[words - 1], true);
+        return;
     }
 
     if (argc == 3 && eq(argv[1], "bulk")) {

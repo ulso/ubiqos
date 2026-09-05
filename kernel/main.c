@@ -199,15 +199,19 @@ static void myrtos_bulk_pool_init(void) {
         return;
     }
     psram_bytes = (uint32_t)psram_get_size();
-    // Half a megabyte at the top is still kept back, and for now that is
-    // deliberate caution rather than a need: nothing is linked there any more,
-    // since a single-instance module is copied and relocated like any other.
-    // Handing it to the allocator is a separate change from relocating those
-    // modules, and mixing the two made a board that would not boot impossible
-    // to attribute. Reclaim it once the rest is known good.
+    // All of it. Half a megabyte used to be kept back for the one address a
+    // single-instance module could be linked at; such a module is copied and
+    // relocated like any other now, so there is nothing left to reserve.
+    //
+    // The one-instance rule stays, and is now caution rather than necessity:
+    // each instance would get its own relocated copy, so the shared writable
+    // data the rule exists to prevent is no longer shared. Lifting it is a
+    // separate decision about what a service module means.
+    //
+    // The memory is real: 'memtest reserve' wrote an address-derived pattern
+    // through the whole region and read every word back, both ends included,
+    // before this line changed.
     uint32_t pool_bytes = psram_bytes;
-    if (MYRTOS_PSRAM_BASE + psram_bytes >= MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_RESERVE)
-        pool_bytes = MYRTOS_SINGLE_BASE - MYRTOS_PSRAM_BASE;
     myrtos_bulk_pool = myrtos_tlsf_create((void*)MYRTOS_PSRAM_BASE, pool_bytes);
     myrtos_print("PSRAM: ");
     myrtos_print_u32(psram_bytes / 1024);
