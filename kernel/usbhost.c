@@ -210,12 +210,31 @@ int32_t myrtos_usbhost_cdc_index(void);
 // has finished and the host stack has not yet noticed cannot be mistaken for it.
 uint32_t myrtos_cdc_rearms;
 
+// How many times a silent dongle is asked again before it is left alone.
+//
+// The re-arm fires about nine times a second, so this is a few seconds of
+// trying -- long enough for a device that is merely wedged, and bounded, which
+// the first version was not. Measured on a dongle that had stopped answering:
+// 3047 re-arms, then 3220 twenty seconds later, and it would have gone on until
+// the power was cut. A recovery with no way to give up is not a recovery.
+#define CDC_REARM_LIMIT 32
+
+uint32_t myrtos_cdc_gaveup;
+
 static void cdc_rearm(void) {
     static uint8_t idle_sweeps;
+    static uint16_t attempts;
 
+    // Every one of these means the endpoint is healthy or the device is gone,
+    // and either way the count starts again -- so a dongle that is unplugged
+    // and put back gets the same patience as the first time.
     int32_t idx = myrtos_usbhost_cdc_index();
-    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) { idle_sweeps = 0; return; }
-    if (tuh_cdc_read_available((uint8_t)idx))      { idle_sweeps = 0; return; }
+    if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) {
+        idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return;
+    }
+    if (tuh_cdc_read_available((uint8_t)idx)) {
+        idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return;
+    }
 
     tuh_itf_info_t info;
     if (!tuh_cdc_itf_get_info((uint8_t)idx, &info)) { idle_sweeps = 0; return; }
@@ -232,10 +251,17 @@ static void cdc_rearm(void) {
         if (e->attr != 2) continue;
         if (!e->has_transfer) stalled = true;
     }
-    if (!stalled)             { idle_sweeps = 0; return; }
+    if (!stalled) { idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return; }
     if (++idle_sweeps < 2)    return;
 
     idle_sweeps = 0;
+
+    // Out of patience. Nothing is torn down -- taking a device away from
+    // TinyUSB while it believes it owns one is what has produced an ebreak
+    // twice today -- it is simply left alone, and usbstat says so.
+    if (attempts >= CDC_REARM_LIMIT) { myrtos_cdc_gaveup = 1; return; }
+    attempts++;
+
     tuh_cdc_read_clear((uint8_t)idx);
     myrtos_cdc_rearms++;
 }
@@ -571,6 +597,7 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
     if (what == MYRTOS_USB_REARMS)     return myrtos_hid_rearms;
     if (what == MYRTOS_USB_RECOVERIES) return myrtos_hid_recoveries;
     if (what == MYRTOS_USB_CDCREARMS)  return myrtos_cdc_rearms;
+    if (what == MYRTOS_USB_CDCGIVEUP)  return myrtos_cdc_gaveup;
     if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
     if (what == MYRTOS_USB_KEYSIN)     return head;
 

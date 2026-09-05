@@ -27,6 +27,8 @@ void module_main(void) {
     kv("rearms:         ", myrtos_usbinfo(MYRTOS_USB_REARMS));
     kv("recoveries:     ", myrtos_usbinfo(MYRTOS_USB_RECOVERIES));
     kv("cdc re-arms:    ", myrtos_usbinfo(MYRTOS_USB_CDCREARMS));
+    if (myrtos_usbinfo(MYRTOS_USB_CDCGIVEUP))
+        myrtos_write_str(MYRTOS_STDOUT, "cdc:            given up, not asking again\n");
 
     uint32_t rk = myrtos_usbinfo(MYRTOS_USB_REPEATKEY);
     myrtos_line_t l;
