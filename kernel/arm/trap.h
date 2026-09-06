@@ -125,4 +125,27 @@ static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
     f->exc_return = ARM_EXC_RETURN_THREAD_PSP;
 }
 
+// The kernel stops being the kernel and becomes the idle process. On RISC-V
+// there is nothing to do: one stack pointer serves thread and trap alike, and
+// the kernel simply keeps running until a timer interrupt takes the frame it is
+// standing on. Here a process must be on PSP, because that is where the trap
+// vector looks -- and until this runs, PSP has never been written, so the first
+// exception of any kind would save its frame through an uninitialised pointer.
+//
+// PSP takes the stack we are already on, so nothing is copied and no local goes
+// out from under us; only the name of the pointer changes. CONTROL bit 1 is
+// SPSEL, and bit 0 is left clear so thread mode stays privileged, which the
+// kernel-as-idle-process needs. The ISB is required: CONTROL is not in effect
+// for instructions already in the pipeline.
+static inline void myrtos_arch_become_process(void)
+{
+    __asm__ volatile(
+        "mrs r0, msp\n"
+        "msr psp, r0\n"
+        "movs r0, #2\n"
+        "msr control, r0\n"
+        "isb\n"
+        ::: "r0", "memory");
+}
+
 #endif

@@ -82,4 +82,9 @@ static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
     f->tp = tls;
 }
 
+// Nothing to become. One stack pointer serves both, and the kernel is already
+// running on the stack the first timer trap will save a frame onto. See the
+// ARM half for what this costs on a machine with two stack pointers.
+static inline void myrtos_arch_become_process(void) { }
+
 #endif

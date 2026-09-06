@@ -396,6 +396,13 @@ void myrtos_kernel_main(void) {
 
     myrtos_print("Trap handlers installed in the SDK vector table.\n");
 
+    // Become the idle process before anything can trap -- before interrupts are
+    // switched on, and before the self-test below makes the first system call.
+    // On RISC-V this is nothing; on ARM it is what puts the kernel on the stack
+    // pointer the trap vector reads, and the vector cannot work until it has
+    // happened. See the trap.h for whichever machine this is.
+    myrtos_arch_become_process();
+
     // Interrupts must be enabled globally before USB starts; individual sources
     // are enabled by whoever needs them. The timer would otherwise do it later.
     //
