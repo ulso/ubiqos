@@ -32,8 +32,40 @@
 __attribute__((aligned(8)))
 uint32_t myrtos_irq_stack[MYRTOS_IRQ_STACK_WORDS];
 
+// System handler priority registers. SVCall is the top byte of SHPR2; PendSV
+// and SysTick are the third and top bytes of SHPR3.
+#define ARM_SCB_SHPR2  (*(volatile uint32_t *)0xE000ED1Cu)
+#define ARM_SCB_SHPR3  (*(volatile uint32_t *)0xE000ED20u)
+
+// The scheduler must not outrank the devices, and on this machine it does by
+// default: every system handler resets to priority 0, the highest there is,
+// while the SDK gives every peripheral interrupt PICO_DEFAULT_IRQ_PRIORITY,
+// which is 0x80. So SysTick -- once a millisecond, for ever -- preempts every
+// driver in the system.
+//
+// For most drivers that is merely rude. For the USB host it is fatal. PIO-USB
+// receives a packet in a tight loop against the state machine's FIFO, and that
+// loop cannot be paused: a scheduler pass in the middle of an IN transfer is
+// tens of microseconds, the packet is gone, and the endpoint's failed_count
+// climbs. It looked exactly like a keyboard that enumerates, mounts, arms its
+// endpoint, gets polled for ever and never delivers a report.
+//
+// RISC-V never had this. Hazard3 does not put the machine timer above external
+// interrupts, so the same code came out the other way round -- which is why
+// this is written here and has no counterpart on that side.
+//
+// 0xFF is the lowest priority the machine offers whatever number of priority
+// bits it implements. Delaying a tick behind a device is the right trade: the
+// tick is a quantum boundary and can wait, and a USB packet cannot.
+#define MYRTOS_SCHED_PRIORITY  0xFFu
+
 void myrtos_arch_become_process(void)
 {
+    ARM_SCB_SHPR2 = (ARM_SCB_SHPR2 & 0x00FFFFFFu) | (MYRTOS_SCHED_PRIORITY << 24);
+    ARM_SCB_SHPR3 = (ARM_SCB_SHPR3 & 0x0000FFFFu)
+                  | (MYRTOS_SCHED_PRIORITY << 16)     // PendSV
+                  | (MYRTOS_SCHED_PRIORITY << 24);    // SysTick
+
     // PSP takes the stack we are standing on, so nothing is copied and no local
     // goes out from under us -- only the name of the pointer changes. CONTROL
     // bit 1 is SPSEL; bit 0 stays clear so thread mode remains privileged,
