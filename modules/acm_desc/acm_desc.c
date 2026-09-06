@@ -15,7 +15,7 @@ __attribute__((section(".rodata.descriptor"), used))
 const acm_descriptor_t acm_descriptor = {
     .desc = {
         .device_name   = "acm",
-        .driver_name   = "ACM     MOD",
+        .driver_name   = "acm",
         .device_class  = MYRTOS_CLASS_CHAR,
         .reserved      = 0,
         .config_offset = 0,

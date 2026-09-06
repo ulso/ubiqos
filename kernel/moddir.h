@@ -1,6 +1,7 @@
 #ifndef MYRTOS_MODDIR_H
 #define MYRTOS_MODDIR_H
 
+#include "../common/myrtos_abi.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include "../common/modules.h"
@@ -41,7 +42,7 @@ typedef struct {
     const myrtos_module_header_t *header;
     uint32_t links;             // how many processes are running it
     void    *owned;             // heap memory to give back, NULL if resident
-    char     name[12];
+    char     name[MYRTOS_NAME_LEN];
     bool     transient;         // adopted from flash for as long as it is in use
 } myrtos_module_entry_t;
 

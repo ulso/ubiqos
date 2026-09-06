@@ -19,7 +19,7 @@
 #define MYRTOS_PATH_NONE   (-1)
 
 typedef struct {
-    const char *module_name;    // what the descriptor refers to: "UART    MOD"
+    const char *module_name;    // what the descriptor refers to: "uart"
     int32_t (*configure)(const void *config, uint32_t size);
     int32_t (*open)(void);
     int32_t (*write)(const uint8_t *buf, uint32_t len);

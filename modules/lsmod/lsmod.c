@@ -25,7 +25,7 @@ void module_main(void) {
     myrtos_line_t line;
     myrtos_line_reset(&line);
     myrtos_line_str(&line, "\nModule directory:\n"
-                           "  name      type  rev  links  bytes\n");
+                           "  name             type  rev  links  bytes\n");
     myrtos_line_flush(MYRTOS_STDOUT, &line);
 
     for (uint32_t i = 0; ; i++) {
@@ -34,11 +34,16 @@ void module_main(void) {
 
         myrtos_line_reset(&line);
         myrtos_line_str(&line, "  ");
-        // Eight characters, not eleven: the last three are the 8.3 extension,
-        // and it says MOD on every module ever made. What the reader wants
-        // there is the type, which the header knows and the name never did.
-        myrtos_line_chars(&line, m.name, 8);
-        myrtos_line_str(&line, "  ");
+        // The name as it is, then spaces to the column. It used to be eight
+        // characters copied raw, which worked only because a name was padded to
+        // eleven in store -- the last three being the 8.3 extension, which said
+        // MOD on every module ever made. Names are terminated now, so copying a
+        // fixed count would put the terminator and whatever follows it on the
+        // screen.
+        uint32_t namelen = 0;
+        while (m.name[namelen]) namelen++;
+        myrtos_line_chars(&line, m.name, namelen);
+        pad(&line, namelen, 17);
         myrtos_line_str(&line, myrtos_type_name(m.type));
         myrtos_line_str(&line, "   ");
         myrtos_line_u32(&line, m.revision);

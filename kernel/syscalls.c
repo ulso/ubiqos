@@ -528,7 +528,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             const myrtos_module_entry_t *e = myrtos_moddir_entry(frame->a0);
             if (!e) { frame->a0 = (uint32_t)-1; break; }
             myrtos_modinfo_t *out = (myrtos_modinfo_t*)(uintptr_t)frame->a1;
-            for (int i = 0; i < 12; i++) out->name[i] = e->name[i];
+            for (int i = 0; i < MYRTOS_NAME_LEN; i++) out->name[i] = e->name[i];
             out->links = e->links;
             out->revision = e->header->revision;
             out->size = e->header->module_size;

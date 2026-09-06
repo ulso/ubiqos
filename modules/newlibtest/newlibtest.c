@@ -34,7 +34,7 @@ static int by_int(const void *a, const void *b)
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
-    printf("newlibc: the C library, not the subset\n");
+    printf("newlibtest: the C library, not the subset\n");
 
     int v[] = { 42, 7, 99, 1, 13 };
     qsort(v, 5, sizeof v[0], by_int);
@@ -151,6 +151,6 @@ int main(int argc, char **argv)
     check("time advances over a sleep", t1 >= t0 + 1 && t1 <= t0 + 3);
     check("clock advances too", c1 > c0);
 
-    printf(failures ? "newlibc: FAILED\n" : "newlibc: passed\n");
+    printf(failures ? "newlibtest: FAILED\n" : "newlibtest: passed\n");
     return failures ? 1 : 0;
 }

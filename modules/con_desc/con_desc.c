@@ -16,7 +16,7 @@ __attribute__((section(".rodata.descriptor"), used))
 const con_descriptor_t con_descriptor = {
     .desc = {
         .device_name   = "con",
-        .driver_name   = "CONSOLE MOD",
+        .driver_name   = "console",
         .device_class  = MYRTOS_CLASS_CHAR,
         .reserved      = 0,
         .config_offset = 0,

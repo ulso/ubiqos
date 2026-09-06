@@ -355,6 +355,7 @@ function(myrtos_add_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
         COMMENT "Building module ${name}.mod")
 
     # Built, and therefore able to be resident. A module whose toolchain is
@@ -508,6 +509,7 @@ function(myrtos_add_clang_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
         COMMENT "Building module ${name}.mod (clang)")
 
     # Built, and therefore able to be resident. A module whose toolchain is
@@ -704,6 +706,7 @@ function(myrtos_add_d_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
         COMMENT "Building module ${name}.mod (D)")
 
     # Built, and therefore able to be resident. A module whose toolchain is
@@ -851,6 +854,7 @@ function(myrtos_add_zig_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
         COMMENT "Building module ${name}.mod (Zig)")
 
     # Built, and therefore able to be resident. A module whose toolchain is
@@ -891,6 +895,7 @@ function(myrtos_add_data_module name source)
                 "${name}" --data
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
         COMMENT "Building data module ${name}.mod")
 
     # Built, and therefore able to be resident. A module whose toolchain is
@@ -933,7 +938,7 @@ myrtos_add_module(libctest modules/libctest/libctest.c)
 
 # The same ground covered by the other library: qsort, bsearch, strdup and a
 # real fopen, none of which the header-only subset has.
-myrtos_add_module(newlibc modules/newlibc/newlibc.c NEWLIB)
+myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 
 # Atto, an emacs in two thousand lines of public-domain C, built as an ordinary
 # module. See modules/atto/README.md for what a C program needs to get here.
@@ -1139,7 +1144,7 @@ set(MYRTOS_RESIDENT
     tlsftest
     more
     libctest
-    newlibc
+    newlibtest
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory

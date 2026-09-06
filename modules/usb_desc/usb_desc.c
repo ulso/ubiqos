@@ -5,7 +5,7 @@
 __attribute__((section(".rodata.descriptor"), used))
 const myrtos_descriptor_t usb_descriptor = {
     .device_name   = "usb",
-    .driver_name   = "USBCDC  MOD",
+    .driver_name   = "usbcdc",
     .device_class  = MYRTOS_CLASS_CHAR,
     .reserved      = 0,
     .config_offset = 0,

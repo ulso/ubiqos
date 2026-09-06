@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+import re
 import sys
 import struct
 
@@ -111,6 +113,18 @@ def tls_layout(elf_path, nm_tool):
     bases = [int(b.group(1), 16)
              for b in re.finditer(r"^\s*LOAD\s+\S+\s+0x(\S+)", out, re.M)]
     return vaddr - min(bases), init, total
+
+
+# A constant out of common/myrtos_abi.h, so that this script and the kernel
+# cannot disagree about it. The header is beside this file.
+def abi_constant(name):
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "common", "myrtos_abi.h")
+    with open(path) as f:
+        m = re.search(r"^#define\s+%s\s+(\d+)" % re.escape(name), f.read(), re.M)
+    if not m:
+        sys.exit(f"{name} not found in {path}")
+    return int(m.group(1))
 
 
 def elf_machine(elf_path, nm_tool):
@@ -348,14 +362,26 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if len(code_bytes) % 4 != 0:
         code_bytes += b'\x00' * (4 - (len(code_bytes) % 4))
 
-    # Eight characters, because the module directory holds names in the 8.3 form
-    # a FAT card gives them. A longer name was silently cut short: the module
-    # built, loaded and registered, and then could not be run because no name
-    # the user could type would ever match it.
-    if len(module_name) > 8:
-        sys.exit(f"module name '{module_name}' is longer than 8 characters; "
-                 f"the module directory stores 8.3 names and would cut it to "
-                 f"'{module_name[:8]}'")
+    # Fifteen characters, which is MYRTOS_NAME_LEN minus the terminator.
+    # It was eight until the module directory stopped storing 8.3 names, and a
+    # longer one was silently cut short: the module built, loaded and
+    # registered, and then could not be run, because no name a user could type
+    # would ever match it.
+    NAME_MAX = 15
+    if len(module_name) > NAME_MAX:
+        sys.exit(f"module name '{module_name}' is longer than {NAME_MAX} characters; "
+                 f"the module directory would cut it to '{module_name[:NAME_MAX]}'")
+
+    # A module name is typed at a shell prompt and used as a filename, so it may
+    # hold what both allow and nothing else. The space is refused for the first
+    # reason -- one word at a prompt -- and the rest for the second. It is also
+    # the space that used to make "sh" and "sh      " the same string, which was
+    # a source of bugs for as long as the padding existed.
+    bad = set(' \t/\\:*?"<>|') & set(module_name)
+    if bad or not module_name:
+        sys.exit(f"module name '{module_name}' is not usable: a name must be "
+                 f"non-empty and free of {' '.join(sorted(repr(c) for c in bad)) or 'nothing'}"
+                 f" -- it is typed at a prompt and used as a filename")
 
     name_bytes = module_name.encode('utf-8') + b'\x00'
     if len(name_bytes) % 4 != 0:
@@ -417,7 +443,13 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # High byte: attributes (re-entrant). Low byte: ABI version, which the kernel
 # compares against its own and rejects on a mismatch -- otherwise a module
 # built against an old interface runs until it fails somewhere obscure.
-    MYRTOS_ABI_VERSION = 8
+#
+# Read out of the header rather than written here. It was written here, and the
+# first time the version moved, every module was built claiming the old one and
+# the kernel refused all fifty-two of them -- a whole machine that booted to
+# "Nothing to run". A number that must agree with another number belongs in one
+# place, and the other place asks.
+    MYRTOS_ABI_VERSION = abi_constant("MYRTOS_ABI_VERSION")
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.

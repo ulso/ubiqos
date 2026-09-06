@@ -24,7 +24,7 @@ __attribute__((section(".rodata.descriptor"), used))
 const kbd_descriptor_t kbd_descriptor = {
     .desc = {
         .device_name   = "kbd",
-        .driver_name   = "USBKBD  MOD",
+        .driver_name   = "usbkbd",
         .device_class  = MYRTOS_CLASS_CHAR,
         .reserved      = 0,
         .config_offset = (uint32_t)__builtin_offsetof(kbd_descriptor_t, keymap),

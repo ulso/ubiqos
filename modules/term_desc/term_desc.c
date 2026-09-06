@@ -15,7 +15,7 @@ __attribute__((section(".rodata.descriptor"), used))
 const term_descriptor_t term_descriptor = {
     .desc = {
         .device_name   = "term",
-        .driver_name   = "UART    MOD",
+        .driver_name   = "uart",
         .device_class  = MYRTOS_CLASS_CHAR,
         .reserved      = 0,
         .config_offset = sizeof(myrtos_descriptor_t),

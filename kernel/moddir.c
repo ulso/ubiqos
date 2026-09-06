@@ -28,15 +28,18 @@ static bool name_eq(const char *a, const char *b) {
 // found or run.
 //
 // Padding with spaces and not with zeroes, which was the second half of the
-// same bug: a module name is space-padded to eight, and myrtos_moddir_match
-// decides a shorter name matches by checking that the rest of the field is
-// blank. Zero-filled, the name was clean, printed correctly in lsmod, and still
-// matched nothing.
+// Terminated, not padded. It used to be space-filled to eleven -- eight for the
+// name and three for a FAT extension -- and matching then had to decide that a
+// shorter name fitted by checking the remainder was blank. That equality had to
+// be remembered at every comparison, and was forgotten at least twice: a
+// zero-filled field printed correctly in lsmod and matched nothing at all.
+//
+// A name is now whatever it is, up to MYRTOS_NAME_LEN - 1, and two names are
+// equal when they are the same string.
 static void name_copy(char *dst, const char *src) {
     int i = 0;
-    while (i < 11 && src[i]) { dst[i] = src[i]; i++; }
-    while (i < 11) dst[i++] = ' ';
-    dst[11] = 0;
+    while (i < MYRTOS_NAME_LEN - 1 && src[i]) { dst[i] = src[i]; i++; }
+    dst[i] = 0;
 }
 
 void myrtos_moddir_init(void) {
@@ -52,9 +55,9 @@ void myrtos_moddir_init(void) {
 // own link counts, and which one ran depended on the order they were found in.
 static myrtos_module_entry_t *entry_named(const char *name) {
     for (uint32_t i = 0; i < module_count; i++) {
-        bool same = true;
-        for (int j = 0; j < 11; j++) if (modules[i].name[j] != name[j]) same = false;
-        if (same) return &modules[i];
+        const char *a = modules[i].name, *b = name;
+        while (*a && *a == *b) { a++; b++; }
+        if (!*a && !*b) return &modules[i];
     }
     return 0;
 }
@@ -172,33 +175,27 @@ bool myrtos_moddir_add_image(uint8_t *image, uint32_t len, const char *name) {
 
 static char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
 
+// Case-insensitive, and equal means the same string. What a user types is
+// matched this way because a card gives names in whatever case it stored them.
+static bool name_eq_ci(const char *a, const char *b) {
+    while (*a && lower(*a) == lower(*b)) { a++; b++; }
+    return !*a && !*b;
+}
+
 static myrtos_module_entry_t *adopt_from_flash(const char *name);
 
 const char *myrtos_moddir_match(const char *user_name) {
     for (uint32_t i = 0; i < module_count; i++) {
-        const char *stored = modules[i].name;
-        int k = 0;
-        while (k < 8 && user_name[k] && lower(stored[k]) == lower(user_name[k])) k++;
-        // A match when the user's name has run out and the rest of the module
-        // name is padding.
-        if (user_name[k]) continue;
-        bool rest_blank = true;
-        for (int j = k; j < 8; j++) if (stored[j] != ' ') rest_blank = false;
-        if (rest_blank) return modules[i].name;
+        if (name_eq_ci(modules[i].name, user_name)) return modules[i].name;
     }
 
     // Not registered, so try the image. Adopting it here rather than returning
     // a pointer into a scratch buffer keeps the promise this function has
     // always made: the name it returns stays put, and link can be called with
     // it. Every caller does exactly that.
-    char name[12];
+    char name[MYRTOS_NAME_LEN];
     for (uint32_t i = 0; myrtos_flash_nth(i, name); i++) {
-        int k = 0;
-        while (k < 8 && user_name[k] && lower(name[k]) == lower(user_name[k])) k++;
-        if (user_name[k]) continue;
-        bool rest_blank = true;
-        for (int j = k; j < 8; j++) if (name[j] != ' ') rest_blank = false;
-        if (!rest_blank) continue;
+        if (!name_eq_ci(name, user_name)) continue;
         myrtos_module_entry_t *e = adopt_from_flash(name);
         return e ? e->name : 0;
     }
@@ -273,7 +270,7 @@ void myrtos_moddir_unlink(const myrtos_module_header_t *header) {
 // with anything registered from the card not counted twice.
 uint32_t myrtos_moddir_count(void) {
     uint32_t n = module_count;
-    char name[12];
+    char name[MYRTOS_NAME_LEN];
     for (uint32_t i = 0; myrtos_flash_nth(i, name); i++)
         if (!entry_named(name)) n++;
     return n;
@@ -288,7 +285,7 @@ const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index) {
     // before asking for the next, which is why one of them is enough.
     static myrtos_module_entry_t made_up;
     uint32_t want = index - module_count;
-    char name[12];
+    char name[MYRTOS_NAME_LEN];
     for (uint32_t i = 0; ; i++) {
         const myrtos_module_header_t *m = myrtos_flash_nth(i, name);
         if (!m) return 0;

@@ -24,7 +24,7 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    8
+#define MYRTOS_ABI_VERSION    9
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -102,7 +102,23 @@
 // key back until the next one needs state the driver does not yet keep.
 // Eleven characters and a NUL. Module names, device names and process names are
 // all this long, and the number was written out at each of them.
-#define MYRTOS_NAME_LEN       12
+// A module's name, and a device's. Sixteen rather than twelve, and no longer
+// 8.3: a module name may now be anything a filename may be, minus the space.
+// Twelve was eight characters, three for an extension and a terminator, and
+// every part of that was FAT's rather than ours -- the card could not give a
+// longer name when this was written, and has been able to for days.
+//
+// Sixteen and not more because SRAM decided it. Thirty-two module entries and
+// eight devices with two names each all carry this field, so every byte here
+// costs about forty-eight in the kernel's data; twenty-four took the C heap
+// below the floor check_heap.cmake enforces and the build stopped. Fifteen
+// usable characters is more than any module here wants.
+//
+// The space is left out on purpose. It was the padding that made "sh" and
+// "sh      " the same string, which is the kind of equality that has to be
+// remembered everywhere it is compared; and a name with a space in it cannot be
+// typed as one word at a shell prompt, so it could never have been used.
+#define MYRTOS_NAME_LEN       16
 
 #define MYRTOS_KEYMAP_KEYS    104
 
@@ -128,7 +144,7 @@ typedef struct {
 
 typedef struct __attribute__((packed, aligned(4))) {
     char device_name[MYRTOS_NAME_LEN];   // what a process opens: "term"
-    char driver_name[MYRTOS_NAME_LEN];   // the module handling it: "UART    MOD"
+    char driver_name[MYRTOS_NAME_LEN];   // the module handling it: "uart"
     uint16_t device_class;               // MYRTOS_CLASS_*
     uint16_t reserved;
     uint32_t config_offset;   // from the start of the descriptor to the tail

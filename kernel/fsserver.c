@@ -409,24 +409,38 @@ static bool load_module_from_card(const char *name) {
     const myrtos_fsops_t *ops = myrtos_vfs_module_volume(&vol);
     if (!ops || !ops->stat || !ops->read_at) return false;
 
-    // 8.3, and the card holds it uppercase: sh.mod is SH.MOD.
+    // The name as given, and then the name with .mod after it.
     //
-    // A name past eight characters is refused rather than cut. This used to copy
-    // the first eight and drop the rest, so "hibouair&" -- a mistyped command
-    // line, with the ampersand meant for the shell -- loaded hibouair.mod and
-    // started the scanner. The only sign was the log saying "Loaded hibouair&
-    // from /sd", which reads like success. A module name is eight characters;
-    // nine is a mistake, and the answer to a mistake is no.
-    char file[13];
+    // There is no extension requirement any more. A module file may be called
+    // whatever the module is called, and .mod is a habit the card already has
+    // rather than a rule -- so both are tried, the bare name first.
+    //
+    // What decides whether a file holds a module is the file, not its name:
+    // four bytes are read and compared with the sync code before anything else
+    // happens. That is the check the extension was standing in for, and it is
+    // the real one -- a file called foo.mod containing a photograph was, until
+    // now, read as far as a header before anybody noticed.
+    //
+    // A name too long to be a filename is refused rather than cut. Cutting is
+    // what made "hibouair&" -- a mistyped command line, with the ampersand
+    // meant for the shell -- load hibouair.mod and start the scanner, with the
+    // log reading "Loaded hibouair& from /sd" as though it had worked.
+    char file[MYRTOS_DIRNAME_MAX + 8];
     uint32_t n = 0;
     while (name[n]) {
-        if (n >= 8) return false;
-        char c = name[n];
-        file[n] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+        if (n >= MYRTOS_NAME_LEN - 1) return false;
+        file[n] = name[n];
         n++;
     }
     if (!n) return false;
-    file[n++] = '.'; file[n++] = 'M'; file[n++] = 'O'; file[n++] = 'D'; file[n] = 0;
+    file[n] = 0;
+
+    uint32_t sync = 0;
+    if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != MYRTOS_SYNC_CODE) {
+        file[n] = '.'; file[n+1] = 'm'; file[n+2] = 'o'; file[n+3] = 'd'; file[n+4] = 0;
+        if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != MYRTOS_SYNC_CODE)
+            return false;
+    }
 
     uint32_t size = 0;
     if (ops->stat(file, &size) < 0 || !size) return false;

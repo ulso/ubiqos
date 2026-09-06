@@ -59,7 +59,7 @@ static int32_t term_read(uint8_t *buf, uint32_t len) {
 }
 
 static const myrtos_driver_t driver_uart = {
-    .module_name = "UART    MOD",
+    .module_name = "uart",
     .configure = term_configure,
     .open = term_open, .write = term_write, .read = term_read, .close = term_close
 };
@@ -173,7 +173,7 @@ static int32_t acm_writable(void) {
 }
 
 static const myrtos_driver_t driver_acm = {
-    .module_name = "ACM     MOD",
+    .module_name = "acm",
     .configure = acm_configure,
     .open = acm_open, .write = acm_write, .read = acm_read, .close = acm_close,
     .readable = acm_readable, .writable = acm_writable
@@ -214,21 +214,21 @@ static int32_t null_readable(void) { return 1; }        // the end is always rea
 static int32_t null_at_eof(void)   { return 1; }
 
 static const myrtos_driver_t driver_null = {
-    .module_name = "NULL    MOD",
+    .module_name = "null",
     .configure = 0,
     .open = null_open, .write = null_write, .read = null_read, .close = null_close,
     .readable = null_readable, .at_eof = null_at_eof
 };
 
 static const myrtos_driver_t driver_console = {
-    .module_name = "CONSOLE MOD",
+    .module_name = "console",
     .configure = 0,
     .open = con_open, .write = con_write, .read = con_read, .close = con_close,
     .readable = con_readable, .writable = con_writable
 };
 
 static const myrtos_driver_t driver_kbd = {
-    .module_name = "USBKBD  MOD",
+    .module_name = "usbkbd",
     .configure = kbd_configure,
     .open = kbd_open, .write = kbd_write, .read = kbd_read, .close = kbd_close,
     .readable = kbd_readable
@@ -239,7 +239,7 @@ static int32_t usb_writable(void) {
 }
 
 static const myrtos_driver_t driver_usb = {
-    .module_name = "USBCDC  MOD",
+    .module_name = "usbcdc",
     .configure = usb_configure,
     .open = usb_open, .write = usb_write, .read = usb_read, .close = usb_close,
     .readable = usb_readable, .writable = usb_writable
@@ -250,7 +250,7 @@ static uint32_t driver_count;
 
 // --- DEVICES AND PATHS ----------------------------------------------------
 typedef struct {
-    char name[12];
+    char name[MYRTOS_NAME_LEN];
     const myrtos_driver_t *driver;
     // The process this device's interrupt key should end. A terminal has one:
     // the command running in front of it, which is emphatically not the process
@@ -311,9 +311,19 @@ static bool str_eq(const char *a, const char *b) {
     return *a == *b;
 }
 
-static bool name11_eq(const char *a, const char *b) {
-    for (int i = 0; i < 11; i++) if (a[i] != b[i]) return false;
-    return true;
+// A descriptor names its driver, and the two are equal when they are the same
+// string. This used to compare exactly eleven characters, so every descriptor
+// in the tree wrote the padded 8.3 form by hand -- "uart", four spaces,
+// counted by a human -- and getting the count wrong produced a device that
+// registered and then had no driver.
+static bool name_eq_ci(const char *a, const char *b) {
+    for (;;) {
+        char x = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a;
+        char y = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+        if (x != y) return false;
+        if (!x) return true;
+        a++; b++;
+    }
 }
 
 void myrtos_io_init(void) {
@@ -355,8 +365,9 @@ uint32_t myrtos_io_device_count(void) { return device_count; }
 // registration order and nothing more; nobody should depend on it.
 bool myrtos_io_device_nth(uint32_t index, char *name_out) {
     if (index >= device_count) return false;
-    for (int i = 0; i < 12; i++) name_out[i] = devices[index].name[i];
-    name_out[11] = 0;
+    int i = 0;
+    while (i < MYRTOS_NAME_LEN - 1 && devices[index].name[i]) { name_out[i] = devices[index].name[i]; i++; }
+    name_out[i] = 0;
     return true;
 }
 
@@ -374,7 +385,7 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
 
     const myrtos_driver_t *drv = 0;
     for (uint32_t i = 0; i < driver_count; i++) {
-        if (name11_eq(drivers[i]->module_name, desc->driver_name)) { drv = drivers[i]; break; }
+        if (name_eq_ci(drivers[i]->module_name, desc->driver_name)) { drv = drivers[i]; break; }
     }
     if (!drv) {
         myrtos_print("  no driver named ");
@@ -391,8 +402,9 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
     }
 
     myrtos_device_t *d = &devices[device_count++];
-    for (int i = 0; i < 11; i++) d->name[i] = desc->device_name[i];
-    d->name[11] = 0;
+    int i = 0;
+    while (i < MYRTOS_NAME_LEN - 1 && desc->device_name[i]) { d->name[i] = desc->device_name[i]; i++; }
+    d->name[i] = 0;
     d->driver = drv;
     d->foreground = -1;
 

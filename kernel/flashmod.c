@@ -9,12 +9,17 @@ bool verify_myrtos_header(myrtos_module_header_t *header);
 // The name lives in the module, but moddir wants eleven characters in 8.3
 // form. A module in flash has no filename, so the name is derived from the
 // module's own string.
+// The module's own name, copied. It used to be padded to eight and given the
+// extension "MOD" -- so a module called cxxdemo became "cxxdemo MOD" inside the
+// kernel, and the boot log said "termdescMOD" because that is what it was. The
+// module never carried an extension; this manufactured one, to match the 8.3
+// name the same module would have had coming off a FAT card. Neither end needs
+// it any more.
 static void name_from_module(const myrtos_module_header_t *m, char *out) {
     const char *src = (const char*)m + m->name_offset;
     int i = 0;
-    for (; i < 8 && src[i]; i++) out[i] = src[i];
-    for (; i < 8; i++) out[i] = ' ';
-    out[8] = 'M'; out[9] = 'O'; out[10] = 'D'; out[11] = 0;
+    for (; i < MYRTOS_NAME_LEN - 1 && src[i]; i++) out[i] = src[i];
+    out[i] = 0;
 }
 
 // One step through the image, from *p, which is advanced past the module.
@@ -57,13 +62,13 @@ const myrtos_module_header_t *myrtos_flash_nth(uint32_t index, char *name_out) {
 
 // By the eleven-character directory name, padded, as the directory stores it.
 const myrtos_module_header_t *myrtos_flash_lookup(const char *name) {
-    char n[12];
+    char n[MYRTOS_NAME_LEN];
     for (uint32_t i = 0; ; i++) {
         const myrtos_module_header_t *m = myrtos_flash_nth(i, n);
         if (!m) return 0;
-        bool same = true;
-        for (int j = 0; j < 11; j++) if (n[j] != name[j]) same = false;
-        if (same) return m;
+        const char *a = n, *b = name;
+        while (*a && *a == *b) { a++; b++; }
+        if (!*a && !*b) return m;
     }
 }
 
@@ -98,7 +103,7 @@ uint32_t myrtos_flash_scan(void) {
             break;
         }
 
-        char name[12];
+        char name[MYRTOS_NAME_LEN];
         name_from_module(m, name);
 
         // Only the descriptors are registered. They are what the devices are
