@@ -383,6 +383,14 @@ void tuh_hid_mount_cb(uint8_t addr, uint8_t instance,
     myrtos_print(proto == HID_ITF_PROTOCOL_KEYBOARD
                  ? "USB host: keyboard ready\n" : "USB host: HID device, not a keyboard\n");
     hid_want(addr, instance);
+
+    // Said after the ask and not before it, because the boot has stopped
+    // between these two lines and there was no way to tell which side of
+    // hid_want it was on: the first report being asked for, or TinyUSB
+    // enumerating the next interface. Seen 6 Sep 2026, intermittently, on a
+    // keyboard that presents two HID interfaces. One line at boot is cheap
+    // against a hang that only shows up sometimes.
+    myrtos_print("USB host:   armed\n");
 }
 
 void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
