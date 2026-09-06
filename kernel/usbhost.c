@@ -194,6 +194,12 @@ int32_t myrtos_usbhost_cdc_index(void);
 static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
     for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
         const endpoint_t *e = PIO_USB_ENDPOINT(i);
+        // A closed slot keeps its old dev_addr and ep_num; only size says it is
+        // gone. Matching one would have this sweep looking at an endpoint that
+        // no longer exists, finding nothing on the wire because there is no
+        // wire, and aborting a healthy transfer on the live one every sixteen
+        // passes. _find_ep inside the library tests the same field first.
+        if (!e->size) continue;
         if (e->dev_addr != addr) continue;
         if (!(e->ep_num & 0x80)) continue;
         if ((e->ep_num & 0x7f) == 0) continue;
@@ -704,9 +710,22 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
 
     if (what >= MYRTOS_USB_EP && what < MYRTOS_USB_EP + PIO_USB_EP_POOL_CNT) {
         const endpoint_t *e = PIO_USB_ENDPOINT((int)(what - MYRTOS_USB_EP));
+        // Bit 19 says the slot is in use. Closing an endpoint sets size to zero
+        // and leaves dev_addr and ep_num where they were -- "ep size is used as
+        // valid indicator", says the library, and allocation reuses any slot
+        // whose size is zero. Without this a listing shows every slot that has
+        // ever been used, still wearing the name of whatever last had it.
+        //
+        // Bit 20 says the address belongs to a hub. TinyUSB numbers hubs from
+        // CFG_TUH_DEVICE_MAX + 1, so the first one is device 6 here -- which
+        // looked like a ghost for a whole afternoon and is the most ordinary
+        // thing on the board. Its two endpoints are what every hub has: a
+        // control pipe, and a one-byte interrupt IN carrying a bit per port.
         return (uint32_t)e->dev_addr | ((uint32_t)e->ep_num << 8)
              | ((uint32_t)e->has_transfer << 16) | ((uint32_t)e->transfer_started << 17)
-             | ((uint32_t)e->stalled << 18) | ((uint32_t)e->failed_count << 24);
+             | ((uint32_t)e->stalled << 18) | ((uint32_t)(e->size != 0) << 19)
+             | ((uint32_t)(e->dev_addr > CFG_TUH_DEVICE_MAX) << 20)
+             | ((uint32_t)e->failed_count << 24);
     }
     return 0;
 }

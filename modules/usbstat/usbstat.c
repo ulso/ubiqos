@@ -75,12 +75,18 @@ void module_main(void) {
     for (uint32_t i = 0; i < MYRTOS_USB_EP_COUNT; i++) {
         uint32_t e = myrtos_usbinfo(MYRTOS_USB_EP + i);
         uint32_t dev = e & 0xFF, ep = (e >> 8) & 0xFF;
+        // Bit 19 is the library's own validity test: a closed slot keeps its
+        // old address and endpoint number, and only the size says it is gone.
+        if (!(e & (1u << 19))) continue;
         if (!dev && !ep) continue;
         myrtos_line_reset(&l);
         myrtos_line_str(&l, "endpoint ");
         myrtos_line_u32(&l, i);
         myrtos_line_str(&l, ": device ");
         myrtos_line_u32(&l, dev);
+        // Named, because an unexplained high address on a board with an onboard
+        // hub reads as a leak. TinyUSB numbers hubs above its device maximum.
+        if (e & (1u << 20)) myrtos_line_str(&l, " (hub)");
         myrtos_line_str(&l, " ep ");
         myrtos_line_hex(&l, ep);
         myrtos_line_str(&l, (e & (1u << 16)) ? ", queued" : ", NOTHING QUEUED");
