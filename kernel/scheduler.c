@@ -505,20 +505,30 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
 
     // What is left after the command line and its vector belongs to the module.
     //
-    // The thread-local block goes first, because tp points at it and the linker
-    // assigned every variable an offset from zero. The module's initial values
-    // are copied in and the rest zeroed -- the same job OS-9's loader did with
-    // a module's data section. Whatever follows is the area myrtos_data_area
-    // hands out for raw use.
+    // The thread-local block goes first, because the thread pointer points at it
+    // and the linker assigned every variable an offset within it. The module's
+    // initial values are copied in and the rest zeroed -- the same job OS-9's
+    // loader did with a module's data section. Whatever follows is the area
+    // myrtos_data_area hands out for raw use.
+    //
+    // MYRTOS_TLS_TCB_BYTES is what the machine's ABI reserves ahead of the
+    // variables. RISC-V reserves nothing; ARM reserves eight for a thread
+    // control block, and the linker resolves every local-exec reference to
+    // eight plus the offset. The thread pointer is the base either way -- only
+    // where the data sits inside the block differs.
     uintptr_t tls_base = ((uintptr_t)&argv[argc + 1] + 3) & ~(uintptr_t)3;
+    uint8_t *tls_data = (uint8_t*)tls_base + MYRTOS_TLS_TCB_BYTES;
+
+    for (uint32_t i = 0; i < MYRTOS_TLS_TCB_BYTES; i++) ((uint8_t*)tls_base)[i] = 0;
 
     const uint8_t *tls_src = module_ptr->tls_init
         ? (const uint8_t*)module_ptr + module_ptr->tls_offset : 0;
     for (uint32_t i = 0; i < module_ptr->tls_total; i++) {
-        ((uint8_t*)tls_base)[i] = (tls_src && i < module_ptr->tls_init) ? tls_src[i] : 0;
+        tls_data[i] = (tls_src && i < module_ptr->tls_init) ? tls_src[i] : 0;
     }
 
-    uintptr_t data_base = (tls_base + module_ptr->tls_total + 3) & ~(uintptr_t)3;
+    uintptr_t data_base = (tls_base + MYRTOS_TLS_TCB_BYTES
+                                    + module_ptr->tls_total + 3) & ~(uintptr_t)3;
 
     uintptr_t stack_top = ((uintptr_t)mem + bytes) & ~(uintptr_t)15;
     myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));

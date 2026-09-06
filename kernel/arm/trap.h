@@ -134,6 +134,20 @@ static inline uint32_t myrtos_arm_fault_address(void)
 // restored with the frame like any other register, and __aeabi_read_tp is a
 // two-instruction function that hands it back -- which is what the compiler
 // calls for __thread.
+// Bytes reserved before the thread-local block.
+//
+// The ARM TLS ABI puts a thread control block first, and the linker knows it:
+// __aeabi_read_tp is defined to return the address of that block, and a
+// local-exec relocation is resolved to eight plus the variable's offset within
+// the block. Reserve nothing and a module writes eight bytes past the end of
+// what the kernel prepared -- which zeroes the wrong four bytes and leaves the
+// variable holding whatever the previous process left there. zhello's counter
+// came back as 4, 5, 6 across three separate runs instead of 1, 1, 1.
+//
+// Nothing uses the eight bytes. They are the ABI's, and the price of them is
+// eight bytes per process.
+#define MYRTOS_TLS_TCB_BYTES  8u
+
 static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
                                       uintptr_t ret, uint32_t a0, uint32_t a1,
                                       uint32_t tls)

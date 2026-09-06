@@ -70,6 +70,12 @@ extern uint32_t myrtos_kernel_gp;
 // Lay out a frame so that resuming it starts the process, as though it had been
 // interrupted immediately before its first instruction. That is the whole trick
 // and it is why there is no separate "start a process" path in the scheduler.
+// Bytes reserved before the thread-local block. RISC-V reserves none: the
+// linker gives the first thread-local variable offset zero from tp, so the
+// block starts where tp points. See the ARM half for why the number is not
+// zero everywhere.
+#define MYRTOS_TLS_TCB_BYTES  0u
+
 static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
                                       uintptr_t ret, uint32_t a0, uint32_t a1,
                                       uint32_t tls)
