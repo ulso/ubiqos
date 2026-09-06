@@ -7,11 +7,6 @@
 // filesystem stores what FAT stores, and the shape a person reads is a matter
 // for whoever is doing the reading.
 
-// The name a directory entry is shown under. The rule lives in
-// common/myrtos_abi.h, because ls, the wasm host and readdir all need it and
-// two copies of it were already one too many.
-#define pretty(raw, out) myrtos_pretty_name((raw), (out))
-
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: ls [DIRECTORY]\n\nLists a directory, or the current one when given no path.\n")) return;
@@ -53,7 +48,9 @@ void module_main(int argc, char **argv) {
             break;
         }
 
-        pretty(raw, name);
+        // The rule is in common/myrtos_abi.h; ls, readdir and the wasm host
+        // all have to expand a FAT name the same way.
+        myrtos_pretty_name(raw, name);
         myrtos_line_reset(&line);
         myrtos_line_str(&line, name);
 

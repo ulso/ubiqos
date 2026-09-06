@@ -874,11 +874,6 @@ static uint64_t wasi_inode(const char *dir, const char *name)
     return h ? h : 1;
 }
 
-// The name a guest can pass straight back to open(). The rule lives in
-// common/myrtos_abi.h: the kernel hands back what FAT stores, and ls, readdir
-// and this all have to expand it the same way. It was copied here once and
-// that was one copy too many.
-#define wasi_pretty(raw, out) myrtos_pretty_name((raw), (out))
 
 
 m3ApiRawFunction(wasi_fd_readdir)
@@ -914,7 +909,11 @@ m3ApiRawFunction(wasi_fd_readdir)
         uint32_t size = 0;
         int32_t attr = myrtos_fs_dir_at(dir, index, raw, &size);
         if (attr < 0) break;
-        wasi_pretty(raw, name);
+        // The kernel hands back what FAT stores and a guest needs a name it can
+        // pass straight back to open(). The rule is in common/myrtos_abi.h,
+        // because ls, readdir and this must all expand it the same way; it was
+        // copied here once and that was one copy too many.
+        myrtos_pretty_name(raw, name);
 
         uint32_t namlen = 0;
         while (name[namlen]) namlen++;
