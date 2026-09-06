@@ -299,3 +299,60 @@ const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index) {
         return &made_up;
     }
 }
+
+// --- LIBRARY MODULES ------------------------------------------------------
+// Link a module the kernel means to call rather than run.
+//
+// The same work as starting a process, minus the process: the module is found,
+// relocated into the pool it belongs in -- which for anything not real-time is
+// PSRAM, so its code is not in SRAM at all -- and then simply not started.
+// exec_offset points at a table instead of at an entry point.
+//
+// Everything is checked before a single pointer is trusted. A module of the
+// wrong type would be entered as though its first instruction were a pointer;
+// a table from an older build would be read with today's field order. Both are
+// the kind of mistake that shows up as a jump into the middle of something.
+const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out)
+{
+    if (owned_out) *owned_out = 0;
+
+    const myrtos_module_header_t *h = myrtos_moddir_link(name);
+    if (!h) return 0;
+
+    if ((h->type_lang >> 8) != MYRTOS_TYPE_LIBRARY) {
+        myrtos_print("lib: ");
+        myrtos_print(name);
+        myrtos_print(" is not a library\n");
+        myrtos_moddir_unlink(h);
+        return 0;
+    }
+
+    // Copied for the same reasons a program is: writable data, addresses to
+    // fix, or a .bss to zero. A library with none of them runs where it lies.
+    const uint8_t *base = (const uint8_t*)h;
+    bool needs_copy = ((h->attr_rev >> 8) & MYRTOS_ATTR_PRIVATE) != 0;
+    if (needs_copy) {
+        extern uint8_t *myrtos_module_relocated_copy(const myrtos_module_header_t *m,
+                                                     void **owned_out);
+        void *owned = 0;
+        base = myrtos_module_relocated_copy(h, &owned);
+        if (!base) {
+            myrtos_print("lib: no room to relocate ");
+            myrtos_print(name);
+            myrtos_print("\n");
+            myrtos_moddir_unlink(h);
+            return 0;
+        }
+        if (owned_out) *owned_out = owned;
+    }
+
+    const myrtos_lib_table_t *t = (const myrtos_lib_table_t*)(base + h->exec_offset);
+    if (t->abi != MYRTOS_LIB_ABI) {
+        myrtos_print("lib: ");
+        myrtos_print(name);
+        myrtos_print(" speaks another interface\n");
+        myrtos_moddir_unlink(h);
+        return 0;
+    }
+    return t;
+}

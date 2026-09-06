@@ -364,6 +364,48 @@ static void relocate_image(uint8_t *image, const myrtos_module_header_t *src)
     }
 }
 
+// A relocated copy of a module, ready to run. The allocation itself is handed
+// back separately, because it is what has to be freed and it is not the address
+// anything runs at.
+//
+// Factored out of myrtos_process_create for the library loader, which needs
+// exactly this and no process: a library is code the kernel calls, so it is
+// copied, zeroed and relocated the same way and then simply not started.
+uint8_t *myrtos_module_relocated_copy(const myrtos_module_header_t *m, void **owned_out)
+{
+    uint32_t image = myrtos_module_image_size(m);
+    uint32_t total = image + m->bss_size;
+
+    // Sixteen bytes, and the allocator is not why.
+    //
+    // A module's sections carry their own alignment -- wasm's .sdata and .bss
+    // both want eight -- and every one of them is measured from wherever the
+    // copy lands. At the fixed address a single-instance module used to be
+    // loaded at, half a megabyte aligned, that was free. From an allocator it is
+    // not: an eight-byte load against a copy that landed four-past-eight is a
+    // misaligned access, and Hazard3 does not fix those up, it traps.
+    void *raw = myrtos_tlsf_malloc(myrtos_pool_for(m), total + 15);
+    if (!raw) return 0;
+    uint8_t *aligned = (uint8_t*)(((uintptr_t)raw + 15) & ~(uintptr_t)15);
+
+    uint32_t *d32 = (uint32_t*)aligned;
+    const uint32_t *s32 = (const uint32_t*)m;
+    uint32_t words = image / 4;
+    for (uint32_t i = 0; i < words; i++) d32[i] = s32[i];
+    uint8_t *d8 = aligned;
+    const uint8_t *s8 = (const uint8_t*)m;
+    for (uint32_t i = words * 4; i < image; i++) d8[i] = s8[i];
+
+    // What the file does not carry. .bss and .sbss have a size and no bytes,
+    // and a module is entitled to find them zero.
+    for (uint32_t i = image; i < total; i++) d8[i] = 0;
+
+    relocate_image(aligned, m);
+    if (owned_out) *owned_out = raw;
+    return aligned;
+}
+
+
 int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
                               const char *args) {
     // A module without the re-entrant attribute has writable data that every
@@ -415,41 +457,13 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     bool needs_copy = ((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_PRIVATE) != 0;
     void *code_copy = 0;
     if (!reentrant || needs_copy) {
-        uint32_t image = myrtos_module_image_size(module_ptr);
-        uint32_t total = image + module_ptr->bss_size;
-
-        // Sixteen bytes, and the allocator is not why.
-        //
-        // A module's sections carry their own alignment -- wasm's .sdata and
-        // .bss both want eight -- and every one of them is measured from wherever
-        // the copy lands. At the fixed address a single-instance module used to
-        // be loaded at, half a megabyte aligned, that was free. From an
-        // allocator it is not: an eight-byte load against a copy that landed
-        // four-past-eight is a misaligned access, and Hazard3 does not fix those
-        // up, it traps. That is what killed the board between "heap ready" and
-        // "environment" -- wasm3's first 64-bit field.
-        code_copy = myrtos_tlsf_malloc(myrtos_pool_for(module_ptr), total + 15);
-        if (!code_copy) {
+        code_copy = 0;
+        uint8_t *aligned = myrtos_module_relocated_copy(module_ptr, &code_copy);
+        if (!aligned) {
             myrtos_print("Error: failed to allocate room to relocate a module.\n");
             myrtos_tlsf_free(myrtos_pool_for(module_ptr), mem);
             return -1;
         }
-        uint8_t *aligned = (uint8_t*)(((uintptr_t)code_copy + 15) & ~(uintptr_t)15);
-
-        uint32_t *d32 = (uint32_t*)aligned;
-        const uint32_t *s32 = (const uint32_t*)module_ptr;
-        uint32_t words = image / 4;
-        for (uint32_t i = 0; i < words; i++) d32[i] = s32[i];
-        uint8_t *d8 = aligned;
-        const uint8_t *s8 = (const uint8_t*)module_ptr;
-        for (uint32_t i = words * 4; i < image; i++) d8[i] = s8[i];
-
-        // What the file does not carry. .bss and .sbss have a size and no
-        // bytes, and a module is entitled to find them zero.
-        for (uint32_t i = image; i < total; i++) d8[i] = 0;
-
-        relocate_image(aligned, module_ptr);
-
 
         // run is the aligned copy; code_base keeps the allocation itself, which
         // is what has to be given back.

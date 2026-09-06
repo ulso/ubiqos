@@ -83,6 +83,61 @@
 #define MYRTOS_TYPE_LIBRARY   4   // code, but entered through a table rather
                                   // than at one point -- see exec_offset
 
+// --- LIBRARY MODULES ------------------------------------------------------
+// A module the kernel calls rather than runs. OS-9 had these as Sbrtn, and the
+// reason is the same one: not everything that belongs in a system belongs in
+// the part that must be resident from the first instruction.
+//
+// A program is entered once, at module_main, and owns a process. A library is
+// entered many times, from whatever context the caller is in, and owns nothing.
+// So exec_offset points at a table instead of at code, and the kernel checks
+// the table before it trusts a single pointer in it.
+//
+// What this buys, and it is the reason wifi went first: a library is loaded
+// where modules are loaded, which is PSRAM. Its code is not in SRAM at all, and
+// the kernel image does not carry it.
+#define MYRTOS_LIB_ABI 1
+
+// The table at exec_offset. abi first so a mismatch is caught before anything
+// is called; count second so a caller can ask for entry n and be told no.
+typedef struct {
+    uint32_t abi;       // MYRTOS_LIB_ABI
+    uint32_t count;     // how many pointers follow
+    void    *fn[];      // in the order the library documents
+} myrtos_lib_table_t;
+
+// And what the kernel hands back, so a library can call home.
+//
+// A library runs in kernel context, so it cannot reach the kernel the way a
+// program does -- there is no trap to take, and ecall from inside the kernel
+// would be answering its own question. It gets addresses instead, in a table
+// as versioned as its own. Twelve entries is what the wifi driver needed:
+// four from the kernel, seven from the SDK's hardware layer, and strlen.
+#define MYRTOS_KERNEL_API_ABI 1
+
+typedef struct {
+    uint32_t abi;                     // MYRTOS_KERNEL_API_ABI
+
+    void   (*print)(const char *s);
+    int32_t (*kernel_thread)(void (*entry)(void), uint32_t stack_bytes,
+                             uint32_t priority);
+    void  *(*bulk_alloc)(uint32_t bytes);   // from the pool modules come from
+    uint32_t (*str_len)(const char *s);
+
+    // The hardware the library drives, reached through the kernel's copy of the
+    // SDK rather than its own -- there is only one SPI block and one set of
+    // pins, and two initialisations of them would be one too many.
+    void   (*spi_init)(void *spi, uint32_t baud);
+    int32_t (*spi_write_read)(void *spi, const uint8_t *out, uint8_t *in, uint32_t len);
+    void   (*gpio_init)(uint32_t pin);
+    void   (*gpio_set_function)(uint32_t pin, uint32_t fn);
+    void   (*gpio_set_pulls)(uint32_t pin, bool up, bool down);
+    void   (*gpio_put)(uint32_t pin, bool value);
+    void   (*gpio_set_dir)(uint32_t pin, bool out);
+    void   (*busy_wait_us)(uint64_t us);
+    uint64_t (*time_us)(void);
+} myrtos_kernel_api_t;
+
 // --- DEVICE DESCRIPTORS ---------------------------------------------------
 // A data module describing a device, in the OS-9 sense. It states what the
 // device is called, which driver module handles it, and carries a tail that

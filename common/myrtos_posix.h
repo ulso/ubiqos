@@ -44,11 +44,11 @@
 
 #define SEEK_SET MYRTOS_SEEK_SET
 #define SEEK_CUR MYRTOS_SEEK_CUR
+// SEEK_END works on a raw descriptor now. It used to be refused because a
+// descriptor did not carry the path and there was nothing to ask about the
+// length of; the kernel keeps the path it was opened with, so SYS_SEEK sends
+// this one case to the file server and gets an answer.
 #define SEEK_END MYRTOS_SEEK_END
-// SEEK_END is still refused by lseek, and the reason is no longer the missing
-// stat: a raw descriptor does not carry the path, so there is nothing to ask
-// about. fopen knows its path, so stdio's "a" mode works.
-#define SEEK_END 2
 
 #define ENOENT  2
 #define EBADF   9

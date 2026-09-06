@@ -66,4 +66,9 @@ void  myrtos_moddir_unlink(const myrtos_module_header_t *header);
 uint32_t myrtos_moddir_count(void);
 const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index);
 
+// Link a module the kernel calls rather than runs, and hand back its table.
+// owned_out receives the allocation to give back, or NULL if the library runs
+// where it lies. See the note beside the definition.
+const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out);
+
 #endif

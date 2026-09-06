@@ -269,6 +269,18 @@ function(myrtos_add_module name source)
     # Such a module is always copied per process, because newlib's _impure_ptr
     # is writable data. That is what makes it correct, and it is also what it
     # costs: the code is no longer shared between instances.
+    # A trailing LIBRARY makes a module the kernel CALLS rather than runs.
+    # exec_offset then points at a table instead of an entry point, and the
+    # table is always called myrtos_lib -- one name, so the loader never has to
+    # be told which symbol to look for. See MYRTOS_TYPE_LIBRARY in the ABI.
+    set(lib_flag "")
+    set(entry_symbol module_main)
+    if("LIBRARY" IN_LIST ARGN)
+        set(lib_flag "--library")
+        set(entry_symbol myrtos_lib)
+        list(REMOVE_ITEM ARGN "LIBRARY")
+    endif()
+
     set(libc_compile -ffreestanding -nostdlib)
     set(libc_link    -nostdlib)
     set(libc_sources "")
@@ -351,8 +363,8 @@ function(myrtos_add_module name source)
                 "${name}"
                 $<TARGET_FILE:${name}_app>
                 ${CMAKE_NM}
-                module_main
-                ${rt_flag}
+                ${entry_symbol}
+                ${rt_flag} ${lib_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
                 ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h

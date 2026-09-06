@@ -435,7 +435,9 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # Defaults for the myrtos-specific fields
     MYRTOS_TYPE_PROGRAM = 1
     MYRTOS_TYPE_DATA    = 3
-    kind = MYRTOS_TYPE_DATA if module_type == "data" else MYRTOS_TYPE_PROGRAM
+    MYRTOS_TYPE_LIBRARY = 4
+    kind = {"data": MYRTOS_TYPE_DATA,
+            "library": MYRTOS_TYPE_LIBRARY}.get(module_type, MYRTOS_TYPE_PROGRAM)
     # High byte: type. Low byte: the machine in the high nibble, the language in
     # the low one. Both fit in four bits and always have.
     arch = elf_machine(elf_path, nm_tool) if (elf_path and nm_tool) else 0
@@ -515,8 +517,12 @@ if __name__ == "__main__":
 # --data as a flag rather than a positional argument: CMake drops empty
 # positional arguments, so a data module was built as a program.
     argv = sys.argv[1:]
-    module_type = "data" if "--data" in argv else "program"
-    argv = [a for a in argv if a != "--data"]
+    # --library is a module the kernel calls rather than runs: exec_offset
+    # points at a table of pointers instead of at an entry point, so the symbol
+    # named on the command line is that table's.
+    module_type = ("data"    if "--data" in argv else
+                   "library" if "--library" in argv else "program")
+    argv = [a for a in argv if a not in ("--data", "--library")]
 
     # --rev sets the module revision. The directory keeps the highest of a given
     # name, so a patched module replaces the one already there by carrying a
