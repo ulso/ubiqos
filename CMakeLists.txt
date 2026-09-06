@@ -152,7 +152,7 @@ add_executable(os_kernel
     kernel/console.c
     kernel/fsserver.c
     kernel/printf.c
-    kernel/wifi.c
+    kernel/wifilink.c
     third_party/pico_sd_card/sd_card.c
     kernel/font8x16.c
     kernel/font6x12.c
@@ -952,6 +952,10 @@ myrtos_add_module(libctest modules/libctest/libctest.c)
 # real fopen, none of which the header-only subset has.
 myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 
+# The first library module: code the kernel calls rather than runs. It was
+# kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
+myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
+
 # Atto, an emacs in two thousand lines of public-domain C, built as an ordinary
 # module. See modules/atto/README.md for what a C program needs to get here.
 file(GLOB MYRTOS_ATTO_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/modules/atto/upstream/*.c)
@@ -1156,6 +1160,7 @@ set(MYRTOS_RESIDENT
     more
     libctest
     newlibtest
+    wifilib
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory

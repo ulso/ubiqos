@@ -18,16 +18,25 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "hardware/gpio.h"
-#include "../common/modules.h"   // myrtos_sleep and the message types
-#include "usbdev.h"                // the named priorities
+#include "../../common/modules.h"   // myrtos_sleep and the message types
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
+// A library module: code the kernel calls rather than runs. This was
+// kernel/wifi.c until 6 Sep 2026, six and a half kilobytes of SRAM that only
+// mattered to somebody who typed "wifi". It is loaded where modules are
+// loaded, which is PSRAM, and the kernel image no longer carries it.
+//
+// Which is why there is not an SDK header in sight. A library runs in kernel
+// context but is linked separately, so it cannot call the kernel's functions by
+// name -- it is handed their addresses in myrtos_kernel_api_t, and everything
+// below reaches the hardware through K. Even gpio_put and gpio_get, which are
+// inline in the SDK's headers and would otherwise have dragged them in.
+static const myrtos_kernel_api_t *K;
 
-#define WIFI_SPI    spi1
+// The named priorities, which used to come from usbdev.h. A library cannot
+// include a kernel header, and one number is not worth an interface.
+#define MYRTOS_PRIO_WIFI 20
+
+#define WIFI_SPI    (K->spi)
 #define WIFI_SCK    30
 #define WIFI_MOSI   31
 #define WIFI_MISO   28
@@ -46,15 +55,17 @@ void myrtos_print_u32(uint32_t v);
 
 static uint8_t xfer(uint8_t v) {
     uint8_t r = 0;
-    spi_write_read_blocking(WIFI_SPI, &v, &r, 1);
+    K->spi_write_read(WIFI_SPI, &v, &r, 1);
     return r;
 }
 
 // Wait for the handshake line to reach a level, giving up rather than spinning.
 static bool wait_ack(bool level, uint32_t ms) {
-    absolute_time_t deadline = make_timeout_time_ms(ms);
-    while (gpio_get(WIFI_ACK) != level) {
-        if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) return false;
+    // The SDK's absolute_time_t went with the SDK headers. A microsecond count
+    // that never wraps says the same thing with less behind it.
+    uint64_t deadline = K->time_us() + (uint64_t)ms * 1000u;
+    while (K->gpio_get(WIFI_ACK) != level) {
+        if (K->time_us() > deadline) return false;
     }
     return true;
 }
@@ -65,7 +76,7 @@ static bool wait_ack(bool level, uint32_t ms) {
 // reply it was waiting for is read as "no answer" rather than "not yet".
 static bool select_chip(void) {
     if (!wait_ack(false, 100)) return false;     // not busy
-    gpio_put(WIFI_CS, 0);
+    K->gpio_put(WIFI_CS, 0);
     return wait_ack(true, 100);                  // selected and ready
 }
 
@@ -82,8 +93,8 @@ static bool select_chip(void) {
 // machine when sleep_ms was used instead of myrtos_sleep.
 static bool select_chip_slow(uint32_t ms) {
     for (uint32_t waited = 0; waited < ms; waited += 4) {
-        if (!gpio_get(WIFI_ACK)) {               // ready is ACK low
-            gpio_put(WIFI_CS, 0);
+        if (!K->gpio_get(WIFI_ACK)) {               // ready is ACK low
+            K->gpio_put(WIFI_CS, 0);
             return wait_ack(true, 100);
         }
         myrtos_sleep(4);
@@ -92,22 +103,22 @@ static bool select_chip_slow(uint32_t ms) {
 }
 
 static void deselect_chip(void) {
-    gpio_put(WIFI_CS, 1);
-    busy_wait_us(100);                           // let the line settle
+    K->gpio_put(WIFI_CS, 1);
+    K->busy_wait_us(100);                           // let the line settle
 }
 
 void myrtos_wifi_init(void) {
-    spi_init(WIFI_SPI, 8 * 1000 * 1000);
-    gpio_set_function(WIFI_SCK,  GPIO_FUNC_SPI);
-    gpio_set_function(WIFI_MOSI, GPIO_FUNC_SPI);
-    gpio_set_function(WIFI_MISO, GPIO_FUNC_SPI);
+    K->spi_init(WIFI_SPI, 8 * 1000 * 1000);
+    K->gpio_set_function(WIFI_SCK,  MYRTOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(WIFI_MOSI, MYRTOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(WIFI_MISO, MYRTOS_GPIO_FUNC_SPI);
 
-    gpio_init(WIFI_CS);
-    gpio_set_dir(WIFI_CS, GPIO_OUT);
-    gpio_put(WIFI_CS, 1);
+    K->gpio_init(WIFI_CS);
+    K->gpio_set_dir(WIFI_CS, MYRTOS_GPIO_OUT);
+    K->gpio_put(WIFI_CS, 1);
 
-    gpio_init(WIFI_ACK);
-    gpio_set_dir(WIFI_ACK, GPIO_IN);
+    K->gpio_init(WIFI_ACK);
+    K->gpio_set_dir(WIFI_ACK, MYRTOS_GPIO_IN);
 }
 
 // Ask the chip what firmware it is running. A version string coming back settles
@@ -121,15 +132,15 @@ int32_t myrtos_wifi_firmware(char *out, uint32_t max) {
         // Say what the line is actually doing rather than only that it did not
         // move. Reading it with each pull in turn tells driven from floating: a
         // driven line ignores the pull, a floating one follows it.
-        gpio_set_pulls(WIFI_ACK, false, false);
-        bool bare = gpio_get(WIFI_ACK);
-        gpio_set_pulls(WIFI_ACK, true, false);
-        busy_wait_us(50);
-        bool with_up = gpio_get(WIFI_ACK);
-        gpio_set_pulls(WIFI_ACK, false, true);
-        busy_wait_us(50);
-        bool with_down = gpio_get(WIFI_ACK);
-        gpio_set_pulls(WIFI_ACK, false, false);
+        K->gpio_set_pulls(WIFI_ACK, false, false);
+        bool bare = K->gpio_get(WIFI_ACK);
+        K->gpio_set_pulls(WIFI_ACK, true, false);
+        K->busy_wait_us(50);
+        bool with_up = K->gpio_get(WIFI_ACK);
+        K->gpio_set_pulls(WIFI_ACK, false, true);
+        K->busy_wait_us(50);
+        bool with_down = K->gpio_get(WIFI_ACK);
+        K->gpio_set_pulls(WIFI_ACK, false, false);
 
         if (max >= 16) {
             const char *v = bare ? "1" : "0";
@@ -202,8 +213,7 @@ typedef struct {
     int32_t rssi[WIFI_MAX_NETS];
 } wifi_scan_t;
 
-extern void *myrtos_tlsf_malloc(void *pool, uint32_t size);
-extern void *myrtos_bulk_pool;
+
 
 static wifi_scan_t *scan;
 static uint32_t scan_count;
@@ -224,8 +234,7 @@ static void trace_hex(uint8_t v) {
 
 static bool scan_room(void) {
     if (scan) return true;
-    if (!myrtos_bulk_pool) return false;
-    scan = (wifi_scan_t*)myrtos_tlsf_malloc(myrtos_bulk_pool, sizeof(wifi_scan_t));
+    scan = (wifi_scan_t*)K->bulk_alloc(sizeof(wifi_scan_t));
     return scan != 0;
 }
 
@@ -543,7 +552,6 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
 // project and the second time the answer was a process of its own.
 
 
-int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 
 static int32_t server_pid = -1;
 
@@ -578,6 +586,30 @@ static void wifi_thread(void) {
 
 void myrtos_wifi_start_server(void) {
     // Below the USB task, which is the thing this exists to stop starving.
-    server_pid = myrtos_kernel_thread(wifi_thread, 2048, MYRTOS_PRIO_WIFI);
-    if (server_pid < 0) myrtos_print("WiFi: could not start its service process\n");
+    server_pid = K->kernel_thread(wifi_thread, 2048, MYRTOS_PRIO_WIFI);
+    if (server_pid < 0) K->print("WiFi: could not start its service process\n");
 }
+
+// --- WHAT THE KERNEL CALLS -------------------------------------------------
+// Entry zero takes the kernel's own table and must be called first; everything
+// else here reaches the hardware through it, so calling anything else before it
+// would be following a null pointer. The kernel checks the ABI word before it
+// calls entry zero, and entry zero checks it again -- once on each side of an
+// interface is not one time too many when the alternative is a wild jump.
+static bool wifi_lib_init(const myrtos_kernel_api_t *api)
+{
+    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    K = api;
+    return true;
+}
+
+const myrtos_lib_table_t myrtos_lib = {
+    .abi   = MYRTOS_LIB_ABI,
+    .count = 4,
+    .fn    = {
+        (void*)wifi_lib_init,            // 0: take the kernel's table
+        (void*)myrtos_wifi_probe,        // 1: find the chip and say what it is
+        (void*)myrtos_wifi_start_server, // 2: start the thread that serves it
+        (void*)myrtos_wifi_server_pid,   // 3: who to send to, or -1
+    },
+};

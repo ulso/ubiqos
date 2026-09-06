@@ -115,27 +115,37 @@ typedef struct {
 // four from the kernel, seven from the SDK's hardware layer, and strlen.
 #define MYRTOS_KERNEL_API_ABI 1
 
+// Pin function numbers, which are the SDK's and are passed straight through.
+// Here so that a library needs no SDK header at all -- only this one.
+#define MYRTOS_GPIO_FUNC_SPI  1u
+#define MYRTOS_GPIO_IN        false
+#define MYRTOS_GPIO_OUT       true
+
 typedef struct {
     uint32_t abi;                     // MYRTOS_KERNEL_API_ABI
 
     void   (*print)(const char *s);
+    void   (*print_u32)(uint32_t v);
     int32_t (*kernel_thread)(void (*entry)(void), uint32_t stack_bytes,
                              uint32_t priority);
     void  *(*bulk_alloc)(uint32_t bytes);   // from the pool modules come from
-    uint32_t (*str_len)(const char *s);
 
-    // The hardware the library drives, reached through the kernel's copy of the
-    // SDK rather than its own -- there is only one SPI block and one set of
-    // pins, and two initialisations of them would be one too many.
+    // The hardware, reached through the kernel's copy of the SDK rather than
+    // its own. There is one SPI block and one set of pins, and two
+    // initialisations of them would be one too many -- and gpio_put and
+    // gpio_get are inline in the SDK's headers, so passing them here is what
+    // lets a library include nothing but this file.
+    void    *spi;                     // the block a driver was given
     void   (*spi_init)(void *spi, uint32_t baud);
-    int32_t (*spi_write_read)(void *spi, const uint8_t *out, uint8_t *in, uint32_t len);
+    void   (*spi_write_read)(void *spi, const uint8_t *out, uint8_t *in, uint32_t len);
     void   (*gpio_init)(uint32_t pin);
     void   (*gpio_set_function)(uint32_t pin, uint32_t fn);
-    void   (*gpio_set_pulls)(uint32_t pin, bool up, bool down);
-    void   (*gpio_put)(uint32_t pin, bool value);
     void   (*gpio_set_dir)(uint32_t pin, bool out);
+    void   (*gpio_put)(uint32_t pin, bool value);
+    bool   (*gpio_get)(uint32_t pin);
+    void   (*gpio_set_pulls)(uint32_t pin, bool up, bool down);
     void   (*busy_wait_us)(uint64_t us);
-    uint64_t (*time_us)(void);
+    uint64_t (*time_us)(void);        // free-running, never wraps in any life here
 } myrtos_kernel_api_t;
 
 // --- DEVICE DESCRIPTORS ---------------------------------------------------

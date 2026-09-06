@@ -297,14 +297,11 @@ static void myrtos_bulk_pool_init(void) {
 // /sd/startup needs could not be allocated. The answer was not a bigger pool but
 // a shell that is not real-time -- see the note beside sh in CMakeLists.txt.
 // With them in PSRAM this has nearly eight kilobytes free where it had 1748.
-// 27 rather than 28 since 6 Sep 2026, and the kilobyte went to the C heap.
-// Widening a module name from twelve characters to sixteen cost 292 bytes of
-// kernel data -- thirty-two directory entries and eight devices with two names
-// each all carry the field -- and took the C heap below the floor
-// check_heap.cmake enforces. The pool had 7892 bytes free at the time, so this
-// is the cheaper side of the trade, and it is the same trade the note above
-// describes making in the other direction.
-#define MYRTOS_HEAP_SIZE (27 * 1024)
+// 28 again. It went to 27 for an afternoon to pay for wider module names, and
+// the kilobyte came back when wifi left the kernel: a library module's code is
+// in PSRAM, so moving one 6.9 kB driver out returned 8236 bytes of SRAM and the
+// borrowing was no longer needed.
+#define MYRTOS_HEAP_SIZE (28 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
