@@ -365,6 +365,30 @@ void myrtos_kernel_main(void) {
 #else
     myrtos_print("System: ARM 32-bit (Cortex-M33)\n");
 #endif
+
+    // Why the machine started. Asked because an evening went into guessing it:
+    // a board that reboots silently, with no panic and no trap, looks the same
+    // from the log whether it browned out, glitched, was watchdogged or was
+    // simply switched on -- and those want completely different answers.
+    //
+    // POWMAN remembers across the reset that it is reporting on. Power-on and
+    // brown-out are the two that matter here; the watchdog bits would name our
+    // own reboot command, and the glitch detector is its own kind of news.
+    {
+        uint32_t why = *(volatile uint32_t *)(0x40100000u + 0x2cu);
+        myrtos_print("Reset: ");
+        if (why & 0x00010000u) myrtos_print("power-on ");
+        if (why & 0x00020000u) myrtos_print("BROWN-OUT ");
+        if (why & 0x00040000u) myrtos_print("run-pin ");
+        if (why & 0x04000000u) myrtos_print("GLITCH-DETECTED ");
+        if (why & 0x00080000u) myrtos_print("debug-port ");
+        if (why & 0x01800000u) myrtos_print("watchdog ");
+        if (why & 0x10000000u) myrtos_print("watchdog-psm ");
+        if (!(why & 0x1FCF0000u)) myrtos_print("none of the recorded causes ");
+        myrtos_print("(chip_reset ");
+        myrtos_print_u32(why);
+        myrtos_print(")\n");
+    }
     
     // 1. Initiera TLSF-minnespoolen
     myrtos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");
