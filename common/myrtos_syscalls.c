@@ -30,6 +30,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/times.h>
+#include <sys/time.h>
+#include <time.h>
 #include <fcntl.h>
 #include "myrtos_abi.h"
 
@@ -59,6 +61,27 @@ void *_sbrk(int incr)
     if (incr > 0 && heap_brk + incr > heap_end) { errno = ENOMEM; return (void *)-1; }
     heap_brk += incr;
     return prev;
+}
+
+// Why an open failed, worked out afterwards rather than reported by the kernel,
+// which answers -1 to every cause alike.
+//
+// The distinction that matters is "not there" against "there and it still did
+// not open": a program told ENOENT will create the file, and being told it for
+// a descriptor table that is full makes it try again and fail the same way for
+// ever. Config-file loading is the shape that hits this -- open, get ENOENT,
+// write a default -- and it would quietly overwrite nothing at all.
+//
+// EMFILE for the last case is the likeliest of what remains rather than a fact:
+// once the name exists and is a plain file, running out of descriptors is the
+// only cause the file server has left that a caller can do anything about.
+static int open_errno(const char *path)
+{
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(path, &size);
+    if (attr < 0) return ENOENT;
+    if (attr & MYRTOS_ATTR_DIRECTORY) return EISDIR;
+    return EMFILE;
 }
 
 int _write(int fd, const char *buf, int len)
@@ -102,7 +125,7 @@ int _open(const char *path, int flags, int mode)
     if (flags & O_TRUNC)  f |= MYRTOS_O_TRUNC;
     if (flags & O_APPEND) f |= MYRTOS_O_APPEND;
     int32_t fd = myrtos_open_flags(path, f);
-    if (fd < 0) { errno = ENOENT; return -1; }
+    if (fd < 0) { errno = open_errno(path); return -1; }
     return fd;
 }
 
@@ -157,9 +180,47 @@ int _kill(int pid, int sig) { (void)pid; (void)sig; errno = EINVAL; return -1; }
 
 void _exit(int code) { (void)code; myrtos_exit(); for (;;) { } }
 
-clock_t _times(struct tms *buf) { (void)buf; return (clock_t)-1; }
+// Time, and it is worth saying plainly what kind: this machine has no clock to
+// ask. There is no battery-backed anything on the board, and nothing has told it
+// what year it is, so what the tick counter knows is how long it has been
+// running and nothing else.
+//
+// So the epoch is the moment of boot. time() answers seconds since then, which
+// is wrong for a date and right for everything ports actually do with it --
+// seeding a generator, measuring how long something took, giving a temporary
+// file a name nobody else has. A program that formats the answer will print a
+// day in January 1970, which is at least obviously not today rather than
+// plausibly the wrong day.
+//
+// The tick count is 32 bits of milliseconds, so it wraps after 49.7 days.
+// Nothing here has run that long yet, and when something does, the fix is a
+// 64-bit tick in the kernel rather than arithmetic here.
+int _gettimeofday(struct timeval *tv, void *tz)
+{
+    (void)tz;
+    if (!tv) { errno = EINVAL; return -1; }
+    uint32_t ms = myrtos_ticks_now();
+    tv->tv_sec  = (time_t)(ms / 1000u);
+    tv->tv_usec = (suseconds_t)((ms % 1000u) * 1000u);
+    return 0;
+}
 
-int _gettimeofday(void *tv, void *tz) { (void)tv; (void)tz; errno = ENOSYS; return -1; }
+// clock() is this, and it is the one of the two that means what it says: a
+// count of processor time from an arbitrary origin, which is exactly what a
+// tick since boot is. The division is in 64 bits because CLOCKS_PER_SEC is the
+// machine's to choose and multiplying milliseconds by it overflows otherwise.
+clock_t _times(struct tms *buf)
+{
+    uint32_t ms = myrtos_ticks_now();
+    clock_t t = (clock_t)((uint64_t)ms * CLOCKS_PER_SEC / 1000u);
+    if (buf) {
+        buf->tms_utime = t;
+        buf->tms_stime = 0;
+        buf->tms_cutime = 0;
+        buf->tms_cstime = 0;
+    }
+    return t;
+}
 
 // Ported programs have a main; myrtos starts a module at module_main. Weak, so
 // a module written for myrtos from the start can define its own and never have

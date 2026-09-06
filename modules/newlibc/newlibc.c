@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <time.h>
+#include "../../common/myrtos_abi.h"
 
 static int failures;
 
@@ -127,6 +129,27 @@ int main(int argc, char **argv)
     }
     check("opendir of a file fails", opendir("/sd/w4") == NULL);
     check("opendir of nothing fails", opendir("/sd/nosuchdir") == NULL);
+
+    // errno, which used to be ENOENT whatever went wrong. The distinction that
+    // matters is "not there" against "there and it still did not open": a
+    // program told ENOENT writes a default file, and being told it for a
+    // directory would have it overwrite nothing at all, for ever.
+    errno = 0;
+    check("missing file gives ENOENT",
+          fopen("/sd/nosuchfile.txt", "r") == NULL && errno == ENOENT);
+    errno = 0;
+    check("a directory gives EISDIR",
+          open("/sd/docs", O_WRONLY) < 0 && errno == EISDIR);
+
+    // Time. There is no clock on this board, so the epoch is boot -- which is
+    // wrong for a date and right for measuring, which is what ports use it for.
+    time_t t0 = time(NULL);
+    clock_t c0 = clock();
+    myrtos_sleep(1200);
+    time_t t1 = time(NULL);
+    clock_t c1 = clock();
+    check("time advances over a sleep", t1 >= t0 + 1 && t1 <= t0 + 3);
+    check("clock advances too", c1 > c0);
 
     printf(failures ? "newlibc: FAILED\n" : "newlibc: passed\n");
     return failures ? 1 : 0;

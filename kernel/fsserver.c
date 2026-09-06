@@ -164,8 +164,17 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         if (!ops) return -1;
 
         uint32_t size = 0;
-        bool exists = ops->stat && ops->stat(rest, &size) >= 0;
+        int32_t attr = ops->stat ? ops->stat(rest, &size) : -1;
+        bool exists = attr >= 0;
         bool creating = (o->flags & (MYRTOS_O_CREAT | MYRTOS_O_TRUNC)) != 0;
+
+        // A directory is not a file and must not open as one. It used to: the
+        // check was only that the name existed, so opening a directory gave a
+        // descriptor onto something with no bytes in it, and writing through
+        // that descriptor was a question nobody had an answer for. myrtos has a
+        // separate way to read a directory -- the nth entry -- and that is the
+        // only way it can be read.
+        if (exists && (attr & MYRTOS_ATTR_DIRECTORY)) return -1;
 
         // Reading something that is not there is an error, and this is the
         // moment to say so: leaving it to the first read means the caller has a
