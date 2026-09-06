@@ -93,8 +93,8 @@ extern tlsf_pool_t myrtos_mem_pool;
 
 volatile uint32_t myrtos_ticks = 0;
 volatile uint32_t myrtos_trap_count = 0;
-volatile uint32_t myrtos_last_mcause = 0;
-volatile uint32_t myrtos_last_mepc = 0;
+volatile uint32_t myrtos_last_cause = 0;
+volatile uint32_t myrtos_last_pc = 0;
 
 // The return value is the stack pointer to resume. Same in as out means we
 // continue in the same process; a different one is a context switch.
@@ -102,8 +102,8 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     uint32_t sp = (uint32_t)(uintptr_t)frame;
 
     myrtos_trap_count++;
-    myrtos_last_mcause = frame->cause;
-    myrtos_last_mepc = frame->pc;
+    myrtos_last_cause = frame->cause;
+    myrtos_last_pc = frame->pc;
 
     if (MYRTOS_TRAP_IS_INTERRUPT(frame)) {
         if (MYRTOS_TRAP_IS_TIMER(frame)) {
@@ -650,8 +650,9 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
     // SD driver's __breakpoint() had already cost a boot for exactly this.
     //
     // Past the ebreak is `li a0, 0; ret` -- TU_ASSERT's own false. So step over
-    // it. Compressed ebreak is two bytes and the wide one is four; the low two
-    // bits of the instruction say which.
+    // it. How far is the machine's business and lives in its trap.h: the width
+    // of an ebreak on one, a fixed two bytes and a sticky bit to clear on the
+    // other.
     //
     // The tally matters as much as the step. A stack that asserts on every poll
     // would otherwise look like a machine that works, so the first one is
@@ -668,8 +669,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         }
         myrtos_asserts_seen++;
         myrtos_assert_last = frame->pc;
-        uint16_t insn = *(const uint16_t *)(uintptr_t)frame->pc;
-        frame->pc += ((insn & 3u) == 3u) ? 4u : 2u;
+        MYRTOS_TRAP_STEP_BREAKPOINT(frame);
         return sp;
     }
 

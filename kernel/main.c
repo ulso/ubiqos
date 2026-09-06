@@ -5,6 +5,7 @@
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "io.h"
+#include "trap.h"
 #include "sdcard.h"
 #include "fat32.h"
 #include "moddir.h"
@@ -410,13 +411,15 @@ void myrtos_kernel_main(void) {
     myrtos_usb_init();
 
     // Prove the trap path before anything relies on it. If we get back here the
-    // vector has saved, the handler has run, mepc has stepped past the ecall and
-    // mret has returned -- the whole chain in one call.
+    // vector has saved, the handler has run, the saved pc has moved past the
+    // call and the return has taken -- the whole chain in one call. Neither
+    // half of that sentence names a machine any more, and neither does the
+    // test: the cause is asked what it was rather than compared with a number.
     extern volatile uint32_t myrtos_trap_count;
-    extern volatile uint32_t myrtos_last_mcause;
+    extern volatile uint32_t myrtos_last_cause;
     uint32_t before = myrtos_trap_count;
     myrtos_syscall(SYS_NULL, 0, 0, 0);
-    if (myrtos_trap_count == before + 1 && (myrtos_last_mcause & 0x7fffffffu) == 11) {
+    if (myrtos_trap_count == before + 1 && MYRTOS_CAUSE_IS_SYSCALL(myrtos_last_cause)) {
         myrtos_print("Trap vector self-test passed: ecall taken and resumed.\n");
     } else {
         myrtos_print("Trap vector self-test FAILED.\n");

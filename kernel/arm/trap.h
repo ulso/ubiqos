@@ -50,8 +50,21 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 // a peripheral interrupt.
 #define MYRTOS_TRAP_IS_INTERRUPT(f)  ((f)->cause >= ARM_EXC_PENDSV)
 #define MYRTOS_TRAP_IS_TIMER(f)      ((f)->cause == ARM_EXC_SYSTICK)
-#define MYRTOS_TRAP_IS_SYSCALL(f)    ((f)->cause == ARM_EXC_SVCALL)
-#define MYRTOS_TRAP_IS_BREAKPOINT(f) ((f)->cause == ARM_EXC_HARDFAULT)
+#define MYRTOS_CAUSE_IS_SYSCALL(c)   ((c) == ARM_EXC_SVCALL)
+#define MYRTOS_TRAP_IS_SYSCALL(f)    MYRTOS_CAUSE_IS_SYSCALL((f)->cause)
+
+// A breakpoint is not a cause of its own here. With no debugger attached bkpt
+// raises a debug monitor exception that nobody has enabled, so it escalates --
+// and arrives as a HardFault, indistinguishable by number from a bad pointer.
+//
+// What tells them apart is HFSR.DEBUGEVT, which is set for the escalated
+// breakpoint and for nothing else. Asking that register rather than reading the
+// instruction at pc matters: a HardFault's pc may be exactly the wild address
+// that caused it, and a second fault inside the fault handler is a lockup.
+#define ARM_SCB_HFSR  (*(volatile uint32_t *)0xE000ED2Cu)
+#define ARM_HFSR_DEBUGEVT  0x80000000u
+#define MYRTOS_TRAP_IS_BREAKPOINT(f) ((f)->cause == ARM_EXC_HARDFAULT && \
+                                      (ARM_SCB_HFSR & ARM_HFSR_DEBUGEVT) != 0)
 
 // Past the call, and back onto it.
 //
@@ -66,6 +79,15 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 // stays in a peripheral register until someone asks, so asking is what this is.
 #define ARM_SCB_BFAR  (*(volatile uint32_t *)0xE000ED38u)
 #define MYRTOS_TRAP_FAULT(f)  ((void)(f), ARM_SCB_BFAR)
+
+// Past the breakpoint. Two bytes always: bkpt has no wide form, where RISC-V
+// has to read the instruction to find out which ebreak it was. The sticky bit
+// in HFSR is written back to clear it, or the next real HardFault would look
+// like another assertion and be stepped over into whatever follows.
+#define MYRTOS_TRAP_STEP_BREAKPOINT(f) do { \
+        ARM_SCB_HFSR = ARM_HFSR_DEBUGEVT; \
+        (f)->pc += 2u; \
+    } while (0)
 
 // Thread mode, on the process stack, with no floating-point state stacked --
 // which is the only shape myrtos produces, since the FPU is left switched off

@@ -33,8 +33,12 @@ _Static_assert(sizeof(myrtos_frame_t) == 144, "the frame must match FRAME_SIZE")
 #define MYRTOS_TRAP_IS_INTERRUPT(f) (((f)->cause & MCAUSE_INTERRUPT_BIT) != 0)
 #define MYRTOS_TRAP_IS_TIMER(f)     (MYRTOS_TRAP_IS_INTERRUPT(f) && \
                                      ((f)->cause & MCAUSE_CODE_MASK) == MCAUSE_MACHINE_TIMER)
-#define MYRTOS_TRAP_IS_SYSCALL(f)   (!MYRTOS_TRAP_IS_INTERRUPT(f) && \
-                                     ((f)->cause & MCAUSE_CODE_MASK) == MCAUSE_ECALL_M)
+// Asked of a bare cause as well as of a frame, because the trap self-test at
+// startup has only the number: it makes one call and then wants to know that
+// what came back was the system call it made.
+#define MYRTOS_CAUSE_IS_SYSCALL(c)  (((c) & MCAUSE_INTERRUPT_BIT) == 0 && \
+                                     ((c) & MCAUSE_CODE_MASK) == MCAUSE_ECALL_M)
+#define MYRTOS_TRAP_IS_SYSCALL(f)   MYRTOS_CAUSE_IS_SYSCALL((f)->cause)
 #define MYRTOS_TRAP_IS_BREAKPOINT(f) (!MYRTOS_TRAP_IS_INTERRUPT(f) && \
                                      ((f)->cause & MCAUSE_CODE_MASK) == MCAUSE_BREAKPOINT)
 
@@ -47,6 +51,16 @@ _Static_assert(sizeof(myrtos_frame_t) == 144, "the frame must match FRAME_SIZE")
 
 // The address that faulted, which this machine hands over in the frame.
 #define MYRTOS_TRAP_FAULT(f)  ((f)->fault)
+
+// Past the breakpoint, so an assertion returns false instead of parking the
+// board. The instruction's own low two bits say how wide it is: compressed
+// ebreak is two bytes and the wide one is four. Reading the instruction is safe
+// here and only here -- the cause has already said a breakpoint executed at
+// this address, so the address is one that fetched.
+#define MYRTOS_TRAP_STEP_BREAKPOINT(f) do { \
+        uint16_t _insn = *(const uint16_t *)(uintptr_t)(f)->pc; \
+        (f)->pc += ((_insn & 3u) == 3u) ? 4u : 2u; \
+    } while (0)
 
 // The global pointer every process runs with. Captured from the kernel once at
 // startup, because on this machine gp addresses the kernel's own small data and

@@ -9,7 +9,7 @@
 #define MYRTOS_CRASH_MAGIC 0x43524148u   // "CRAH"
 
 #define MYRTOS_CRASH_PANIC  1   // a = format string, b = caller
-#define MYRTOS_CRASH_TRAP   2   // a = mepc, b = mcause, c = mtval
+#define MYRTOS_CRASH_TRAP   2   // a = pc, b = cause, c = faulting address
 #define MYRTOS_CRASH_ASSERT 3   // a = where the ebreak was
 
 // The crash record keeps the first assertion, because the first is the one that
