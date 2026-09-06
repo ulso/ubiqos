@@ -124,6 +124,8 @@ static struct {
     uint8_t addr, instance;
     bool wanted, armed;
     uint8_t idle;                // consecutive sweeps with nothing in flight
+    uint8_t dead;                // consecutive sweeps with nothing on the WIRE
+    uint8_t tries;               // recoveries since the last report arrived
 } hid_poll[HID_SLOTS];
 
 uint32_t myrtos_hid_rearms;      // how many times the ask had to be repeated
@@ -141,6 +143,9 @@ static void hid_want(uint8_t addr, uint8_t instance) {
             hid_poll[i].addr = addr;
             hid_poll[i].instance = instance;
             hid_poll[i].wanted = true;
+            hid_poll[i].idle = 0;
+            hid_poll[i].dead = 0;
+            hid_poll[i].tries = 0;
             hid_poll[i].armed = tuh_hid_receive_report(addr, instance);
             return;
         }
@@ -173,6 +178,41 @@ static void hid_want(uint8_t addr, uint8_t instance) {
 
 static void forget_held_keys(void);
 int32_t myrtos_usbhost_cdc_index(void);
+
+// The interrupt IN endpoint one HID instance's reports arrive on, or nothing.
+//
+// The control endpoint is skipped: it is ep 0 in both directions and is never
+// what a report comes back on. What is left are the interface endpoints, and
+// there is more than one of them -- this very keyboard reports two, 0x81 for
+// the keys and 0x82 for the second HID interface beside them. So the instance
+// has to be counted off rather than assumed away; taking the first match would
+// have watched the keyboard's endpoint on behalf of the other interface and
+// drawn the wrong conclusion about both.
+//
+// The pool is filled in the order the endpoints are opened, which is the order
+// the interfaces are mounted, which is the order the instances are numbered.
+static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
+    for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
+        const endpoint_t *e = PIO_USB_ENDPOINT(i);
+        if (e->dev_addr != addr) continue;
+        if (!(e->ep_num & 0x80)) continue;
+        if ((e->ep_num & 0x7f) == 0) continue;
+        if (instance--) continue;
+        return e;
+    }
+    return 0;
+}
+
+// Long enough that the ordinary gap between one transfer completing and the
+// next being queued cannot be mistaken for the fault. That gap is microseconds
+// -- the host stack re-queues from the completion callback -- and this is
+// sixteen milliseconds, which is also far too short for anyone to notice.
+#define HID_DEAD_SWEEPS 16
+
+// A keyboard that has genuinely gone is asked this many times and then left
+// alone, so a removed device cannot spin here for ever. The budget is refilled
+// by any report that arrives, so a keyboard that recovers is never rationed.
+#define HID_RECOVER_LIMIT 8
 
 // The CDC side has the same disease and, unlike the hub, a cure that is public.
 //
@@ -281,6 +321,41 @@ void myrtos_usbhost_rearm(void) {
             myrtos_hid_rearms++;
             continue;
         }
+
+        // Ask the layer that owns the wire before asking the one that owns the
+        // bookkeeping.
+        //
+        // tuh_hid_receive_ready reports the host stack's own record, and a
+        // transfer that fails without ever completing leaves that record saying
+        // "busy" for good -- so the sweep below, which only acts when the stack
+        // admits to being idle, can never fire. That is precisely the state the
+        // first ARM board sat in: nine keystrokes delivered, then endpoint 0x81
+        // with three failures and NOTHING QUEUED, rearms and recoveries both
+        // zero, and a replug that went unnoticed. PIO knows there is nothing on
+        // the wire, and PIO is not guessing.
+        //
+        // The same fault exists on RISC-V and announces itself differently:
+        // TU_ASSERT is an ebreak there, so it prints a stepped-over assertion,
+        // where on ARM it returns false and says nothing.
+        //
+        // Aborting first is what makes the ask land. Without it the claim
+        // inside tuh_hid_receive_report is refused for exactly the reason the
+        // report is needed, and the retry would repeat for ever.
+        const endpoint_t *ep = hid_in_endpoint(hid_poll[i].addr, hid_poll[i].instance);
+        if (ep && !ep->has_transfer) {
+            if (++hid_poll[i].dead < HID_DEAD_SWEEPS) continue;
+            hid_poll[i].dead = 0;
+            if (hid_poll[i].tries >= HID_RECOVER_LIMIT) continue;
+            hid_poll[i].tries++;
+            tuh_edpt_abort_xfer(hid_poll[i].addr, ep->ep_num);
+            hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr,
+                                                       hid_poll[i].instance);
+            hid_poll[i].idle = 0;
+            myrtos_hid_recoveries++;
+            forget_held_keys();
+            continue;
+        }
+        hid_poll[i].dead = 0;
 
         if (!tuh_hid_receive_ready(hid_poll[i].addr, hid_poll[i].instance)) {
             hid_poll[i].idle = 0;               // a transfer is out, as it should be
@@ -535,6 +610,18 @@ void tuh_cdc_umount_cb(uint8_t idx) {
 
 void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
                                 uint8_t const *report, uint16_t len) {
+    // A report arriving is the proof that recovery worked, so the budget is
+    // refilled here rather than counted down to nothing. A keyboard that keeps
+    // coming back is never rationed; only one that never answers runs out.
+    for (int i = 0; i < HID_SLOTS; i++) {
+        if (hid_poll[i].wanted && hid_poll[i].addr == addr
+                               && hid_poll[i].instance == instance) {
+            hid_poll[i].tries = 0;
+            hid_poll[i].dead = 0;
+            break;
+        }
+    }
+
     if (len >= 8 && tuh_hid_interface_protocol(addr, instance) == HID_ITF_PROTOCOL_KEYBOARD) {
         // A report lists the keys that are DOWN, not the ones just pressed, and
         // it arrives on every poll. Emitting all of them each time turned one
