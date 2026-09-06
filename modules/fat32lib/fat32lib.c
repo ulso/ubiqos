@@ -1,9 +1,39 @@
-#include "fat32.h"
-#include "sdcard.h"
-#include "../common/myrtos_abi.h"   // for MYRTOS_DIRNAME_MAX
+// FAT32 as a library module: code the kernel calls rather than runs.
+//
+// This was kernel/fat32.c until 6 Sep 2026 -- 9.3 kB of SRAM that only matters
+// once somebody touches the card. It is loaded where modules are loaded, which
+// is PSRAM, and the kernel image no longer carries it.
+//
+// No kernel header, no SDK header. Everything it needs from outside is in K:
+// two prints and four block-device calls, which is the whole of what a
+// filesystem asked of the system underneath it. myrtos_fsops_t came along to
+// the ABI, because it stopped being a kernel detail the moment this file left.
+#include "../../common/myrtos_abi.h"
+#include "../../common/myrtos_string.h"   // memset and strlen, which the
+                                          // compiler emits calls to by itself
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
+static const myrtos_kernel_api_t *K;
+
+// What fat32.h used to declare. The header stayed in the kernel because the
+// kernel's own callers still want those four names; everything else was only
+// ever this file talking to itself, and now says so here.
+bool     myrtos_fat_mount(void);
+bool     myrtos_fat_remount(void);
+bool     myrtos_fat_extent(uint32_t *first_block, uint32_t *block_count);
+int32_t  myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len);
+bool     myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out);
+int32_t  myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len);
+int32_t  myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
+                             char *name_out, uint32_t *size_out);
+int32_t  myrtos_fat_write_at(const char *path, uint32_t offset,
+                             const uint8_t *buf, uint32_t len);
+bool     myrtos_fat_remove(const char *path);
+bool     myrtos_fat_mkdir(const char *path);
+bool     myrtos_fat_rmdir(const char *path);
+int32_t  myrtos_fat_stat(const char *path, uint32_t *size_out);
+bool     myrtos_fat_name_to_83(const char *user, char *out_11);
+extern const myrtos_fsops_t myrtos_fat_ops;
+
 
 static uint32_t fat_start_lba;      // the first FAT
 static uint32_t data_start_lba;     // the first data cluster (cluster 2)
@@ -39,12 +69,12 @@ bool myrtos_fat_mount(void) {
     myrtos_fat_forget_read_cache();
     mounted = false;
 
-    if (!myrtos_sd_read_block(0, sector)) {
-        myrtos_print("FAT: cannot read sector 0\n");
+    if (!K->sd_read_block(0, sector)) {
+        K->print("FAT: cannot read sector 0\n");
         return false;
     }
     if (sector[510] != 0x55 || sector[511] != 0xaa) {
-        myrtos_print("FAT: no boot signature\n");
+        K->print("FAT: no boot signature\n");
         return false;
     }
 
@@ -55,8 +85,8 @@ bool myrtos_fat_mount(void) {
     if (!(sector[0] == 0xeb || sector[0] == 0xe9)) {
         // Partition table: the first entry starts at 446, the LBA at +8.
         vbr_lba = rd32(&sector[446 + 8]);
-        if (!vbr_lba) { myrtos_print("FAT: no partition found\n"); return false; }
-        if (!myrtos_sd_read_block(vbr_lba, sector)) return false;
+        if (!vbr_lba) { K->print("FAT: no partition found\n"); return false; }
+        if (!K->sd_read_block(vbr_lba, sector)) return false;
     }
 
     uint32_t bytes_per_sector = rd16(&sector[11]);
@@ -68,7 +98,7 @@ bool myrtos_fat_mount(void) {
     root_cluster              = rd32(&sector[44]);
 
     if (bytes_per_sector != 512 || !sectors_per_cluster || !sectors_per_fat) {
-        myrtos_print("FAT: not a FAT32 volume this reader understands\n");
+        K->print("FAT: not a FAT32 volume this reader understands\n");
         return false;
     }
 
@@ -80,9 +110,9 @@ bool myrtos_fat_mount(void) {
                      / sectors_per_cluster;
     mounted = true;
 
-    myrtos_print("FAT32 mounted, ");
-    myrtos_print_u32(sectors_per_cluster);
-    myrtos_print(" sectors per cluster\n");
+    K->print("FAT32 mounted, ");
+    K->print_u32(sectors_per_cluster);
+    K->print(" sectors per cluster\n");
     return true;
 }
 
@@ -93,7 +123,7 @@ static uint32_t cluster_to_lba(uint32_t cluster) {
 // The next cluster in the chain, or >= 0x0ffffff8 when the file ends.
 static uint32_t fat_next_cluster(uint32_t cluster) {
     uint32_t offset = cluster * 4;
-    if (!myrtos_sd_read_block(fat_start_lba + offset / 512, sector)) return 0x0fffffff;
+    if (!K->sd_read_block(fat_start_lba + offset / 512, sector)) return 0x0fffffff;
     return rd32(&sector[offset % 512]) & 0x0fffffff;
 }
 
@@ -178,7 +208,7 @@ static bool find_entry(uint32_t dir_cluster, const char *name_83,
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
+            if (!K->sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
             for (int e = 0; e < 512; e += 32) {
                 if (sector[e] == 0x00) return false;   // end of the directory
                 if (sector[e] == 0xe5) { lfn_reset(&lfn); continue; }   // deleted
@@ -310,7 +340,7 @@ int32_t myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len
     uint32_t written = 0, cluster = file_cluster;
     while (cluster < 0x0ffffff8 && written < file_size) {
         for (uint32_t s = 0; s < sectors_per_cluster && written < file_size; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(cluster) + s, sector)) return -1;
+            if (!K->sd_read_block(cluster_to_lba(cluster) + s, sector)) return -1;
             for (uint32_t i = 0; i < 512 && written < file_size; i++) {
                 buf[written++] = sector[i];
             }
@@ -328,7 +358,7 @@ bool myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
+            if (!K->sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
             for (int e = 0; e < 512; e += 32) {
                 if (sector[e] == 0x00) return false;      // end of the directory
                 if (sector[e] == 0xe5) continue;          // deleted entry
@@ -452,7 +482,7 @@ int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint
     uint32_t pos = offset % bytes_per_cluster, written = 0;
     while (cluster < 0x0ffffff8 && written < len) {
         for (uint32_t s = pos / 512; s < sectors_per_cluster && written < len; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(cluster) + s, sector)) return -1;
+            if (!K->sd_read_block(cluster_to_lba(cluster) + s, sector)) return -1;
             for (uint32_t i = pos % 512; i < 512 && written < len; i++) buf[written++] = sector[i];
             pos = 0;
         }
@@ -478,7 +508,7 @@ int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
 
     while (dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return -1;
+            if (!K->sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return -1;
             for (int e = 0; e < 512; e += 32) {
                 if (sector[e] == 0x00) return -1;         // end of the directory
                 if (sector[e] == 0xe5) { lfn_reset(&lfn); continue; }
@@ -571,7 +601,7 @@ static void wr32(uint8_t *p, uint32_t v) {
 
 static uint32_t fat_get(uint32_t cluster) {
     uint32_t offset = cluster * 4;
-    if (!myrtos_sd_read_block(fat_start_lba + offset / 512, fatbuf)) return 0x0fffffff;
+    if (!K->sd_read_block(fat_start_lba + offset / 512, fatbuf)) return 0x0fffffff;
     return rd32(&fatbuf[offset % 512]) & 0x0fffffff;
 }
 
@@ -581,14 +611,14 @@ static uint32_t fat_get(uint32_t cluster) {
 static bool fat_put(uint32_t cluster, uint32_t value) {
     uint32_t offset = cluster * 4;
     uint32_t lba = fat_start_lba + offset / 512;
-    if (!myrtos_sd_read_block(lba, fatbuf)) return false;
+    if (!K->sd_read_block(lba, fatbuf)) return false;
 
     // The top four bits are reserved and must be preserved, not overwritten.
     uint32_t old = rd32(&fatbuf[offset % 512]);
     wr32(&fatbuf[offset % 512], (old & 0xf0000000u) | (value & 0x0fffffffu));
 
     for (uint32_t f = 0; f < num_fats; f++) {
-        if (!myrtos_sd_write_block(lba + f * sectors_per_fat, fatbuf)) return false;
+        if (!K->sd_write_block(lba + f * sectors_per_fat, fatbuf)) return false;
     }
     return true;
 }
@@ -738,7 +768,7 @@ static bool dir_find(uint32_t dir_cluster, const char *name_83, const char *want
     while (dir_cluster >= 2 && dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
             uint32_t lba = cluster_to_lba(dir_cluster) + s;
-            if (!myrtos_sd_read_block(lba, sector)) return false;
+            if (!K->sd_read_block(lba, sector)) return false;
             for (uint32_t e = 0; e < 512; e += 32, index++) {
                 if (sector[e] == 0x00) return false;
                 if (sector[e] == 0xe5) { lfn_reset(&lfn); in_run = false; continue; }
@@ -792,7 +822,7 @@ static bool dir_alloc_run(uint32_t dir_cluster, uint32_t count, uint32_t *first_
 
     while (dir_cluster >= 2 && dir_cluster < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
+            if (!K->sd_read_block(cluster_to_lba(dir_cluster) + s, sector)) return false;
             for (uint32_t e = 0; e < 512; e += 32, index++) {
                 if (sector[e] != 0x00 && sector[e] != 0xe5) { run = 0; continue; }
                 if (!run) run_start = index;
@@ -807,7 +837,7 @@ static bool dir_alloc_run(uint32_t dir_cluster, uint32_t count, uint32_t *first_
     if (!fresh || !fat_put(last, fresh)) return false;
     for (int i = 0; i < 512; i++) sector[i] = 0;
     for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-        if (!myrtos_sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
+        if (!K->sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
     }
     *first_idx = run ? run_start : index;
     return true;
@@ -835,7 +865,7 @@ static bool dir_write_lfn(uint32_t dir_cluster, uint32_t first_idx,
         uint32_t seq = frags - k;                  // what lands at first_idx + k
         uint32_t lba, o;
         if (!dir_at(dir_cluster, first_idx + k, &lba, &o)) return false;
-        if (!myrtos_sd_read_block(lba, sector)) return false;
+        if (!K->sd_read_block(lba, sector)) return false;
 
         uint8_t *e = &sector[o];
         for (int i = 0; i < 32; i++) e[i] = 0;
@@ -850,7 +880,7 @@ static bool dir_write_lfn(uint32_t dir_cluster, uint32_t first_idx,
                        : (at == len) ? 0u : 0xffffu;
             wr16(&e[off[i]], u);
         }
-        if (!myrtos_sd_write_block(lba, sector)) return false;
+        if (!K->sd_write_block(lba, sector)) return false;
     }
     return true;
 }
@@ -865,9 +895,9 @@ static bool dir_erase_run(uint32_t dir_cluster, uint32_t first, uint32_t last) {
     for (uint32_t i = first; i <= last; i++) {
         uint32_t lba, off;
         if (!dir_at(dir_cluster, i, &lba, &off)) return false;
-        if (!myrtos_sd_read_block(lba, sector)) return false;
+        if (!K->sd_read_block(lba, sector)) return false;
         sector[off] = 0xe5;
-        if (!myrtos_sd_write_block(lba, sector)) return false;
+        if (!K->sd_write_block(lba, sector)) return false;
     }
     return true;
 }
@@ -896,7 +926,7 @@ static bool dir_create(uint32_t dir_cluster, const char *name_83, const char *le
     if (frags && !dir_write_lfn(dir_cluster, first, leaf_long, short_11, frags)) return false;
 
     if (!dir_at(dir_cluster, first + frags, lba_out, off_out)) return false;
-    if (!myrtos_sd_read_block(*lba_out, sector)) return false;
+    if (!K->sd_read_block(*lba_out, sector)) return false;
     for (int i = 0; i < 11; i++) sector[*off_out + i] = (uint8_t)short_11[i];
     for (int i = 11; i < 32; i++) sector[*off_out + i] = 0;
     return true;
@@ -945,7 +975,7 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
         if (!dir_create(dir, name_83, leaf, &lba, &off)) return -1;
         first_cluster = 0;
         size = 0;
-        if (!myrtos_sd_write_block(lba, sector)) return -1;
+        if (!K->sd_write_block(lba, sector)) return -1;
     }
 
     const uint32_t bytes_per_cluster = sectors_per_cluster * 512;
@@ -972,11 +1002,11 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
             uint32_t dlba = cluster_to_lba(cluster) + s;
 
             // Read before write: a partial sector must keep the bytes around it.
-            if (!myrtos_sd_read_block(dlba, sector)) return -1;
+            if (!K->sd_read_block(dlba, sector)) return -1;
             for (uint32_t i = pos % 512; i < 512 && written < len; i++) {
                 sector[i] = buf[written++];
             }
-            if (!myrtos_sd_write_block(dlba, sector)) return -1;
+            if (!K->sd_write_block(dlba, sector)) return -1;
             pos = 0;
         }
         pos = 0;
@@ -992,12 +1022,12 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
 
     // The directory entry is written last, so a file only ever claims bytes that
     // are already on the card.
-    if (!myrtos_sd_read_block(lba, sector)) return -1;
+    if (!K->sd_read_block(lba, sector)) return -1;
     wr16(&sector[off + 20], (uint16_t)(first_cluster >> 16));
     wr16(&sector[off + 26], (uint16_t)(first_cluster & 0xffff));
     if (offset + len > size) wr32(&sector[off + 28], offset + len);
     sector[off + 11] = 0x20;                             // archive, an ordinary file
-    if (!myrtos_sd_write_block(lba, sector)) return -1;
+    if (!K->sd_write_block(lba, sector)) return -1;
 
     return (int32_t)len;
 }
@@ -1025,7 +1055,7 @@ bool myrtos_fat_mkdir(const char *path) {
 
     for (int i = 0; i < 512; i++) sector[i] = 0;
     for (uint32_t s = 0; s < sectors_per_cluster; s++) {
-        if (!myrtos_sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
+        if (!K->sd_write_block(cluster_to_lba(fresh) + s, sector)) return false;
     }
 
     for (int i = 0; i < 11; i++) { sector[i] = ' '; sector[32 + i] = ' '; }
@@ -1038,13 +1068,13 @@ bool myrtos_fat_mkdir(const char *path) {
     uint32_t up = (dir == root_cluster) ? 0 : dir;
     wr16(&sector[32 + 20], (uint16_t)(up >> 16));
     wr16(&sector[32 + 26], (uint16_t)(up & 0xffff));
-    if (!myrtos_sd_write_block(cluster_to_lba(fresh), sector)) return false;
+    if (!K->sd_write_block(cluster_to_lba(fresh), sector)) return false;
 
     if (!dir_create(dir, name_83, leaf, &lba, &off)) return false;
     sector[off + 11] = 0x10;
     wr16(&sector[off + 20], (uint16_t)(fresh >> 16));
     wr16(&sector[off + 26], (uint16_t)(fresh & 0xffff));
-    return myrtos_sd_write_block(lba, sector);
+    return K->sd_write_block(lba, sector);
 }
 
 // Remove a directory, provided it is empty. "Empty" means nothing in it but its
@@ -1073,7 +1103,7 @@ bool myrtos_fat_rmdir(const char *path) {
     uint32_t c = cluster;
     while (!done && c >= 2 && c < 0x0ffffff8) {
         for (uint32_t s = 0; s < sectors_per_cluster && !done; s++) {
-            if (!myrtos_sd_read_block(cluster_to_lba(c) + s, sector)) return false;
+            if (!K->sd_read_block(cluster_to_lba(c) + s, sector)) return false;
             for (int e = 0; e < 512; e += 32) {
                 if (sector[e] == 0x00) { done = true; break; }   // end of the directory
                 if (sector[e] == 0xe5) continue;                 // deleted
@@ -1113,8 +1143,8 @@ bool myrtos_fat_remount(void) {
     // the first: the driver has unbounded waits that upstream itself marks
     // "todo not forever". In this process a hang costs one process. Before the
     // scheduler it costs the board, which is what it did.
-    if (myrtos_sd_try_sdio() && myrtos_fat_mount()) return true;
-    if (!myrtos_sd_init()) return false;
+    if (K->sd_try_sdio() && myrtos_fat_mount()) return true;
+    if (!K->sd_init()) return false;
     return myrtos_fat_mount();
 }
 
@@ -1131,4 +1161,28 @@ const myrtos_fsops_t myrtos_fat_ops = {
     .stat      = myrtos_fat_stat,
     .find_nth  = myrtos_fat_find_nth,
     .read_file = myrtos_fat_read_file,
+};
+
+// --- WHAT THE KERNEL CALLS -------------------------------------------------
+// Entry zero takes the kernel's table and must be called first. Entry two is
+// not a function but the volume's operation table, which the file server hands
+// straight to myrtos_vfs_add -- so a mounted card is nine function pointers
+// into PSRAM, relocated at load like everything else in the module.
+static bool fat_lib_init(const myrtos_kernel_api_t *api)
+{
+    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    K = api;
+    return true;
+}
+
+const myrtos_lib_table_t myrtos_lib = {
+    .abi   = MYRTOS_LIB_ABI,
+    .count = 5,
+    .fn    = {
+        (void*)fat_lib_init,          // 0: take the kernel's table
+        (void*)myrtos_fat_mount,      // 1: find the volume on the card
+        (void*)&myrtos_fat_ops,       // 2: the operations, for myrtos_vfs_add
+        (void*)myrtos_fat_stat,       // 3: one named entry
+        (void*)myrtos_fat_extent,     // 4: where the volume sits, for usbmsc
+    },
 };

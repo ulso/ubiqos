@@ -320,7 +320,7 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
             myrtos_print("USB disk: the card came back unreadable\n");
             return -1;
         }
-        if (!card_mounted && !myrtos_vfs_add("sd", &myrtos_fat_ops)) {
+        if (!card_mounted && !myrtos_vfs_add("sd", myrtos_fat_ops_ptr())) {
             myrtos_print("USB disk: no room in the volume table\n");
             return -1;
         }
@@ -524,7 +524,7 @@ static bool card_bring_up(bool try_sdio) {
     // It becomes /sd. The name is the volume's, not the filesystem's: a
     // LittleFS partition or a USB stick would come in the same way under its
     // own name, and nothing above here would know the difference.
-    if (!myrtos_vfs_add("sd", &myrtos_fat_ops)) {
+    if (!myrtos_vfs_add("sd", myrtos_fat_ops_ptr())) {
         myrtos_print("SD: no room in the volume table\n");
         return false;
     }

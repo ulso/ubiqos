@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../common/myrtos_abi.h"
 
 // Volumes, and the root that lists them.
 //
@@ -16,26 +17,9 @@
 // The root itself is owned by nobody. Listing it lists the volumes, which is
 // why it is answered here rather than by any filesystem.
 
-// Everything the server asks of a volume. A volume that cannot do something
-// leaves the pointer null and the request is refused -- /dev has only stat_nth,
-// because a device is not a file you can write to by name.
-//
-// The signatures are FAT32's unchanged, so that filesystem needs no wrappers.
-typedef struct {
-    int32_t (*read_at)(const char *path, uint32_t offset, uint8_t *buf, uint32_t len);
-    int32_t (*write_at)(const char *path, uint32_t offset, const uint8_t *buf, uint32_t len);
-    bool    (*remove)(const char *path);
-    bool    (*mkdir)(const char *path);
-    bool    (*rmdir)(const char *path);
-    int32_t (*stat_nth)(const char *dirpath, uint32_t index, char *name_out, uint32_t *size_out);
-    // One named entry rather than the nth: attribute byte, or -1. This is what
-    // lets a program ask how long a file is, which is what "a", SEEK_END and an
-    // open that can refuse a missing file all wanted.
-    int32_t (*stat)(const char *path, uint32_t *size_out);
-    // Module scanning: find the nth file with this extension, then read it.
-    bool    (*find_nth)(const char *ext_3, uint32_t index, char *name_out);
-    int32_t (*read_file)(const char *name_83, uint8_t *buf, uint32_t max_len);
-} myrtos_fsops_t;
+// myrtos_fsops_t moved to common/myrtos_abi.h when fat32 became a library:
+// it is an interface between the kernel and a module now, not a kernel detail.
+
 
 #define MYRTOS_MAX_VOLUMES 4
 

@@ -83,6 +83,27 @@
 #define MYRTOS_TYPE_LIBRARY   4   // code, but entered through a table rather
                                   // than at one point -- see exec_offset
 
+// Everything the server asks of a volume. A volume that cannot do something
+// leaves the pointer null and the request is refused -- /dev has only stat_nth,
+// because a device is not a file you can write to by name.
+//
+// The signatures are FAT32's unchanged, so that filesystem needs no wrappers.
+typedef struct {
+    int32_t (*read_at)(const char *path, uint32_t offset, uint8_t *buf, uint32_t len);
+    int32_t (*write_at)(const char *path, uint32_t offset, const uint8_t *buf, uint32_t len);
+    bool    (*remove)(const char *path);
+    bool    (*mkdir)(const char *path);
+    bool    (*rmdir)(const char *path);
+    int32_t (*stat_nth)(const char *dirpath, uint32_t index, char *name_out, uint32_t *size_out);
+    // One named entry rather than the nth: attribute byte, or -1. This is what
+    // lets a program ask how long a file is, which is what "a", SEEK_END and an
+    // open that can refuse a missing file all wanted.
+    int32_t (*stat)(const char *path, uint32_t *size_out);
+    // Module scanning: find the nth file with this extension, then read it.
+    bool    (*find_nth)(const char *ext_3, uint32_t index, char *name_out);
+    int32_t (*read_file)(const char *name_83, uint8_t *buf, uint32_t max_len);
+} myrtos_fsops_t;
+
 // --- LIBRARY MODULES ------------------------------------------------------
 // A module the kernel calls rather than runs. OS-9 had these as Sbrtn, and the
 // reason is the same one: not everything that belongs in a system belongs in
@@ -113,7 +134,7 @@ typedef struct {
 // would be answering its own question. It gets addresses instead, in a table
 // as versioned as its own. Twelve entries is what the wifi driver needed:
 // four from the kernel, seven from the SDK's hardware layer, and strlen.
-#define MYRTOS_KERNEL_API_ABI 1
+#define MYRTOS_KERNEL_API_ABI 2
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -146,7 +167,19 @@ typedef struct {
     void   (*gpio_set_pulls)(uint32_t pin, bool up, bool down);
     void   (*busy_wait_us)(uint64_t us);
     uint64_t (*time_us)(void);        // free-running, never wraps in any life here
+
+    // The block device, for a filesystem library. Four calls is the whole of
+    // what fat32 wanted from the kernel besides printing.
+    bool   (*sd_init)(void);
+    bool   (*sd_try_sdio)(void);
+    bool   (*sd_read_block)(uint32_t lba, uint8_t *buf);
+    bool   (*sd_write_block)(uint32_t lba, const uint8_t *buf);
 } myrtos_kernel_api_t;
+
+// One table for every library, which is the simple thing and not the right one
+// for ever: wifi ignores the block device and fat32 ignores the SPI pins. When
+// a third library wants something neither needs, this should become a common
+// part and a domain part rather than growing again.
 
 // --- DEVICE DESCRIPTORS ---------------------------------------------------
 // A data module describing a device, in the OS-9 sense. It states what the

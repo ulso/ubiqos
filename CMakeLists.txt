@@ -139,7 +139,7 @@ add_executable(os_kernel
     kernel/syscalls.c 
     kernel/io.c
     kernel/sdcard.c
-    kernel/fat32.c
+    kernel/fat32link.c
     kernel/moddir.c
     kernel/flashmod.c
     kernel/usbdev.c
@@ -955,6 +955,7 @@ myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 # The first library module: code the kernel calls rather than runs. It was
 # kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
 myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
+myrtos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
 
 # Atto, an emacs in two thousand lines of public-domain C, built as an ordinary
 # module. See modules/atto/README.md for what a C program needs to get here.
@@ -1161,6 +1162,7 @@ set(MYRTOS_RESIDENT
     libctest
     newlibtest
     wifilib
+    fat32lib
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory

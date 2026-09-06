@@ -14,6 +14,7 @@
 #include "hardware/gpio.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
+#include "sdcard.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -41,7 +42,9 @@ static uint64_t k_time_us(void)                            { return time_us_64()
 static void  *k_bulk_alloc(uint32_t n)
 { return myrtos_bulk_pool ? myrtos_tlsf_malloc(myrtos_bulk_pool, n) : 0; }
 
-static const myrtos_kernel_api_t kernel_api = {
+// Not static any more: fat32link.c wants the same table, and there is only
+// one kernel to describe.
+const myrtos_kernel_api_t myrtos_kernel_api = {
     .abi               = MYRTOS_KERNEL_API_ABI,
     .print             = myrtos_print,
     .print_u32         = myrtos_print_u32,
@@ -58,6 +61,10 @@ static const myrtos_kernel_api_t kernel_api = {
     .gpio_set_pulls    = k_gpio_set_pulls,
     .busy_wait_us      = k_busy_wait,
     .time_us           = k_time_us,
+    .sd_init           = myrtos_sd_init,
+    .sd_try_sdio       = myrtos_sd_try_sdio,
+    .sd_read_block     = myrtos_sd_read_block,
+    .sd_write_block    = myrtos_sd_write_block,
 };
 
 // The entries wifilib publishes, in the order its table documents them.
@@ -76,7 +83,7 @@ static bool ensure_linked(void)
     if (!lib || lib->count <= WIFI_PID) { lib = 0; return false; }
 
     bool (*init)(const myrtos_kernel_api_t *) = (bool (*)(const myrtos_kernel_api_t *))lib->fn[WIFI_INIT];
-    if (!init(&kernel_api)) { lib = 0; return false; }
+    if (!init(&myrtos_kernel_api)) { lib = 0; return false; }
 
     // Said out loud, because a library that does not link fails silently by
     // design -- a board without the module simply has no wifi -- and silence
