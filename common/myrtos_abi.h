@@ -540,7 +540,6 @@ typedef struct {
 #define MYRTOS_USB_KEYSIN       3u   // bytes ever pushed into the key ring
 #define MYRTOS_USB_CDCREARMS    5u   // times the dongle's read was queued again
 #define MYRTOS_USB_CDCGIVEUP    6u   // 1 once the dongle stopped being asked
-#define MYRTOS_USB_HUBREARMS    7u   // times the hub's status poll was queued again
 #define MYRTOS_USB_ROOT         4u   // init | connected<<1 | fullspeed<<2 | susp<<3 | event<<8
 // addr | instance<<8 | wanted<<16 | armed<<17 | idle<<24, for eight slots
 #define MYRTOS_USB_HID          0x10u

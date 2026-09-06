@@ -312,89 +312,11 @@ static void cdc_rearm(void) {
     myrtos_cdc_rearms++;
 }
 
-// Re-arming the hub's status poll, which is the failure this board has had
-// since August and the one that only cutting the power has cured.
-//
-// TinyUSB's hub_xfer_cb opens with TU_VERIFY(result == XFER_RESULT_SUCCESS)
-// (hub.c:337), so ONE failed transfer returns before the re-arm at the bottom
-// and nothing polls the hub again. Port changes stop being reported for good --
-// which is why replugging a device afterwards produces no log line and no
-// recovery, and why a warm reset does not help.
-//
-// This was tried from outside in the summer and hit
-// TU_ASSERT(ep_state->busy == 0): usbh still believed a transfer was out. That
-// is the same trap the HID sweep below hit on 6 Sep, and it has the same two
-// answers -- ask PIO whether anything is on the wire rather than asking usbh,
-// and call tuh_edpt_abort_xfer first to release the claim that is stuck. The
-// third piece is hub_edpt_status_xfer, which submits using the hub driver's own
-// buffer, so nothing here has to own memory it has no right to.
-//
-// The hub is found by address: TinyUSB numbers hubs from CFG_TUH_DEVICE_MAX + 1.
-//
-// MEASURED 6 Sep 2026, AND IT DOES NOT CURE THIS BOARD. On a hub that has gone
-// silent, the re-arm succeeds -- the endpoint reads "queued" again, which
-// nothing had achieved before -- and the transfer then fails, over and over.
-// So the CH334F itself has stopped answering and the driver giving up is a
-// consequence, not the cause. Only cutting the power brings it back.
-//
-// Kept anyway, and bounded so that a dead hub costs eight attempts and then
-// silence, because the defect it fixes is real and separate: one failed
-// transfer stops the polling FOR GOOD even when the hub is still alive. That
-// case has not been seen yet and would look exactly like this one.
-extern bool hub_edpt_status_xfer(uint8_t dev_addr);
-
-uint32_t myrtos_hub_rearms;
-
-#define HUB_DEAD_SWEEPS 32          // about a third of a second at this rate
-#define HUB_REARM_LIMIT 8           // then leave it alone; refilled on recovery
-
-// Long enough that a re-arm which "worked" for one sweep does not refill the
-// budget. A hub that is genuinely gone accepts the transfer, fails it, and is
-// healthy for exactly one observation in between -- which cost 387 re-arms in
-// twenty seconds before this was counted properly.
-#define HUB_WELL_SWEEPS 1000        // about a second of actually being polled
-
-static void hub_rearm(void)
-{
-    static uint8_t dead, tries;
-    static uint16_t well;
-
-    const endpoint_t *hub = 0;
-    for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
-        const endpoint_t *e = PIO_USB_ENDPOINT(i);
-        if (!e->size) continue;                       // a closed slot keeps its name
-        if (e->dev_addr <= CFG_TUH_DEVICE_MAX) continue;
-        if (!(e->ep_num & 0x80) || (e->ep_num & 0x7f) == 0) continue;
-        hub = e;
-        break;
-    }
-    if (!hub) { dead = 0; return; }
-
-    if (hub->has_transfer) {
-        dead = 0;
-        // The budget comes back only after the hub has been polled steadily for
-        // a while, not because it looked well once. See HUB_WELL_SWEEPS.
-        if (well < HUB_WELL_SWEEPS) well++;
-        else tries = 0;
-        return;
-    }
-    well = 0;
-    if (++dead < HUB_DEAD_SWEEPS) return;
-    dead = 0;
-    if (tries >= HUB_REARM_LIMIT) return;
-    tries++;
-
-    tuh_edpt_abort_xfer(hub->dev_addr, hub->ep_num);
-    if (hub_edpt_status_xfer(hub->dev_addr)) myrtos_hub_rearms++;
-}
-
 void myrtos_usbhost_rearm(void) {
     // Not every pass. A healthy endpoint is busy and the claim simply fails, so
     // this costs little either way, but sixty times a second is enough.
     static uint8_t cdc_countdown;
     if (!cdc_countdown--) { cdc_countdown = 63; cdc_rearm(); }
-
-    hub_rearm();
 
     for (int i = 0; i < HID_SLOTS; i++) {
         if (!hid_poll[i].wanted) continue;
@@ -776,7 +698,6 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
     if (what == MYRTOS_USB_REARMS)     return myrtos_hid_rearms;
     if (what == MYRTOS_USB_RECOVERIES) return myrtos_hid_recoveries;
     if (what == MYRTOS_USB_CDCREARMS)  return myrtos_cdc_rearms;
-    if (what == MYRTOS_USB_HUBREARMS)  return myrtos_hub_rearms;
     if (what == MYRTOS_USB_CDCGIVEUP)  return myrtos_cdc_gaveup;
     if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
     if (what == MYRTOS_USB_KEYSIN)     return head;
