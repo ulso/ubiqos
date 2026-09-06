@@ -22,12 +22,24 @@ import ldc.llvmasm;
 
 @nogc: nothrow:
 
-// The trap. a7 carries the call, a0 to a2 the arguments, a0 the result -- the
-// same registers the C inline function uses, written in the constraint syntax
-// LLVM wants. Verified by disassembly rather than by reading: li a7,N; ecall.
-pragma(inline, true)
-int syscall(uint id, uint a = 0, uint b = 0, uint c = 0) {
-    return __asm!int("ecall", "={a0},{a7},{a0},{a1},{a2},~{memory}", id, a, b, c);
+// The trap, in the constraint syntax LLVM wants, and the same registers the C
+// inline function uses on each machine. Verified by disassembly rather than by
+// reading: li a7,N; ecall on one side, movs r7,#N; svc 0 on the other.
+//
+// RISC-V carries the call in a7 and the arguments in a0 to a2. ARM carries it
+// in r7 and the arguments in r0 to r2 -- r7 rather than r12, because r12 is the
+// intra-procedure scratch register and belongs to the linker's veneers, while
+// r7 is the frame pointer only when there is one, which at -Oz there is not.
+version (ARM) {
+    pragma(inline, true)
+    int syscall(uint id, uint a = 0, uint b = 0, uint c = 0) {
+        return __asm!int("svc #0", "={r0},{r7},{r0},{r1},{r2},~{memory}", id, a, b, c);
+    }
+} else {
+    pragma(inline, true)
+    int syscall(uint id, uint a = 0, uint b = 0, uint c = 0) {
+        return __asm!int("ecall", "={a0},{a7},{a0},{a1},{a2},~{memory}", id, a, b, c);
+    }
 }
 
 enum : uint {

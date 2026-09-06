@@ -14,15 +14,37 @@
 //! with better habits, since a module-scope `var` stands out in Zig where a
 //! static does not in C.
 
-/// The trap. a7 carries the call, a0 to a2 the arguments, a0 the result.
+const builtin = @import("builtin");
+
+/// The trap. The number carries the call, three registers the arguments, and
+/// the first of them comes back holding the result.
+///
+/// Two machines, one shape. RISC-V puts the number in a7 and the arguments in
+/// a0 to a2; ARM puts it in r7 and the arguments in r0 to r2, which is where
+/// Linux's ARM EABI has always put them. The condition is comptime-known, so
+/// only the branch for the machine being built is ever analysed -- the other
+/// one's register names would not even parse here.
+///
+/// r7 rather than r12 on ARM: r12 belongs to the linker's veneers, and r7 is
+/// the frame pointer only when there is one, which at ReleaseSmall there is not.
 pub fn syscall(id: u32, a0: u32, a1: u32, a2: u32) i32 {
-    return asm volatile ("ecall"
-        : [ret] "={a0}" (-> i32),
-        : [id] "{a7}" (id),
-          [arg0] "{a0}" (a0),
-          [arg1] "{a1}" (a1),
-          [arg2] "{a2}" (a2),
-        : .{ .memory = true });
+    if (builtin.cpu.arch.isArm() or builtin.cpu.arch.isThumb()) {
+        return asm volatile ("svc 0"
+            : [ret] "={r0}" (-> i32),
+            : [id] "{r7}" (id),
+              [arg0] "{r0}" (a0),
+              [arg1] "{r1}" (a1),
+              [arg2] "{r2}" (a2),
+            : .{ .memory = true });
+    } else {
+        return asm volatile ("ecall"
+            : [ret] "={a0}" (-> i32),
+            : [id] "{a7}" (id),
+              [arg0] "{a0}" (a0),
+              [arg1] "{a1}" (a1),
+              [arg2] "{a2}" (a2),
+            : .{ .memory = true });
+    }
 }
 
 pub const SYS_IO_PUTC: u32 = 1;

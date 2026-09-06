@@ -40,6 +40,13 @@ endif()
 # It is the RISC-V linker's, and arm-none-eabi's ld does not know the option at
 # all. -m elf32lriscv likewise: the driver picks its own emulation, so ARM is
 # given nothing and gets it right.
+#
+# Every module link goes through this variable, the D and Zig rules included.
+# They used to spell -m elf32lriscv out for themselves, which is how they came
+# to be riscv-only: the flag was the thing that could not follow. A side effect
+# of routing them here is that D now gets --no-relax as well, which it always
+# should have had -- relaxation is what turns an absolute reference into a
+# gp-relative one, and a module may not contain either.
 if(MYRTOS_ARCH STREQUAL "riscv")
     set(MYRTOS_MODULE_CFLAGS  -mcmodel=medany)
     set(MYRTOS_MODULE_LDFLAGS -Wl,-m,elf32lriscv -Wl,--no-relax)
@@ -500,14 +507,31 @@ find_program(MYRTOS_LDC ldc2 HINTS /opt/homebrew/bin /usr/local/bin)
 # local-exec build passes.
 #
 # --relocation-model=static is -fno-pic and --code-model=medium is -mcmodel=medany.
-set(MYRTOS_LDC_ARCH -mtriple=riscv32-unknown-elf -mattr=+m,+a,+c,+zba,+zbb,+zbs)
-set(MYRTOS_LDC_FLAGS -betterC -Oz --relocation-model=static --code-model=medium
+#
+# --code-model is a RISC-V idea and has no ARM counterpart, so it goes with the
+# triple rather than with the flags every machine shares. --fthread-model does
+# carry across: local-exec gives R_ARM_TLS_LE32, which is an offset from the
+# thread pointer and is on check_module.py's allowed list for the same reason
+# TPREL is.
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(MYRTOS_LDC_ARCH -mtriple=riscv32-unknown-elf -mattr=+m,+a,+c,+zba,+zbb,+zbs
+                        --code-model=medium)
+else()
+    # +no-movt because LLVM otherwise materialises an absolute address as a
+    # movw/movt pair, which is ARM's answer to RISC-V's lui/addi and needs the
+    # same kind of two-instruction relocation -- R_ARM_THM_MOVW_ABS_NC and
+    # R_ARM_THM_MOVT_ABS, neither of which the loader knows. Without it the
+    # address goes in a literal pool instead: one plain word in .text, one
+    # R_ARM_ABS32, and the loader has handled that since the day it was
+    # written. It is also what gcc does for every C module here.
+    set(MYRTOS_LDC_ARCH -mtriple=thumbv8m.main-none-eabi -mcpu=cortex-m33
+                        -mattr=+no-movt)
+endif()
+set(MYRTOS_LDC_FLAGS -betterC -Oz --relocation-model=static
                      --fthread-model=local-exec)
 
 set(MYRTOS_LDC_OK FALSE)
-if(NOT MYRTOS_ARCH STREQUAL "riscv")
-    message(STATUS "D modules are riscv-only so far; skipped on ${MYRTOS_ARCH}")
-elseif(MYRTOS_LDC)
+if(MYRTOS_LDC)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.d
          "module ldc_probe;\nextern(C) int probe() @nogc nothrow { return 0; }\n")
     execute_process(
@@ -609,8 +633,9 @@ function(myrtos_add_d_module name source)
     add_custom_command(
         OUTPUT ${elf}
         COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH} -nostdlib
-                -Wl,-m,elf32lriscv -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
-                -Wl,--emit-relocs ${single_link} ${objs} -o ${elf}
+                ${MYRTOS_MODULE_LDFLAGS} -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
+                -Wl,--emit-relocs ${single_link} ${objs}
+                ${MYRTOS_MODULE_ARCH_SOURCES} -o ${elf}
         DEPENDS ${objs}
         COMMENT "Linking ${name} (D)")
 
@@ -666,19 +691,32 @@ endfunction()
 # handler from dragging in formatting machinery that has nowhere to print.
 find_program(MYRTOS_ZIG zig HINTS /opt/homebrew/bin /usr/local/bin)
 
-set(MYRTOS_ZIG_ARCH -target riscv32-freestanding
-                    -mcpu=generic_rv32+m+a+c+zba+zbb+zbs)
 # -mcmodel=medium is -mcmodel=medany: without it Zig addresses a global with
 # R_RISCV_HI20/LO12_I, an absolute address, and check_module.py refuses the
 # module. It is the same flag every C module here is built with, and the first
 # Zig build was rejected for exactly the reason the checker exists.
-set(MYRTOS_ZIG_FLAGS -OReleaseSmall -mcmodel=medium -fno-PIC -fno-PIE
+#
+# ARM has no such flag and needs none: Thumb-2 reaches a global through a
+# literal pool, so the absolute address is a plain word in .text that the
+# loader relocates. It goes with the target rather than with the shared flags,
+# because passing it there would simply be rejected.
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(MYRTOS_ZIG_ARCH -target riscv32-freestanding
+                        -mcpu=generic_rv32+m+a+c+zba+zbb+zbs
+                        -mcmodel=medium)
+else()
+    # -fno-unwind-tables because LLVM emits an .ARM.exidx entry for every
+    # function on this target, and an entry saying a function cannot be unwound
+    # still names a personality routine that does not exist here. On this side
+    # only, so RISC-V modules come out byte for byte as they did.
+    set(MYRTOS_ZIG_ARCH -target thumb-freestanding-eabi -mcpu=cortex_m33
+                        -fno-unwind-tables)
+endif()
+set(MYRTOS_ZIG_FLAGS -OReleaseSmall -fno-PIC -fno-PIE
                      -fno-stack-check -fno-stack-protector)
 
 set(MYRTOS_ZIG_OK FALSE)
-if(NOT MYRTOS_ARCH STREQUAL "riscv")
-    message(STATUS "Zig modules are riscv-only so far; skipped on ${MYRTOS_ARCH}")
-elseif(MYRTOS_ZIG)
+if(MYRTOS_ZIG)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/zig_probe.zig
          "export fn probe() u32 { return 0; }\n")
     execute_process(
@@ -742,8 +780,9 @@ function(myrtos_add_zig_module name source)
     add_custom_command(
         OUTPUT ${elf}
         COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH} -nostdlib
-                -Wl,-m,elf32lriscv -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
-                -Wl,--no-relax -Wl,--emit-relocs ${single_link} ${zobj} -o ${elf}
+                ${MYRTOS_MODULE_LDFLAGS} -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
+                -Wl,--emit-relocs ${single_link} ${zobj}
+                ${MYRTOS_MODULE_ARCH_SOURCES} -o ${elf}
         DEPENDS ${zobj}
         COMMENT "Linking ${name} (Zig)")
 

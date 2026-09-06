@@ -31,3 +31,28 @@ __aeabi_read_tp:
     mov     r0, r9
     bx      lr
 .size __aeabi_read_tp, . - __aeabi_read_tp
+
+// And the personality routine the unwinder would call, which nothing here ever
+// will.
+//
+// LLVM emits an .ARM.exidx entry for every function on this target, and an
+// entry that says "this function cannot be unwound" still names the personality
+// routine __aeabi_unwind_cpp_pr0. C avoids it because gcc is told
+// -fno-exceptions; Zig avoids it with -fno-unwind-tables; LDC emits the tables
+// whatever -betterC says. So the symbol is supplied rather than argued with.
+//
+// Reaching it would mean an exception was thrown in a system that has no
+// unwinder to catch it. Returning is as good an answer as any and is smaller
+// than the alternative.
+.section .text.__aeabi_unwind_cpp_pr0,"ax",%progbits
+.global __aeabi_unwind_cpp_pr0
+.type __aeabi_unwind_cpp_pr0, %function
+.weak __aeabi_unwind_cpp_pr0
+.thumb_func
+__aeabi_unwind_cpp_pr0:
+    bx      lr
+.size __aeabi_unwind_cpp_pr0, . - __aeabi_unwind_cpp_pr0
+
+// Assembly files have to say so explicitly, or the linker assumes the worst and
+// warns that the stack is executable. Nothing here needs a trampoline on it.
+.section .note.GNU-stack,"",%progbits
