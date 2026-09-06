@@ -7,38 +7,10 @@
 // filesystem stores what FAT stores, and the shape a person reads is a matter
 // for whoever is doing the reading.
 
-// "SH      MOD" -> "sh.mod". A directory has no extension worth showing.
-// A directory entry arrives either as FAT's raw eleven characters -- "README
-// TXT", no dot, the extension implied by its position -- or as a name that is
-// already a name: a long one off the card, or a device's. They are told apart
-// exactly rather than by guessing, because a FAT short entry can never contain
-// a dot: the separator is not stored. Eleven characters with no dot is the one
-// case that needs expanding.
-static void pretty(const char *raw, char *out) {
-    uint32_t len = 0;
-    bool dotted = false;
-    while (raw[len]) { if (raw[len] == '.') dotted = true; len++; }
-    if (len != 11 || dotted) {
-        uint32_t i = 0;
-        for (; raw[i]; i++) out[i] = raw[i];
-        out[i] = 0;
-        return;
-    }
-
-    int n = 0;
-    for (int i = 0; i < 8 && raw[i] != ' '; i++) {
-        char c = raw[i];
-        out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
-    }
-    if (raw[8] != ' ') {
-        out[n++] = '.';
-        for (int i = 8; i < 11 && raw[i] != ' '; i++) {
-            char c = raw[i];
-            out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
-        }
-    }
-    out[n] = 0;
-}
+// The name a directory entry is shown under. The rule lives in
+// common/myrtos_abi.h, because ls, the wasm host and readdir all need it and
+// two copies of it were already one too many.
+#define pretty(raw, out) myrtos_pretty_name((raw), (out))
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,

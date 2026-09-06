@@ -275,12 +275,21 @@ function(myrtos_add_module name source)
     if("NEWLIB" IN_LIST ARGN)
         set(libc_compile --specs=nano.specs)
         set(libc_link    --specs=nano.specs)
-        set(libc_sources ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_syscalls.c)
+        set(libc_sources ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_syscalls.c
+                         ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_dirent.c)
         list(REMOVE_ITEM ARGN "NEWLIB")
     endif()
 
     add_executable(${name}_app ${source} ${ARGN}
                    ${libc_sources} ${MYRTOS_MODULE_ARCH_SOURCES})
+    # common/newlib holds the headers newlib does not have. It goes first on the
+    # include path so that <dirent.h> finds ours rather than newlib's, whose
+    # entire content is #error "<dirent.h> not supported".
+    if(libc_sources)
+        target_include_directories(${name}_app BEFORE PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/common/newlib
+            ${CMAKE_CURRENT_SOURCE_DIR}/common)
+    endif()
     target_compile_options(${name}_app PRIVATE
         -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common ${libc_compile} -O2
         # -fno-use-cxa-atexit puts the destructors of globals in .fini_array

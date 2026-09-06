@@ -874,37 +874,12 @@ static uint64_t wasi_inode(const char *dir, const char *name)
     return h ? h : 1;
 }
 
-// "SH      MOD" -> "sh.mod". The kernel hands back what FAT stores, and a
-// guest needs a name it can pass straight back to open(). The test is ls's, and
-// exact rather than a guess: a FAT short entry never contains a dot, because
-// the separator is implied by position and not stored, so eleven characters
-// with no dot is the one case that needs expanding.
-static void wasi_pretty(const char *raw, char *out)
-{
-    uint32_t len = 0;
-    bool dotted = false;
-    while (raw[len]) { if (raw[len] == '.') dotted = true; len++; }
-    if (len != 11 || dotted) {
-        uint32_t i = 0;
-        for (; raw[i]; i++) out[i] = raw[i];
-        out[i] = 0;
-        return;
-    }
+// The name a guest can pass straight back to open(). The rule lives in
+// common/myrtos_abi.h: the kernel hands back what FAT stores, and ls, readdir
+// and this all have to expand it the same way. It was copied here once and
+// that was one copy too many.
+#define wasi_pretty(raw, out) myrtos_pretty_name((raw), (out))
 
-    uint32_t n = 0;
-    for (int i = 0; i < 8 && raw[i] != ' '; i++) {
-        char c = raw[i];
-        out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
-    }
-    if (raw[8] != ' ') {
-        out[n++] = '.';
-        for (int i = 8; i < 11 && raw[i] != ' '; i++) {
-            char c = raw[i];
-            out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
-        }
-    }
-    out[n] = 0;
-}
 
 m3ApiRawFunction(wasi_fd_readdir)
 {

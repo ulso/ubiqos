@@ -749,6 +749,46 @@ typedef struct {
     uint32_t *size;   // out
 } myrtos_fs_dir_t;
 
+// "SH      MOD" -> "sh.mod". The name a directory entry should be shown and
+// opened under.
+//
+// An entry arrives either as FAT's raw eleven characters -- no dot, the
+// extension implied by its position -- or as a name that is already a name: a
+// long one off the card, or a device's. They are told apart exactly rather than
+// by guessing, because a FAT short entry can never contain a dot: the separator
+// is not stored. Eleven characters with no dot is the one case that needs
+// expanding.
+//
+// Here rather than in each caller, because there were two copies before this --
+// ls and the wasm host's fd_readdir -- and readdir would have been a third. out
+// needs MYRTOS_DIRNAME_MAX bytes.
+static inline void myrtos_pretty_name(const char *raw, char *out)
+{
+    uint32_t len = 0;
+    bool dotted = false;
+    while (raw[len]) { if (raw[len] == '.') dotted = true; len++; }
+    if (len != 11 || dotted) {
+        uint32_t i = 0;
+        for (; raw[i]; i++) out[i] = raw[i];
+        out[i] = 0;
+        return;
+    }
+
+    int n = 0;
+    for (int i = 0; i < 8 && raw[i] != ' '; i++) {
+        char c = raw[i];
+        out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    if (raw[8] != ' ') {
+        out[n++] = '.';
+        for (int i = 8; i < 11 && raw[i] != ' '; i++) {
+            char c = raw[i];
+            out[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+        }
+    }
+    out[n] = 0;
+}
+
 static inline int32_t myrtos_fs_dir_at(const char *path, uint32_t index, char *name_out, uint32_t *size_out)
 {
     myrtos_fs_dir_t d;

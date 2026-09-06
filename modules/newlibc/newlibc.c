@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 static int failures;
 
@@ -99,6 +100,33 @@ int main(int argc, char **argv)
           stat("/sd/docs", &sb) == 0 && S_ISDIR(sb.st_mode));
     check("stat says /sd/w4 is a file",
           stat("/sd/w4", &sb) == 0 && S_ISREG(sb.st_mode) && sb.st_size == 4);
+
+    // Walking a directory, which newlib has no answer for at all -- its own
+    // <dirent.h> is one #error. Anything that completes a filename or looks for
+    // a config file does this on its first page.
+    DIR *dir = opendir("/sd");
+    check("opendir", dir != NULL);
+    if (dir) {
+        int entries = 0, saw_w4 = 0, saw_docs_as_dir = 0, zero_ino = 0;
+        struct dirent *de;
+        while ((de = readdir(dir)) != NULL) {
+            entries++;
+            if (!de->d_ino) zero_ino = 1;
+            if (!strcmp(de->d_name, "w4") && de->d_type == DT_REG) saw_w4 = 1;
+            if (!strcmp(de->d_name, "docs") && de->d_type == DT_DIR) saw_docs_as_dir = 1;
+        }
+        check("readdir returns entries", entries > 5);
+        check("d_type tells a file", saw_w4);
+        check("d_type tells a directory", saw_docs_as_dir);
+        check("d_ino is never zero", !zero_ino);
+
+        rewinddir(dir);
+        de = readdir(dir);
+        check("rewinddir starts over", de != NULL);
+        check("closedir", closedir(dir) == 0);
+    }
+    check("opendir of a file fails", opendir("/sd/w4") == NULL);
+    check("opendir of nothing fails", opendir("/sd/nosuchdir") == NULL);
 
     printf(failures ? "newlibc: FAILED\n" : "newlibc: passed\n");
     return failures ? 1 : 0;
