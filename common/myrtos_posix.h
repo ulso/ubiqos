@@ -18,6 +18,20 @@
 // plain write would put its output at the start of the file, and that is the
 // kind of fault that costs an evening. See the table below.
 
+// This header IS the C library for a module that does not link one, so it must
+// not be mixed with a module that does. The names below are the same as
+// <fcntl.h>'s and the numbers are not: myrtos took Linux's -- O_CREAT 0x40,
+// O_TRUNC 0x200, O_APPEND 0x400 -- and newlib took BSD's, 0x200, 0x400 and
+// 0x008. Two honest Unix lineages that disagree above the access mode.
+//
+// Mixing the two already fails to compile, on struct stat and on open. It fails
+// in forty-six diagnostics that never mention the flags, so this says it once
+// and first. A module built NEWLIB wants <fcntl.h> and newlib's own open;
+// common/myrtos_syscalls.c translates the numbers on the way to the kernel.
+#ifdef O_RDONLY
+#error "myrtos_posix.h is for a module built without a C library, and this one has <fcntl.h>. Use it and newlib's open(); common/myrtos_syscalls.c translates the flags."
+#endif
+
 // Aliases, not translations: the kernel uses POSIX's own numbers and acts on
 // them itself, so nothing here has to arrange afterwards what the flag asked
 // for. That is the difference between a flag and a convention.
