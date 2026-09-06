@@ -11,6 +11,10 @@ void myrtos_print_u32(uint32_t v);
 // It should: the state machines are their own hardware and the core only writes
 // registers at them. But the question was asked, and the way to answer it is to
 // run one rather than to reason about it.
+//
+// The ARM port asked the same question a second time and got the same answer,
+// which is the answer the reasoning gave -- so the message says which core it
+// was actually running on rather than assuming.
 void myrtos_pio_probe(void) {
     PIO pio = pio0;
     uint offset = pio_add_program(pio, &probe_program);
@@ -34,7 +38,15 @@ void myrtos_pio_probe(void) {
         uint32_t v = pio_sm_get(pio, sm);
         myrtos_print("got ");
         myrtos_print_u32(v);
-        myrtos_print(v == 21 ? " -- PIO runs from RISC-V\n" : " -- wrong value\n");
+        if (v != 21) {
+            myrtos_print(" -- wrong value\n");
+        } else {
+#ifdef __riscv
+            myrtos_print(" -- PIO runs from RISC-V\n");
+#else
+            myrtos_print(" -- PIO runs from ARM\n");
+#endif
+        }
     }
 
     pio_sm_set_enabled(pio, sm, false);

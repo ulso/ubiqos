@@ -356,7 +356,11 @@ void myrtos_kernel_main(void) {
     myrtos_print("\n========================================\n");
     myrtos_print("      MYRTOS KERNEL v0.1 STARTING       \n");
     myrtos_print("========================================\n");
-    myrtos_print("System: RISC-V 32-bit (Hazard3/Virt) mode\n");
+#ifdef __riscv
+    myrtos_print("System: RISC-V 32-bit (Hazard3)\n");
+#else
+    myrtos_print("System: ARM 32-bit (Cortex-M33)\n");
+#endif
     
     // 1. Initiera TLSF-minnespoolen
     myrtos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");

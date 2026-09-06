@@ -118,7 +118,7 @@ pico_sdk_init()
 if(MYRTOS_ARCH STREQUAL "riscv")
     set(MYRTOS_ARCH_KERNEL_SOURCES kernel/scheduler.S)
 else()
-    set(MYRTOS_ARCH_KERNEL_SOURCES kernel/arm/scheduler.S kernel/arm/timer.c)
+    set(MYRTOS_ARCH_KERNEL_SOURCES kernel/arm/scheduler.S kernel/arm/timer.c kernel/arm/stack.c)
 endif()
 
 add_executable(os_kernel 

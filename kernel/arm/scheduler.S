@@ -75,23 +75,6 @@ myrtos_trap_vector:
     // frame the core pushed.
     stmdb   r0!, {r1, r4-r11, lr}
 
-    // Run the handler on the process's own stack, immediately below the frame
-    // it just saved -- which is what RISC-V does, without having to be told.
-    //
-    // A Cortex-M handler runs on MSP by architecture, and that is the problem:
-    // the kernel thread and the handler would be two stacks with one pointer
-    // between them. Giving MSP its own region instead would mean sizing an
-    // interrupt stack for the deepest system call in the system, and the
-    // process stacks are already sized for exactly that work, because on the
-    // other machine they have always carried it.
-    //
-    // In handler mode sp IS msp, so this one instruction is the whole trick.
-    // The old value is not saved: it is overwritten from psp on every entry,
-    // so nothing reads it. The frame is 72 bytes and the hardware guarantees
-    // an eight-aligned psp, so what the handler gets is aligned as the ABI
-    // requires.
-    mov     sp, r0
-
     // The frame is the argument, and the answer is the frame to resume.
     bl      myrtos_trap_handler
 
