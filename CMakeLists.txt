@@ -925,6 +925,17 @@ myrtos_add_module(libctest modules/libctest/libctest.c)
 # The same ground covered by the other library: qsort, bsearch, strdup and a
 # real fopen, none of which the header-only subset has.
 myrtos_add_module(newlibc modules/newlibc/newlibc.c NEWLIB)
+
+# Atto, an emacs in two thousand lines of public-domain C, built as an ordinary
+# module. See modules/atto/README.md for what a C program needs to get here.
+file(GLOB MYRTOS_ATTO_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/modules/atto/upstream/*.c)
+myrtos_add_module(atto modules/atto/compat.c
+                  ${MYRTOS_ATTO_SOURCES}
+                  ${CMAKE_CURRENT_SOURCE_DIR}/modules/wasm/examples/curses/curses.c
+                  NEWLIB)
+target_include_directories(atto_app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/wasm/examples/curses)
+target_compile_options(atto_app PRIVATE -std=gnu17 -funsigned-char)
 myrtos_add_module(rm modules/rm/rm.c)
 myrtos_add_module(cp modules/cp/cp.c)
 myrtos_add_module(write modules/write/write.c)
@@ -1120,6 +1131,7 @@ set(MYRTOS_RESIDENT
     more
     libctest
     newlibc
+    atto
     head
     # Descriptors first. They are what the devices are made of, and a directory
     # that fills up turns away whatever comes last -- which twice now has been

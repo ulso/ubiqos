@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/times.h>
+#include <fcntl.h>
 #include "myrtos_abi.h"
 
 #undef errno
@@ -74,12 +75,20 @@ int _read(int fd, char *buf, int len)
     return n;
 }
 
-// Newlib's O_RDONLY/O_WRONLY/O_CREAT happen to be the values myrtos_open_flags
-// takes, which is not luck -- both took them from Unix.
+// The access mode is the same number in both worlds -- 0, 1 and 2, straight
+// from Unix -- and NOTHING ABOVE IT IS. Newlib's O_CREAT is 0x200, which myrtos
+// reads as O_TRUNC; newlib's O_TRUNC is 0x400, which myrtos reads as O_APPEND.
+// Passed through unchanged, fopen(path, "w") asks to truncate a file it never
+// creates. Caught by reading the two headers rather than by running it: the
+// first test only opened for reading, where every one of these bits is zero.
 int _open(const char *path, int flags, int mode)
 {
     (void)mode;
-    int32_t fd = myrtos_open_flags(path, (uint32_t)flags);
+    uint32_t f = (uint32_t)flags & 3u;
+    if (flags & O_CREAT)  f |= MYRTOS_O_CREAT;
+    if (flags & O_TRUNC)  f |= MYRTOS_O_TRUNC;
+    if (flags & O_APPEND) f |= MYRTOS_O_APPEND;
+    int32_t fd = myrtos_open_flags(path, f);
     if (fd < 0) { errno = ENOENT; return -1; }
     return fd;
 }

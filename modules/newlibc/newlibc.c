@@ -55,6 +55,22 @@ int main(int argc, char **argv)
         fclose(f);
     }
 
+    // Writing is the half that flag translation gets wrong, and the half a
+    // read-only test cannot see: newlib's O_CREAT is myrtos's O_TRUNC, so a
+    // straight pass-through asks to truncate a file it never creates.
+    FILE *w = fopen("/sd/nlctest.txt", "w");
+    check("fopen for writing", w != NULL);
+    if (w) {
+        fprintf(w, "%s %d\n", "written", 7);
+        fclose(w);
+        FILE *r = fopen("/sd/nlctest.txt", "r");
+        char back[32] = { 0 };
+        check("read back what was written",
+              r && fgets(back, sizeof back, r) && !strcmp(back, "written 7\n"));
+        if (r) fclose(r);
+        remove("/sd/nlctest.txt");
+    }
+
     printf(failures ? "newlibc: FAILED\n" : "newlibc: passed\n");
     return failures ? 1 : 0;
 }
