@@ -2,6 +2,9 @@
 #define MYRTOS_ABI_H
 
 #include <stdint.h>
+// bool is a keyword only from C23 onwards, and this header is public: a
+// module built to an older standard must still be able to include it.
+#include <stdbool.h>
 
 // The interface between the kernel and the modules. Everything both sides must
 // agree on lives here and nowhere else -- the module format, the system call

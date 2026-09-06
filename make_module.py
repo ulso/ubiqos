@@ -74,7 +74,11 @@ def find_entry_offset(elf_path, nm_tool, symbol):
     out = subprocess.run([nm_tool, elf_path], capture_output=True, text=True).stdout
     for line in out.splitlines():
         parts = line.split()
-        if len(parts) == 3 and parts[2] == symbol and parts[1] in "tTdDrR":
+        # W and V are weak definitions, which are still definitions. A module
+        # built NEWLIB gets its module_main from common/myrtos_syscalls.c as a
+        # weak symbol, so that a program written for myrtos can define its own
+        # and a ported one can just have a main.
+        if len(parts) == 3 and parts[2] == symbol and parts[1] in "tTdDrRWV":
             return int(parts[0], 16) - base
     raise SystemExit(f"symbol {symbol} not found in {elf_path}")
 
@@ -302,6 +306,14 @@ def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_siz
         else:
             value = int(m.group(3), 16) + int(m.group(4), 16)
         if not (load_base <= site < load_base + image_len):
+            continue
+        # A null pointer is null wherever the module lands, so it is left alone
+        # rather than relocated or refused. This is not a corner case: newlib
+        # declares its optional hooks weak and undefined -- __call_exitprocs,
+        # software_init_hook, _printf_float -- so that the code can test the
+        # address and skip the call. Relocating those zeroes would turn every
+        # "is this present?" into yes and call into the middle of the module.
+        if value == 0:
             continue
         # One past the end is inside. _end and __bss_end__ name the address
         # after the last byte, which is where a heap starts and exactly what a

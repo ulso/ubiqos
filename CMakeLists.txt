@@ -251,9 +251,38 @@ function(myrtos_add_module name source)
         set(single_link "")   # relocated like every other module
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
-    add_executable(${name}_app ${source} ${ARGN} ${MYRTOS_MODULE_ARCH_SOURCES})
+
+    # A trailing NEWLIB gives the module the whole C library instead of the
+    # header-only subset in common/myrtos_stdio.h and its neighbours. That
+    # subset is smaller and links nothing; this is for ported code, where the
+    # library is what the program was written against.
+    #
+    # nano.specs is newlib-nano: the same library with the space-hungry parts
+    # left out. Measured on Atto, it costs about seven kilobytes of code over
+    # the hand-written subset and gives qsort, strtod, time, dirent and a stdio
+    # nobody has to keep adding to.
+    #
+    # myrtos_syscalls.c is its bottom end and comes along automatically -- a
+    # dozen functions, and the note at the top of it explains why the reentrancy
+    # struct needs no work here.
+    #
+    # Such a module is always copied per process, because newlib's _impure_ptr
+    # is writable data. That is what makes it correct, and it is also what it
+    # costs: the code is no longer shared between instances.
+    set(libc_compile -ffreestanding -nostdlib)
+    set(libc_link    -nostdlib)
+    set(libc_sources "")
+    if("NEWLIB" IN_LIST ARGN)
+        set(libc_compile --specs=nano.specs)
+        set(libc_link    --specs=nano.specs)
+        set(libc_sources ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_syscalls.c)
+        list(REMOVE_ITEM ARGN "NEWLIB")
+    endif()
+
+    add_executable(${name}_app ${source} ${ARGN}
+                   ${libc_sources} ${MYRTOS_MODULE_ARCH_SOURCES})
     target_compile_options(${name}_app PRIVATE
-        -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2
+        -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common ${libc_compile} -O2
         # -fno-use-cxa-atexit puts the destructors of globals in .fini_array
         # instead of registering them with __cxa_atexit, which would want that
         # function and __dso_handle from a C library that is not here. Measured:
@@ -276,7 +305,7 @@ function(myrtos_add_module name source)
     # small-data area instead of the module's. The wasm host had 752 of them
     # and behaved exactly as that implies -- a constant read back as the wrong
     # number, pointers that were not pointers, and a machine that fell over.
-    target_link_options(${name}_app PRIVATE -nostdlib ${MYRTOS_MODULE_LDFLAGS} -Wl,-N
+    target_link_options(${name}_app PRIVATE ${libc_link} ${MYRTOS_MODULE_LDFLAGS} -Wl,-N
                         -Wl,-e,0 -Wl,--no-warn-rwx-segments -Wl,--emit-relocs
                         ${single_link})
     if(single_flag)
@@ -892,6 +921,10 @@ myrtos_add_module(head modules/head/head.c)
 myrtos_add_module(more modules/more/more.c)
 myrtos_add_module(tlsftest modules/tlsftest/tlsftest.c)
 myrtos_add_module(libctest modules/libctest/libctest.c)
+
+# The same ground covered by the other library: qsort, bsearch, strdup and a
+# real fopen, none of which the header-only subset has.
+myrtos_add_module(newlibc modules/newlibc/newlibc.c NEWLIB)
 myrtos_add_module(rm modules/rm/rm.c)
 myrtos_add_module(cp modules/cp/cp.c)
 myrtos_add_module(write modules/write/write.c)
@@ -1086,6 +1119,7 @@ set(MYRTOS_RESIDENT
     tlsftest
     more
     libctest
+    newlibc
     head
     # Descriptors first. They are what the devices are made of, and a directory
     # that fills up turns away whatever comes last -- which twice now has been
