@@ -9,6 +9,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 static int failures;
 
@@ -70,6 +74,31 @@ int main(int argc, char **argv)
         if (r) fclose(r);
         remove("/sd/nlctest.txt");
     }
+
+    // How nearly every C program asks how big a file is. myrtos could not
+    // answer it at all until SEEK_END was sent to the file server: the trap
+    // has no way to learn a length, and a cached one goes stale the moment
+    // somebody writes.
+    FILE *e = fopen("/sd/w4", "r");
+    check("fopen for seeking", e != NULL);
+    if (e) {
+        check("fseek END then ftell", fseek(e, 0, SEEK_END) == 0 && ftell(e) == 4);
+        check("fseek back to the start", fseek(e, 0, SEEK_SET) == 0 && ftell(e) == 0);
+        fclose(e);
+    }
+
+    // Refused, not ignored: myrtos cannot promise the file did not exist.
+    errno = 0;
+    int x = open("/sd/w4", O_RDONLY | O_EXCL);
+    check("O_EXCL is refused, not dropped", x < 0);
+    if (x >= 0) close(x);
+
+    // S_ISDIR, which is how anything that walks a tree decides to descend.
+    struct stat sb;
+    check("stat says /sd/docs is a directory",
+          stat("/sd/docs", &sb) == 0 && S_ISDIR(sb.st_mode));
+    check("stat says /sd/w4 is a file",
+          stat("/sd/w4", &sb) == 0 && S_ISREG(sb.st_mode) && sb.st_size == 4);
 
     printf(failures ? "newlibc: FAILED\n" : "newlibc: passed\n");
     return failures ? 1 : 0;

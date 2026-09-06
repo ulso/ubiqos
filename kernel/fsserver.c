@@ -186,6 +186,26 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
             myrtos_io_file_seek(fd, from, (int32_t)size, MYRTOS_SEEK_SET);
         return fd;
     }
+    // Seek from the end, sent here because it needs the file's length. Asked
+    // of the filesystem at this moment rather than remembered from open: a
+    // descriptor that has been written through is longer than it was, and a
+    // cached length would send the caller to the wrong place with no sign.
+    case MYRTOS_MSG_FS_SEEK: {
+        const myrtos_fs_seek_t *k = (const myrtos_fs_seek_t*)m->data;
+        const char *stored;
+        uint32_t pos = 0;
+        if (!myrtos_io_file_at(k->fd, from, &stored, &pos)) return -1;
+
+        const char *rest;
+        const myrtos_fsops_t *ops = myrtos_vfs_split(stored, &rest);
+        if (!ops || !ops->stat) return -1;
+
+        uint32_t size = 0;
+        if (ops->stat(rest, &size) < 0) return -1;
+
+        return myrtos_io_file_seek(k->fd, from, (int32_t)size + k->offset,
+                                   MYRTOS_SEEK_SET);
+    }
     case MYRTOS_MSG_FS_FDIO: {
         const myrtos_fs_fdio_t *r = (const myrtos_fs_fdio_t*)m->data;
         const char *stored;

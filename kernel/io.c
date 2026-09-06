@@ -511,8 +511,11 @@ int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid,
         switch (whence) {
         case MYRTOS_SEEK_SET: pos = (uint32_t)offset; break;
         case MYRTOS_SEEK_CUR: pos = (uint32_t)((int32_t)pos + offset); break;
-        // SEEK_END would need the file's length, and nothing can answer that
-        // yet. Refusing is better than seeking somewhere plausible.
+        // SEEK_END never reaches here. It needs the file's length, which is
+        // the filesystem's to give and long work to ask for, so the trap sends
+        // it to the server and the server comes back through SEEK_SET. Anything
+        // else is a caller mistake, and refusing beats seeking somewhere
+        // plausible.
         default: ok = false; break;
         }
         if (ok) {

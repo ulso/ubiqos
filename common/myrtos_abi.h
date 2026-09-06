@@ -270,6 +270,12 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 
 #define MYRTOS_SEEK_SET 0u   // from the start of the file
 #define MYRTOS_SEEK_CUR 1u   // from where the descriptor is now
+// From the end, which needs the file's length and so cannot be answered in the
+// trap: SYS_SEEK sends it to the file server, the way open and read already go.
+// Worth having rather than refusing, because fseek(f, 0, SEEK_END) followed by
+// ftell is how nearly every C program asks how big a file is, and a port that
+// cannot do it fails in a way that looks like a bug in the port.
+#define MYRTOS_SEEK_END 2u
 // SEEK_END is deliberately absent. It needs the file's length, and nothing can
 // answer that yet: the filesystem lists sizes when it walks a directory and has
 // no stat for one named file. Asking for it returns -1 rather than a number
@@ -337,6 +343,7 @@ typedef struct {
 #define MYRTOS_MSG_FS_LOADMOD 13u  // data = module name, without the extension
 #define MYRTOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
 #define MYRTOS_MSG_FS_EXEC   15u   // data = myrtos_fs_exec_t -> the new pid
+#define MYRTOS_MSG_FS_SEEK   16u   // data = myrtos_fs_seek_t
 
 // How long a name a directory listing may hand back, terminator included. FAT's
 // 8.3 needed twelve; VFAT's long names are read now, and ".wasm" alone does not
@@ -908,6 +915,15 @@ typedef struct {
     uint32_t len;
     uint32_t write;                 // non-zero to write
 } myrtos_fs_fdio_t;
+
+// Seeking from the end, which is the one seek the trap cannot answer: it needs
+// the file's length. The descriptor rather than the name, because the server
+// keeps the path the descriptor was opened with, and a process that has since
+// done cd must not find its open files moving under it.
+typedef struct {
+    int32_t fd;
+    int32_t offset;
+} myrtos_fs_seek_t;
 
 // Asking about one named file. The size comes back through the pointer because
 // the reply carries the attribute byte, and a directory is worth telling from a

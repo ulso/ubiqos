@@ -59,6 +59,7 @@ static bool server_request(int32_t srv, uint32_t type, void *data) {
 // that lets a sender's buffer be passed by pointer at all.
 static myrtos_fs_fdio_t fdio_req[MYRTOS_MAX_PROCESSES];
 static myrtos_fs_open_t open_req[MYRTOS_MAX_PROCESSES];
+static myrtos_fs_seek_t seek_req[MYRTOS_MAX_PROCESSES];
 static myrtos_fs_exec_t exec_req[MYRTOS_MAX_PROCESSES];
 
 static bool fs_request(uint32_t type, void *data) {
@@ -183,6 +184,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                                                 myrtos_current_pid());
             break;
         case SYS_SEEK: {
+            // From the end is the one that cannot be answered here: it needs
+            // the file's length, and asking the filesystem for it is exactly
+            // the long work a trap may not do. So it goes to the server the way
+            // open does, and the process waits.
+            if (frame->a2 == MYRTOS_SEEK_END) {
+                myrtos_fs_seek_t *k = &seek_req[myrtos_current_pid()];
+                k->fd = (int32_t)frame->a0;
+                k->offset = (int32_t)frame->a1;
+                if (!fs_request(MYRTOS_MSG_FS_SEEK, k)) {
+                    frame->a0 = (uint32_t)-1;
+                    break;
+                }
+                return myrtos_switch(sp);
+            }
             frame->a0 = (uint32_t)myrtos_io_file_seek((int32_t)frame->a0,
                                                       myrtos_current_pid(),
                                                       (int32_t)frame->a1, frame->a2);

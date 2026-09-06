@@ -44,6 +44,7 @@
 
 #define SEEK_SET MYRTOS_SEEK_SET
 #define SEEK_CUR MYRTOS_SEEK_CUR
+#define SEEK_END MYRTOS_SEEK_END
 // SEEK_END is still refused by lseek, and the reason is no longer the missing
 // stat: a raw descriptor does not carry the path, so there is nothing to ask
 // about. fopen knows its path, so stdio's "a" mode works.

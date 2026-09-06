@@ -84,6 +84,19 @@ int _read(int fd, char *buf, int len)
 int _open(const char *path, int flags, int mode)
 {
     (void)mode;
+    // A flag that cannot be honoured is refused rather than dropped. That is
+    // the rule common/myrtos_posix.h states for the other library here, and it
+    // holds for the same reason: a program that asks for O_EXCL is asking to be
+    // told whether it won a race, and answering yes to one it never entered is
+    // how two instances come to believe they hold the same lock. Better a port
+    // that fails at the call than one that fails at three in the morning.
+    //
+    // Everything else newlib can name -- O_CLOEXEC, O_NOCTTY, O_NONBLOCK on a
+    // file -- either means nothing on a system without exec-across-fork,
+    // terminals or a network, or means nothing for a file. Those are ignored on
+    // purpose rather than by omission.
+    if (flags & O_EXCL) { errno = ENOTSUP; return -1; }
+
     uint32_t f = (uint32_t)flags & 3u;
     if (flags & O_CREAT)  f |= MYRTOS_O_CREAT;
     if (flags & O_TRUNC)  f |= MYRTOS_O_TRUNC;
@@ -113,11 +126,17 @@ int _fstat(int fd, struct stat *st)
     return 0;
 }
 
+// The attribute byte myrtos answers with is FAT's, and the one bit of it that
+// a ported program actually reads is whether this is a directory: S_ISDIR is
+// how anything that walks a tree decides to descend. Reporting every entry as a
+// regular file makes such a program treat a directory as a file it cannot read,
+// which looks like a broken filesystem rather than a missing translation.
 int _stat(const char *path, struct stat *st)
 {
     uint32_t size = 0;
-    if (myrtos_fs_stat(path, &size) < 0) { errno = ENOENT; return -1; }
-    st->st_mode = S_IFREG;
+    int32_t attr = myrtos_fs_stat(path, &size);
+    if (attr < 0) { errno = ENOENT; return -1; }
+    st->st_mode = (attr & MYRTOS_ATTR_DIRECTORY) ? S_IFDIR : S_IFREG;
     st->st_size = (off_t)size;
     return 0;
 }
