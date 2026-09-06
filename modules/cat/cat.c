@@ -23,12 +23,19 @@ __thread int errno;
 // buffer is a local.
 #define CHUNK 1024
 
+// Which failure it was, now that open can tell them apart. "no such file" for a
+// directory was true of the open and false of the world, and it is the kind of
+// message that sends someone looking for a typo in a name that is spelled
+// perfectly.
 static void complain(const char *name) {
+    const char *why = errno == EISDIR ? ": is a directory\n"
+                    : errno == EMFILE ? ": too many open files\n"
+                    :                   ": no such file\n";
     myrtos_line_t l;
     myrtos_line_reset(&l);
     myrtos_line_str(&l, "cat: ");
     myrtos_line_str(&l, name);
-    myrtos_line_str(&l, ": no such file\n");
+    myrtos_line_str(&l, why);
     myrtos_line_flush(MYRTOS_STDERR, &l);
 }
 

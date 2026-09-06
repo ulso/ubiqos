@@ -52,7 +52,12 @@
 
 #define ENOENT  2
 #define EBADF   9
+#define EISDIR 21
 #define EINVAL 22
+#define EMFILE 24
+// 38 is Linux's, and newlib's is 88. The two libraries here cannot be included
+// together -- the guard above this says so -- but the divergence is the same
+// one the open flags have, and worth knowing before somebody compares them.
 #define ENOSYS 38
 
 // errno is per-process writable state, which a shareable module may not have as
@@ -85,10 +90,26 @@ static inline int stat(const char *path, struct stat *st)
 // The mode argument is accepted and ignored: there are no permissions to set.
 // Everything else is the kernel's: it refuses a missing file, empties one for
 // O_TRUNC and positions the descriptor for O_APPEND, all before this returns.
+// Why an open failed, worked out afterwards rather than reported by the kernel,
+// which answers -1 to every cause alike. The same reasoning -- and the same
+// three answers -- as common/myrtos_syscalls.c gives the other library here:
+// "not there" and "there and it still did not open" are different problems, and
+// a caller told ENOENT for the second will create a file it should not.
+//
+// EMFILE for the last case is the likeliest of what remains rather than a fact.
+static inline int myrtos_open_errno(const char *path)
+{
+    uint32_t size = 0;
+    int32_t attr = myrtos_fs_stat(path, &size);
+    if (attr < 0) return ENOENT;
+    if (attr & MYRTOS_ATTR_DIRECTORY) return EISDIR;
+    return EMFILE;
+}
+
 static inline int open(const char *path, int flags, ...)
 {
     int32_t fd = myrtos_open_flags(path, (uint32_t)flags);
-    if (fd < 0) { errno = ENOENT; return -1; }
+    if (fd < 0) { errno = myrtos_open_errno(path); return -1; }
     return (int)fd;
 }
 
