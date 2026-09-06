@@ -39,15 +39,28 @@
 .global isr_pendsv
 .global isr_systick
 .global isr_hardfault
-.thumb_func
 .align 2
 
 // One body for all of them: IPSR says which arrived, and it is decoded in the
 // handler, exactly as mcause is on RISC-V.
+//
+// One .thumb_func per label, and it is not decoration. The directive marks the
+// NEXT symbol only, so a single one in front of five aliases set the Thumb bit
+// on isr_svcall and left the other four even. The vector table is where that
+// shows: an even entry means ARM state, ARMv8-M has none, so the core takes an
+// INVSTATE UsageFault -- which escalates to HardFault, whose vector was equally
+// even. The first SysTick tick would have locked the machine up with nothing
+// printed and nothing to read. Caught by dumping the table out of the binary
+// before ever flashing it.
+.thumb_func
 isr_svcall:
+.thumb_func
 isr_pendsv:
+.thumb_func
 isr_systick:
+.thumb_func
 isr_hardfault:
+.thumb_func
 myrtos_trap_vector:
     // The process stack, which is where the hardware frame already is. A
     // process always runs on PSP; only these handlers run on MSP.
