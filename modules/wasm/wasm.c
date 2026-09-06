@@ -57,8 +57,6 @@ MYRTOS_MEM_SIZE(64 * 1024);
 // One symbol from it is referenced unconditionally, so it gets a body.
 void m3_PrintProfilerInfo(void) { }
 
-extern const unsigned char hello_wasm[];
-extern const unsigned int  hello_wasm_len;
 
 // Not printf. newlib's stdio needs an initialised reent structure and there is
 // no C startup here to build one, so _impure_ptr points at nothing and the
@@ -244,8 +242,8 @@ void module_main(int argc, char **argv)
 
     // Before clear_bss too, for the same reason: nothing here needs .bss.
     if (myrtos_help(argc, argv,
-            "usage: wasm [PATH.wasm] [ARGS...]\n       wasm STAGE\n\n"
-            "Runs a WebAssembly program; the built-in one when given no path.\n"
+            "usage: wasm PATH.wasm [ARGS...]\n       wasm STAGE\n\n"
+            "Runs a WebAssembly program.\n"
             "A relative path is taken from the current directory.\n"
             "STAGE is one of entry, bss, heap, env, runtime, parse, load, link\n"
             "and stops after that step, for bisecting a fault in the host.\n")) return;
@@ -296,10 +294,20 @@ void module_main(int argc, char **argv)
     // module does: m3_ParseModule does not copy the bytes, it points into them,
     // so freeing this before the run would leave wasm3 reading whatever came
     // next. Hence the free at the very end and not here.
-    const unsigned char *code = hello_wasm;
-    unsigned int code_len = hello_wasm_len;
+    // There used to be a program built in here -- hello.wasm, 56 kB of it, as a
+    // generated C array -- so that "wasm" with no path did something. It was 22
+    // per cent of the module, in flash on both machines, and it was a duplicate
+    // of a file already on the card. A demonstration is not worth a fifth of a
+    // module.
+    const unsigned char *code = 0;
+    unsigned int code_len = 0;
     unsigned char *loaded = 0;
-    if (path) {
+    if (!path) {
+        myrtos_write_str(MYRTOS_STDOUT,
+                         "usage: wasm PATH.wasm [ARGS...]\n");
+        goto done;
+    }
+    {
         uint32_t size = 0;
         if (myrtos_fs_stat(path, &size) < 0) { say("wasm: no such file: ", path); goto done; }
         if (!size)                           { say("wasm: empty file: ", path);   goto done; }

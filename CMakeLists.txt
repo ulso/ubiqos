@@ -968,7 +968,6 @@ myrtos_add_module(hibouair modules/hibouair/hibouair.c)
 myrtos_add_module(wasm modules/wasm/wasm.c
     modules/wasm/newlib_glue.c
     modules/wasm/wasi.c
-    modules/wasm/hello_wasm.c
     third_party/wasm3/m3_bind.c
     third_party/wasm3/m3_code.c
     third_party/wasm3/m3_compile.c
