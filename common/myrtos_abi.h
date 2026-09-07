@@ -134,7 +134,11 @@ typedef struct {
 // would be answering its own question. It gets addresses instead, in a table
 // as versioned as its own. Twelve entries is what the wifi driver needed:
 // four from the kernel, seven from the SDK's hardware layer, and strlen.
-#define MYRTOS_KERNEL_API_ABI 2
+//
+// Version 3 added what a driver that owns PIO and DMA needs -- the SD card
+// driver -- and mem_alloc, which is SRAM and is the only memory a library may
+// let DMA touch.
+#define MYRTOS_KERNEL_API_ABI 3
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -174,6 +178,39 @@ typedef struct {
     bool   (*sd_try_sdio)(void);
     bool   (*sd_read_block)(uint32_t lba, uint8_t *buf);
     bool   (*sd_write_block)(uint32_t lba, const uint8_t *buf);
+
+    // --- version 3 ---------------------------------------------------------
+
+    // SRAM, and the reason it is here rather than bulk_alloc is DMA. A library
+    // lives in PSRAM, which sits behind the XIP cache on the QMI bus: what DMA
+    // writes there is not reliably what the CPU reads back, and a DMA control
+    // block read by the DMA engine out of PSRAM cannot even be bounced. So a
+    // driver that does DMA allocates its buffers here and keeps its code where
+    // every other library keeps it.
+    void  *(*mem_alloc)(uint32_t bytes);
+
+    // One character. It is here so that a library can carry its own printf --
+    // the SD library does, because the small printf in the kernel existed for
+    // the vendored driver alone and went with it.
+    void   (*putc)(char c);
+
+    // May DMA touch this memory? The library that does DMA is not the one that
+    // knows the memory map, and the question is not "is it PSRAM": it is this,
+    // and the kernel is free to answer it differently later.
+    bool   (*dma_safe)(const void *p);
+
+    // The rest of the SDK a PIO driver needs. Everything here is a real
+    // function rather than an inline, so a library has no other way to reach
+    // it -- the PIO and DMA registers themselves are fixed addresses and need
+    // nothing.
+    void   (*spi_set_baudrate)(void *spi, uint32_t baud);
+    void   (*sleep_ms)(uint32_t ms);
+    int32_t (*pio_add_program)(void *pio, const void *program);
+    void   (*pio_sm_init)(void *pio, uint32_t sm, uint32_t initial_pc,
+                          const void *config);
+    void   (*pio_sm_set_pindirs_with_mask64)(void *pio, uint32_t sm,
+                                             uint64_t values, uint64_t mask);
+    void   (*pio_set_gpio_base)(void *pio, uint32_t base);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one

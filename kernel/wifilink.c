@@ -12,6 +12,7 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
 #include "sdcard.h"
@@ -42,6 +43,36 @@ static uint64_t k_time_us(void)                            { return time_us_64()
 static void  *k_bulk_alloc(uint32_t n)
 { return myrtos_bulk_pool ? myrtos_tlsf_malloc(myrtos_bulk_pool, n) : 0; }
 
+// Version 3. SRAM rather than the bulk pool, because this is where a library
+// puts anything DMA will touch -- see the note on mem_alloc in the ABI.
+void *myrtos_mem_alloc(uint32_t size);
+void myrtos_putc(char c);
+uint32_t myrtos_psram_bytes(void);
+static void  *k_mem_alloc(uint32_t n)                      { return myrtos_mem_alloc(n); }
+static void   k_putc(char c)                               { myrtos_putc(c); }
+
+// The PSRAM window, bounded at BOTH ends. SRAM is at 0x20000000 and PSRAM at
+// 0x11000000, so "above the PSRAM base" is true of SRAM too -- a mistake this
+// repository has made before and paid for twice.
+static bool   k_dma_safe(const void *p)
+{
+    uintptr_t a = (uintptr_t)p;
+    uint32_t n = myrtos_psram_bytes();
+    return !(n && a >= MYRTOS_PSRAM_BASE && a < (uintptr_t)MYRTOS_PSRAM_BASE + n);
+}
+static void   k_spi_set_baudrate(void *spi, uint32_t baud)
+{ spi_set_baudrate((spi_inst_t*)spi, baud); }
+static void   k_sleep_ms(uint32_t ms)                      { sleep_ms(ms); }
+static int32_t k_pio_add_program(void *pio, const void *p)
+{ return pio_add_program((PIO)pio, (const pio_program_t*)p); }
+static void   k_pio_sm_init(void *pio, uint32_t sm, uint32_t pc, const void *c)
+{ pio_sm_init((PIO)pio, sm, pc, (const pio_sm_config*)c); }
+static void   k_pio_sm_set_pindirs_with_mask64(void *pio, uint32_t sm,
+                                               uint64_t v, uint64_t m)
+{ pio_sm_set_pindirs_with_mask64((PIO)pio, sm, v, m); }
+static void   k_pio_set_gpio_base(void *pio, uint32_t base)
+{ pio_set_gpio_base((PIO)pio, base); }
+
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
 const myrtos_kernel_api_t myrtos_kernel_api = {
@@ -65,6 +96,16 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .sd_try_sdio       = myrtos_sd_try_sdio,
     .sd_read_block     = myrtos_sd_read_block,
     .sd_write_block    = myrtos_sd_write_block,
+
+    .mem_alloc         = k_mem_alloc,
+    .putc              = k_putc,
+    .dma_safe          = k_dma_safe,
+    .spi_set_baudrate  = k_spi_set_baudrate,
+    .sleep_ms          = k_sleep_ms,
+    .pio_add_program   = k_pio_add_program,
+    .pio_sm_init       = k_pio_sm_init,
+    .pio_sm_set_pindirs_with_mask64 = k_pio_sm_set_pindirs_with_mask64,
+    .pio_set_gpio_base = k_pio_set_gpio_base,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

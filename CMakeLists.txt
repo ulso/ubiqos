@@ -138,7 +138,7 @@ add_executable(os_kernel
     kernel/scheduler.c 
     kernel/syscalls.c 
     kernel/io.c
-    kernel/sdcard.c
+    kernel/sdlink.c
     kernel/fat32link.c
     kernel/moddir.c
     kernel/flashmod.c
@@ -151,9 +151,7 @@ add_executable(os_kernel
     kernel/video.c
     kernel/console.c
     kernel/fsserver.c
-    kernel/printf.c
     kernel/wifilink.c
-    third_party/pico_sd_card/sd_card.c
     kernel/font8x16.c
     kernel/font6x12.c
 
@@ -184,15 +182,9 @@ pico_set_binary_type(os_kernel copy_to_ram)
 
 pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.pio)
 
-# The SD card over SDIO, four data lines on PIO, vendored from pico-extras. The
-# board wires DAT0..DAT3 to GP36..GP39 and the board header already names them,
-# so the driver's own defaults are the right ones here.
-#
-# It prints on its error paths. Rather than edit somebody else's source, its
-# printf is pointed at ours -- see kernel/printf.c.
-pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.pio)
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
-    PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
+# The SD card driver is not built into the kernel any more. It is the sdlib
+# module -- see the myrtos_add_module call for it further down, and the note at
+# the top of kernel/sdlink.c.
 
 # Link against the Pico standard libraries and enable PSRAM support.
 # pico_standard_link provides only linker scripts and link flags. The startup
@@ -957,6 +949,31 @@ myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
 myrtos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
 
+# The SD card driver, kernel/sdcard.c until 7 Sep 2026, with the vendored SDIO
+# driver from pico-extras alongside it. Together they were 11.6 kB of a kernel
+# that is copied into SRAM at boot and stays there for good.
+#
+# It is the one module that compiles against the SDK's headers. The PIO, DMA and
+# SPI register layouts live there and are fixed addresses that travel with
+# nobody; the real functions come from the kernel's table through sdk_shim.c.
+# Taking the headers from os_kernel itself, rather than listing them, is what
+# keeps the two builds compiling the vendored driver against the same thing.
+#
+# printf.c comes along because it only ever existed for this driver's error
+# paths -- it went where its one caller went.
+myrtos_add_module(sdlib modules/sdlib/sdlib.c LIBRARY
+                  modules/sdlib/sdk_shim.c
+                  modules/sdlib/printf.c
+                  third_party/pico_sd_card/sd_card.c)
+target_include_directories(sdlib_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(sdlib_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+pico_generate_pio_header(sdlib_app ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.pio)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
+    TARGET_DIRECTORY sdlib_app
+    PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
+
 # Atto, an emacs in two thousand lines of public-domain C, built as an ordinary
 # module. See modules/atto/README.md for what a C program needs to get here.
 file(GLOB MYRTOS_ATTO_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/modules/atto/upstream/*.c)
@@ -1163,6 +1180,7 @@ set(MYRTOS_RESIDENT
     newlibtest
     wifilib
     fat32lib
+    sdlib
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory

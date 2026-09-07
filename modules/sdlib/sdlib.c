@@ -1,9 +1,27 @@
-#include "sdcard.h"
-#include "../common/myrtos_abi.h"   // MYRTOS_PSRAM_BASE
+// The SD card driver, as a library module.
+//
+// This was kernel/sdcard.c. With the vendored SDIO driver beside it, it was
+// 11.6 kB of a kernel that is copied into SRAM at boot and must stay there --
+// and it matters only to somebody who touches the card. It is loaded where
+// modules are loaded now, and kernel/sdlink.c keeps the names the rest of the
+// kernel calls.
+//
+// It still compiles against the SDK's headers, because the PIO, DMA and SPI
+// register layouts are there and those are fixed addresses that travel with
+// nobody. The real functions come from the kernel through the table in
+// sdk_shim.c, which is what makes that work.
+//
+// What could not simply move is memory. A module lives in PSRAM, which sits
+// behind the XIP cache on the QMI bus, and this is the one driver in the system
+// that does DMA -- so its buffers are asked for from the kernel, in SRAM, at
+// init. See sd_set_dma_buffers in the vendored driver and sd_bounce below.
+#include "../../kernel/sdcard.h"
+#include "../../common/myrtos_abi.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
 
+extern const myrtos_kernel_api_t *myrtos_sd_k;
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
@@ -359,18 +377,16 @@ bool myrtos_sd_is_sdio(void) { return use_sdio; }
 // lives to read a block, and the next module to be moved out of the kernel
 // would have walked into this the same way. 512 bytes of SRAM and one copy
 // per block, against a transfer that already costs milliseconds.
-static uint32_t sd_bounce[128];          // 512 bytes, and word-aligned by type
+// SRAM, from the kernel, because this module's own memory is PSRAM and that is
+// the whole problem. 512 bytes, word-aligned by the pointer it is used through.
+static uint32_t *sd_bounce;
 
-// The PSRAM window, bounded at BOTH ends on purpose. SRAM lives at 0x20000000,
-// which is ABOVE the PSRAM base, so a bare "is it >= PSRAM_BASE" says yes to
-// every SRAM address as well -- a mistake this repository has made before.
-static inline bool in_psram(const void *p)
-{
-    uintptr_t a = (uintptr_t)p;
-    extern uint32_t myrtos_psram_bytes(void);
-    uint32_t n = myrtos_psram_bytes();
-    return n && a >= MYRTOS_PSRAM_BASE && a < (uintptr_t)MYRTOS_PSRAM_BASE + n;
-}
+// Whether DMA may touch the caller's buffer at all. The kernel answers it: the
+// library that does the DMA is not the one that knows the memory map, and the
+// bounds have to be checked at BOTH ends -- SRAM lives at 0x20000000, above the
+// PSRAM base, so "is it above PSRAM" says yes to SRAM too. That mistake has
+// been made twice in this repository already.
+static inline bool needs_bounce(const void *p) { return !myrtos_sd_k->dma_safe(p); }
 
 bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     if (needs_init) return false;
@@ -378,7 +394,7 @@ bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     if (myrtos_sd_failed()) return false;
     if ((uintptr_t)buf & 3u) return false;
 
-    if (in_psram(buf)) {
+    if (needs_bounce(buf)) {
         if (sd_readblocks_sync(sd_bounce, lba, 1) != SD_OK)
             return sd_fail("a read did not complete");
         const uint8_t *src = (const uint8_t*)sd_bounce;
@@ -437,7 +453,7 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     // Not caught in the wild -- reads were what broke -- but it is the same
     // memory, the same bus and the same DMA, and finding out the hard way
     // would mean a torn block on the card rather than a wrong listing.
-    if (in_psram(buf)) {
+    if (needs_bounce(buf)) {
         uint8_t *dst = (uint8_t*)sd_bounce;
         for (uint32_t i = 0; i < 512; i++) dst[i] = buf[i];
         buf = dst;
@@ -477,3 +493,44 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     restore_wide_bus();
     return true;
 }
+
+// --- THE LIBRARY TABLE ----------------------------------------------------
+//
+// Everything above is the driver as it was. This is the only part that knows
+// it is a module: the kernel calls sdlib_init once with its table of addresses,
+// and the driver has memory and a way to print from that moment on.
+//
+// The order of the entries is the interface. kernel/sdlink.c names them in the
+// same order and neither list may be reordered without the other.
+static bool sdlib_init(const myrtos_kernel_api_t *api)
+{
+    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    myrtos_sd_k = api;
+
+    // SRAM, and the two allocations are separate because they are different
+    // things: the vendored driver's DMA control blocks and CRC landing area,
+    // and this file's own bounce buffer. Both must be memory DMA can reach.
+    uint32_t *dma = (uint32_t *)api->mem_alloc(sd_dma_buffer_words() * 4);
+    sd_bounce = (uint32_t *)api->mem_alloc(512);
+    if (!dma || !sd_bounce) {
+        api->print("sd: no SRAM for the DMA buffers\n");
+        return false;
+    }
+    sd_set_dma_buffers(dma);
+    return true;
+}
+
+const myrtos_lib_table_t myrtos_lib = {
+    .abi = MYRTOS_LIB_ABI,
+    .count = 8,
+    .fn = {
+        (void *)sdlib_init,
+        (void *)myrtos_sd_init,
+        (void *)myrtos_sd_try_sdio,
+        (void *)myrtos_sd_read_block,
+        (void *)myrtos_sd_write_block,
+        (void *)myrtos_sd_is_sdio,
+        (void *)myrtos_sd_failed,
+        (void *)myrtos_sd_forget,
+    },
+};

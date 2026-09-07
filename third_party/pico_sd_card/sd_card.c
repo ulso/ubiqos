@@ -794,9 +794,39 @@ void sd_set_byteswap_on_read(bool swap)
     bytes_swap_on_read = swap;
 }
 
-static uint32_t crcs[PICO_SD_MAX_BLOCK_COUNT * 2];
-static uint32_t ctrl_words[(PICO_SD_MAX_BLOCK_COUNT + 1) * 4];
-static uint32_t pio_cmd_buf[PICO_SD_MAX_BLOCK_COUNT * 3];
+// LOCAL CHANGE: these three were plain arrays. They are pointers now, filled
+// in by sd_set_dma_buffers before anything uses them, because this driver can
+// be built into a library module and a library module lives in PSRAM.
+//
+// It is not the usual PSRAM/DMA hazard, and it is worse than it. ctrl_words is
+// a chain of DMA control blocks that the DMA engine READS to program itself,
+// and pio_cmd_buf is read the same way; crcs is written by DMA and read by the
+// CPU. PSRAM sits behind the XIP cache on the QMI bus, so none of the three is
+// coherent there -- and a control block the DMA reads for itself cannot be
+// bounced through SRAM the way a caller's data buffer can. So they have to BE
+// in SRAM, which means being allocated rather than declared.
+//
+// In the kernel build the pointers are simply set to static arrays and nothing
+// else changes.
+static uint32_t *crcs;
+static uint32_t *ctrl_words;
+static uint32_t *pio_cmd_buf;
+
+// The three above, in that order, out of memory the caller promises is SRAM.
+// Sizes are the ones the arrays had.
+uint32_t sd_dma_buffer_words(void)
+{
+    return PICO_SD_MAX_BLOCK_COUNT * 2 +
+           (PICO_SD_MAX_BLOCK_COUNT + 1) * 4 +
+           PICO_SD_MAX_BLOCK_COUNT * 3;
+}
+
+void sd_set_dma_buffers(uint32_t *sram)
+{
+    crcs        = sram;
+    ctrl_words  = crcs + PICO_SD_MAX_BLOCK_COUNT * 2;
+    pio_cmd_buf = ctrl_words + (PICO_SD_MAX_BLOCK_COUNT + 1) * 4;
+}
 
 int sd_readblocks_async(uint32_t *buf, uint32_t block, uint block_count)
 {

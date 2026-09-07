@@ -61,6 +61,13 @@ int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint s
 int sd_set_wide_bus(bool wide);
 int sd_set_clock_divider(uint div);
 
+// LOCAL CHANGE: the driver's three DMA buffers are allocated rather than
+// declared, so that this can be built into a library module whose own memory is
+// PSRAM -- which DMA cannot use. Ask for the size, hand it SRAM, once, before
+// sd_init_4pins. See the note at the definitions.
+uint32_t sd_dma_buffer_words(void);
+void sd_set_dma_buffers(uint32_t *sram);
+
 #endif
 
 #ifdef __cplusplus

@@ -301,7 +301,19 @@ static void myrtos_bulk_pool_init(void) {
 // the kilobyte came back when wifi left the kernel: a library module's code is
 // in PSRAM, so moving one 6.9 kB driver out returned 8236 bytes of SRAM and the
 // borrowing was no longer needed.
-#define MYRTOS_HEAP_SIZE (28 * 1024)
+//
+// 40 on 7 Sep 2026, and this is the first time this number has gone UP. The SD
+// driver left the kernel the same way wifi and fat32 did -- it and the vendored
+// SDIO driver together were 11.6 kB -- and the build's C heap went from 37612
+// bytes to 51608. That is headroom and not memory anyone can use: this array is
+// what the module pool is made of, and it is a fixed size. So twelve of the
+// fourteen kilobytes are moved into it, leaving the C heap at about what it had
+// while all of that code was still resident.
+//
+// The two that are not moved pay for the driver's own buffers, which are now
+// allocated instead of declared: DMA cannot reach PSRAM, so sdlib asks the
+// kernel for 1168 bytes of control blocks and a 512-byte bounce buffer at init.
+#define MYRTOS_HEAP_SIZE (40 * 1024)
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
