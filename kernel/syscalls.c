@@ -422,6 +422,30 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         }
+        case SYS_WIFISOCK: {
+            // Every socket call goes through the service for the same reason
+            // the others do: it talks to the chip over SPI with handshakes and
+            // waits, and waiting inside a trap stops the machine. The request
+            // sits on this stack, which is safe because send blocks until the
+            // answer -- the same argument as the three above.
+            myrtos_wifi_sock_t req;
+            req.op  = frame->a0;
+            req.arg = frame->a1;
+            req.buf = 0;
+            req.len = 0;
+            if (frame->a2) {
+                // The buffer and its length arrive together, because a syscall
+                // has three arguments and this wants four.
+                const myrtos_sockbuf_t *b = (const myrtos_sockbuf_t*)(uintptr_t)frame->a2;
+                req.buf = b->buf;
+                req.len = b->len;
+            }
+            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_SOCK, &req)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        }
         case SYS_WIFISCAN: {
             // Through the service rather than here: a scan waits seconds, and
             // waiting inside a trap stops the machine. The request is built on

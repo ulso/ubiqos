@@ -268,6 +268,70 @@ static int32_t read_list(uint8_t cmd) {
     return (int32_t)n;
 }
 
+// --- FRAMING, WRITTEN ONCE ------------------------------------------------
+// The commands above each spell the frame out, which was fine while there were
+// five of them. The socket commands below are nine more, two of them with
+// parameters longer than a byte can count, so the shape is written here instead.
+//
+// The reference pads every command to a multiple of four and the chip is
+// entitled to expect it -- so the length is counted rather than worked out per
+// command, which is what made param_cmd's "pad 6 to 8" a comment that has to be
+// right by hand.
+static uint32_t tx_len;
+
+static void tx_begin(uint8_t cmd, uint8_t nparam) {
+    xfer(START_CMD); xfer(cmd); xfer(nparam);
+    tx_len = 3;
+}
+
+static void tx_param(const uint8_t *p, uint8_t len) {
+    xfer(len); tx_len++;
+    for (uint8_t i = 0; i < len; i++) { xfer(p[i]); tx_len++; }
+}
+
+static void tx_param8(uint8_t v) { tx_param(&v, 1); }
+
+// Big-endian, which is this protocol's order for a port number and not ours.
+static void tx_param16(uint16_t v) {
+    uint8_t b[2] = { (uint8_t)(v >> 8), (uint8_t)v };
+    tx_param(b, 2);
+}
+
+// A parameter whose own length needs two bytes. SEND_DATA_TCP and
+// GET_DATABUF_TCP are the only commands that use this form, and they use it
+// because a buffer may be longer than 255 bytes -- which for a web server it
+// always is.
+static void tx_param_long(const uint8_t *p, uint16_t len) {
+    xfer((uint8_t)(len >> 8)); xfer((uint8_t)len); tx_len += 2;
+    for (uint16_t i = 0; i < len; i++) { xfer(p[i]); tx_len++; }
+}
+
+static void tx_end(void) {
+    xfer(END_CMD); tx_len++;
+    while (tx_len & 3u) { xfer(0xff); tx_len++; }
+}
+
+// The head of a reply: how many parameters follow, or -1 if the chip said
+// something else. The skip loop is the one the commands above already use --
+// the chip may send filler before it starts.
+static int32_t rx_begin(uint8_t cmd) {
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    if (b != START_CMD) return -1;
+    if (xfer(0xff) != (cmd | REPLY_FLAG)) return -1;
+    return (int32_t)xfer(0xff);
+}
+
+// One parameter, up to four bytes, as a little-endian number. That is the order
+// the chip answers in, which is not the order it is asked in.
+static uint32_t rx_param_u32(void) {
+    uint32_t len = xfer(0xff);
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < len && i < 4; i++) v |= (uint32_t)xfer(0xff) << (8 * i);
+    for (uint32_t i = 4; i < len; i++) (void)xfer(0xff);
+    return v;
+}
+
 static bool simple_cmd(uint8_t cmd) {
     if (!select_chip()) return false;
     xfer(START_CMD); xfer(cmd); xfer(0); xfer(END_CMD);
@@ -557,12 +621,179 @@ static int32_t server_pid = -1;
 
 int32_t myrtos_wifi_server_pid(void) { return server_pid; }
 
+// --- SOCKETS ---------------------------------------------------------------
+// The chip carries the TCP/IP stack, so this is not a stack: it is nine
+// commands and some bookkeeping. Which is the whole argument for the NINA part
+// being where it is -- a web server on this machine costs a driver, not a port
+// of lwIP.
+//
+// The flow is Arduino's WiFiServer, because it is nina-fw's flow:
+//
+//   GET_SOCKET            -> a free socket number
+//   START_SERVER_TCP      -> that socket now listens on a port
+//   AVAIL_DATA_TCP(server)-> the socket of a client with something to say,
+//                            or 255 when there is nobody
+//   GET_DATABUF_TCP       -> read from the client's socket
+//   SEND_DATA_TCP         -> write to it
+//   STOP_CLIENT_TCP       -> close it
+//
+// Note what AVAIL_DATA_TCP means, because it is not what its name suggests: on
+// a LISTENING socket it answers with a client socket number, and on a client
+// socket it answers with a byte count. One command, two meanings, decided by
+// which socket it is asked about.
+#define GET_SOCKET_CMD        0x3Fu
+#define START_SERVER_TCP_CMD  0x28u
+#define AVAIL_DATA_TCP_CMD    0x2Bu
+#define STOP_CLIENT_TCP_CMD   0x2Eu
+#define GET_CLIENT_STATE_CMD  0x2Fu
+#define SEND_DATA_TCP_CMD     0x44u
+#define GET_DATABUF_TCP_CMD   0x45u
+#define DATA_SENT_TCP_CMD     0x2Au
+
+#define TCP_MODE 0u
+#define NO_SOCKET 255u
+
+// A command with one byte of parameter and one number back. Six of the nine are
+// this shape.
+static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg)
+{
+    if (!select_chip()) return -1;
+    tx_begin(cmd, 1);
+    tx_param8(arg);
+    tx_end();
+    deselect_chip();
+
+    if (!select_chip()) return -1;
+    int32_t np = rx_begin(cmd);
+    int32_t v = (np == 1) ? (int32_t)rx_param_u32() : -1;
+    if (np >= 0) (void)xfer(0xff);                 // END_CMD
+    deselect_chip();
+    return v;
+}
+
+// Take a socket and put it to listening on a port. Returns the socket, or -1.
+int32_t myrtos_wifi_listen(uint16_t port)
+{
+    int32_t sock = sock_cmd_u8(GET_SOCKET_CMD, 0xff);
+    if (sock < 0 || sock == (int32_t)NO_SOCKET) return -1;
+
+    if (!select_chip()) return -1;
+    tx_begin(START_SERVER_TCP_CMD, 3);
+    tx_param16(port);
+    tx_param8((uint8_t)sock);
+    tx_param8(TCP_MODE);
+    tx_end();
+    deselect_chip();
+
+    if (!select_chip()) return -1;
+    int32_t np = rx_begin(START_SERVER_TCP_CMD);
+    uint32_t ok = (np == 1) ? rx_param_u32() : 0;
+    if (np >= 0) (void)xfer(0xff);
+    deselect_chip();
+    return ok ? sock : -1;
+}
+
+// Is anybody there? The client's socket, or -1 for nobody. Asked repeatedly by
+// whoever is serving, so it must be cheap and must not block.
+int32_t myrtos_wifi_accept(uint8_t server_sock)
+{
+    int32_t v = sock_cmd_u8(AVAIL_DATA_TCP_CMD, server_sock);
+    if (v < 0 || v == (int32_t)NO_SOCKET || v == (int32_t)server_sock) return -1;
+    return v;
+}
+
+// Read what a client has sent. Zero means nothing yet, not end of stream -- the
+// caller decides how long to keep asking, because only the caller knows what it
+// is waiting for.
+int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
+{
+    if (!len) return 0;
+    if (len > 4000u) len = 4000u;                  // the chip's own buffer limit
+
+    if (!select_chip()) return -1;
+    tx_begin(GET_DATABUF_TCP_CMD, 2);
+    // Both parameters carry two-byte lengths in this command, the socket
+    // included -- the length prefix is a property of the command and not of the
+    // parameter, which is the part that is easy to get wrong.
+    uint8_t s = sock;
+    tx_param_long(&s, 1);
+    uint8_t want[2] = { (uint8_t)(len & 0xffu), (uint8_t)(len >> 8) };
+    tx_param_long(want, 2);
+    tx_end();
+    deselect_chip();
+
+    if (!select_chip()) return -1;
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    if (b != START_CMD) { deselect_chip(); return -1; }
+    int32_t got = -1;
+    if (xfer(0xff) == (GET_DATABUF_TCP_CMD | REPLY_FLAG) && xfer(0xff) == 1) {
+        // And the reply's length is two bytes as well, little-endian.
+        uint32_t lo = xfer(0xff), hi = xfer(0xff);
+        uint32_t n = lo | (hi << 8);
+        if (n > len) n = len;
+        for (uint32_t i = 0; i < n; i++) buf[i] = xfer(0xff);
+        (void)xfer(0xff);                          // END_CMD
+        got = (int32_t)n;
+    }
+    deselect_chip();
+    return got;
+}
+
+// Hand a block to the chip and wait for it to say it went. The wait matters:
+// without it a close can overtake the data, and the browser gets an empty
+// answer for a page that was written correctly.
+int32_t myrtos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
+{
+    if (!len) return 0;
+    if (len > 2000u) len = 2000u;                  // one chip buffer at a time
+
+    if (!select_chip()) return -1;
+    tx_begin(SEND_DATA_TCP_CMD, 2);
+    uint8_t s = sock;
+    tx_param_long(&s, 1);
+    tx_param_long(buf, (uint16_t)len);
+    tx_end();
+    deselect_chip();
+
+    if (!select_chip()) return -1;
+    int32_t np = rx_begin(SEND_DATA_TCP_CMD);
+    uint32_t sent = (np == 1) ? rx_param_u32() : 0;
+    if (np >= 0) (void)xfer(0xff);
+    deselect_chip();
+    if (!sent) return -1;
+
+    // Yielding, not spinning. This runs in the wifi thread above the shell, and
+    // the lesson about spinning here was learned once already at the scan.
+    for (int i = 0; i < 100; i++) {
+        if (sock_cmd_u8(DATA_SENT_TCP_CMD, sock) == 1) return (int32_t)sent;
+        myrtos_sleep(2);
+    }
+    return (int32_t)sent;
+}
+
+int32_t myrtos_wifi_close(uint8_t sock)
+{
+    return sock_cmd_u8(STOP_CLIENT_TCP_CMD, sock) >= 0 ? 0 : -1;
+}
+
 static int32_t handle(const myrtos_msg_t *m) {
     const myrtos_wifi_req_t *r = (const myrtos_wifi_req_t*)m->data;
     switch (m->type) {
     case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
     case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
     case MYRTOS_MSG_WIFI_ADDR: return myrtos_wifi_ipaddr(r->buf, r->len);
+    case MYRTOS_MSG_WIFI_SOCK: {
+        const myrtos_wifi_sock_t *q = (const myrtos_wifi_sock_t*)m->data;
+        switch (q->op) {
+        case MYRTOS_SOCK_LISTEN: return myrtos_wifi_listen((uint16_t)q->arg);
+        case MYRTOS_SOCK_ACCEPT: return myrtos_wifi_accept((uint8_t)q->arg);
+        case MYRTOS_SOCK_RECV:   return myrtos_wifi_recv((uint8_t)q->arg, q->buf, q->len);
+        case MYRTOS_SOCK_SEND:   return myrtos_wifi_send((uint8_t)q->arg, q->buf, q->len);
+        case MYRTOS_SOCK_CLOSE:  return myrtos_wifi_close((uint8_t)q->arg);
+        default:                 return -1;
+        }
+    }
     case MYRTOS_MSG_WIFI_JOIN: {
         // name, NUL, secret, NUL -- in the caller's own memory, which is stable
         // because the caller is blocked in send.

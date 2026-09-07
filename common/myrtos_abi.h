@@ -492,6 +492,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_CONFONT   38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
 #define SYS_WIFIADDR  43u   // a0 = buffer, a1 = length -> a0 = 0 if there is one
 #define SYS_WIFIJOIN  42u   // a0 = "ssid\0pass" -> a0 = 0 joined, else the status
+#define SYS_WIFISOCK  58u   // a0 = op, a1 = port or socket, a2 = &{buf,len}
 #define SYS_READABLE  39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
 #define SYS_KILL      40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
 #define SYS_FOREGRND  41u   // a0 = path, a1 = pid or 0 -> a0 = 0 ok, -1 no path
@@ -606,6 +607,29 @@ typedef struct {
     char *buf;
     uint32_t len;
 } myrtos_wifi_req_t;
+
+// Sockets, which the coprocessor provides rather than this machine: the chip
+// carries the TCP/IP stack, so what crosses here is a socket number and bytes,
+// not packets. That is why there is no network stack in myrtos and why there is
+// not going to be one -- see the note at the top of modules/wifilib.
+//
+// One message with an operation inside it rather than five message types. The
+// five would each need a syscall number too, and what they have in common -- a
+// socket, a buffer, a length -- is exactly one struct.
+#define MYRTOS_MSG_WIFI_SOCK 14u
+
+#define MYRTOS_SOCK_LISTEN 0u   // arg = port      -> the listening socket, or -1
+#define MYRTOS_SOCK_ACCEPT 1u   // arg = that sock -> a client socket, or -1 for nobody
+#define MYRTOS_SOCK_RECV   2u   // arg = client    -> bytes read; 0 means not yet
+#define MYRTOS_SOCK_SEND   3u   // arg = client    -> bytes written
+#define MYRTOS_SOCK_CLOSE  4u   // arg = client    -> 0
+
+typedef struct {
+    uint32_t op;      // MYRTOS_SOCK_*
+    uint32_t arg;     // a port for LISTEN, a socket for everything else
+    uint8_t *buf;
+    uint32_t len;
+} myrtos_wifi_sock_t;
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
@@ -1063,6 +1087,48 @@ static inline int32_t myrtos_wifi_join(const char *ssid_then_pass)
 static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t len)
 {
     return myrtos_syscall(SYS_WIFISCAN, (uint32_t)index, (uint32_t)(uintptr_t)ssid, len);
+}
+
+// The buffer and its length travel together because a syscall has three
+// arguments and this wants four. Everything below is one line over it.
+typedef struct { uint8_t *buf; uint32_t len; } myrtos_sockbuf_t;
+
+// The family is myrtos_sock_*, all five of it: myrtos_send and myrtos_receive
+// are the message passing and were here first, and a socket send that was
+// called myrtos_send would be two different things one letter apart.
+//
+// Listen on a port. The answer is a socket to hand to the calls below, or -1 --
+// which on a machine that is not on a network is what always comes back.
+static inline int32_t myrtos_sock_listen(uint16_t port)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_LISTEN, port, 0);
+}
+
+// Somebody's socket, or -1 for nobody yet. It does not wait: a server that
+// wants to wait sleeps between asks, and one that has other work does it.
+static inline int32_t myrtos_sock_accept(int32_t server_sock)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_ACCEPT, (uint32_t)server_sock, 0);
+}
+
+// Zero means nothing has arrived yet, not that the client has gone.
+static inline int32_t myrtos_sock_recv(int32_t sock, uint8_t *buf, uint32_t len)
+{
+    myrtos_sockbuf_t b = { buf, len };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_RECV, (uint32_t)sock,
+                          (uint32_t)(uintptr_t)&b);
+}
+
+static inline int32_t myrtos_sock_send(int32_t sock, const uint8_t *buf, uint32_t len)
+{
+    myrtos_sockbuf_t b = { (uint8_t *)buf, len };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_SEND, (uint32_t)sock,
+                          (uint32_t)(uintptr_t)&b);
+}
+
+static inline int32_t myrtos_sock_close(int32_t sock)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_CLOSE, (uint32_t)sock, 0);
 }
 
 // Which bus to ask the card for. The order is the card's rule and not ours: it
