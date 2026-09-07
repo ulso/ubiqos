@@ -449,22 +449,34 @@ static int32_t run_between(char *cmd, int32_t fd, const char *file, uint32_t fla
     return pid;
 }
 
+// Which command could not be started, for the caller to name. It is set for
+// every failure that has a name to give, and read only when exec_line returns
+// one of those -- see the note where it is reported.
+static const char *failed_name;
+
 static int32_t run_pipeline(char *left, char *right) {
     const char *between = "/tmp/pipe";
 
     int32_t p1 = run_between(left, MYRTOS_STDOUT, between,
                              MYRTOS_O_WRONLY | MYRTOS_O_CREAT | MYRTOS_O_TRUNC);
     if (p1 == -3) return -3;
-    if (p1 < 0) { myrtos_fs_remove(between); return p1; }
+    if (p1 < 0) { myrtos_fs_remove(between); failed_name = left; return p1; }
 
     int32_t p2 = run_between(right, MYRTOS_STDIN, between, MYRTOS_O_RDONLY);
     myrtos_fs_remove(between);
+    // The half that failed is the half to name. start_one has NUL-terminated
+    // each of these at its first space, so both are bare command names by now.
+    if (p2 < 0) failed_name = right;
     return p2;
 }
 
 // Split the line at the first space: everything before is the module name,
 // everything after is the command line the process is given.
 static int32_t exec_line(char *line) {
+    // Whatever fails, it is this unless a pipeline says otherwise. A single
+    // command's name is the head of the line, which start_one terminates.
+    failed_name = line;
+
     // A pipe splits the line before anything else looks at it, because each
     // half has its own name, arguments and redirections.
     for (char *b = line; *b; b++) {
@@ -622,7 +634,12 @@ void module_main(int argc, char **argv) {
                         // sends the reader looking for the wrong problem.
                         myrtos_line_str(&l, r == -2 ? "already running: "
                                                     : "no such module: ");
-                        myrtos_line_str(&l, e->line);  // exec_line NUL-terminated the name
+                        // The command that failed, which for a pipeline is not
+                        // the head of the line. This read e->line, and start_one
+                        // NUL-terminates the LEFT half at its first space -- so
+                        // `echo x | nosuch` reported "no such module: echo",
+                        // naming the command that had just run successfully.
+                        myrtos_line_str(&l, failed_name);
                         myrtos_line_str(&l, "\r\n");
                         myrtos_line_flush(e->out, &l);
                     }
