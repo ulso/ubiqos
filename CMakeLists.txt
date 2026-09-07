@@ -47,10 +47,19 @@ endif()
 # of routing them here is that D now gets --no-relax as well, which it always
 # should have had -- relaxation is what turns an absolute reference into a
 # gp-relative one, and a module may not contain either.
+#
+# The clang, D and Zig rules drive their own compiler and linker rather than the
+# SDK's gcc driver, so they need the same two facts spelled without the -Wl,
+# wrapper: which triple to compile for and which emulation to link with. They
+# are set here, beside the flags they belong to, because the reason the clang
+# path was riscv-only was that these were written into it.
 if(MYRTOS_ARCH STREQUAL "riscv")
     set(MYRTOS_MODULE_CFLAGS  -mcmodel=medany)
     set(MYRTOS_MODULE_LDFLAGS -Wl,-m,elf32lriscv -Wl,--no-relax)
     set(MYRTOS_MODULE_ARCH_SOURCES)
+    set(MYRTOS_LLVM_TRIPLE    riscv32-unknown-elf)
+    set(MYRTOS_LLVM_EMULATION elf32lriscv)
+    set(MYRTOS_LLVM_CFLAGS)
 else()
     # -ffixed-r9 keeps the register the compiler may not have. r9 carries the
     # thread pointer, which RISC-V has in tp and ARM has nowhere -- so the
@@ -63,6 +72,25 @@ else()
     # instruction but a call to __aeabi_read_tp, which the platform supplies --
     # so every module carries the two instructions that answer it.
     set(MYRTOS_MODULE_ARCH_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/common/arm/tp.S)
+
+    set(MYRTOS_LLVM_TRIPLE    arm-none-eabi)
+    set(MYRTOS_LLVM_EMULATION armelf)
+
+    # -mno-movt, and it is the whole reason clang could not build ARM modules.
+    #
+    # To put a 32-bit address in a register, gcc emits a literal pool entry --
+    # a word of data inside .text, which the linker fills in and which arrives
+    # as R_ARM_ABS32. The loader has always relocated those. Clang prefers a
+    # movw/movt pair instead, splitting the same address across the immediate
+    # fields of two Thumb instructions, which arrives as R_ARM_THM_MOVW_ABS_NC
+    # and R_ARM_THM_MOVT_ABS. Those are absolute too, and check_module.py
+    # refused them -- correctly, because nothing relocates them.
+    #
+    # Two ways out: teach the loader to split a value across two instruction
+    # encodings, or ask the compiler for the form the loader already handles.
+    # This is the second, it is one flag, and the cost is the literal pool gcc
+    # pays anyway. cxxdemo came out with nine addresses to fix and no refusal.
+    set(MYRTOS_LLVM_CFLAGS -mno-movt)
 endif()
 
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
@@ -405,21 +433,21 @@ find_program(MYRTOS_LLD     ld.lld  HINTS /opt/homebrew/bin /opt/homebrew/opt/ll
 # of a broken build.
 separate_arguments(MYRTOS_TARGET_ARCH NATIVE_COMMAND "${CMAKE_C_FLAGS}")
 set(MYRTOS_CLANG_OK FALSE)
-# The probe below offers a riscv32 triple, so it can only answer for one
-# machine. Giving clang an ARM target as well is worth doing and is not this
-# commit; until then gcc builds every module on ARM, which it can.
-if(NOT MYRTOS_ARCH STREQUAL "riscv")
-    message(STATUS "Clang modules are riscv-only so far; gcc builds them on ${MYRTOS_ARCH}")
-elseif(MYRTOS_CLANG AND MYRTOS_CLANGXX AND MYRTOS_LLD)
+# The probe compiles for whichever machine this build is for, with the same
+# triple and the same flags the modules will use -- so it answers the question
+# actually being asked rather than a fixed one. It used to offer riscv32 and
+# nothing else, which is what made clang modules riscv-only.
+if(MYRTOS_CLANG AND MYRTOS_CLANGXX AND MYRTOS_LLD)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c "int probe(void){return 0;}\n")
     execute_process(
-        COMMAND ${MYRTOS_CLANG} --target=riscv32-unknown-elf ${MYRTOS_TARGET_ARCH}
+        COMMAND ${MYRTOS_CLANG} --target=${MYRTOS_LLVM_TRIPLE} ${MYRTOS_TARGET_ARCH}
+                ${MYRTOS_LLVM_CFLAGS} ${MYRTOS_MODULE_CFLAGS}
                 -ffreestanding -nostdlib -c ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c
                 -o ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.o
         RESULT_VARIABLE probe_rc OUTPUT_QUIET ERROR_VARIABLE probe_err)
     if(probe_rc EQUAL 0)
         set(MYRTOS_CLANG_OK TRUE)
-        message(STATUS "Clang module toolchain: ${MYRTOS_CLANG} + ${MYRTOS_LLD}")
+        message(STATUS "Clang module toolchain: ${MYRTOS_CLANG} + ${MYRTOS_LLD} (${MYRTOS_LLVM_TRIPLE})")
     else()
         message(STATUS "Clang found but cannot build for this target; modules fall back to gcc")
         message(STATUS "  ${probe_err}")
@@ -465,8 +493,12 @@ function(myrtos_add_clang_module name source)
 
     set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_clang)
     file(MAKE_DIRECTORY ${objdir})
+    # The architecture's own sources come along, exactly as they do in
+    # myrtos_add_module: on ARM that is common/arm/tp.S, the two instructions
+    # that answer __aeabi_read_tp. A clang module without it links but cannot
+    # read a thread-local.
     set(objs "")
-    foreach(src ${source} ${ARGN})
+    foreach(src ${source} ${ARGN} ${MYRTOS_MODULE_ARCH_SOURCES})
         get_filename_component(base ${src} NAME_WE)
         get_filename_component(ext ${src} EXT)
         set(obj ${objdir}/${base}.o)
@@ -477,13 +509,19 @@ function(myrtos_add_clang_module name source)
             set(cc ${MYRTOS_CLANG})
             set(lang_flags ${MYRTOS_CLANG_C_FLAGS})
         endif()
+        # An absolute path is left alone; MYRTOS_MODULE_ARCH_SOURCES gives one.
+        set(srcpath ${CMAKE_CURRENT_SOURCE_DIR}/${src})
+        if(IS_ABSOLUTE ${src})
+            set(srcpath ${src})
+        endif()
         add_custom_command(
             OUTPUT ${obj}
-            COMMAND ${cc} --target=riscv32-unknown-elf ${MYRTOS_TARGET_ARCH}
-                    -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2
+            COMMAND ${cc} --target=${MYRTOS_LLVM_TRIPLE} ${MYRTOS_TARGET_ARCH}
+                    -fno-pic ${MYRTOS_MODULE_CFLAGS} ${MYRTOS_LLVM_CFLAGS}
+                    -fno-common -ffreestanding -nostdlib -O2
                     ${lang_flags} ${single_compile}
-                    -c ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
-            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
+                    -c ${srcpath} -o ${obj}
+            DEPENDS ${srcpath}
             COMMENT "Compiling ${src} with clang")
         list(APPEND objs ${obj})
     endforeach()
@@ -493,7 +531,7 @@ function(myrtos_add_clang_module name source)
     set(elf ${objdir}/${name}.elf)
     add_custom_command(
         OUTPUT ${elf}
-        COMMAND ${MYRTOS_LLD} -m elf32lriscv -N -e 0 --emit-relocs ${single_link} -o ${elf} ${objs}
+        COMMAND ${MYRTOS_LLD} -m ${MYRTOS_LLVM_EMULATION} -N -e 0 --emit-relocs ${single_link} -o ${elf} ${objs}
         DEPENDS ${objs}
         COMMENT "Linking ${name} with lld")
 
@@ -639,8 +677,12 @@ function(myrtos_add_d_module name source)
     # too. common/myrtos.d also carries memset, memcpy and __assert, which LDC
     # emits calls to and a hosted target would take from a C library.
     set(dsrcs "")
+    # The architecture's own sources come along, exactly as they do in
+    # myrtos_add_module: on ARM that is common/arm/tp.S, the two instructions
+    # that answer __aeabi_read_tp. A clang module without it links but cannot
+    # read a thread-local.
     set(objs "")
-    foreach(src ${source} ${ARGN})
+    foreach(src ${source} ${ARGN} ${MYRTOS_MODULE_ARCH_SOURCES})
         get_filename_component(ext ${src} EXT)
         if(ext STREQUAL ".d")
             list(APPEND dsrcs ${CMAKE_CURRENT_SOURCE_DIR}/${src})
