@@ -1,7 +1,6 @@
 #include "io.h"
-#include "hardware/sync.h"
+#include "critical.h"
 #include "tusb.h"          // the CDC host class, for the acm driver
-#include "hardware/sync.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "usbdev.h"
@@ -475,7 +474,7 @@ static myrtos_path_t *file_entry(int32_t path, int32_t owner_pid) {
 
 int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS || !abs_path) return -1;
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
 
     int32_t slot = -1;
     for (int i = 0; i < MYRTOS_MAX_OPEN_FILES; i++)
@@ -483,7 +482,7 @@ int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid) {
     int32_t fd = -1;
     for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
         if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) { fd = i; break; }
-    if (slot < 0 || fd < 0) { restore_interrupts(st); return -1; }
+    if (slot < 0 || fd < 0) { myrtos_critical_exit(st); return -1; }
 
     uint32_t n = 0;
     while (abs_path[n] && n < sizeof(open_files[0].path) - 1) {
@@ -495,7 +494,7 @@ int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid) {
     open_files[slot].refs = 1;
     paths[owner_pid][fd].file = (int16_t)slot;
 
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
     return fd;
 }
 
@@ -513,15 +512,15 @@ bool myrtos_io_file_at(int32_t path, int32_t owner_pid,
 }
 
 void myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n) {
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     myrtos_path_t *p = file_entry(path, owner_pid);
     if (p) open_files[p->file].pos += n;
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
 }
 
 int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid,
                             int32_t offset, uint32_t whence) {
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     myrtos_path_t *p = file_entry(path, owner_pid);
     int32_t result = -1;
     if (p) {
@@ -542,7 +541,7 @@ int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid,
             result = (int32_t)pos;
         }
     }
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
     return result;
 }
 
@@ -567,7 +566,7 @@ static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
 void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
     if (parent_pid < 0 || parent_pid >= MYRTOS_MAX_PROCS) return;
     if (child_pid < 0 || child_pid >= MYRTOS_MAX_PROCS) return;
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
         paths[child_pid][i] = paths[parent_pid][i];
         // The child shares the open file, position and all, exactly as a fork's
@@ -581,24 +580,24 @@ void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
             else                                pipes[paths[child_pid][i].pipe].readers++;
         }
     }
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
 }
 
 int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid) {
     myrtos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
         if (!q->pipe_write) return -1;                  // the wrong end
-        uint32_t st = save_and_disable_interrupts();
+        uint32_t st = myrtos_critical_enter();
         pipe_t *r = &pipes[q->pipe];
         // Nobody to read it. Failing beats filling a buffer that will never be
         // emptied, which is what SIGPIPE is for elsewhere.
-        if (!r->readers) { restore_interrupts(st); return -1; }
+        if (!r->readers) { myrtos_critical_exit(st); return -1; }
         uint32_t n = 0;
         while (n < len && pipe_used(r) < MYRTOS_PIPE_BUF - 1) {
             r->buf[r->head] = buf[n++];
             r->head = (r->head + 1) % MYRTOS_PIPE_BUF;
         }
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         return (int32_t)n;                              // zero means wait for room
     }
     myrtos_path_t *p = path_of(path, owner_pid);
@@ -651,13 +650,13 @@ bool myrtos_io_interrupt(const char *name) {
         // which killing outright would skip. The foreground stays set in that
         // case so a second press escalates, and the deadline in the scheduler
         // ends it regardless if it does not go.
-        uint32_t st = save_and_disable_interrupts();
+        uint32_t st = myrtos_critical_enter();
         bool told = myrtos_intr_request(victim);
         if (!told) {
             devices[i].foreground = -1;
             myrtos_process_kill(victim);
         }
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         return true;
     }
     return false;
@@ -700,14 +699,14 @@ int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_p
     myrtos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
         if (q->pipe_write) return -1;                   // the wrong end
-        uint32_t st = save_and_disable_interrupts();
+        uint32_t st = myrtos_critical_enter();
         pipe_t *r = &pipes[q->pipe];
         uint32_t n = 0;
         while (n < len && pipe_used(r)) {
             buf[n++] = r->buf[r->tail];
             r->tail = (r->tail + 1) % MYRTOS_PIPE_BUF;
         }
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         return (int32_t)n;
     }
     myrtos_path_t *p = path_of(path, owner_pid);
@@ -728,16 +727,16 @@ static bool device_shared(int32_t path, int32_t owner_pid) {
 int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
     myrtos_path_t *f = file_entry(path, owner_pid);
     if (f) {
-        uint32_t st = save_and_disable_interrupts();
+        uint32_t st = myrtos_critical_enter();
         file_release(f);
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         return 0;
     }
     myrtos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
-        uint32_t st = save_and_disable_interrupts();
+        uint32_t st = myrtos_critical_enter();
         pipe_release(q);
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         return 0;
     }
     myrtos_path_t *p = path_of(path, owner_pid);
@@ -756,7 +755,7 @@ static myrtos_path_t *pipe_entry(int32_t path, int32_t owner_pid) {
 
 int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS || !fds) return -1;
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
 
     int32_t q = -1;
     for (int i = 0; i < MYRTOS_MAX_PIPES; i++)
@@ -768,7 +767,7 @@ int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
             || paths[owner_pid][i].pipe >= 0) continue;
         if (r < 0) r = i; else { w = i; break; }
     }
-    if (q < 0 || w < 0) { restore_interrupts(st); return -1; }
+    if (q < 0 || w < 0) { myrtos_critical_exit(st); return -1; }
 
     pipes[q].head = pipes[q].tail = 0;
     pipes[q].readers = pipes[q].writers = 1;
@@ -777,7 +776,7 @@ int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
     fds[0] = r;
     fds[1] = w;
 
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
     return 0;
 }
 
@@ -806,21 +805,21 @@ int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
     if (!src->device && src->file < 0 && src->pipe < 0) return -1;
     if (new_path == path) return path;                  // dup2 onto itself
 
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     if (new_path < 0) {
         for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
             if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) {
                 new_path = i;
                 break;
             }
-        if (new_path < 0) { restore_interrupts(st); return -1; }
+        if (new_path < 0) { myrtos_critical_exit(st); return -1; }
     } else if (new_path >= MYRTOS_MAX_PATHS) {
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         return -1;
     } else {
-        restore_interrupts(st);
+        myrtos_critical_exit(st);
         myrtos_io_close(new_path, owner_pid);           // dup2 closes it first
-        st = save_and_disable_interrupts();
+        st = myrtos_critical_enter();
     }
 
     paths[owner_pid][new_path] = *src;
@@ -829,13 +828,13 @@ int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
         if (src->pipe_write) pipes[src->pipe].writers++;
         else                 pipes[src->pipe].readers++;
     }
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
     return new_path;
 }
 
 void myrtos_io_close_all(int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return;
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
         if (paths[owner_pid][i].file >= 0) file_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].pipe >= 0) pipe_release(&paths[owner_pid][i]);
@@ -844,5 +843,5 @@ void myrtos_io_close_all(int32_t owner_pid) {
             paths[owner_pid][i].device = 0;
         }
     }
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
 }

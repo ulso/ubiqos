@@ -1,5 +1,5 @@
 #include "tlsf.h"
-#include "hardware/sync.h"
+#include "critical.h"
 
 // Block header. size is the payload size; bit 0 marks it free.
 // prev_phys_block points at the neighbour at the next lower address, which is
@@ -231,24 +231,24 @@ bool myrtos_tlsf_owns(tlsf_pool_t pool, const void* p) {
 // restore_interrupts puts that state back, so a call from a trap leaves
 // interrupts off, as they already were.
 void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     void* p = myrtos_tlsf_malloc_unlocked(pool, size);
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
     return p;
 }
 
 void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     myrtos_tlsf_free_unlocked(pool, ptr);
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
 }
 
 // Walking the pool block by block reads the same structure the other two write,
 // so it needs the same protection -- a torn walk reports a number that was
 // never true, and free is the one number a caller acts on.
 size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
-    uint32_t st = save_and_disable_interrupts();
+    uint32_t st = myrtos_critical_enter();
     size_t n = myrtos_tlsf_largest_free_unlocked(pool);
-    restore_interrupts(st);
+    myrtos_critical_exit(st);
     return n;
 }
