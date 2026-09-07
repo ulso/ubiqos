@@ -473,6 +473,160 @@ static int32_t run_pipeline(char *left, char *right) {
 
 // Split the line at the first space: everything before is the module name,
 // everything after is the command line the process is given.
+// --- COMPLETION ------------------------------------------------------------
+// Tab fills in what can only be one thing, and stops where it becomes a choice.
+//
+// The first word is a command, so the candidates are the module directory; any
+// later word is a path, so they are the names in the directory it points at.
+// Both are the same problem once the candidates can be walked, which is why
+// there is one loop and a flag rather than two of everything.
+//
+// It completes to the longest common prefix rather than to the first match. A
+// completion that guesses is worse than one that stops: stopping tells you
+// exactly how far the name is decided, and typing one more letter asks again.
+
+// Where the word under the cursor starts. Everything is split on spaces here,
+// as the rest of this shell does -- quoting does not exist yet, and inventing
+// it in the completer alone would make Tab disagree with Return.
+static uint32_t word_start(editor_t *e)
+{
+    uint32_t i = e->pos;
+    while (i && e->line[i - 1] != ' ') i--;
+    return i;
+}
+
+static bool first_word(editor_t *e, uint32_t start)
+{
+    for (uint32_t i = 0; i < start; i++)
+        if (e->line[i] != ' ') return false;
+    return true;
+}
+
+// How much of a and b agree, in bytes.
+static uint32_t common(const char *a, const char *b)
+{
+    uint32_t n = 0;
+    while (a[n] && a[n] == b[n]) n++;
+    return n;
+}
+
+// Insert text at the cursor, which is what every completion ends up doing.
+static void insert_str(editor_t *e, const char *s)
+{
+    for (uint32_t i = 0; s[i]; i++) insert(e, s[i]);
+}
+
+// Split a path into the directory to look in and the fragment to match. "/sd/do"
+// looks in "/sd" for "do"; "do" looks in the current directory for "do".
+static void split_path(const char *word, char *dir, uint32_t dir_max, const char **leaf)
+{
+    uint32_t cut = 0, n = 0;
+    for (; word[n]; n++) if (word[n] == '/') cut = n + 1;
+    *leaf = word + cut;
+    if (!cut) { dir[0] = '.'; dir[1] = 0; return; }
+    uint32_t keep = cut > 1 ? cut - 1 : 1;          // "/x" keeps the root's slash
+    if (keep >= dir_max) keep = dir_max - 1;
+    for (uint32_t i = 0; i < keep; i++) dir[i] = word[i];
+    dir[keep] = 0;
+}
+
+static void complete(editor_t *e)
+{
+    uint32_t start = word_start(e);
+    char frag[LINE_MAX];
+    uint32_t flen = e->pos - start;
+    for (uint32_t i = 0; i < flen; i++) frag[i] = e->line[start + i];
+    frag[flen] = 0;
+
+    bool commands = first_word(e, start);
+    char dir[128]; const char *leaf = frag;
+    if (!commands) split_path(frag, dir, sizeof dir, &leaf);
+    uint32_t leaf_len = 0;
+    while (leaf[leaf_len]) leaf_len++;
+
+    char best[MYRTOS_DIRNAME_MAX];
+    uint32_t best_len = 0, matches = 0;
+
+    for (uint32_t i = 0; ; i++) {
+        char name[MYRTOS_DIRNAME_MAX];
+        if (commands) {
+            myrtos_modinfo_t m;
+            if (myrtos_moddir_get(i, &m) < 0) break;
+            // A data module is a descriptor or a keymap, not something to run.
+            if (m.type == MYRTOS_TYPE_DATA) continue;
+            uint32_t k = 0;
+            while (k < MYRTOS_NAME_LEN - 1 && m.name[k]) { name[k] = m.name[k]; k++; }
+            name[k] = 0;
+        } else {
+            char raw[MYRTOS_DIRNAME_MAX];
+            uint32_t size = 0;
+            if (myrtos_fs_dir_at(dir, i, raw, &size) < 0) break;
+            myrtos_pretty_name(raw, name);
+        }
+
+        bool hit = true;
+        for (uint32_t k = 0; k < leaf_len; k++) if (name[k] != leaf[k]) { hit = false; break; }
+        if (!hit) continue;
+
+        if (!matches) {
+            uint32_t k = 0;
+            while (name[k]) { best[k] = name[k]; k++; }
+            best[k] = 0; best_len = k;
+        } else {
+            best_len = common(best, name);
+            best[best_len] = 0;
+        }
+        matches++;
+    }
+
+    if (!matches) return;                 // nothing to say, and nothing said
+
+    if (best_len > leaf_len) {
+        insert_str(e, best + leaf_len);
+        // A single match is finished, so the space that would be typed next is
+        // typed here. More than one is not: the cursor stops exactly where the
+        // name stopped being decided.
+        if (matches == 1) insert_str(e, " ");
+        redraw(e);
+        return;
+    }
+
+    // The prefix is already as long as it can get, so the only useful thing
+    // left is to show what the choices are. Printed above a fresh prompt, so
+    // the line being edited is not lost.
+    if (matches > 1) {
+        myrtos_write_str(e->out, "\r\n");
+        myrtos_line_t l;
+        myrtos_line_reset(&l);
+        uint32_t shown = 0;
+        for (uint32_t i = 0; ; i++) {
+            char name[MYRTOS_DIRNAME_MAX];
+            if (commands) {
+                myrtos_modinfo_t m;
+                if (myrtos_moddir_get(i, &m) < 0) break;
+                if (m.type == MYRTOS_TYPE_DATA) continue;
+                uint32_t k = 0;
+                while (k < MYRTOS_NAME_LEN - 1 && m.name[k]) { name[k] = m.name[k]; k++; }
+                name[k] = 0;
+            } else {
+                char raw[MYRTOS_DIRNAME_MAX];
+                uint32_t size = 0;
+                if (myrtos_fs_dir_at(dir, i, raw, &size) < 0) break;
+                myrtos_pretty_name(raw, name);
+            }
+            bool hit = true;
+            for (uint32_t k = 0; k < leaf_len; k++) if (name[k] != leaf[k]) { hit = false; break; }
+            if (!hit) continue;
+            myrtos_line_str(&l, name);
+            myrtos_line_str(&l, "  ");
+            if (++shown % 6 == 0) { myrtos_line_str(&l, "\r\n"); myrtos_line_flush(e->out, &l); myrtos_line_reset(&l); }
+        }
+        myrtos_line_str(&l, "\r\n");
+        myrtos_line_flush(e->out, &l);
+        redraw(e);
+    }
+}
+
 static int32_t exec_line(char *line) {
     // Whatever fails, it is this unless a pipeline says otherwise. A single
     // command's name is the head of the line, which start_one terminates.
@@ -661,6 +815,8 @@ void module_main(int argc, char **argv) {
             e->len = e->pos = e->browse = 0;
             e->line[0] = 0;
             redraw(e);
+        } else if (ch == 9) {            // Tab
+            complete(e);
         } else if (ch == 1) {            // Ctrl-A
             e->pos = 0; redraw(e);
         } else if (ch == 5) {            // Ctrl-E
