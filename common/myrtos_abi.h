@@ -211,12 +211,66 @@ typedef struct {
     void   (*pio_sm_set_pindirs_with_mask64)(void *pio, uint32_t sm,
                                              uint64_t values, uint64_t mask);
     void   (*pio_set_gpio_base)(void *pio, uint32_t base);
+
+    // The UART, for the terminal driver. uart_putc_raw is inline in the SDK's
+    // header and compiles into the module; this is the only real function it
+    // needs.
+    void   (*uart_init)(void *uart, uint32_t baud);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
 // for ever: wifi ignores the block device and fat32 ignores the SPI pins. When
 // a third library wants something neither needs, this should become a common
 // part and a domain part rather than growing again.
+
+// --- DRIVER MODULES -------------------------------------------------------
+// A device driver, on the card or in the module pool rather than in the kernel.
+//
+// The descriptors below have said which driver handles a device since they were
+// written, and adding a device has been a matter of adding a file for just as
+// long -- but the driver the descriptor named had to be one of the six compiled
+// into io.c. This is the other half: the driver is a file too.
+//
+// It is a library with a fixed shape. A library publishes whatever list of
+// functions it documents and the caller has to know the order; a driver
+// publishes the one table the I/O manager already calls every device through,
+// so there is nothing to agree about.
+//
+// The vtable itself lives here rather than in the kernel's io.h for the same
+// reason myrtos_fsops_t does: a module cannot include a kernel header.
+typedef struct {
+    const char *module_name;    // what the descriptor refers to: "uart"
+    int32_t (*configure)(const void *config, uint32_t size);
+    int32_t (*open)(void);
+    int32_t (*write)(const uint8_t *buf, uint32_t len);
+    int32_t (*read)(uint8_t *buf, uint32_t len);   // 0 = nothing right now
+    // Whether a read would return anything. A driver without this is never
+    // waited on: reads from it keep returning 0, as they did before blocking
+    // existed. That is what keeps the send-only UART from parking a shell
+    // forever on input that cannot arrive.
+    int32_t (*readable)(void);
+    // Room to write. Absent means always writable, which is right for a driver
+    // that cannot fill up -- the UART writes a byte at a time and blocks in
+    // hardware, so waiting on it would never end.
+    int32_t (*writable)(void);
+    int32_t (*close)(void);
+    // Whether a read of nothing means "never" rather than "not yet". A device
+    // without this can only fall quiet, and a reader waits; /dev/null has an
+    // end, and a reader that waited for it would wait for ever.
+    int32_t (*at_eof)(void);
+} myrtos_driver_t;
+
+#define MYRTOS_DRIVER_ABI 1
+
+// What exec_offset points at in a driver module, under the symbol
+// myrtos_driver. init comes first and is called once, like a library's entry
+// zero, because a driver has no other way to reach the kernel either.
+typedef struct {
+    uint32_t abi;               // MYRTOS_DRIVER_ABI
+    uint32_t reserved;
+    bool (*init)(const myrtos_kernel_api_t *api);
+    myrtos_driver_t ops;
+} myrtos_driver_module_t;
 
 // --- DEVICE DESCRIPTORS ---------------------------------------------------
 // A data module describing a device, in the OS-9 sense. It states what the

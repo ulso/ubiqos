@@ -18,27 +18,9 @@
 #define MYRTOS_MAX_PATHS   8
 #define MYRTOS_PATH_NONE   (-1)
 
-typedef struct {
-    const char *module_name;    // what the descriptor refers to: "uart"
-    int32_t (*configure)(const void *config, uint32_t size);
-    int32_t (*open)(void);
-    int32_t (*write)(const uint8_t *buf, uint32_t len);
-    int32_t (*read)(uint8_t *buf, uint32_t len);   // 0 = nothing right now
-    // Whether a read would return anything. A driver without this is never
-    // waited on: reads from it keep returning 0, as they did before blocking
-    // existed. That is what keeps the send-only UART from parking a shell
-    // forever on input that cannot arrive.
-    int32_t (*readable)(void);
-    // Room to write. Absent means always writable, which is right for a driver
-    // that cannot fill up -- the UART writes a byte at a time and blocks in
-    // hardware, so waiting on it would never end.
-    int32_t (*writable)(void);
-    int32_t (*close)(void);
-    // Whether a read of nothing means "never" rather than "not yet". A device
-    // without this can only fall quiet, and a reader waits; /dev/null has an
-    // end, and a reader that waited for it would wait for ever.
-    int32_t (*at_eof)(void);
-} myrtos_driver_t;
+// myrtos_driver_t was here. It is in common/myrtos_abi.h now, because a driver
+// may be a module of its own and a module cannot include a kernel header -- the
+// same move myrtos_fsops_t made when fat32 became a library.
 
 void    myrtos_io_init(void);
 uint32_t myrtos_io_device_count(void);

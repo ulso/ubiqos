@@ -71,4 +71,8 @@ const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index);
 // where it lies. See the note beside the definition.
 const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out);
 
+// A device driver as a module. Asked for by the I/O manager when a descriptor
+// names a driver that is not compiled into the kernel.
+const myrtos_driver_module_t *myrtos_driver_link(const char *name, void **owned_out);
+
 #endif

@@ -434,9 +434,11 @@ def create_module(input_bin_path, output_mod_path, module_name,
 
 # Defaults for the myrtos-specific fields
     MYRTOS_TYPE_PROGRAM = 1
+    MYRTOS_TYPE_DRIVER  = 2
     MYRTOS_TYPE_DATA    = 3
     MYRTOS_TYPE_LIBRARY = 4
     kind = {"data": MYRTOS_TYPE_DATA,
+            "driver": MYRTOS_TYPE_DRIVER,
             "library": MYRTOS_TYPE_LIBRARY}.get(module_type, MYRTOS_TYPE_PROGRAM)
     # High byte: type. Low byte: the machine in the high nibble, the language in
     # the low one. Both fit in four bits and always have.
@@ -520,9 +522,15 @@ if __name__ == "__main__":
     # --library is a module the kernel calls rather than runs: exec_offset
     # points at a table of pointers instead of at an entry point, so the symbol
     # named on the command line is that table's.
-    module_type = ("data"    if "--data" in argv else
+    #
+    # --driver is the same idea with a fixed shape. A library publishes whatever
+    # list of functions it documents; a driver publishes the one table the I/O
+    # manager already calls every device through, so the kernel knows what it is
+    # getting without being told.
+    module_type = ("data"    if "--data"    in argv else
+                   "driver"  if "--driver"  in argv else
                    "library" if "--library" in argv else "program")
-    argv = [a for a in argv if a not in ("--data", "--library")]
+    argv = [a for a in argv if a not in ("--data", "--library", "--driver")]
 
     # --rev sets the module revision. The directory keeps the highest of a given
     # name, so a patched module replaces the one already there by carrying a

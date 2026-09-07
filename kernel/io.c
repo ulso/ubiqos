@@ -11,58 +11,14 @@ void myrtos_print_u32(uint32_t v);
 void myrtos_print_hex(uint32_t v);
 
 // --- DRIVER: serial terminal ----------------------------------------------
-// The driver still lives in the kernel, but it is no longer hardcoded to one
-// UART: the descriptor says which, on which pin and at what rate. The next step
-// is to lift it out as a module of its own on the card.
-
-static uart_inst_t *term_uart;
-static uint32_t term_tx_pin;
-
-static int32_t term_configure(const void *config, uint32_t size) {
-    if (size < sizeof(myrtos_uart_config_t)) return -1;
-    const myrtos_uart_config_t *c = (const myrtos_uart_config_t*)config;
-
-    term_uart = (c->uart_base == 0x40070000u) ? uart0 : uart1;
-    term_tx_pin = c->tx_pin;
-
-    uart_init(term_uart, c->baud_rate);
-    gpio_set_function(term_tx_pin, UART_FUNCSEL_NUM(term_uart, term_tx_pin));
-
-    myrtos_print("  uart driver: base 0x");
-    myrtos_print_hex(c->uart_base);      // print_u32 is decimal; hex is wanted here
-    myrtos_print(", tx GP");
-    myrtos_print_u32(c->tx_pin);
-    myrtos_print(", ");
-    myrtos_print_u32(c->baud_rate);
-    myrtos_print(" baud\n");
-    return 0;
-}
-
-static int32_t term_open(void) { return term_uart ? 0 : -1; }
-static int32_t term_close(void) { return 0; }
-
-static int32_t term_write(const uint8_t *buf, uint32_t len) {
-    // Called from the trap handler, hence with interrupts off. The whole
-    // write is therefore atomic without any lock.
-    for (uint32_t i = 0; i < len; i++) {
-        if (buf[i] == '\n') uart_putc_raw(term_uart, '\r');
-        uart_putc_raw(term_uart, (char)buf[i]);
-    }
-    return (int32_t)len;
-}
-
-// UART receive: the descriptor does not set rx_pin yet, so there is nothing to
-// read. The function exists to keep the interface complete.
-static int32_t term_read(uint8_t *buf, uint32_t len) {
-    (void)buf; (void)len;
-    return 0;
-}
-
-static const myrtos_driver_t driver_uart = {
-    .module_name = "uart",
-    .configure = term_configure,
-    .open = term_open, .write = term_write, .read = term_read, .close = term_close
-};
+// It was here, and it is modules/uartdrv now -- the first driver to be a module
+// of its own, which is what the note that stood here said was the next step.
+// The descriptor already said which UART, on which pin, at what rate; the only
+// thing still compiled in was the code that read it.
+//
+// Nothing about the device changed: /dev/term is registered from the same
+// descriptor, by the same myrtos_io_add_descriptor, through the same vtable.
+// What changed is where the vtable comes from.
 
 // --- DRIVER: USB CDC ------------------------------------------------------
 // No configuration is needed: the identity sits in the USB descriptors, not in
@@ -248,6 +204,39 @@ static const myrtos_driver_t driver_usb = {
 static const myrtos_driver_t *drivers[MYRTOS_MAX_DRIVERS];
 static uint32_t driver_count;
 
+// --- DRIVERS THAT ARE MODULES ---------------------------------------------
+// Linked on demand, when a descriptor names a driver the kernel was not built
+// with. The table it returns is inside the relocated copy in PSRAM and stays
+// valid for as long as the module is linked, which is for ever: nothing
+// unlinks a driver, because a device once registered is registered.
+//
+// Registering the same driver twice would link the module twice and give the
+// two devices separate copies of its state, so a driver that has been linked is
+// remembered in drivers[] alongside the compiled-in ones and found by the
+// ordinary search on the next descriptor.
+const myrtos_driver_module_t *myrtos_driver_link(const char *name, void **owned_out);
+extern const myrtos_kernel_api_t myrtos_kernel_api;
+
+static const myrtos_driver_t *driver_from_module(const char *name)
+{
+    if (driver_count >= MYRTOS_MAX_DRIVERS) return 0;
+
+    const myrtos_driver_module_t *m = myrtos_driver_link(name, 0);
+    if (!m) return 0;
+    if (!m->init || !m->init(&myrtos_kernel_api)) {
+        myrtos_print("  driver ");
+        myrtos_print(name);
+        myrtos_print(" would not start\n");
+        return 0;
+    }
+
+    myrtos_print("  driver '");
+    myrtos_print(name);
+    myrtos_print("' linked, running from the module pool\n");
+    drivers[driver_count++] = &m->ops;
+    return &m->ops;
+}
+
 // --- DEVICES AND PATHS ----------------------------------------------------
 typedef struct {
     char name[MYRTOS_NAME_LEN];
@@ -328,7 +317,6 @@ static bool name_eq_ci(const char *a, const char *b) {
 
 void myrtos_io_init(void) {
     driver_count = 0;
-    drivers[driver_count++] = &driver_uart;
     drivers[driver_count++] = &driver_usb;
     drivers[driver_count++] = &driver_kbd;
     drivers[driver_count++] = &driver_console;
@@ -387,6 +375,11 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
     for (uint32_t i = 0; i < driver_count; i++) {
         if (name_eq_ci(drivers[i]->module_name, desc->driver_name)) { drv = drivers[i]; break; }
     }
+    // Not compiled in, so look for a module of that name. This is the half of
+    // the OS-9 model that was missing: a descriptor has always been a file, and
+    // now so is the driver it names. A board can be given a device it was never
+    // built with by dropping two files on the card.
+    if (!drv) drv = driver_from_module(desc->driver_name);
     if (!drv) {
         myrtos_print("  no driver named ");
         myrtos_print(desc->driver_name);

@@ -13,6 +13,7 @@
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
+#include "hardware/uart.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
 #include "sdcard.h"
@@ -72,6 +73,8 @@ static void   k_pio_sm_set_pindirs_with_mask64(void *pio, uint32_t sm,
 { pio_sm_set_pindirs_with_mask64((PIO)pio, sm, v, m); }
 static void   k_pio_set_gpio_base(void *pio, uint32_t base)
 { pio_set_gpio_base((PIO)pio, base); }
+static void   k_uart_init(void *uart, uint32_t baud)
+{ uart_init((uart_inst_t*)uart, baud); }
 
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
@@ -106,6 +109,7 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .pio_sm_init       = k_pio_sm_init,
     .pio_sm_set_pindirs_with_mask64 = k_pio_sm_set_pindirs_with_mask64,
     .pio_set_gpio_base = k_pio_set_gpio_base,
+    .uart_init         = k_uart_init,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

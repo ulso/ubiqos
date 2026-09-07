@@ -312,17 +312,22 @@ const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index) {
 // wrong type would be entered as though its first instruction were a pointer;
 // a table from an older build would be read with today's field order. Both are
 // the kind of mistake that shows up as a jump into the middle of something.
-const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out)
+// Find a module of the wanted type and give back the address its table sits at.
+// Shared by libraries and drivers, which differ only in the type byte and in
+// what the caller does with the pointer afterwards.
+static const void *link_table(const char *name, uint32_t want_type,
+                              const char *what, void **owned_out)
 {
     if (owned_out) *owned_out = 0;
 
     const myrtos_module_header_t *h = myrtos_moddir_link(name);
     if (!h) return 0;
 
-    if ((h->type_lang >> 8) != MYRTOS_TYPE_LIBRARY) {
-        myrtos_print("lib: ");
+    if ((h->type_lang >> 8) != want_type) {
+        myrtos_print(what);
+        myrtos_print(": ");
         myrtos_print(name);
-        myrtos_print(" is not a library\n");
+        myrtos_print(" is not one\n");
         myrtos_moddir_unlink(h);
         return 0;
     }
@@ -346,13 +351,37 @@ const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out)
         if (owned_out) *owned_out = owned;
     }
 
-    const myrtos_lib_table_t *t = (const myrtos_lib_table_t*)(base + h->exec_offset);
+    return base + h->exec_offset;
+}
+
+const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out)
+{
+    const myrtos_lib_table_t *t =
+        (const myrtos_lib_table_t*)link_table(name, MYRTOS_TYPE_LIBRARY, "lib", owned_out);
+    if (!t) return 0;
     if (t->abi != MYRTOS_LIB_ABI) {
         myrtos_print("lib: ");
         myrtos_print(name);
         myrtos_print(" speaks another interface\n");
-        myrtos_moddir_unlink(h);
         return 0;
     }
     return t;
+}
+
+// The same for a device driver. The I/O manager asks for one by the name a
+// descriptor gave, after looking through the drivers built into the kernel and
+// not finding it -- so a descriptor for a device nobody compiled in still works,
+// which is the whole point of the descriptors being files.
+const myrtos_driver_module_t *myrtos_driver_link(const char *name, void **owned_out)
+{
+    const myrtos_driver_module_t *d =
+        (const myrtos_driver_module_t*)link_table(name, MYRTOS_TYPE_DRIVER, "drv", owned_out);
+    if (!d) return 0;
+    if (d->abi != MYRTOS_DRIVER_ABI) {
+        myrtos_print("drv: ");
+        myrtos_print(name);
+        myrtos_print(" speaks another interface\n");
+        return 0;
+    }
+    return d;
 }

@@ -273,6 +273,17 @@ function(myrtos_add_module name source)
         list(REMOVE_ITEM ARGN "LIBRARY")
     endif()
 
+    # A trailing DRIVER is the same idea with a fixed shape: exec_offset points
+    # at a myrtos_driver_module_t, always called myrtos_driver, which carries an
+    # init and the vtable the I/O manager calls every device through. A
+    # descriptor naming this driver finds it whether or not the kernel was built
+    # with it. See MYRTOS_TYPE_DRIVER in the ABI.
+    if("DRIVER" IN_LIST ARGN)
+        set(lib_flag "--driver")
+        set(entry_symbol myrtos_driver)
+        list(REMOVE_ITEM ARGN "DRIVER")
+    endif()
+
     set(libc_compile -ffreestanding -nostdlib)
     set(libc_link    -nostdlib)
     set(libc_sources "")
@@ -970,6 +981,20 @@ target_include_directories(sdlib_app PRIVATE
 target_compile_definitions(sdlib_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 pico_generate_pio_header(sdlib_app ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.pio)
+
+# The serial terminal driver, the first MYRTOS_TYPE_DRIVER module. It was the
+# first driver in kernel/io.c and the note above it said for weeks that lifting
+# it out was the next step. Like sdlib it compiles against the SDK's headers --
+# uart_putc_raw is inline and comes along -- and takes uart_init from the table.
+#
+# The module is called uart because that is the name the descriptor already
+# used: a descriptor's driver_name is a module name now, which is the whole
+# point. termdesc has said "uart" since it was written and did not change.
+myrtos_add_module(uart modules/uart/uart.c DRIVER)
+target_include_directories(uart_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(uart_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
     PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
@@ -1181,6 +1206,7 @@ set(MYRTOS_RESIDENT
     wifilib
     fat32lib
     sdlib
+    uart
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory
