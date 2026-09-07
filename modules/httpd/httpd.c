@@ -151,10 +151,23 @@ static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
 // A whole answer, headers and body, in as few writes as the chip will take.
 // Every send costs a command, a wait and a poll for "did it go", so a header
 // written a field at a time would cost more than the page.
+// Until it has all gone. myrtos_sock_send hands the chip one buffer and answers
+// with how much it took -- at most 2000 bytes, which is the chip's own limit --
+// so a single call is not a write, it is the first of however many it takes.
+//
+// This called it once. Every answer under two kilobytes was therefore correct
+// and the sensor page, which is four, arrived cut in half: curl gave up with
+// "transfer closed with outstanding read data remaining" and a browser showed a
+// page missing its script. A short write that is not looped is a bug that hides
+// until the day something gets big.
 static void send_str(int32_t sock, const char *s) {
     uint32_t n = 0;
     while (s[n]) n++;
-    myrtos_sock_send(sock, (const uint8_t *)s, n);
+    for (uint32_t done = 0; done < n; ) {
+        int32_t sent = myrtos_sock_send(sock, (const uint8_t *)s + done, n - done);
+        if (sent <= 0) return;                 // the client has gone
+        done += (uint32_t)sent;
+    }
 }
 
 static void send_head(int32_t sock, const char *status, const char *type, uint32_t len) {
@@ -255,7 +268,15 @@ static bool send_file(int32_t sock, const char *path, const char *as_type) {
     for (;;) {
         int32_t got = myrtos_read(fd, buf, sizeof buf);
         if (got <= 0) break;
-        if (myrtos_sock_send(sock, buf, (uint32_t)got) < 0) break;
+        // The same loop, for the same reason. This one happened to be safe --
+        // BUF_MAX is 512 and the chip takes 2000 -- which is exactly how a
+        // missing loop survives review.
+        bool gone = false;
+        for (uint32_t done = 0; done < (uint32_t)got && !gone; ) {
+            int32_t sent = myrtos_sock_send(sock, buf + done, (uint32_t)got - done);
+            if (sent <= 0) gone = true; else done += (uint32_t)sent;
+        }
+        if (gone) break;
     }
     myrtos_close(fd);
     return true;
