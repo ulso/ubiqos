@@ -571,6 +571,101 @@ function(myrtos_add_clang_module name source)
     set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
 endfunction()
 
+# --- Rust, natively --------------------------------------------------------
+# Not a cross-compiler of its own: rustc is LLVM, so it is the same backend the
+# clang rule already uses, and it wants the same three things -- no PIC,
+# literal pools instead of movw/movt, and r9 left alone for the thread pointer.
+#
+# The target is the machine's, taken from MYRTOS_LLVM_TRIPLE's neighbourhood
+# rather than written in, so this cannot quietly become ARM-only the way the
+# clang rule did. rustup has to have the target installed; if it does not, the
+# module is skipped and said out loud, like every other optional toolchain here.
+find_program(MYRTOS_RUSTC rustc)
+set(MYRTOS_RUST_OK FALSE)
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(MYRTOS_RUST_TARGET riscv32imac-unknown-none-elf)
+else()
+    # hf rather than the soft-float target because that is the one installed
+    # here. Nothing crosses the module boundary as a float -- every syscall
+    # argument is a uint32 -- so the difference does not reach the ABI.
+    set(MYRTOS_RUST_TARGET thumbv8m.main-none-eabihf)
+endif()
+if(MYRTOS_RUSTC AND MYRTOS_LLD)
+    execute_process(COMMAND ${MYRTOS_RUSTC} --print target-list
+                    OUTPUT_VARIABLE rust_targets RESULT_VARIABLE rustc_rc OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND rustup target list --installed
+                    OUTPUT_VARIABLE rust_installed ERROR_QUIET)
+    if(rustc_rc EQUAL 0 AND rust_installed MATCHES "${MYRTOS_RUST_TARGET}")
+        set(MYRTOS_RUST_OK TRUE)
+        message(STATUS "Rust module toolchain: ${MYRTOS_RUSTC} (${MYRTOS_RUST_TARGET})")
+    else()
+        message(STATUS "Rust target ${MYRTOS_RUST_TARGET} is not installed; Rust modules are skipped")
+    endif()
+else()
+    message(STATUS "No rustc; Rust modules are skipped")
+endif()
+
+# Same downstream as every other module: the same checker, the same objcopy,
+# the same packager, the same .mod.
+function(myrtos_add_rust_module name source)
+    if(NOT MYRTOS_RUST_OK)
+        return()
+    endif()
+
+    set(rt_flag "")
+    if("RT" IN_LIST ARGN)
+        set(rt_flag "--rt")
+        list(REMOVE_ITEM ARGN "RT")
+    endif()
+
+    set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_rust)
+    file(MAKE_DIRECTORY ${objdir})
+    set(obj ${objdir}/${name}.o)
+    set(elf ${objdir}/${name}.elf)
+
+    add_custom_command(
+        OUTPUT ${obj}
+        COMMAND ${MYRTOS_RUSTC} --target ${MYRTOS_RUST_TARGET}
+                -C opt-level=2 -C panic=abort -C relocation-model=static
+                -C target-feature=+no-movt,+reserve-r9
+                --emit obj -o ${obj} ${CMAKE_CURRENT_SOURCE_DIR}/${source}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${source}
+        COMMENT "Compiling ${source} with rustc")
+
+    add_custom_command(
+        OUTPUT ${elf}
+        COMMAND ${MYRTOS_LLD} -m ${MYRTOS_LLVM_EMULATION} -N -e 0 --emit-relocs -o ${elf} ${obj}
+        DEPENDS ${obj}
+        COMMENT "Linking ${name} with lld")
+
+    add_custom_command(
+        OUTPUT ${objdir}/${name}.checked
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+                ${CMAKE_READELF} ${obj} ${elf}
+        COMMAND ${CMAKE_COMMAND} -E touch ${objdir}/${name}.checked
+        DEPENDS ${elf} ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
+        COMMENT "Checking that ${name} is position independent")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        COMMAND ${CMAKE_OBJCOPY} -O binary ${elf} ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+        DEPENDS ${objdir}/${name}.checked
+        COMMENT "Extracting raw position-independent machine code from ${name}")
+
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
+                "${name}" ${elf} ${CMAKE_NM} module_main ${rt_flag}
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
+                ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
+        COMMENT "Building module ${name}.mod (rustc)")
+
+    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
+endfunction()
+
 # --- The third toolchain --------------------------------------------------
 # LDC, the LLVM D compiler, beside the other two.
 #
@@ -1001,6 +1096,7 @@ myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 # kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
 myrtos_add_module(httpd modules/httpd/httpd.c)
 myrtos_add_module(sockstat modules/sockstat/sockstat.c)
+myrtos_add_rust_module(rhello modules/rhello/rhello.rs)
 myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
 myrtos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
 
@@ -1253,6 +1349,7 @@ set(MYRTOS_RESIDENT
     uart
     httpd
     sockstat
+    rhello
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory
