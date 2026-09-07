@@ -982,6 +982,15 @@ static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t le
 #define MYRTOS_MOUNT_SPI  0u
 #define MYRTOS_MOUNT_SDIO 1u
 
+// Ask which bus the card came up on without touching it. Asking used to mean
+// mounting, and since a bare mount defaulted to SPI, the question itself pulled
+// a four-bit card down to one bit -- a state that then costs a power cycle to
+// undo. A query has to be a query.
+#define MYRTOS_MOUNT_QUERY 2u
+
+// Returns 0 on success. -2 says the host has the card over USB. For
+// MYRTOS_MOUNT_QUERY the answer is the bus itself, MYRTOS_MOUNT_SPI or
+// MYRTOS_MOUNT_SDIO, and -1 means no card is mounted.
 static inline int32_t myrtos_mount(uint32_t bus)
 {
     return myrtos_syscall(SYS_MOUNT, bus, 0, 0);

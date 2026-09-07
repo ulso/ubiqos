@@ -334,6 +334,14 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // "no card, or not FAT32" about a card the host is holding sends the
         // reader looking for the wrong problem entirely.
         if (myrtos_msc_host_has_card()) return -2;
+        // Asking must not answer by doing. A bare `mount` used to mean "mount
+        // over SPI", so asking which bus the card was on took it off SDIO --
+        // and back is a power cycle away.
+        if ((uintptr_t)m->data == MYRTOS_MOUNT_QUERY)
+            return card_mounted
+                       ? (int32_t)(myrtos_sd_is_sdio() ? MYRTOS_MOUNT_SDIO
+                                                       : MYRTOS_MOUNT_SPI)
+                       : -1;
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
         // behind every failed listing.

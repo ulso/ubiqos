@@ -397,7 +397,7 @@ Type a module name to run it. Built in:
   pwd      where you are
   mkdir    make a directory
   rmdir    remove an empty directory
-  mount    take the SD card again
+  mount    which bus the card is on, or 'mount sdio' to take it again
   wifi     firmware, or 'wifi scan' for networks
   font     screen font, or 'font 6x12' to change it
   cat      show a file
