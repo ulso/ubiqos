@@ -111,9 +111,16 @@ static inline uint32_t myrtos_arm_fault_address(void)
         (f)->pc += 2u; \
     } while (0)
 
-// Thread mode, on the process stack, with no floating-point state stacked --
-// which is the only shape myrtos produces, since the FPU is left switched off
-// and every module soft-floats as it does on the other machine.
+// Thread mode, on the process stack, with no floating-point state stacked.
+//
+// That last part is about a NEW process and nothing more. It used to claim the
+// FPU was switched off and every module soft-floated, and both halves were
+// wrong: the SDK enables CP10 unconditionally, this port does not opt out, and
+// gcc reaches for d8 to move eight-byte blocks in code that does no arithmetic
+// at all. What is true is that a process which has never executed a
+// floating-point instruction has no floating-point context, so the frame it
+// starts from names none -- and the core sets FType itself the moment that
+// stops being true. See the note in scheduler.S about s16 to s31.
 #define ARM_EXC_RETURN_THREAD_PSP  0xFFFFFFFDu
 
 // The Thumb bit in xPSR. Without it the first instruction faults, and the fault

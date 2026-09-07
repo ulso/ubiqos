@@ -31,6 +31,12 @@
 
 .syntax unified
 .cpu cortex-m33
+// Named for the assembler's sake. .cpu alone leaves it without an FPU and the
+// d8-d15 save below will not assemble. FPv5-SP-D16 is what a Cortex-M33 has:
+// single precision, sixteen double-width registers -- and d8 to d15 are s16 to
+// s31 under another name, which is the half of the register file nothing else
+// saves.
+.fpu fpv5-sp-d16
 .thumb
 
 .section .text
@@ -75,11 +81,59 @@ myrtos_trap_vector:
     // frame the core pushed.
     stmdb   r0!, {r1, r4-r11, lr}
 
+    // --- THE OTHER HALF OF THE CONTEXT ------------------------------------
+    // s16 to s31, which nothing else saves.
+    //
+    // The FPU is on -- the SDK enables CP10 unconditionally and this port does
+    // not opt out -- and s0 to s15 are handled by the core, which pushes them
+    // in an extended exception frame and pops them again. That works here only
+    // because EXC_RETURN is preserved per process above; it names the frame's
+    // shape, and getting it right for the stack pointer got it right for the
+    // floating-point state as well, by luck rather than by design.
+    //
+    // s16 to s31 are callee-saved and never automatically stacked. AAPCS gets
+    // them across a CALL: a function that uses d8 pushes it on entry. It does
+    // not get them across a PREEMPTION -- interrupt a process between its vpush
+    // and its vpop and the next process's use of d8 overwrites a live value.
+    //
+    // And they are used, by code that has nothing to do with arithmetic: gcc
+    // moves eight-byte blocks through d8 when an FPU is available, so
+    // sd_init, wifi_thread and fat32lib all have a vpush {d8} in them. Two of
+    // those are different processes that preempt each other.
+    //
+    // FType is bit 4 of EXC_RETURN and is CLEAR when the core pushed an
+    // extended frame, which is exactly when this process has live
+    // floating-point context. So a process that has never touched the FPU pays
+    // nothing, which is nearly all of them.
+    //
+    // Written 64 bytes BELOW the frame rather than pushed, so that
+    // myrtos_frame_t stays one contiguous structure with the hardware's half
+    // and r0 keeps pointing at it. That space is below the process's live
+    // stack and nothing else can reach it: handlers run on MSP, and the
+    // process is not running. It does mean a frame's worst case is 136 bytes
+    // rather than 72, which the smallest stack here -- the console thread's
+    // 2 kB -- has room for many times over.
+    tst     lr, #0x10
+    bne     1f
+    sub     r1, r0, #64
+    vstmia  r1, {d8-d15}
+1:
+
     // The frame is the argument, and the answer is the frame to resume.
     bl      myrtos_trap_handler
 
     // r0 now points at the frame to return through -- the same one, or another
-    // process's. Undo the push in the same order.
+    // process's. Its own EXC_RETURN says whether it has a block to restore,
+    // and it is read out of the frame rather than out of lr: lr belongs to
+    // whoever we are leaving, and this belongs to whoever we are going to.
+    ldr     r1, [r0, #36]
+    tst     r1, #0x10
+    bne     2f
+    sub     r1, r0, #64
+    vldmia  r1, {d8-d15}
+2:
+
+    // Undo the push in the same order.
     ldmia   r0!, {r1, r4-r11, lr}
     msr     psp, r0
 
