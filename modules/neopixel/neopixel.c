@@ -59,7 +59,25 @@ static int32_t leds_configure(const void *config, uint32_t size)
     // in the FIFO with its colour in the high three bytes.
     sm_config_set_out_shift(&c, false, true, 24);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-    sm_config_set_clkdiv(&c, (float)K->clock_hz() / (LED_HZ * PIO_CYCLES));
+    // Integer arithmetic, not float, and RISC-V is what found that out.
+    //
+    // sm_config_set_clkdiv takes a float. On Arm with an FPU that compiles to
+    // instructions; on RV32IMAC it compiles to calls into libgcc -- __addsf3,
+    // __mulsf3, __fixunssfsi -- which a module built -nostdlib does not have,
+    // so this linked on one machine and would not link on the other. The
+    // divider is a 16.8 fixed-point number underneath anyway, so computing it
+    // that way is both portable and closer to what the hardware wants.
+    //
+    // And in 32 bits, which took a second try. Multiplying by 256 first
+    // overflows a word -- 120 MHz times 256 is thirty billion -- and doing it
+    // in 64 wants __udivdi3, which is libgcc again and gets us nowhere. But
+    // clock_hz * 256 / 8000000 is exactly clock_hz / 31250, because 8000000
+    // divides by 256 without remainder, so the whole thing is one 32-bit
+    // division.
+    _Static_assert((LED_HZ * PIO_CYCLES) % 256 == 0,
+                   "the divisor must reduce exactly, or this arithmetic drifts");
+    uint32_t div256 = K->clock_hz() / (LED_HZ * PIO_CYCLES / 256);
+    sm_config_set_clkdiv_int_frac8(&c, div256 >> 8, (uint8_t)(div256 & 0xffu));
 
     // pio_gpio_init is inline but calls gpio_set_function, which is a real
     // function this module does not have -- so it goes through the table like

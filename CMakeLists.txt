@@ -99,8 +99,12 @@ if(WIN32)
 else()
     set(USERHOME $ENV{HOME})
 endif()
-set(sdkVersion 2.3.0)
+set(sdkVersion 2.3.1)
 set(toolchainVersion ${myrtosToolchain})
+# Deliberately not 2.3.1. The SDK asks for the picotool version it needs and
+# 2.3.1 asks for 2.3.0 -- tools/CMakeLists.txt sets picotool_VERSION_REQUIRED --
+# so raising this to match sdkVersion would point at a directory that does not
+# exist and send the build off to compile picotool from source.
 set(picotoolVersion 2.3.0)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})

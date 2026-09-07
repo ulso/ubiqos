@@ -33,6 +33,11 @@ use core::arch::global_asm;
 // AAPCS puts the four arguments in r0 to r3; myrtos wants the number in r7 and
 // the arguments in r0 to r2, so they shuffle down by one. r7 is saved and
 // restored because it belongs to the caller.
+// One per machine, because the stub is the one part of this that cannot be
+// written once. Both put the call number where myrtos wants it and shuffle the
+// arguments down by one, which is the whole of the difference between the C
+// calling convention and this system call.
+#[cfg(target_arch = "arm")]
 global_asm!(
     ".global myrtos_syscall",
     ".thumb_func",
@@ -44,6 +49,20 @@ global_asm!(
     "   mov r2, r3",
     "   svc 0",
     "   pop {{r7, pc}}",
+);
+
+// RISC-V needs no saving: a7 and a0 to a3 are all caller-saved here, and the
+// number goes in a7 the way Linux has always put it.
+#[cfg(target_arch = "riscv32")]
+global_asm!(
+    ".global myrtos_syscall",
+    "myrtos_syscall:",
+    "   mv a7, a0",
+    "   mv a0, a1",
+    "   mv a1, a2",
+    "   mv a2, a3",
+    "   ecall",
+    "   ret",
 );
 
 unsafe extern "C" {
