@@ -649,6 +649,12 @@ int32_t myrtos_wifi_server_pid(void) { return server_pid; }
 #define SEND_DATA_TCP_CMD     0x44u
 #define GET_DATABUF_TCP_CMD   0x45u
 #define DATA_SENT_TCP_CMD     0x2Au
+#define GET_STATE_TCP_CMD     0x29u
+
+// What the chip says a socket is doing. These are TCP's own state names and the
+// numbering is nina-fw's, which is lwIP's underneath.
+#define TCP_CLOSED  0u
+#define TCP_LISTEN  1u
 
 #define TCP_MODE 0u
 #define NO_SOCKET 255u
@@ -670,16 +676,27 @@ int32_t myrtos_wifi_server_pid(void) { return server_pid; }
 // where talking to the chip is what it is for. An orphan therefore lingers
 // until somebody asks for something -- and the somebody is the next listen,
 // which is exactly the call that needs the port back.
-#define NINA_SOCKETS 16
+// Ten, which is nina-fw's own number and not a round one of ours. Sixteen was
+// a guess and it cost the network: sockstat asked GET_STATE_TCP about sockets
+// 10 to 15, the firmware indexed past its array, and the association went with
+// it. Ask a chip only about things it has.
+#define NINA_SOCKETS 10
 #define OWNER_NONE   (-1)
 #define OWNER_DEAD   (-2)
 
-static int32_t sock_owner[NINA_SOCKETS];
-static bool    owners_ready;
+// Defined below, beside the commands that use it most; the bookkeeping above
+// needs to ask the chip a question too.
+static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg);
+
+static int32_t  sock_owner[NINA_SOCKETS];
+// Which port a socket was put to listening on, so a server can be found again.
+// Zero means it is not a server.
+static uint16_t sock_port[NINA_SOCKETS];
+static bool     owners_ready;
 
 static void owners_init(void) {
     if (owners_ready) return;
-    for (int i = 0; i < NINA_SOCKETS; i++) sock_owner[i] = OWNER_NONE;
+    for (int i = 0; i < NINA_SOCKETS; i++) { sock_owner[i] = OWNER_NONE; sock_port[i] = 0; }
     owners_ready = true;
 }
 
@@ -688,7 +705,33 @@ static void own(int32_t sock, int32_t pid) {
     if (sock >= 0 && sock < NINA_SOCKETS) sock_owner[sock] = pid;
 }
 
-static void disown(int32_t sock) { own(sock, OWNER_NONE); }
+static void disown(int32_t sock) {
+    own(sock, OWNER_NONE);
+    if (sock >= 0 && sock < NINA_SOCKETS) sock_port[sock] = 0;
+}
+
+// What the chip believes about a socket, which is the only opinion that counts
+// -- but only for a socket it can have. Out of range is answered here rather
+// than passed on, because passing it on is what took the network down.
+int32_t myrtos_wifi_state(uint8_t sock)
+{
+    if (sock >= NINA_SOCKETS) return -1;
+    return sock_cmd_u8(GET_STATE_TCP_CMD, sock);
+}
+
+// Who asked for it, for the same command to report. OWNER_NONE and OWNER_DEAD
+// come through as themselves.
+int32_t myrtos_wifi_owner(uint8_t sock)
+{
+    owners_init();
+    return sock < NINA_SOCKETS ? sock_owner[sock] : OWNER_NONE;
+}
+
+int32_t myrtos_wifi_port_of(uint8_t sock)
+{
+    owners_init();
+    return sock < NINA_SOCKETS ? (int32_t)sock_port[sock] : 0;
+}
 
 // Called from the kernel when a process is reaped. Marks only.
 void myrtos_wifi_forget_pid(int32_t pid) {
@@ -717,19 +760,48 @@ static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg)
 
 // Close whatever the dead have left behind. Runs in the wifi thread, where
 // talking to the chip is allowed, at the top of every request.
+//
+// A LISTENING socket is left alone on purpose, and this is the correction to
+// the first attempt at this. Stopping one frees the socket NUMBER without
+// tearing down the listener behind it, so the port stayed taken while a fresh
+// bind reported success and then answered nothing -- worse than the failure it
+// replaced, because it failed silently. nina-fw offers no way to stop a server;
+// Arduino's WiFiServer has no end() either, which is the same fact seen from
+// the other side.
+//
+// So a server outlives its process and is ADOPTED by the next one that asks for
+// that port. See myrtos_wifi_listen.
 static void sweep_orphans(void)
 {
     owners_init();
     for (int i = 0; i < NINA_SOCKETS; i++) {
         if (sock_owner[i] != OWNER_DEAD) continue;
+        if (sock_port[i]) { sock_owner[i] = OWNER_NONE; continue; }   // a server, kept
         sock_owner[i] = OWNER_NONE;
         (void)sock_cmd_u8(STOP_CLIENT_TCP_CMD, (uint8_t)i);
     }
 }
 
 // Take a socket and put it to listening on a port. Returns the socket, or -1.
+//
+// A server left behind by a process that has gone is adopted rather than
+// replaced. The chip has no command that stops one, so the choice is between
+// handing back the listener that already exists and leaving the port unusable
+// until the board is restarted -- and the first is what the caller wanted.
+//
+// It is checked against the chip and not against this table alone: the state
+// has to still be LISTEN. A socket this side believes in and the chip has
+// forgotten is exactly the situation that produced a server which bound
+// successfully and then never answered.
 int32_t myrtos_wifi_listen(uint16_t port)
 {
+    owners_init();
+    for (int i = 0; i < NINA_SOCKETS; i++) {
+        if (sock_port[i] != port) continue;
+        if (myrtos_wifi_state((uint8_t)i) == (int32_t)TCP_LISTEN) return i;
+        sock_port[i] = 0;                          // stale: the chip disagrees
+    }
+
     int32_t sock = sock_cmd_u8(GET_SOCKET_CMD, 0xff);
     if (sock < 0 || sock == (int32_t)NO_SOCKET) return -1;
 
@@ -746,7 +818,9 @@ int32_t myrtos_wifi_listen(uint16_t port)
     uint32_t ok = (np == 1) ? rx_param_u32() : 0;
     if (np >= 0) (void)xfer(0xff);
     deselect_chip();
-    return ok ? sock : -1;
+    if (!ok) return -1;
+    if (sock < NINA_SOCKETS) sock_port[sock] = port;
+    return sock;
 }
 
 // Is anybody there? The client's socket, or -1 for nobody. Asked repeatedly by
@@ -860,6 +934,11 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
         case MYRTOS_SOCK_RECV:   return myrtos_wifi_recv((uint8_t)q->arg, q->buf, q->len);
         case MYRTOS_SOCK_SEND:   return myrtos_wifi_send((uint8_t)q->arg, q->buf, q->len);
         case MYRTOS_SOCK_CLOSE:  return myrtos_wifi_close((uint8_t)q->arg);
+        // Diagnostics. Three numbers about one socket, which is what was
+        // missing while three explanations were argued over in an evening.
+        case MYRTOS_SOCK_STATE:  return myrtos_wifi_state((uint8_t)q->arg);
+        case MYRTOS_SOCK_OWNER:  return myrtos_wifi_owner((uint8_t)q->arg);
+        case MYRTOS_SOCK_PORT:   return myrtos_wifi_port_of((uint8_t)q->arg);
         default:                 return -1;
         }
     }

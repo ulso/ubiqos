@@ -623,6 +623,25 @@ typedef struct {
 #define MYRTOS_SOCK_RECV   2u   // arg = client    -> bytes read; 0 means not yet
 #define MYRTOS_SOCK_SEND   3u   // arg = client    -> bytes written
 #define MYRTOS_SOCK_CLOSE  4u   // arg = client    -> 0
+// Diagnostics, so that what the chip thinks and what this side thinks can be
+// compared instead of assumed. They are separate calls rather than one packed
+// number because a packed number would have to be unpacked by every caller.
+#define MYRTOS_SOCK_STATE  5u   // arg = socket    -> the chip's TCP state
+#define MYRTOS_SOCK_OWNER  6u   // arg = socket    -> pid, -1 nobody, -2 reaped
+#define MYRTOS_SOCK_PORT   7u   // arg = socket    -> the port it serves, or 0
+
+// TCP's own state numbers, as nina-fw reports them.
+#define MYRTOS_TCP_CLOSED      0u
+#define MYRTOS_TCP_LISTEN      1u
+#define MYRTOS_TCP_SYN_SENT    2u
+#define MYRTOS_TCP_SYN_RCVD    3u
+#define MYRTOS_TCP_ESTABLISHED 4u
+#define MYRTOS_TCP_FIN_WAIT_1  5u
+#define MYRTOS_TCP_FIN_WAIT_2  6u
+#define MYRTOS_TCP_CLOSE_WAIT  7u
+#define MYRTOS_TCP_CLOSING     8u
+#define MYRTOS_TCP_LAST_ACK    9u
+#define MYRTOS_TCP_TIME_WAIT  10u
 
 typedef struct {
     uint32_t op;      // MYRTOS_SOCK_*
@@ -1129,6 +1148,32 @@ static inline int32_t myrtos_sock_send(int32_t sock, const uint8_t *buf, uint32_
 static inline int32_t myrtos_sock_close(int32_t sock)
 {
     return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_CLOSE, (uint32_t)sock, 0);
+}
+
+// What the chip believes, what this side believes, and which port. Asked one at
+// a time by the sockstat command; nothing else needs them.
+static inline int32_t myrtos_sock_state(int32_t sock)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_STATE, (uint32_t)sock, 0);
+}
+
+static inline int32_t myrtos_sock_owner(int32_t sock)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_OWNER, (uint32_t)sock, 0);
+}
+
+static inline int32_t myrtos_sock_port(int32_t sock)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_PORT, (uint32_t)sock, 0);
+}
+
+static inline const char *myrtos_tcp_state_name(uint32_t s)
+{
+    static const char *const names[11] = {
+        "closed", "listen", "syn-sent", "syn-rcvd", "established",
+        "fin-wait-1", "fin-wait-2", "close-wait", "closing", "last-ack",
+        "time-wait" };
+    return s < 11 ? names[s] : "?";
 }
 
 // Which bus to ask the card for. The order is the card's rule and not ours: it
