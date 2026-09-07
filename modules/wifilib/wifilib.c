@@ -277,16 +277,45 @@ static int32_t read_list(uint8_t cmd) {
 // entitled to expect it -- so the length is counted rather than worked out per
 // command, which is what made param_cmd's "pad 6 to 8" a comment that has to be
 // right by hand.
-static uint32_t tx_len;
+// --- ONE TRANSACTION, NOT ONE PER BYTE -------------------------------------
+// These built their frames with xfer(), which is one call through the kernel
+// table and one blocking SPI transfer PER BYTE. A two-kilobyte send was two
+// thousand of them and a four-kilobyte read four thousand; every one of those
+// is a gap on the wire where anything else in the machine can run.
+//
+// The frame is accumulated here instead and written in one go. Payloads longer
+// than the accumulator do not pass through it at all: what has been gathered so
+// far is written, then the caller's own buffer is written straight from where
+// it lies, which keeps the copy out as well as the calls.
+//
+// Sixty-four bytes because that is a header. No command here has more than four
+// short parameters, and the long ones are the payloads that bypass it.
+#define TX_ACC 64
+
+static uint8_t  tx_acc[TX_ACC];
+static uint32_t tx_fill;     // bytes waiting in tx_acc
+static uint32_t tx_len;      // bytes of the frame written so far, for the pad
+
+static void tx_flush(void) {
+    if (!tx_fill) return;
+    K->spi_write(WIFI_SPI, tx_acc, tx_fill);
+    tx_len += tx_fill;
+    tx_fill = 0;
+}
+
+static void tx_byte(uint8_t v) {
+    if (tx_fill == TX_ACC) tx_flush();
+    tx_acc[tx_fill++] = v;
+}
 
 static void tx_begin(uint8_t cmd, uint8_t nparam) {
-    xfer(START_CMD); xfer(cmd); xfer(nparam);
-    tx_len = 3;
+    tx_fill = 0; tx_len = 0;
+    tx_byte(START_CMD); tx_byte(cmd); tx_byte(nparam);
 }
 
 static void tx_param(const uint8_t *p, uint8_t len) {
-    xfer(len); tx_len++;
-    for (uint8_t i = 0; i < len; i++) { xfer(p[i]); tx_len++; }
+    tx_byte(len);
+    for (uint8_t i = 0; i < len; i++) tx_byte(p[i]);
 }
 
 static void tx_param8(uint8_t v) { tx_param(&v, 1); }
@@ -302,13 +331,23 @@ static void tx_param16(uint16_t v) {
 // because a buffer may be longer than 255 bytes -- which for a web server it
 // always is.
 static void tx_param_long(const uint8_t *p, uint16_t len) {
-    xfer((uint8_t)(len >> 8)); xfer((uint8_t)len); tx_len += 2;
-    for (uint16_t i = 0; i < len; i++) { xfer(p[i]); tx_len++; }
+    tx_byte((uint8_t)(len >> 8));
+    tx_byte((uint8_t)len);
+    // Straight from the caller's buffer. Copying two kilobytes into an
+    // accumulator to write them out again is work for its own sake.
+    tx_flush();
+    if (len) { K->spi_write(WIFI_SPI, p, len); tx_len += len; }
 }
 
 static void tx_end(void) {
-    xfer(END_CMD); tx_len++;
-    while (tx_len & 3u) { xfer(0xff); tx_len++; }
+    tx_byte(END_CMD);
+    // The pad counts everything written, the payloads that bypassed the
+    // accumulator included, so it is worked out once the frame is complete
+    // rather than per command -- which is what made the older param_cmd's
+    // "pad 6 to 8" a comment that has to be right by hand.
+    uint32_t total = tx_len + tx_fill;
+    while (total & 3u) { tx_byte(0xff); total++; }
+    tx_flush();
 }
 
 // The head of a reply: how many parameters follow, or -1 if the chip said
@@ -862,7 +901,10 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
         uint32_t lo = xfer(0xff), hi = xfer(0xff);
         uint32_t n = lo | (hi << 8);
         if (n > len) n = len;
-        for (uint32_t i = 0; i < n; i++) buf[i] = xfer(0xff);
+        // One transaction. This was a loop of single-byte transfers, so a
+        // four-kilobyte read was four thousand calls through the kernel table
+        // -- the largest single piece of per-byte work in this driver.
+        if (n) K->spi_read(WIFI_SPI, 0xff, buf, n);
         (void)xfer(0xff);                          // END_CMD
         got = (int32_t)n;
     }

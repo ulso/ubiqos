@@ -148,7 +148,10 @@ typedef struct {
 // Version 3 added what a driver that owns PIO and DMA needs -- the SD card
 // driver -- and mem_alloc, which is SRAM and is the only memory a library may
 // let DMA touch.
-#define MYRTOS_KERNEL_API_ABI 3
+//
+// Version 4 added the one-direction SPI transfers, so a driver can move a run
+// of bytes in one transaction instead of one call per byte.
+#define MYRTOS_KERNEL_API_ABI 4
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -226,6 +229,18 @@ typedef struct {
     // header and compiles into the module; this is the only real function it
     // needs.
     void   (*uart_init)(void *uart, uint32_t baud);
+
+    // --- version 4 ---------------------------------------------------------
+
+    // A run of bytes in one transaction rather than one call each.
+    //
+    // spi_write_read above takes both buffers and was used a byte at a time,
+    // which made a four-kilobyte read four thousand calls through this table,
+    // each a separate blocking transfer. These are the SDK's own one-direction
+    // forms: spi_read repeats one byte on the wire rather than wanting a
+    // filler buffer as long as the read, which for four kilobytes matters.
+    void   (*spi_write)(void *spi, const uint8_t *src, uint32_t len);
+    void   (*spi_read)(void *spi, uint8_t repeated_tx, uint8_t *dst, uint32_t len);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
