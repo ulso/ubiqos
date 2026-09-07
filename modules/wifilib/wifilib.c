@@ -42,6 +42,11 @@ static const myrtos_kernel_api_t *K;
 #define WIFI_MISO   28
 #define WIFI_CS     46
 #define WIFI_ACK     3
+// The board has had a reset line to this chip all along -- GP22, and the SDK's
+// own board header names it -- and this driver did not touch it. That was worth
+// finding: when the protocol goes wrong there is no way back inside the
+// protocol, and until now the only recovery was cutting the board's power.
+#define WIFI_RESET  22
 
 #define START_CMD   0xE0u
 #define END_CMD     0xEEu
@@ -107,6 +112,26 @@ static void deselect_chip(void) {
     K->busy_wait_us(100);                           // let the line settle
 }
 
+// Hold the chip in reset briefly and let it come back up.
+//
+// This is the one recovery that does not depend on the protocol being in a
+// state fit to ask anything, which is exactly the case where it is needed. It
+// costs the network: nina-fw keeps no credentials across a reset, so whoever
+// calls this is disconnecting the machine and has to say so.
+//
+// Ten milliseconds low is what every host library for these chips uses, and
+// three quarters of a second is how long the chip takes to be worth talking to
+// afterwards. Both are the reference's numbers rather than ones I measured.
+// Named for the chip and not for the call, because myrtos_wifi_reset is the
+// name the ABI gives the syscall a program makes -- and one of them is a
+// GPIO pulse while the other is a message to this thread.
+static void wifi_chip_reset(void) {
+    K->gpio_put(WIFI_RESET, 0);
+    K->busy_wait_us(10000);
+    K->gpio_put(WIFI_RESET, 1);
+    K->busy_wait_us(750000);
+}
+
 void myrtos_wifi_init(void) {
     K->spi_init(WIFI_SPI, 8 * 1000 * 1000);
     K->gpio_set_function(WIFI_SCK,  MYRTOS_GPIO_FUNC_SPI);
@@ -119,6 +144,18 @@ void myrtos_wifi_init(void) {
 
     K->gpio_init(WIFI_ACK);
     K->gpio_set_dir(WIFI_ACK, MYRTOS_GPIO_IN);
+
+    // Held released. The pin is driven rather than left floating, so the chip
+    // cannot be reset by a stray edge on a line nobody owns.
+    K->gpio_init(WIFI_RESET);
+    K->gpio_set_dir(WIFI_RESET, MYRTOS_GPIO_OUT);
+    K->gpio_put(WIFI_RESET, 1);
+
+    // Not reset here, deliberately. This runs at boot, before the scheduler is
+    // going, and three quarters of a second of busy waiting would be three
+    // quarters of a second of a dead machine every time -- for a chip that has
+    // just come out of the same power-up we have. A reset is what `wifi reset`
+    // is for, and what a driver that knows it is lost should reach for.
 }
 
 // Ask the chip what firmware it is running. A version string coming back settles
@@ -980,6 +1017,14 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
     case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
     case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
     case MYRTOS_MSG_WIFI_ADDR: return myrtos_wifi_ipaddr(r->buf, r->len);
+    case MYRTOS_MSG_WIFI_RESET:
+        wifi_chip_reset();
+        // Everything the chip knew about is gone with it, this side's
+        // bookkeeping included -- a socket number that survived a reset would
+        // be a number for something that no longer exists.
+        owners_init();
+        for (int i = 0; i < NINA_SOCKETS; i++) { sock_owner[i] = OWNER_NONE; sock_port[i] = 0; }
+        return 0;
     case MYRTOS_MSG_WIFI_SOCK: {
         const myrtos_wifi_sock_t *q = (const myrtos_wifi_sock_t*)m->data;
         // Before anything else, and cheap when there is nothing to do: a socket
@@ -1053,12 +1098,13 @@ static bool wifi_lib_init(const myrtos_kernel_api_t *api)
 
 const myrtos_lib_table_t myrtos_lib = {
     .abi   = MYRTOS_LIB_ABI,
-    .count = 5,
+    .count = 6,
     .fn    = {
         (void*)wifi_lib_init,            // 0: take the kernel's table
         (void*)myrtos_wifi_probe,        // 1: find the chip and say what it is
         (void*)myrtos_wifi_start_server, // 2: start the thread that serves it
         (void*)myrtos_wifi_server_pid,   // 3: who to send to, or -1
         (void*)myrtos_wifi_forget_pid,   // 4: this process is gone; mark, do not talk
+        (void*)wifi_chip_reset,          // 5: hold the chip in reset and let it return
     },
 };

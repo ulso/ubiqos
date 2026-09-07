@@ -422,6 +422,18 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         }
+        case SYS_WIFIRESET: {
+            // Not through the service. A reset is three quarters of a second of
+            // waiting, which is why it does NOT belong in a trap -- so it goes
+            // to the wifi thread like everything else that talks to that chip.
+            myrtos_wifi_sock_t req;
+            req.op = 0; req.arg = 0; req.buf = 0; req.len = 0;
+            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_RESET, &req)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        }
         case SYS_WIFISOCK: {
             // Every socket call goes through the service for the same reason
             // the others do: it talks to the chip over SPI with handshakes and

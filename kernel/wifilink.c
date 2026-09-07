@@ -120,7 +120,7 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
 
 // The entries wifilib publishes, in the order its table documents them.
 enum { WIFI_INIT = 0, WIFI_PROBE = 1, WIFI_START = 2, WIFI_PID = 3,
-       WIFI_FORGET = 4 };
+       WIFI_FORGET = 4, WIFI_RESET = 5 };
 
 static const myrtos_lib_table_t *lib;
 
@@ -132,7 +132,7 @@ static bool ensure_linked(void)
 {
     if (lib) return true;
     lib = myrtos_lib_link("wifilib", 0);
-    if (!lib || lib->count <= WIFI_FORGET) { lib = 0; return false; }
+    if (!lib || lib->count <= WIFI_RESET) { lib = 0; return false; }
 
     bool (*init)(const myrtos_kernel_api_t *) = (bool (*)(const myrtos_kernel_api_t *))lib->fn[WIFI_INIT];
     if (!init(&myrtos_kernel_api)) { lib = 0; return false; }
@@ -176,4 +176,15 @@ void myrtos_wifi_forget_pid(int32_t pid)
 {
     if (!lib) return;                    // never linked: no sockets to lose
     ((void (*)(int32_t))lib->fn[WIFI_FORGET])(pid);
+}
+
+// The only recovery that does not need the protocol to be in a fit state to be
+// asked anything, which is exactly when it is wanted. It disconnects the
+// machine -- nina-fw keeps no credentials across a reset -- so it is asked for
+// and never done quietly.
+int32_t myrtos_wifi_hard_reset(void)
+{
+    if (!ensure_linked()) return -1;
+    ((void (*)(void))lib->fn[WIFI_RESET])();
+    return 0;
 }

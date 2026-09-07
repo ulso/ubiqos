@@ -12,7 +12,7 @@ static bool is(const char *a, const char *b) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: wifi [scan | connect | ip]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one; the password is typed on this machine's own\n            keyboard and never appears as an argument\n  ip        the address it was given\n")) return;
+            "usage: wifi [scan | connect | ip | reset]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one; the password is typed on this machine's own\n            keyboard and never appears as an argument\n  ip        the address it was given\n  reset     hold the chip in reset and let it come back. The way out\n            when the link is wrong in a way talking cannot fix; it\n            comes back knowing no network.\n")) return;
 
     myrtos_line_t line;
     char version[16];
@@ -27,6 +27,20 @@ void module_main(int argc, char **argv) {
         } else {
             myrtos_write_str(MYRTOS_STDOUT, "wifi: no address -- not on a network\r\n");
         }
+        return;
+    }
+
+    // The way back when the link has gone wrong in a way that talking to it
+    // cannot fix. It is not a reconnect: the chip comes up knowing nothing, so
+    // this says so rather than leaving somebody to wonder why 'ip' went quiet.
+    if (argc > 1 && is(argv[1], "reset")) {
+        myrtos_write_str(MYRTOS_STDOUT, "resetting the coprocessor...\r\n");
+        if (myrtos_wifi_reset() != 0) {
+            myrtos_write_str(MYRTOS_STDOUT, "wifi: no coprocessor to reset\r\n");
+            return;
+        }
+        myrtos_write_str(MYRTOS_STDOUT,
+            "wifi: reset. It is not on a network -- 'wifi connect <ssid>' again.\r\n");
         return;
     }
 

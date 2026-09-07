@@ -518,6 +518,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_CONFONT   38u   // a0 = font, -1 = current, a1 = out, a2 = 1 to only look
 #define SYS_WIFIADDR  43u   // a0 = buffer, a1 = length -> a0 = 0 if there is one
 #define SYS_WIFIJOIN  42u   // a0 = "ssid\0pass" -> a0 = 0 joined, else the status
+#define SYS_WIFIRESET 60u   // no arguments; the chip comes back not on a network
 #define SYS_WIFISOCK  58u   // a0 = op, a1 = port or socket, a2 = &{buf,len}
 #define SYS_READABLE  39u   // a0 = path -> a0 = bytes waiting, 0 = none, -1 = no path
 #define SYS_KILL      40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
@@ -644,6 +645,8 @@ typedef struct {
 // five would each need a syscall number too, and what they have in common -- a
 // socket, a buffer, a length -- is exactly one struct.
 #define MYRTOS_MSG_WIFI_SOCK 14u
+// Hold the coprocessor in reset and let it come back. It loses the network.
+#define MYRTOS_MSG_WIFI_RESET 15u
 
 #define MYRTOS_SOCK_LISTEN 0u   // arg = port      -> the listening socket, or -1
 #define MYRTOS_SOCK_ACCEPT 1u   // arg = that sock -> a client socket, or -1 for nobody
@@ -1123,6 +1126,14 @@ static inline int32_t myrtos_wifi_look(void)
 static inline int32_t myrtos_wifi_address(char *buf, uint32_t len)
 {
     return myrtos_syscall(SYS_WIFIADDR, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
+// Reset the coprocessor. The one recovery that does not depend on the protocol
+// being in a state fit to ask anything -- and it disconnects the machine, so it
+// is something a person asks for rather than something a driver does quietly.
+static inline int32_t myrtos_wifi_reset(void)
+{
+    return myrtos_syscall(SYS_WIFIRESET, 0, 0, 0);
 }
 
 static inline int32_t myrtos_wifi_join(const char *ssid_then_pass)
