@@ -24,7 +24,12 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-#define MYRTOS_ABI_VERSION    9
+// 10 on 7 Sep 2026: myrtos_fsops_t gained rename. A module built against 9
+// supplies a table one pointer short, and the kernel reading ops->rename off
+// the end of it would follow whatever lay after -- which is exactly what the
+// version is here to prevent. Old .mod files on the card are refused rather
+// than trusted.
+#define MYRTOS_ABI_VERSION    10
 
 // --- MODULE HEADER --------------------------------------------------------
 #define MYRTOS_SYNC_CODE      0x0509000B
@@ -92,6 +97,11 @@ typedef struct {
     int32_t (*read_at)(const char *path, uint32_t offset, uint8_t *buf, uint32_t len);
     int32_t (*write_at)(const char *path, uint32_t offset, const uint8_t *buf, uint32_t len);
     bool    (*remove)(const char *path);
+    // Another name for the same file, which on a real filesystem is an edit of
+    // directory entries and moves no data. A volume that cannot do it leaves
+    // this null and mv is refused there rather than quietly becoming cp and rm
+    // -- which is a different operation with different failure modes.
+    bool    (*rename)(const char *from, const char *to);
     bool    (*mkdir)(const char *path);
     bool    (*rmdir)(const char *path);
     int32_t (*stat_nth)(const char *dirpath, uint32_t index, char *name_out, uint32_t *size_out);
@@ -435,6 +445,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_FSREAD    12u   // a0 = &myrtos_fs_io_t -> a0 = bytes read, 0 = eof
 #define SYS_FSWRITE   13u   // a0 = &myrtos_fs_io_t -> a0 = bytes written
 #define SYS_FSREMOVE  14u   // a0 = name -> a0 = 0 ok, -1 failed
+#define SYS_FSRENAME  59u   // a0 = &myrtos_fs_rename_t -> a0 = 0 ok, -1 failed
 #define SYS_WAIT      15u   // a0 = pid; returns when that process has exited
 #define SYS_SLEEP     16u   // a0 = milliseconds; returns when they have passed
 #define SYS_SETPRIO   17u   // a0 = new priority -> a0 = the old one
@@ -550,6 +561,7 @@ typedef struct {
 #define MYRTOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
 #define MYRTOS_MSG_FS_EXEC   15u   // data = myrtos_fs_exec_t -> the new pid
 #define MYRTOS_MSG_FS_SEEK   16u   // data = myrtos_fs_seek_t
+#define MYRTOS_MSG_FS_RENAME 17u   // data = myrtos_fs_rename_t
 
 // How long a name a directory listing may hand back, terminator included. FAT's
 // 8.3 needed twelve; VFAT's long names are read now, and ".wasm" alone does not
@@ -1321,6 +1333,23 @@ static inline int32_t myrtos_fs_stat(const char *name, uint32_t *size_out)
 {
     myrtos_fs_stat_t r = { name, size_out };
     return myrtos_syscall(SYS_FSSTAT, (uint32_t)(uintptr_t)&r, 0, 0);
+}
+
+// Both names, because a syscall's arguments are registers and the server needs
+// them at the same time. Sent by pointer, which is safe because the sender is
+// blocked in send while the server reads it.
+typedef struct {
+    const char *from;
+    const char *to;
+} myrtos_fs_rename_t;
+
+// Rename, and on one volume that is also move. Refused across volumes: the
+// filesystems do not share a cluster chain, so it would have to be a copy --
+// and a copy that calls itself a move is how a full card loses a file.
+static inline int32_t myrtos_fs_rename(const char *from, const char *to)
+{
+    myrtos_fs_rename_t r = { from, to };
+    return myrtos_syscall(SYS_FSRENAME, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
 static inline int32_t myrtos_fs_remove(const char *name)

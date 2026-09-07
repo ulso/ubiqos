@@ -28,6 +28,7 @@ int32_t  myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
 int32_t  myrtos_fat_write_at(const char *path, uint32_t offset,
                              const uint8_t *buf, uint32_t len);
 bool     myrtos_fat_remove(const char *path);
+bool     myrtos_fat_rename(const char *from, const char *to);
 bool     myrtos_fat_mkdir(const char *path);
 bool     myrtos_fat_rmdir(const char *path);
 int32_t  myrtos_fat_stat(const char *path, uint32_t *size_out);
@@ -780,8 +781,13 @@ static bool dir_find(uint32_t dir_cluster, const char *name_83, const char *want
                 bool hit = name_matches(&sector[e], name_83)
                         || (lfn.valid && want_long && same_name_ci(lfn.name, want_long));
                 if (hit) {
-                    *lba_out = lba;
-                    *off_out = e;
+                    // Guarded like the two below, which they always were. A
+                    // caller that only wants to know whether a name exists has
+                    // no use for the position, and passing null for it should
+                    // not be a null write -- rename's existence check did
+                    // exactly that and was one taken branch away from a fault.
+                    if (lba_out) *lba_out = lba;
+                    if (off_out) *off_out = e;
                     if (short_idx) *short_idx = index;
                     if (first_idx) *first_idx = in_run ? run_start : index;
                     return true;                 // `sector` still holds this entry
@@ -953,6 +959,73 @@ bool myrtos_fat_remove(const char *path) {
 
     fat_free_chain(cluster);
     return true;
+}
+
+// Give a file another name, which on FAT is an edit of two directory entries
+// and touches no data at all: the name lives in the entry and the contents live
+// in a cluster chain the entry points at. Copying and deleting would move every
+// byte through this machine to achieve the same thing.
+//
+// It works across directories on this volume for the same reason -- the chain
+// does not care which directory names it -- so this is mv as well as rename.
+//
+// The order is: create the new entry, copy the chain and size into it, then
+// erase the old one. A power failure between them leaves two names for one
+// chain, which fsck resolves and which the card survives. The other order would
+// leave the clusters allocated with nothing naming them, and the file is then
+// gone -- so this order risks a duplicate and the other risks the data. See the
+// same argument the other way round in myrtos_fat_remove, where erasing first
+// is right because there is no second name to be had.
+bool myrtos_fat_rename(const char *from, const char *to) {
+    myrtos_fat_forget_read_cache();
+    if (!mounted) return false;
+
+    uint32_t src_dir = 0; char src_83[12], src_leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(from, &src_dir, src_83, src_leaf)) return false;
+
+    uint32_t lba, off, first, last;
+    if (!dir_find(src_dir, src_83, src_leaf, &lba, &off, &first, &last)) return false;
+
+    // Everything the new entry has to carry, taken before anything is written:
+    // dir_create reuses the same sector buffer, so reading these afterwards
+    // would read whatever it left there.
+    uint8_t  attr    = sector[off + 11];
+    uint32_t cluster = ((uint32_t)rd16(&sector[off + 20]) << 16) | rd16(&sector[off + 26]);
+    uint32_t size    = rd32(&sector[off + 28]);
+
+    uint32_t dst_dir = 0; char dst_83[12], dst_leaf[FAT_LFN_MAX + 1];
+    if (!resolve_parent(to, &dst_dir, dst_83, dst_leaf)) return false;
+
+    // A destination that exists is refused rather than replaced. Overwriting
+    // would have to free the destination's chain, and doing that before the
+    // rename has succeeded is how one loses two files instead of renaming one.
+    if (dir_find(dst_dir, dst_83, dst_leaf, 0, 0, 0, 0)) return false;
+
+    uint32_t dst_lba, dst_off;
+    if (!dir_create(dst_dir, dst_83, dst_leaf, &dst_lba, &dst_off)) return false;
+
+    // dir_create leaves the new entry IN `sector`, with the name written and
+    // the rest zeroed, and deliberately does not write it back: the caller
+    // fills in what only it knows and writes once. myrtos_fat_write_at does
+    // exactly that.
+    //
+    // Re-reading the sector here threw the name away. What was written back was
+    // an entry whose first byte is zero, which every reader takes as the end of
+    // the directory -- so the destination never appeared, the source had
+    // already been erased, and every call in the chain returned true. That cost
+    // a file, and the comment above about which order is safe was beside the
+    // point: the order was right and the buffer was wrong.
+    sector[dst_off + 11] = attr;
+    wr16(&sector[dst_off + 20], (uint16_t)(cluster >> 16));
+    wr16(&sector[dst_off + 26], (uint16_t)(cluster & 0xffffu));
+    wr32(&sector[dst_off + 28], size);
+    if (!K->sd_write_block(dst_lba, sector)) return false;
+
+    // And only now does the old name go. dir_find is repeated because the
+    // sector buffer has been used since, and the run it found is what tells
+    // this how many entries a long name occupied.
+    if (!dir_find(src_dir, src_83, src_leaf, &lba, &off, &first, &last)) return false;
+    return dir_erase_run(src_dir, first, last);
 }
 
 // Write a slice of a file, creating it and extending it as needed. The mirror of
@@ -1155,6 +1228,7 @@ const myrtos_fsops_t myrtos_fat_ops = {
     .read_at   = myrtos_fat_read_at,
     .write_at  = myrtos_fat_write_at,
     .remove    = myrtos_fat_remove,
+    .rename    = myrtos_fat_rename,
     .mkdir     = myrtos_fat_mkdir,
     .rmdir     = myrtos_fat_rmdir,
     .stat_nth  = myrtos_fat_stat_nth,

@@ -146,6 +146,23 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         VOLUME_OR_FAIL(remove);
         return ops->remove(rest) ? 0 : -1;
     }
+    case MYRTOS_MSG_FS_RENAME: {
+        const myrtos_fs_rename_t *r = (const myrtos_fs_rename_t*)m->data;
+        char abs2[128];
+        make_abs(from, r->from, abs,  sizeof(abs));
+        make_abs(from, r->to,   abs2, sizeof(abs2));
+
+        // Both ends must be the same volume. A cluster chain belongs to one
+        // filesystem, so there is nothing to rename across a boundary -- it
+        // would have to be a copy, and a copy that answers to "mv" is how a
+        // full card loses the file it was moving.
+        const char *rest_from = 0, *rest_to = 0;
+        const myrtos_fsops_t *a = myrtos_vfs_split(abs,  &rest_from);
+        const myrtos_fsops_t *b = myrtos_vfs_split(abs2, &rest_to);
+        if (!a || a != b) return -1;
+        if (!a->rename) return -1;
+        return a->rename(rest_from, rest_to) ? 0 : -1;
+    }
     case MYRTOS_MSG_FS_MKDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         VOLUME_OR_FAIL(mkdir);

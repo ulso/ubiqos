@@ -1095,6 +1095,7 @@ myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 # The first library module: code the kernel calls rather than runs. It was
 # kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
 myrtos_add_module(httpd modules/httpd/httpd.c)
+myrtos_add_module(mv modules/mv/mv.c)
 myrtos_add_module(sockstat modules/sockstat/sockstat.c)
 myrtos_add_rust_module(rhello modules/rhello/rhello.rs)
 myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
@@ -1350,6 +1351,7 @@ set(MYRTOS_RESIDENT
     httpd
     sockstat
     rhello
+    mv
     atto
     head
     # Descriptors first. They are what the devices are made of, and a directory

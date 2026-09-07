@@ -206,6 +206,108 @@ static void remember(const uint8_t *b, uint32_t n, const char *addr)
  * goes back up over what was printed last time; the console and the serial line
  * take the same escape sequence.
  */
+// --- PUBLISHING ------------------------------------------------------------
+// The sensors live in this process's memory and nothing else can see them, so
+// a web page cannot show what the table shows. They are written out as JSON
+// instead, to a file in /tmp -- which is a tmpfs in PSRAM, so this costs a copy
+// and no card traffic.
+//
+// A file rather than a message interface, and the choice was Ulf's: it needs no
+// IPC, it does not turn a command into a daemon that something must know how to
+// ask, and the result can be read with cat. httpd then serves it as it serves
+// any other file, which is why /api/sensors needed almost no code in the
+// server.
+//
+// Written in place, because this filesystem has no rename. So a reader can in
+// principle catch a half-written file -- the window is one truncate and a few
+// hundred bytes into PSRAM, against a reader that asks every two seconds -- and
+// the page treats a parse failure as "not this time" rather than as an error.
+// Saying so is better than a comment claiming an atomicity that is not there.
+//
+// Two writers of this path would race. There is one scanner, because there is
+// one dongle.
+#define SENSORS_PATH "/tmp/sensors.json"
+
+static void put_str(int32_t fd, const char *s)
+{
+    uint32_t n = 0;
+    while (s[n]) n++;
+    myrtos_write(fd, s, n);
+}
+
+// A tenths-of-a-unit integer as a decimal with one place. Every reading the
+// dongle gives arrives this way except CO2 and VOC, which are whole numbers.
+static void put_tenths(int32_t fd, int32_t v)
+{
+    char b[16];
+    uint32_t n = 0;
+    if (v < 0) { b[n++] = '-'; v = -v; }
+    uint32_t whole = (uint32_t)v / 10, frac = (uint32_t)v % 10;
+    char t[12]; uint32_t m = 0;
+    do { t[m++] = (char)('0' + whole % 10); whole /= 10; } while (whole);
+    while (m) b[n++] = t[--m];
+    b[n++] = '.';
+    b[n++] = (char)('0' + frac);
+    myrtos_write(fd, b, n);
+}
+
+static void put_u32(int32_t fd, uint32_t v)
+{
+    char t[12]; uint32_t m = 0;
+    do { t[m++] = (char)('0' + v % 10); v /= 10; } while (v);
+    char b[12]; uint32_t n = 0;
+    while (m) b[n++] = t[--m];
+    myrtos_write(fd, b, n);
+}
+
+static void publish(void)
+{
+    int32_t fd = myrtos_open_flags(SENSORS_PATH,
+                                   MYRTOS_O_WRONLY | MYRTOS_O_CREAT | MYRTOS_O_TRUNC);
+    if (fd < 0)
+        return;                      // no /tmp is not a reason to stop scanning
+
+    put_str(fd, "{\"sensors\":[");
+    for (uint32_t i = 0; i < sensor_count; i++) {
+        sensor_t *e = &sensors[i];
+        if (i) put_str(fd, ",");
+        put_str(fd, "{\"board\":\"");
+        // The board number is hex everywhere else it is shown -- on the table,
+        // on the dongle's own label -- so it is a string here rather than a
+        // number a reader would have to know to format.
+        {
+            static const char hex[] = "0123456789ABCDEF";
+            char h[6];
+            for (int k = 0; k < 6; k++) h[k] = hex[(e->board >> (20 - 4 * k)) & 0xf];
+            myrtos_write(fd, h, 6);
+        }
+        put_str(fd, "\",\"addr\":\"");
+        put_str(fd, e->addr);
+        put_str(fd, "\",\"type\":\"");
+        {
+            // Trimmed: the table's names are padded to a fixed width so the
+            // columns line up, and a page does its own alignment.
+            const char *t = board_type_name(e->type);
+            uint32_t n = 0, last = 0;
+            while (t[n]) { if (t[n] != ' ') last = n + 1; n++; }
+            myrtos_write(fd, t, last);
+        }
+        put_str(fd, "\",\"temp\":");     put_tenths(fd, e->temp);
+        put_str(fd, ",\"humidity\":");   put_tenths(fd, (int32_t)e->hum);
+        put_str(fd, ",\"pressure\":");   put_tenths(fd, (int32_t)e->bar);
+        put_str(fd, ",\"voc\":");        put_u32(fd, e->voc);
+        put_str(fd, ",\"vocUnit\":\"");  put_str(fd, voc_unit(e->voc_type));
+        put_str(fd, "\",\"co2\":");      put_u32(fd, e->co2);
+        put_str(fd, ",\"pm1\":");        put_tenths(fd, (int32_t)e->pm1);
+        put_str(fd, ",\"pm25\":");       put_tenths(fd, (int32_t)e->pm25);
+        put_str(fd, "}");
+    }
+    put_str(fd, "],\"count\":");
+    put_u32(fd, sensor_count);
+    put_str(fd, "}\n");
+    myrtos_close(fd);
+}
+
 static void redraw(void)
 {
     if (drawn_rows)
@@ -280,9 +382,19 @@ static void consume(const uint8_t *p, uint32_t n)
 void module_main(int argc, char **argv)
 {
     if (myrtos_help(argc, argv,
-            "usage: hibouair\n\nScans for HibouAir sensors on the BleuIO dongle and shows a live\ntable. Ctrl-C tells the dongle to stop and exits.\n")) return;
+            "usage: hibouair [-q]\n\n"
+            "Scans for HibouAir sensors on the BleuIO dongle and shows a live\n"
+            "table. Ctrl-C tells the dongle to stop and exits.\n\n"
+            "Either way the readings are written to /tmp/sensors.json, which is\n"
+            "what httpd serves at /api/sensors. -q draws no table, which is what\n"
+            "it wants in the background: 'hibouair -q &'.\n")) return;
 
-    (void)argc; (void)argv;
+    // Quiet is for the background. A table drawn by a process nobody is looking
+    // at is not merely wasted -- it lands on whatever terminal the shell was
+    // using, in the middle of somebody else's output.
+    bool quiet = false;
+    for (int i = 1; i < argc; i++)
+        if (argv[i][0] == '-' && argv[i][1] == 'q' && !argv[i][2]) quiet = true;
 
     int32_t dev = myrtos_open("/dev/acm");
     if (dev < 0) {
@@ -305,7 +417,7 @@ void module_main(int argc, char **argv)
     // next program to open it would find a stream already running.
     myrtos_catch_intr(PULSE_INTR);
 
-    printf("scanning; ctrl-C to stop\n\n");
+    if (!quiet) printf("scanning; ctrl-C to stop\n\n");
 
     uint32_t next_draw = myrtos_ticks_now() + REDRAW_MS;
 
@@ -331,7 +443,11 @@ void module_main(int argc, char **argv)
             static const char stop[] = "\x03";
             myrtos_write(dev, stop, 1);
             myrtos_sleep(100);
-            printf("\nhibouair: told the dongle to stop\n");
+            if (!quiet) printf("\nhibouair: told the dongle to stop\n");
+            // The readings are stale the moment the scan stops, and a page
+            // showing yesterday's air as though it were now is worse than a
+            // page showing nothing.
+            myrtos_fs_remove(SENSORS_PATH);
             break;
         }
 
@@ -347,7 +463,8 @@ void module_main(int argc, char **argv)
         // beaconing ten times a second would otherwise spend the whole console
         // on writing the same numbers again.
         if ((int32_t)(myrtos_ticks_now() - next_draw) >= 0) {
-            redraw();
+            if (!quiet) redraw();
+            publish();
             next_draw = myrtos_ticks_now() + REDRAW_MS;
         }
     }

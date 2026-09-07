@@ -545,6 +545,15 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_FSRENAME:
+            // The pair travels by pointer into the caller's own memory, which
+            // is stable because send blocks the caller until the server has
+            // answered -- the same argument as every other request here.
+            if (!fs_request(MYRTOS_MSG_FS_RENAME, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
         case SYS_CLOSE:
             frame->a0 = (uint32_t)myrtos_io_close((int32_t)frame->a0, myrtos_current_pid());
             break;
