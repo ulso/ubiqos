@@ -653,6 +653,50 @@ int32_t myrtos_wifi_server_pid(void) { return server_pid; }
 #define TCP_MODE 0u
 #define NO_SOCKET 255u
 
+// --- WHOSE SOCKET IS IT ----------------------------------------------------
+// The chip has no idea a process has died, and a listening socket it still
+// holds keeps the port. That is not hypothetical: killing httpd and starting it
+// again gave "the chip would not listen", because port 80 was still bound to a
+// socket belonging to a process that no longer existed.
+//
+// So a socket is owned, the way a path is owned, and the owner going away
+// releases it -- which is what myrtos_io_close_all does for paths in reap().
+// The difference is that this cannot be done in reap(): releasing a socket
+// means SPI transactions with handshakes and waits, and reap runs in kernel
+// context where waiting stops the machine.
+//
+// Hence two halves. The kernel MARKS, which is a memory write and safe
+// anywhere; the wifi thread SWEEPS, at the top of the next request it handles,
+// where talking to the chip is what it is for. An orphan therefore lingers
+// until somebody asks for something -- and the somebody is the next listen,
+// which is exactly the call that needs the port back.
+#define NINA_SOCKETS 16
+#define OWNER_NONE   (-1)
+#define OWNER_DEAD   (-2)
+
+static int32_t sock_owner[NINA_SOCKETS];
+static bool    owners_ready;
+
+static void owners_init(void) {
+    if (owners_ready) return;
+    for (int i = 0; i < NINA_SOCKETS; i++) sock_owner[i] = OWNER_NONE;
+    owners_ready = true;
+}
+
+static void own(int32_t sock, int32_t pid) {
+    owners_init();
+    if (sock >= 0 && sock < NINA_SOCKETS) sock_owner[sock] = pid;
+}
+
+static void disown(int32_t sock) { own(sock, OWNER_NONE); }
+
+// Called from the kernel when a process is reaped. Marks only.
+void myrtos_wifi_forget_pid(int32_t pid) {
+    owners_init();
+    for (int i = 0; i < NINA_SOCKETS; i++)
+        if (sock_owner[i] == pid) sock_owner[i] = OWNER_DEAD;
+}
+
 // A command with one byte of parameter and one number back. Six of the nine are
 // this shape.
 static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg)
@@ -669,6 +713,18 @@ static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg)
     if (np >= 0) (void)xfer(0xff);                 // END_CMD
     deselect_chip();
     return v;
+}
+
+// Close whatever the dead have left behind. Runs in the wifi thread, where
+// talking to the chip is allowed, at the top of every request.
+static void sweep_orphans(void)
+{
+    owners_init();
+    for (int i = 0; i < NINA_SOCKETS; i++) {
+        if (sock_owner[i] != OWNER_DEAD) continue;
+        sock_owner[i] = OWNER_NONE;
+        (void)sock_cmd_u8(STOP_CLIENT_TCP_CMD, (uint8_t)i);
+    }
 }
 
 // Take a socket and put it to listening on a port. Returns the socket, or -1.
@@ -774,10 +830,11 @@ int32_t myrtos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
 
 int32_t myrtos_wifi_close(uint8_t sock)
 {
+    disown(sock);
     return sock_cmd_u8(STOP_CLIENT_TCP_CMD, sock) >= 0 ? 0 : -1;
 }
 
-static int32_t handle(const myrtos_msg_t *m) {
+static int32_t handle(const myrtos_msg_t *m, int32_t from) {
     const myrtos_wifi_req_t *r = (const myrtos_wifi_req_t*)m->data;
     switch (m->type) {
     case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
@@ -785,9 +842,21 @@ static int32_t handle(const myrtos_msg_t *m) {
     case MYRTOS_MSG_WIFI_ADDR: return myrtos_wifi_ipaddr(r->buf, r->len);
     case MYRTOS_MSG_WIFI_SOCK: {
         const myrtos_wifi_sock_t *q = (const myrtos_wifi_sock_t*)m->data;
+        // Before anything else, and cheap when there is nothing to do: a socket
+        // whose owner has been reaped is closed here, because this is the first
+        // place after the reaping where the chip may be spoken to.
+        sweep_orphans();
         switch (q->op) {
-        case MYRTOS_SOCK_LISTEN: return myrtos_wifi_listen((uint16_t)q->arg);
-        case MYRTOS_SOCK_ACCEPT: return myrtos_wifi_accept((uint8_t)q->arg);
+        case MYRTOS_SOCK_LISTEN: {
+            int32_t s = myrtos_wifi_listen((uint16_t)q->arg);
+            own(s, from);
+            return s;
+        }
+        case MYRTOS_SOCK_ACCEPT: {
+            int32_t c = myrtos_wifi_accept((uint8_t)q->arg);
+            own(c, from);
+            return c;
+        }
         case MYRTOS_SOCK_RECV:   return myrtos_wifi_recv((uint8_t)q->arg, q->buf, q->len);
         case MYRTOS_SOCK_SEND:   return myrtos_wifi_send((uint8_t)q->arg, q->buf, q->len);
         case MYRTOS_SOCK_CLOSE:  return myrtos_wifi_close((uint8_t)q->arg);
@@ -811,7 +880,10 @@ static void wifi_thread(void) {
         myrtos_msg_t m;
         int32_t from = myrtos_receive(&m);
         if (from < 0) continue;
-        myrtos_reply(handle(&m));
+        // Who asked, which is who owns whatever socket comes back. The kernel
+        // blocks the sender until the reply, so this pid is alive right now --
+        // and if it dies later, reap tells us.
+        myrtos_reply(handle(&m, from));
     }
 }
 
@@ -836,11 +908,12 @@ static bool wifi_lib_init(const myrtos_kernel_api_t *api)
 
 const myrtos_lib_table_t myrtos_lib = {
     .abi   = MYRTOS_LIB_ABI,
-    .count = 4,
+    .count = 5,
     .fn    = {
         (void*)wifi_lib_init,            // 0: take the kernel's table
         (void*)myrtos_wifi_probe,        // 1: find the chip and say what it is
         (void*)myrtos_wifi_start_server, // 2: start the thread that serves it
         (void*)myrtos_wifi_server_pid,   // 3: who to send to, or -1
+        (void*)myrtos_wifi_forget_pid,   // 4: this process is gone; mark, do not talk
     },
 };

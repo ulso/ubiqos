@@ -113,7 +113,8 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
 };
 
 // The entries wifilib publishes, in the order its table documents them.
-enum { WIFI_INIT = 0, WIFI_PROBE = 1, WIFI_START = 2, WIFI_PID = 3 };
+enum { WIFI_INIT = 0, WIFI_PROBE = 1, WIFI_START = 2, WIFI_PID = 3,
+       WIFI_FORGET = 4 };
 
 static const myrtos_lib_table_t *lib;
 
@@ -125,7 +126,7 @@ static bool ensure_linked(void)
 {
     if (lib) return true;
     lib = myrtos_lib_link("wifilib", 0);
-    if (!lib || lib->count <= WIFI_PID) { lib = 0; return false; }
+    if (!lib || lib->count <= WIFI_FORGET) { lib = 0; return false; }
 
     bool (*init)(const myrtos_kernel_api_t *) = (bool (*)(const myrtos_kernel_api_t *))lib->fn[WIFI_INIT];
     if (!init(&myrtos_kernel_api)) { lib = 0; return false; }
@@ -153,4 +154,20 @@ int32_t myrtos_wifi_server_pid(void)
 {
     if (!lib) return -1;                 // not linked means no server to ask
     return ((int32_t (*)(void))lib->fn[WIFI_PID])();
+}
+
+// A process has been reaped, so anything it held on the coprocessor is nobody's
+// -- which for a listening socket means a port that would otherwise stay taken
+// until the board was restarted. Killing httpd and starting it again is exactly
+// how that was found.
+//
+// This only MARKS. Releasing a socket means SPI transactions with handshakes
+// and waits, and reap() runs in kernel context where waiting stops the machine;
+// the wifi thread does the closing at the top of the next request it handles.
+// Called on every process teardown, so it must also be free when there is no
+// wifi library at all.
+void myrtos_wifi_forget_pid(int32_t pid)
+{
+    if (!lib) return;                    // never linked: no sockets to lose
+    ((void (*)(int32_t))lib->fn[WIFI_FORGET])(pid);
 }

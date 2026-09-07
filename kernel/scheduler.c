@@ -1448,6 +1448,9 @@ static void reap(uint32_t pid) {
     pulse_drop_for((int32_t)pid);               // nobody is waiting on these
     arms_drop_for((int32_t)pid);                // and no one to tell any more
     myrtos_io_close_all(pid);
+    // And on the coprocessor, where a listening socket keeps its port. Marks
+    // only -- see the note in wifilink.c for why it cannot close them here.
+    { extern void myrtos_wifi_forget_pid(int32_t pid); myrtos_wifi_forget_pid((int32_t)pid); }
     if (process_table[pid].module) {            // a kernel thread has none
         myrtos_moddir_unlink(process_table[pid].module);
     }
