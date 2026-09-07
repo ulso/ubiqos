@@ -377,10 +377,18 @@ void module_main(int argc, char **argv) {
     for (;;) {
         int32_t client = myrtos_sock_accept(server);
         if (client < 0) {
-            // Sleeping and not spinning. A loop that never yields is a loop
-            // nothing else runs beside -- including the console that has to
-            // deliver the ctrl-C that ends this.
-            myrtos_sleep(20);
+            // Two hundred milliseconds, not twenty. Every ask is an
+            // AVAIL_DATA_TCP over SPI, so twenty meant fifty transactions a
+            // second for ever, whether or not anybody was connecting -- and
+            // each one is a chance for the protocol to go wrong. Nobody
+            // notices a fifth of a second before a page starts loading, and
+            // nine tenths of the traffic to the chip was this loop asking
+            // whether anything had happened yet.
+            //
+            // Sleeping and not spinning, which was always the point: a loop
+            // that never yields is a loop nothing else runs beside, including
+            // the console that has to deliver the ctrl-C that ends this.
+            myrtos_sleep(200);
             continue;
         }
 

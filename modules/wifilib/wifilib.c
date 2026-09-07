@@ -350,14 +350,31 @@ static void tx_end(void) {
     tx_flush();
 }
 
+// Read past whatever the chip was still saying.
+//
+// This is the piece that was missing, and its absence turned one bad reply into
+// a permanent fault. A reply that is not read to its end leaves the chip mid
+// sentence; the next command then reads that tail as its own answer, and every
+// command after it is one step out of step. Nothing detected it and nothing
+// reset it, so the driver ran perfectly until the first timeout and was
+// completely gone from then on -- which is exactly how it behaved, dying all at
+// once rather than degrading.
+//
+// Bounded, because a chip with nothing to say answers 0xff for ever and this
+// runs on the error path where patience is not a virtue.
+static void drain(void) {
+    for (int i = 0; i < 256; i++)
+        if (xfer(0xff) == END_CMD) return;
+}
+
 // The head of a reply: how many parameters follow, or -1 if the chip said
 // something else. The skip loop is the one the commands above already use --
 // the chip may send filler before it starts.
 static int32_t rx_begin(uint8_t cmd) {
     uint8_t b = 0;
     for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    if (b != START_CMD) return -1;
-    if (xfer(0xff) != (cmd | REPLY_FLAG)) return -1;
+    if (b != START_CMD) { drain(); return -1; }
+    if (xfer(0xff) != (cmd | REPLY_FLAG)) { drain(); return -1; }
     return (int32_t)xfer(0xff);
 }
 
@@ -894,7 +911,7 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
     if (!select_chip()) return -1;
     uint8_t b = 0;
     for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    if (b != START_CMD) { deselect_chip(); return -1; }
+    if (b != START_CMD) { drain(); deselect_chip(); return -1; }
     int32_t got = -1;
     if (xfer(0xff) == (GET_DATABUF_TCP_CMD | REPLY_FLAG) && xfer(0xff) == 1) {
         // And the reply's length is two bytes as well, little-endian.
@@ -907,6 +924,8 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
         if (n) K->spi_read(WIFI_SPI, 0xff, buf, n);
         (void)xfer(0xff);                          // END_CMD
         got = (int32_t)n;
+    } else {
+        drain();                                   // the reply was not ours
     }
     deselect_chip();
     return got;
@@ -933,16 +952,21 @@ int32_t myrtos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
     uint32_t sent = (np == 1) ? rx_param_u32() : 0;
     if (np >= 0) (void)xfer(0xff);
     deselect_chip();
-    if (!sent) return -1;
-
-    // Yielding, not spinning. This runs in the wifi thread above the shell, and
-    // the lesson about spinning here was learned once already at the scan.
-    for (int i = 0; i < 100; i++) {
-        if (sock_cmd_u8(DATA_SENT_TCP_CMD, sock) == 1) return (int32_t)sent;
-        myrtos_sleep(2);
-    }
-    return (int32_t)sent;
+    return sent ? (int32_t)sent : -1;
 }
+
+// DATA_SENT_TCP was polled here, up to a hundred times two milliseconds apart,
+// after every chunk. It is gone, and the measurement is why: the WiFi link
+// survived polling /api/status -- one small send -- and fell the moment the
+// test moved to /api/sensors, which is a file sent in 512-byte pieces. A
+// 675-byte file was three poll loops and as many as three hundred SPI
+// transactions asking the chip to confirm sends it already had.
+//
+// What it was guarding against was a close overtaking the data. That may be
+// real and it is not what a hundred questions buys: SEND_DATA_TCP has already
+// answered with how much the chip took, and the chip owns the socket until it
+// is told to stop. If a close does overtake, it will show as a page that
+// arrives short -- which is a thing this server can be watched for, and was.
 
 int32_t myrtos_wifi_close(uint8_t sock)
 {
