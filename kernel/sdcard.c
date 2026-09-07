@@ -1,4 +1,5 @@
 #include "sdcard.h"
+#include "../common/myrtos_abi.h"   // MYRTOS_PSRAM_BASE
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
@@ -339,11 +340,52 @@ bool myrtos_sd_is_sdio(void) { return use_sdio; }
 
 // The driver takes words, so a caller's buffer has to be aligned. Everything
 // that reaches here is a static 512-byte buffer in the kernel, declared aligned.
+// --- DMA CANNOT BE TRUSTED TO REACH PSRAM ---------------------------------
+//
+// The SDIO path moves a block with DMA, and PSRAM sits behind the XIP cache on
+// the QMI bus. A block DMA'd into a PSRAM buffer is not reliably what the
+// processor reads back afterwards: the read hits a cache line that was filled
+// before the transfer and the caller gets whatever was there.
+//
+// Measured 7 Sep 2026 and it is not subtle. fat32 became a library the day
+// before, which moved its sector buffer from kernel SRAM into PSRAM with the
+// rest of the module, and `ls /sd` immediately began returning nonsense for
+// the first entry of a directory -- a name of raw sector bytes and a random
+// size -- about half the time, in bursts. The same listing with the module
+// forced back into SRAM was right six times out of six. The boot's own
+// "FAT: no boot signature" was the same fault on the very first read.
+//
+// So the driver bounces. A caller should not have to know where its memory
+// lives to read a block, and the next module to be moved out of the kernel
+// would have walked into this the same way. 512 bytes of SRAM and one copy
+// per block, against a transfer that already costs milliseconds.
+static uint32_t sd_bounce[128];          // 512 bytes, and word-aligned by type
+
+// The PSRAM window, bounded at BOTH ends on purpose. SRAM lives at 0x20000000,
+// which is ABOVE the PSRAM base, so a bare "is it >= PSRAM_BASE" says yes to
+// every SRAM address as well -- a mistake this repository has made before.
+static inline bool in_psram(const void *p)
+{
+    uintptr_t a = (uintptr_t)p;
+    extern uint32_t myrtos_psram_bytes(void);
+    uint32_t n = myrtos_psram_bytes();
+    return n && a >= MYRTOS_PSRAM_BASE && a < (uintptr_t)MYRTOS_PSRAM_BASE + n;
+}
+
 bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     if (needs_init) return false;
     if (!use_sdio) return spi_read_block(lba, buf);
     if (myrtos_sd_failed()) return false;
     if ((uintptr_t)buf & 3u) return false;
+
+    if (in_psram(buf)) {
+        if (sd_readblocks_sync(sd_bounce, lba, 1) != SD_OK)
+            return sd_fail("a read did not complete");
+        const uint8_t *src = (const uint8_t*)sd_bounce;
+        for (uint32_t i = 0; i < 512; i++) buf[i] = src[i];
+        return true;
+    }
+
     if (sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) != SD_OK)
         return sd_fail("a read did not complete");
     return true;
@@ -389,6 +431,17 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     if ((uintptr_t)buf & 3u) return false;
     if (!myrtos_sd_sdio_writes_allowed) return false;
     if (myrtos_sd_failed()) return false;
+
+    // The same hazard the other way round: DMA reads what the processor wrote,
+    // and a write into PSRAM may still be sitting in the cache when it does.
+    // Not caught in the wild -- reads were what broke -- but it is the same
+    // memory, the same bus and the same DMA, and finding out the hard way
+    // would mean a torn block on the card rather than a wrong listing.
+    if (in_psram(buf)) {
+        uint8_t *dst = (uint8_t*)sd_bounce;
+        for (uint32_t i = 0; i < 512; i++) dst[i] = buf[i];
+        buf = dst;
+    }
 
     if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) {
         restore_wide_bus();
