@@ -25,7 +25,13 @@ void myrtos_print(const char *s);
                                   // reallocation per byte
 
 typedef struct {
-    char     name[12];
+    // Room for a real filename, and it was twelve. That is FAT's old 8.3 limit
+    // and nothing here is FAT -- but the consequence was worse than a short
+    // name: create() truncated to eleven characters while find() compared the
+    // whole name, so anything longer could never be found again and every open
+    // with O_CREAT made another file. "/tmp/sensors.json" is twelve characters
+    // and produced eight copies called "sensors.jso" before the table was full.
+    char     name[MYRTOS_DIRNAME_MAX];
     uint8_t *data;
     uint32_t size;                // bytes written
     uint32_t cap;                 // bytes allocated
@@ -59,10 +65,18 @@ static tmpfile_t *find(const char *path) {
 static tmpfile_t *create(const char *path) {
     const char *n = leaf(path);
     if (!n) return 0;
+    // Refused rather than cut, which is the other half of the fix above. A
+    // truncated name is a name that does not match itself, and the file it
+    // makes is one nobody can open -- see the same rule spelled out in
+    // load_module_from_card, where cutting a name ran the wrong program.
+    uint32_t len = 0;
+    while (n[len]) len++;
+    if (len >= MYRTOS_DIRNAME_MAX) return 0;
+
     for (int i = 0; i < TMP_MAX_FILES; i++) {
         if (files[i].used) continue;
         uint32_t k = 0;
-        while (n[k] && k < sizeof files[i].name - 1) { files[i].name[k] = n[k]; k++; }
+        while (n[k]) { files[i].name[k] = n[k]; k++; }
         files[i].name[k] = 0;
         files[i].data = 0;
         files[i].size = files[i].cap = 0;

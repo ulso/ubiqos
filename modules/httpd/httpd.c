@@ -40,6 +40,10 @@ MYRTOS_MEM_SIZE(16384);
 // larger than this machine's memory.
 #define PAGE_MAX 2048
 
+// Where the scanner publishes. It is hibouair that owns the dongle; this only
+// serves what it has written. See the note at /api/sensors.
+#define SENSORS_PATH "/tmp/sensors.json"
+
 static bool starts(const char *s, const char *pre) {
     while (*pre) { if (*s != *pre) return false; s++; pre++; }
     return true;
@@ -53,6 +57,94 @@ static uint32_t u32_to_dec(uint32_t v, char *out) {
     out[n] = 0;
     return n;
 }
+
+// The page. Compiled in rather than served off the card, and that is a
+// compromise rather than the right answer: a page belongs in a file, and this
+// one is here so that it deploys with a flash instead of needing the card to be
+// handed to a host first. Move it to /sd/www when there is a comfortable way to
+// put files there.
+//
+// It is the BleuIO tab of pico-io-bridge and nothing else -- the sensor cards,
+// the state dot, the two-second poll. The rest of that UI is I2C, SCPI and
+// audio, none of which this machine has.
+static const char SENSOR_PAGE[] =
+    "<!doctype html><meta charset=\"utf-8\"><title>myrtos - HibouAir</title>\n"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+    "<style>\n"
+    ":root{--bg:#0f1720;--card:#152029;--line:#233240;--ink:#e6edf3;--dim:#8b9bab;--ok:#4ade80;--off:#64748b}\n"
+    "*{box-sizing:border-box}\n"
+    "body{margin:0;padding:24px;background:var(--bg);color:var(--ink);\n"
+    "     font:15px/1.45 system-ui,-apple-system,\"Segoe UI\",sans-serif}\n"
+    "h1{margin:0;font-size:26px}\n"
+    ".sub{color:var(--dim);margin:2px 0 20px}\n"
+    ".top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px}\n"
+    ".state{display:flex;align-items:center;gap:8px;font-weight:600}\n"
+    ".dot{width:10px;height:10px;border-radius:50%;background:var(--off)}\n"
+    ".dot.on{background:var(--ok)}\n"
+    ".grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}\n"
+    ".card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}\n"
+    ".card h2{margin:0 0 12px;font-size:17px;display:flex;justify-content:space-between;\n"
+    "         align-items:baseline;gap:8px}\n"
+    ".id{color:var(--dim);font-size:13px;font-weight:400}\n"
+    ".pairs{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}\n"
+    ".k{color:var(--dim);font-size:12px}\n"
+    ".v{font-size:18px;font-weight:600}\n"
+    ".foot{color:var(--dim);font-size:12px;margin-top:12px;border-top:1px solid var(--line);padding-top:10px}\n"
+    ".note{color:var(--dim)}\n"
+    "a{color:var(--dim)}\n"
+    "</style>\n"
+    "<div class=top>\n"
+    "  <div><h1>myrtos &middot; HibouAir</h1><div class=sub>BleuIO scanner over the USB host</div></div>\n"
+    "  <div class=state><span class=dot id=dot></span><span id=stateText>connecting</span></div>\n"
+    "</div>\n"
+    "<div class=grid id=cards></div>\n"
+    "<p class=note id=note></p>\n"
+    "<p><a href=\"/files\">files on the card</a> &middot; <span id=mem></span></p>\n"
+    "<script>\n"
+    "// Polling, not a WebSocket. The sensors advertise every couple of seconds and\n"
+    "// the scanner republishes on the same beat, so asking on that beat sees every\n"
+    "// change there is -- and it keeps the server able to close after each answer.\n"
+    "var CARDS = document.getElementById(\"cards\"), NOTE = document.getElementById(\"note\"),\n"
+    "    DOT = document.getElementById(\"dot\"), STATE = document.getElementById(\"stateText\"),\n"
+    "    MEM = document.getElementById(\"mem\");\n"
+    "\n"
+    "function pair(k, v){ return \"<div><div class=k>\" + k + \"</div><div class=v>\" + v + \"</div></div>\"; }\n"
+    "\n"
+    "function draw(d){\n"
+    "  var s = d.sensors || [];\n"
+    "  DOT.className = \"dot\" + (s.length ? \" on\" : \"\");\n"
+    "  STATE.textContent = s.length ? (s.length + \" sensor\" + (s.length > 1 ? \"s\" : \"\")) : \"no sensors\";\n"
+    "  NOTE.textContent = s.length ? \"\" :\n"
+    "    (d.scanning === false ? \"Nothing is scanning. Run 'hibouair -q &' on the board.\"\n"
+    "                          : \"Scanning; nothing has advertised yet.\");\n"
+    "  CARDS.innerHTML = s.map(function(e){\n"
+    "    var p = pair(\"Temperature\", e.temp + \" &deg;C\") + pair(\"Humidity\", e.humidity + \" %\");\n"
+    "    if (e.co2)      p += pair(\"CO2\", e.co2 + \" ppm\");\n"
+    "    p += pair(\"Pressure\", e.pressure + \" hPa\");\n"
+    "    if (e.voc)      p += pair(\"VOC \" + (e.vocUnit || \"\"), e.voc);\n"
+    "    if (e.pm1 > 0 || e.pm25 > 0)\n"
+    "      p += pair(\"PM1\", e.pm1 + \" &micro;g/m&sup3;\") + pair(\"PM2.5\", e.pm25 + \" &micro;g/m&sup3;\");\n"
+    "    return \"<div class=card><h2>\" + (e.type || \"sensor\") +\n"
+    "           \"<span class=id>#\" + e.board + \"</span></h2><div class=pairs>\" + p +\n"
+    "           \"</div><div class=foot>\" + e.addr + \"</div></div>\";\n"
+    "  }).join(\"\");\n"
+    "}\n"
+    "\n"
+    "function tick(){\n"
+    "  fetch(\"/api/sensors\", {cache:\"no-store\"}).then(function(r){ return r.json(); }).then(draw)\n"
+    "    // A parse failure is \"not this time\" and not an error: the scanner writes\n"
+    "    // the file in place, so a reader can catch it half written. The next poll\n"
+    "    // is two seconds away.\n"
+    "    .catch(function(){});\n"
+    "  fetch(\"/api/status\", {cache:\"no-store\"}).then(function(r){ return r.json(); })\n"
+    "    .then(function(m){\n"
+    "      MEM.textContent = \"SRAM \" + m.sramFree + \" B free, PSRAM \" +\n"
+    "                        Math.round(m.psramFree/1024) + \" kB free, \" + m.processes + \" processes\";\n"
+    "    }).catch(function(){});\n"
+    "}\n"
+    "tick(); setInterval(tick, 2000);\n"
+    "</script>\n"
+    "\n";
 
 static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
 
@@ -80,30 +172,31 @@ static void send_head(int32_t sock, const char *status, const char *type, uint32
     myrtos_sock_send(sock, (const uint8_t *)head, n);
 }
 
-// What the machine will say about itself. Small enough to build in one buffer,
-// which is what lets the length be known before the header goes out.
-static uint32_t status_page(char *out, uint32_t max) {
+// What the machine will say about itself, as JSON.
+//
+// It used to be built as HTML here, which put the server in charge of what a
+// page looks like. Data is the better boundary and it is the one the
+// pico-io-bridge UI already assumes: its tabs fetch JSON and draw themselves,
+// which is why that page could be inherited at all when its server could not.
+static uint32_t status_json(char *out, uint32_t max) {
     (void)max;
     uint32_t n = 0;
-    const char *head =
-        "<!doctype html><meta charset=\"utf-8\"><title>myrtos</title>"
-        "<h1>myrtos</h1><table>";
-    for (const char *q = head; *q; q++) out[n++] = *q;
-
-    struct { const char *label; uint32_t value; } rows[] = {
-        { "SRAM largest free",  (uint32_t)myrtos_meminfo(MYRTOS_MEM_LARGEST_FREE) },
-        { "PSRAM largest free", (uint32_t)myrtos_meminfo(MYRTOS_MEM_BULK_FREE) },
-        { "PSRAM total",        (uint32_t)myrtos_meminfo(MYRTOS_MEM_BULK_SIZE) },
-        { "Processes",          (uint32_t)myrtos_meminfo(MYRTOS_MEM_PROCESSES) },
-        { "Assertions stepped", (uint32_t)myrtos_meminfo(MYRTOS_MEM_ASSERTS) },
+    struct { const char *key; uint32_t value; } rows[] = {
+        { "sramFree",   (uint32_t)myrtos_meminfo(MYRTOS_MEM_LARGEST_FREE) },
+        { "psramFree",  (uint32_t)myrtos_meminfo(MYRTOS_MEM_BULK_FREE) },
+        { "psramTotal", (uint32_t)myrtos_meminfo(MYRTOS_MEM_BULK_SIZE) },
+        { "processes",  (uint32_t)myrtos_meminfo(MYRTOS_MEM_PROCESSES) },
+        { "assertions", (uint32_t)myrtos_meminfo(MYRTOS_MEM_ASSERTS) },
     };
+    out[n++] = '{';
     for (uint32_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
-        for (const char *q = "<tr><td>"; *q; q++) out[n++] = *q;
-        for (const char *q = rows[i].label; *q; q++) out[n++] = *q;
-        for (const char *q = "<td>"; *q; q++) out[n++] = *q;
+        if (i) out[n++] = ',';
+        out[n++] = '"';
+        for (const char *q = rows[i].key; *q; q++) out[n++] = *q;
+        out[n++] = '"'; out[n++] = ':';
         n += u32_to_dec(rows[i].value, out + n);
     }
-    for (const char *q = "</table><p><a href=\"/\">files</a>"; *q; q++) out[n++] = *q;
+    out[n++] = '}';
     out[n] = 0;
     return n;
 }
@@ -129,7 +222,7 @@ static uint32_t index_page(char *out, uint32_t max) {
         for (const char *q = "</a> "; *q; q++) out[n++] = *q;
         n += u32_to_dec(size, out + n);
     }
-    for (const char *q = "</ul><p><a href=\"/status\">status</a>"; *q; q++) out[n++] = *q;
+    for (const char *q = "</ul><p><a href=\"/\">sensors</a>"; *q; q++) out[n++] = *q;
     out[n] = 0;
     return n;
 }
@@ -137,17 +230,22 @@ static uint32_t index_page(char *out, uint32_t max) {
 // A file, in chip-sized pieces. The length goes in the header first, which is
 // what a stat is for -- without it the answer would have to be buffered whole,
 // and the card holds files larger than this machine's memory.
-static bool send_file(int32_t sock, const char *path) {
+static bool send_file(int32_t sock, const char *path, const char *as_type) {
     uint32_t size = 0;
     if (myrtos_fs_stat(path, &size) < 0) return false;
 
     // By extension, which is a guess and is the guess every server makes. A
-    // wrong one shows the file rather than losing it.
-    const char *type = "application/octet-stream";
+    // wrong one shows the file rather than losing it. A caller that knows
+    // better says so -- /api/sensors serves a file whose name ends in .json
+    // but whose type is the endpoint's business, not the filename's.
+    const char *type = as_type ? as_type : "application/octet-stream";
     uint32_t n = 0;
     while (path[n]) n++;
-    if (n > 4 && starts(path + n - 4, ".txt")) type = "text/plain; charset=utf-8";
-    else if (n > 5 && starts(path + n - 5, ".html")) type = "text/html; charset=utf-8";
+    if (!as_type) {
+        if (n > 4 && starts(path + n - 4, ".txt")) type = "text/plain; charset=utf-8";
+        else if (n > 5 && starts(path + n - 5, ".html")) type = "text/html; charset=utf-8";
+        else if (n > 5 && starts(path + n - 5, ".json")) type = "application/json";
+    }
 
     send_head(sock, "200 OK", type, size);
 
@@ -181,19 +279,42 @@ static void serve(int32_t sock, const char *req) {
     path[n] = 0;
 
     char page[PAGE_MAX];
-    if (starts(path, "/status")) {
-        uint32_t len = status_page(page, sizeof page);
-        send_head(sock, "200 OK", "text/html; charset=utf-8", len);
+
+    // --- /api ---------------------------------------------------------------
+    // Two endpoints and no more. The sensors are not read here: the scanner
+    // owns the dongle and publishes what it has seen to /tmp/sensors.json, and
+    // this serves that file like any other. Two readers of one dongle is what
+    // that arrangement exists to prevent, and it means /api/sensors needed no
+    // code at all beyond the name.
+    if (starts(path, "/api/status")) {
+        uint32_t len = status_json(page, sizeof page);
+        send_head(sock, "200 OK", "application/json", len);
         send_str(sock, page);
         return;
     }
-    if (path[1] == 0) {                                  // "/"
+    if (starts(path, "/api/sensors")) {
+        if (send_file(sock, SENSORS_PATH, "application/json")) return;
+        // Nothing is scanning, which is not an error and should not read as
+        // one: the page says so rather than showing an empty table as though
+        // the room had no air in it.
+        static const char none[] = "{\"sensors\":[],\"count\":0,\"scanning\":false}";
+        send_head(sock, "200 OK", "application/json", sizeof none - 1);
+        send_str(sock, none);
+        return;
+    }
+
+    if (path[1] == 0 || starts(path, "/sensors")) {      // "/" is the sensor page
+        send_head(sock, "200 OK", "text/html; charset=utf-8", sizeof SENSOR_PAGE - 1);
+        send_str(sock, SENSOR_PAGE);
+        return;
+    }
+    if (starts(path, "/files")) {
         uint32_t len = index_page(page, sizeof page);
         send_head(sock, "200 OK", "text/html; charset=utf-8", len);
         send_str(sock, page);
         return;
     }
-    if (send_file(sock, path)) return;
+    if (send_file(sock, path, 0)) return;
 
     send_head(sock, "404 Not Found", "text/plain", 9);
     send_str(sock, "not found");

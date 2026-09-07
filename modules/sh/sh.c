@@ -292,6 +292,7 @@ static void help(int32_t c) {
         "  more     a screenful at a time; space, Return, q\r\n"
         "  cp       copy a file\r\n"
         "  rm       delete a file\r\n"
+        "  mv       rename a file, or move it within a volume\r\n"
         "  write    write text to a file\r\n"
         "  sleep    wait, in milliseconds\r\n"
         "  nice     run a command at a priority\r\n"

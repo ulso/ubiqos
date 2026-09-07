@@ -403,6 +403,7 @@ Type a module name to run it. Built in:
   cat      show a file
   cp       copy a file
   rm       delete a file
+  mv       rename a file, or move it within a volume
   write    write text to a file
   sleep    wait, in milliseconds
   nice     run a command at a priority
