@@ -19,8 +19,26 @@
 // Ctrl-C ends it, which is why the accept loop sleeps rather than spins: a
 // process spinning at this priority is a process nothing can interrupt.
 
-#define REQ_MAX  512
-#define BUF_MAX  1024
+// Sixteen kilobytes, and the number is not cautious. A module gets 4096 bytes
+// of data and stack together unless it says otherwise, and the first version of
+// this file did not say otherwise while putting 4.6 kB of buffers on the stack:
+// the page buffer, the file buffer and the request line are all live at once
+// down the same call chain. It overflowed into PSRAM below its own allocation
+// and wrote over the bulk pool's control block, so `free` reported "PSRAM
+// largest free: 0" on a pool that was still handing out memory happily.
+//
+// Nothing caught it. That is worth knowing about this system: a module's stack
+// has no guard page and no canary, so it corrupts a neighbour rather than
+// faulting -- and the neighbour here was the allocator's own bookkeeping.
+MYRTOS_MEM_SIZE(16384);
+
+#define REQ_MAX  256
+#define BUF_MAX  512
+// The largest page built in memory rather than streamed. Content-Length has to
+// go out before the body, so a generated page is written whole and then sent;
+// a file is not, because its length comes from a stat and the card holds files
+// larger than this machine's memory.
+#define PAGE_MAX 2048
 
 static bool starts(const char *s, const char *pre) {
     while (*pre) { if (*s != *pre) return false; s++; pre++; }
@@ -96,7 +114,7 @@ static uint32_t index_page(char *out, uint32_t max) {
     uint32_t n = 0;
     for (const char *q = "<!doctype html><meta charset=\"utf-8\"><title>/sd</title>"
                          "<h1>/sd</h1><ul>"; *q; q++) out[n++] = *q;
-    for (uint32_t i = 0; n < max - 160; i++) {
+    for (uint32_t i = 0; n + 200 < max; i++) {
         char raw[MYRTOS_DIRNAME_MAX], name[MYRTOS_DIRNAME_MAX];
         uint32_t size = 0;
         if (myrtos_fs_dir_at("/sd", i, raw, &size) < 0) break;
@@ -162,7 +180,7 @@ static void serve(int32_t sock, const char *req) {
     while (*p && *p != ' ' && *p != '\r' && n < sizeof(path) - 1) path[n++] = *p++;
     path[n] = 0;
 
-    char page[BUF_MAX * 3];
+    char page[PAGE_MAX];
     if (starts(path, "/status")) {
         uint32_t len = status_page(page, sizeof page);
         send_head(sock, "200 OK", "text/html; charset=utf-8", len);
