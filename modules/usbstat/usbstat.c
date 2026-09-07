@@ -88,7 +88,7 @@ void module_main(void) {
         // hub reads as a leak. TinyUSB numbers hubs above its device maximum.
         if (e & (1u << 20)) myrtos_line_str(&l, " (hub)");
         myrtos_line_str(&l, " ep ");
-        myrtos_line_hex(&l, ep);
+        myrtos_line_hex_byte(&l, ep);
         myrtos_line_str(&l, (e & (1u << 16)) ? ", queued" : ", NOTHING QUEUED");
         if (e & (1u << 18)) myrtos_line_str(&l, ", STALLED");
         myrtos_line_str(&l, ", failed ");

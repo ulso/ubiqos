@@ -1528,6 +1528,22 @@ static inline void myrtos_line_hex(myrtos_line_t *l, uint32_t v)
     myrtos_line_str(l, tmp);
 }
 
+// One byte, two digits. myrtos_line_hex always prints eight, which is right for
+// an address and wrong for anything smaller: usbstat read out its endpoint
+// addresses as 0x00000081, where the number everyone quotes -- the notes, the
+// USB specification, TinyUSB's own logs -- is 0x81.
+static inline void myrtos_line_hex_byte(myrtos_line_t *l, uint32_t v)
+{
+    static const char digits[] = "0123456789abcdef";
+    char tmp[5];
+    tmp[0] = '0';
+    tmp[1] = 'x';
+    tmp[2] = digits[(v >> 4) & 0xfu];
+    tmp[3] = digits[v & 0xfu];
+    tmp[4] = 0;
+    myrtos_line_str(l, tmp);
+}
+
 // Utilities need to print numbers, and a module has no printf. Ten lines here
 // saves them in every utility.
 static inline int32_t myrtos_write_u32(int32_t path, uint32_t v)
