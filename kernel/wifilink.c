@@ -14,6 +14,7 @@
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "hardware/uart.h"
+#include "hardware/clocks.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
 #include "sdcard.h"
@@ -79,6 +80,7 @@ static void   k_spi_write(void *spi, const uint8_t *src, uint32_t len)
 { spi_write_blocking((spi_inst_t*)spi, src, (size_t)len); }
 static void   k_spi_read(void *spi, uint8_t repeated, uint8_t *dst, uint32_t len)
 { spi_read_blocking((spi_inst_t*)spi, repeated, dst, (size_t)len); }
+static uint32_t k_clock_hz(void) { return clock_get_hz(clk_sys); }
 
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
@@ -116,6 +118,7 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .uart_init         = k_uart_init,
     .spi_write         = k_spi_write,
     .spi_read          = k_spi_read,
+    .clock_hz          = k_clock_hz,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

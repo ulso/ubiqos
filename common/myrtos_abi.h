@@ -151,7 +151,9 @@ typedef struct {
 //
 // Version 4 added the one-direction SPI transfers, so a driver can move a run
 // of bytes in one transaction instead of one call per byte.
-#define MYRTOS_KERNEL_API_ABI 4
+//
+// Version 5 added clock_hz, because a PIO driver has to divide it.
+#define MYRTOS_KERNEL_API_ABI 5
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -241,6 +243,11 @@ typedef struct {
     // filler buffer as long as the read, which for four kilobytes matters.
     void   (*spi_write)(void *spi, const uint8_t *src, uint32_t len);
     void   (*spi_read)(void *spi, uint8_t repeated_tx, uint8_t *dst, uint32_t len);
+
+    // What clk_sys is actually running at. A PIO divider is worked out from it,
+    // and a driver that assumed 125 MHz would be wrong here -- this machine
+    // runs 120, chosen so PIO-USB's 48 and 96 MHz divide exactly.
+    uint32_t (*clock_hz)(void);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one

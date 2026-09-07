@@ -1096,6 +1096,7 @@ myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 # kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
 myrtos_add_module(httpd modules/httpd/httpd.c)
 myrtos_add_module(mv modules/mv/mv.c)
+myrtos_add_module(leds modules/leds/leds.c)
 myrtos_add_module(sockstat modules/sockstat/sockstat.c)
 myrtos_add_rust_module(rhello modules/rhello/rhello.rs)
 myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
@@ -1131,6 +1132,16 @@ pico_generate_pio_header(sdlib_app ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_
 # The module is called uart because that is the name the descriptor already
 # used: a descriptor's driver_name is a module name now, which is the whole
 # point. termdesc has said "uart" since it was written and did not change.
+# The five RGB LEDs. PIO2, because PIO0 is the USB host and PIO1 is the SD card
+# -- the first thing on this board to want the RP2350's third block.
+myrtos_add_module(neopixel modules/neopixel/neopixel.c DRIVER)
+target_include_directories(neopixel_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(neopixel_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+pico_generate_pio_header(neopixel_app ${CMAKE_CURRENT_SOURCE_DIR}/modules/neopixel/ws2812.pio)
+myrtos_add_data_module(leddesc modules/neopixel/led_desc.c)
+
 myrtos_add_module(uart modules/uart/uart.c DRIVER)
 target_include_directories(uart_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
@@ -1348,6 +1359,9 @@ set(MYRTOS_RESIDENT
     fat32lib
     sdlib
     uart
+    neopixel
+    leddesc
+    leds
     httpd
     sockstat
     rhello

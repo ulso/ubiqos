@@ -1,0 +1,26 @@
+; WS2812, the usual four instructions.
+;
+; The wire carries no clock: a bit is a pulse whose LENGTH says which bit it is.
+; Every bit is 1.25 us long; a zero is high for about 0.4 of it and a one for
+; about 0.8. That is why this cannot be bit-banged here -- five pixels is 120
+; bits and 150 us of holding the processor still, and PIO-USB loses a packet in
+; a fraction of that.
+;
+; The three delays add up to ten PIO cycles per bit, so the clock divider is set
+; for 8 MHz and the arithmetic lives in one place.
+
+.program ws2812
+.side_set 1
+
+.define public T1 2
+.define public T2 5
+.define public T3 3
+
+.wrap_target
+bitloop:
+    out x, 1       side 0 [T3 - 1]   ; the line is low between pulses
+    jmp !x do_zero side 1 [T1 - 1]   ; every bit starts high
+    jmp bitloop    side 1 [T2 - 1]   ; a one stays high longer
+do_zero:
+    nop            side 0 [T2 - 1]   ; a zero has already gone low
+.wrap

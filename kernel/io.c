@@ -389,9 +389,23 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
 
     // The configuration tail sits right after the descriptor and is read only
     // by the driver; the I/O manager passes it on untouched.
+    //
+    // Called even when there is no tail, which it was not. "Configure" is the
+    // moment a driver gets ready, and a driver can have nothing to be told and
+    // still have work to do: the neopixel driver has one strip on one pin and
+    // no configuration at all, and it needs that call to set up its PIO. It
+    // registered, appeared in /dev, and refused every open -- because the one
+    // function that would have made it ready was skipped for having nothing to
+    // read.
+    //
+    // Safe for the drivers that were already here: the ones with no
+    // configuration leave the pointer null, and the ones that have a function
+    // either ignore both arguments or are named by a descriptor that does carry
+    // a tail.
     const uint8_t *base = (const uint8_t*)desc;
-    if (drv->configure && desc->config_size) {
-        if (drv->configure(base + desc->config_offset, desc->config_size) != 0) return false;
+    if (drv->configure) {
+        const void *tail = desc->config_size ? base + desc->config_offset : 0;
+        if (drv->configure(tail, desc->config_size) != 0) return false;
     }
 
     myrtos_device_t *d = &devices[device_count++];
