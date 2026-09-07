@@ -191,3 +191,25 @@ stale and is gone.
 **With this and the `spoop()` removal, four-bit SDIO works.** `mount sdio` on a
 freshly inserted card: `use_sdio` 1, `bus_width` `bw_wide`, files listed, and
 the video chain still walking the framebuffer through the whole thing.
+
+## The three DMA buffers are allocated, not declared
+
+7 Sep 2026. `crcs`, `ctrl_words` and `pio_cmd_buf` were static arrays; they are
+pointers now, filled in by `sd_set_dma_buffers` before anything uses them.
+Nothing else about them changed, and in a build that keeps this driver in the
+kernel the pointers can simply be set to three static arrays.
+
+The reason is that this driver is now compiled into a library module — see
+`modules/sdlib` — and a module lives in PSRAM. PSRAM sits behind the XIP cache
+on the QMI bus, so what DMA writes there is not reliably what the processor
+reads back, and what the processor writes is not reliably what DMA reads.
+
+For a caller's *data* buffer that is fixable by bouncing through SRAM, and the
+driver above this one does exactly that. These three are not data. `ctrl_words`
+is a chain of DMA control blocks that the DMA engine reads to program itself,
+and `pio_cmd_buf` is read the same way; there is no bounce for memory the
+hardware fetches on its own behalf. They have to *be* in SRAM, which means
+being asked for rather than declared.
+
+`sd_dma_buffer_words()` says how much, in words, and the sizes are the ones the
+arrays had.
