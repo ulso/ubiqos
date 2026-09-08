@@ -495,6 +495,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             }
             return myrtos_switch(sp);
         }
+        case SYS_WIFISTATS: {
+            // The same shape as SYS_WIFIVER and for the same reason: the
+            // counters live in the library, which runs in the wifi thread, and
+            // a trap is not where one waits for anything.
+            myrtos_wifi_req_t req;
+            req.index = 0;
+            req.buf   = (char*)(uintptr_t)frame->a0;
+            req.len   = 16;
+            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_STATS, &req)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return myrtos_switch(sp);
+        }
         case SYS_FSSTAT:
             if (!fs_request(MYRTOS_MSG_FS_STAT, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;

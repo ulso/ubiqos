@@ -285,7 +285,7 @@ static void help(int32_t c) {
         "  mount    take the SD card again\r\n"
         "  font     screen font, or 'font 6x12' to change it\r\n"
         "  color    text and background, or 'color' to see them\r\n"
-        "  wifi     firmware, scan, connect <ssid>, or ip\r\n"
+        "  wifi     firmware, scan, connect <ssid>, ip, or stats\r\n"
         "  i2c      scan the bus, or read and write a register\r\n"
         "  tone     a sine out of the headphone jack\r\n"
         "  volume   0 to 100, or 'volume' to see it\r\n"

@@ -132,6 +132,154 @@ static void wifi_chip_reset(void) {
     K->busy_wait_us(750000);
 }
 
+// --- A COMMAND IS A TRANSACTION -------------------------------------------
+//
+// Everything below this line exists because of one measured failure: the whole
+// command channel would go one step out of step and stay there. The chip was
+// demonstrably fine -- answering ICMP -- while every command over SPI failed,
+// including GET_FW_VERSION, which shares nothing with the socket commands but
+// the framing. Nothing detected it and nothing put it back.
+//
+// The old shape decided byte by byte while the chip was still talking: read a
+// byte, branch on it, read another. A single wrong branch left the rest of the
+// reply unread, the next command read that tail as its own answer, and from
+// then on every command was answering the one before it. It ran perfectly until
+// the first glitch and was completely gone afterwards, which is exactly how it
+// behaved.
+//
+// So: read the whole reply first, decide afterwards, and have exactly ONE place
+// that puts the channel back. Three things follow from that and all three are
+// the point:
+//
+//   * every check is against a buffer, not against the wire;
+//   * every failure lands on resync(), not on its own idea of recovery;
+//   * a transaction that failed can be sent again, because the frame is data.
+
+#define NINA_MAX_PARAMS 8u
+#define RX_ACC          96u        // a header and short parameters; bulk has its own path
+
+static uint8_t  rx_acc[RX_ACC];
+
+typedef struct {
+    uint8_t        n;
+    uint8_t        len[NINA_MAX_PARAMS];
+    const uint8_t *val[NINA_MAX_PARAMS];
+} nina_reply_t;
+
+// One argument of a command. long_form is the two-byte length that SEND_DATA
+// and GET_DATABUF use, and nothing else does.
+typedef struct {
+    const uint8_t *p;
+    uint16_t       len;
+    bool           long_form;
+} nina_arg_t;
+
+// Visible on purpose. A channel that resynchronises occasionally and one that
+// resynchronises constantly are different machines, and without a count they
+// look identical from the outside -- which is how this went unnoticed for a
+// day. `wifi stats` reports them.
+static uint32_t nina_resyncs, nina_retries, nina_failures, nina_commands;
+
+// THE one way back. Read forward to the end of whatever the chip was saying, so
+// the next command starts at a frame boundary.
+//
+// Bounded, because a chip with nothing to say answers 0xff for ever and this
+// runs on the error path, where patience is not a virtue.
+static void resync(void) {
+    nina_resyncs++;
+    for (int i = 0; i < 256; i++)
+        if (xfer(0xff) == END_CMD) return;
+}
+
+// Kept under its old name because callers outside the transaction path still
+// use it; it is the same act.
+static void drain(void) { resync(); }
+
+// The whole reply, into rx_acc, before anything is decided about it. False
+// means the channel has been put back and the caller may try again.
+static bool rx_reply(uint8_t cmd, nina_reply_t *r) {
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    if (b != START_CMD)                     { resync(); return false; }
+    if (xfer(0xff) != (uint8_t)(cmd | REPLY_FLAG)) { resync(); return false; }
+
+    uint8_t n = xfer(0xff);
+    if (n > NINA_MAX_PARAMS)                { resync(); return false; }
+
+    uint32_t used = 0;
+    r->n = n;
+    for (uint8_t i = 0; i < n; i++) {
+        uint8_t len = xfer(0xff);
+        if (used + len > RX_ACC)            { resync(); return false; }
+        for (uint8_t j = 0; j < len; j++) rx_acc[used + j] = xfer(0xff);
+        r->len[i] = len;
+        r->val[i] = rx_acc + used;
+        used += len;
+    }
+    // The end marker is a check and not a formality: a reply that does not end
+    // where it says it does is the shape of every desync this had.
+    if (xfer(0xff) != END_CMD)              { resync(); return false; }
+    return true;
+}
+
+static void tx_begin(uint8_t cmd, uint8_t nparam);
+static void tx_param(const uint8_t *p, uint8_t len);
+static void tx_param_long(const uint8_t *p, uint16_t len);
+static void tx_end(void);
+
+// A command, start to finish. One retry, because a single glitch on a wire
+// should not reach a web server as "no client" -- and exactly one, because a
+// chip that is genuinely wedged is not helped by being asked five times, and
+// the caller needs to hear about it while it is still true.
+static bool nina_xact(uint8_t cmd, const nina_arg_t *args, uint8_t nargs, nina_reply_t *r) {
+    nina_commands++;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt) nina_retries++;
+
+        if (!select_chip()) continue;
+        tx_begin(cmd, nargs);
+        for (uint8_t i = 0; i < nargs; i++) {
+            if (args[i].long_form) tx_param_long(args[i].p, args[i].len);
+            else                   tx_param(args[i].p, (uint8_t)args[i].len);
+        }
+        tx_end();
+        deselect_chip();
+
+        if (!select_chip()) continue;
+        bool ok = rx_reply(cmd, r);
+        deselect_chip();
+        if (ok) return true;
+    }
+    nina_failures++;
+    return false;
+}
+
+// A parameter as a little-endian number, which is the order the chip answers
+// in and not the order it is asked in.
+static uint32_t val_u32(const nina_reply_t *r, uint8_t i) {
+    uint32_t v = 0;
+    for (uint8_t j = 0; j < r->len[i] && j < 4; j++) v |= (uint32_t)r->val[i][j] << (8 * j);
+    return v;
+}
+
+// The head of a reply, for the paths that still read their own parameters --
+// the lists and the bulk transfers, which do not fit in rx_acc.
+static int32_t rx_begin(uint8_t cmd) {
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    if (b != START_CMD) { resync(); return -1; }
+    if (xfer(0xff) != (cmd | REPLY_FLAG)) { resync(); return -1; }
+    return (int32_t)xfer(0xff);
+}
+
+static uint32_t rx_param_u32(void) {
+    uint32_t len = xfer(0xff);
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < len && i < 4; i++) v |= (uint32_t)xfer(0xff) << (8 * i);
+    for (uint32_t i = 4; i < len; i++) (void)xfer(0xff);
+    return v;
+}
+
 void myrtos_wifi_init(void) {
     K->spi_init(WIFI_SPI, 8 * 1000 * 1000);
     K->gpio_set_function(WIFI_SCK,  MYRTOS_GPIO_FUNC_SPI);
@@ -191,39 +339,23 @@ int32_t myrtos_wifi_firmware(char *out, uint32_t max) {
         }
         return -1;
     }
-    xfer(START_CMD);
-    xfer(GET_FW_VERSION_CMD & ~REPLY_FLAG);
-    xfer(0);                                     // no parameters
-    xfer(END_CMD);
+    // Through the transaction path like everything else. The separate return
+    // codes this used to have -- answered but not 0xE0, right start but wrong
+    // command -- were useful when the question was whether the wiring worked;
+    // they are less useful than `wifi stats` now, which says whether the
+    // channel had to be resynchronised and whether a retry saved it. And this
+    // command mattered for a different reason: it shares nothing with the
+    // socket commands but the framing, so its failing alongside them is what
+    // proved the whole channel went out of step rather than one code path.
     deselect_chip();
 
-    if (!select_chip()) { return -2; }               // took it, never came back
+    nina_reply_t r;
+    if (!nina_xact(GET_FW_VERSION_CMD, 0, 0, &r)) return -3;
+    if (r.n != 1) return -4;
 
-    // The chip pads with 0xFF until it has something; read past that to the
-    // start byte rather than assuming the first byte is meaningful.
-    uint8_t b = 0;
-    for (int i = 0; i < 64; i++) {
-        b = xfer(0xff);
-        if (b == START_CMD || b == ERR_CMD) break;
-    }
-    if (b != START_CMD) { deselect_chip(); return -3; }   // answered, but not 0xE0
-
-    uint8_t cmd = xfer(0xff);
-    uint8_t nparam = xfer(0xff);
-    if (cmd != (GET_FW_VERSION_CMD | REPLY_FLAG) || nparam != 1) {
-        deselect_chip();
-        return -4;                                   // wrong command or count
-    }
-
-    uint32_t len = xfer(0xff);
     uint32_t i = 0;
-    for (; i < len; i++) {
-        uint8_t v = xfer(0xff);
-        if (i < max - 1) out[i] = (char)v;
-    }
+    for (; i < r.len[0]; i++) if (i < max - 1) out[i] = (char)r.val[0][i];
     out[i < max ? i : max - 1] = 0;
-    xfer(0xff);                                  // END_CMD
-    deselect_chip();
     return 0;
 }
 
@@ -387,44 +519,6 @@ static void tx_end(void) {
     tx_flush();
 }
 
-// Read past whatever the chip was still saying.
-//
-// This is the piece that was missing, and its absence turned one bad reply into
-// a permanent fault. A reply that is not read to its end leaves the chip mid
-// sentence; the next command then reads that tail as its own answer, and every
-// command after it is one step out of step. Nothing detected it and nothing
-// reset it, so the driver ran perfectly until the first timeout and was
-// completely gone from then on -- which is exactly how it behaved, dying all at
-// once rather than degrading.
-//
-// Bounded, because a chip with nothing to say answers 0xff for ever and this
-// runs on the error path where patience is not a virtue.
-static void drain(void) {
-    for (int i = 0; i < 256; i++)
-        if (xfer(0xff) == END_CMD) return;
-}
-
-// The head of a reply: how many parameters follow, or -1 if the chip said
-// something else. The skip loop is the one the commands above already use --
-// the chip may send filler before it starts.
-static int32_t rx_begin(uint8_t cmd) {
-    uint8_t b = 0;
-    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    if (b != START_CMD) { drain(); return -1; }
-    if (xfer(0xff) != (cmd | REPLY_FLAG)) { drain(); return -1; }
-    return (int32_t)xfer(0xff);
-}
-
-// One parameter, up to four bytes, as a little-endian number. That is the order
-// the chip answers in, which is not the order it is asked in.
-static uint32_t rx_param_u32(void) {
-    uint32_t len = xfer(0xff);
-    uint32_t v = 0;
-    for (uint32_t i = 0; i < len && i < 4; i++) v |= (uint32_t)xfer(0xff) << (8 * i);
-    for (uint32_t i = 4; i < len; i++) (void)xfer(0xff);
-    return v;
-}
-
 static bool simple_cmd(uint8_t cmd) {
     if (!select_chip()) return false;
     xfer(START_CMD); xfer(cmd); xfer(0); xfer(END_CMD);
@@ -440,14 +534,13 @@ static bool simple_cmd(uint8_t cmd) {
 // One byte of parameter, padded to a multiple of four. The reference pads every
 // command and this code did not: START, cmd, nparam, len, value, END is six
 // bytes, and the chip is entitled to expect eight.
+// The hand-written padding is gone with it: tx_end() counts what was actually
+// written and pads that, which is the same fix applied once instead of at every
+// call site that remembered to.
 static bool param_cmd(uint8_t cmd, uint8_t value) {
-    if (!select_chip()) return false;
-    xfer(START_CMD); xfer(cmd); xfer(1);
-    xfer(1); xfer(value);
-    xfer(END_CMD);
-    xfer(0xff); xfer(0xff);                      // pad 6 to 8
-    deselect_chip();
-    return true;
+    nina_arg_t a = { &value, 1, false };
+    nina_reply_t r;
+    return nina_xact(cmd, &a, 1, &r);
 }
 
 static int32_t rssi_of(uint32_t index) {
@@ -484,31 +577,19 @@ static int32_t rssi_of(uint32_t index) {
 // achieved anything: associating is the chip's business, but an address means
 // DHCP answered. The reply carries three parameters -- address, mask, gateway --
 // so this reads all three and reports the first and the last.
+// Three parameters back -- address, netmask, gateway -- and the whole reply is
+// in hand before any of it is looked at. The version this replaces walked the
+// wire with the parameter loop and the length loop nested, and any surprise in
+// either left the rest of the frame unread.
 int32_t myrtos_wifi_ipaddr(char *out, uint32_t max) {
     uint8_t p[3][4] = {{0}};
-    if (!param_cmd(GET_IPADDR_CMD, 0xff)) return -1;
-    if (!select_chip()) return -1;
-
-    uint8_t b = 0;
-    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    bool ok = false;
-    if (b == START_CMD) {
-        uint8_t rc = xfer(0xff);
-        uint32_t np = xfer(0xff);
-        if (rc == (GET_IPADDR_CMD | REPLY_FLAG)) {
-            for (uint32_t k = 0; k < np; k++) {
-                uint32_t len = xfer(0xff);
-                for (uint32_t j = 0; j < len; j++) {
-                    uint8_t v = xfer(0xff);
-                    if (k < 3 && j < 4) p[k][j] = v;
-                }
-            }
-            ok = np >= 1;
-        }
-        xfer(0xff);
-    }
-    deselect_chip();
-    if (!ok) return -1;
+    uint8_t any = 0xff;
+    nina_arg_t a = { &any, 1, false };
+    nina_reply_t r;
+    if (!nina_xact(GET_IPADDR_CMD, &a, 1, &r)) return -1;
+    if (r.n < 1) return -1;
+    for (uint8_t k = 0; k < r.n && k < 3; k++)
+        for (uint8_t j = 0; j < r.len[k] && j < 4; j++) p[k][j] = r.val[k][j];
 
     uint32_t o = 0;
     for (int k = 0; k < 3; k += 2) {                 // address, then gateway
@@ -837,18 +918,10 @@ void myrtos_wifi_forget_pid(int32_t pid) {
 // this shape.
 static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg)
 {
-    if (!select_chip()) return -1;
-    tx_begin(cmd, 1);
-    tx_param8(arg);
-    tx_end();
-    deselect_chip();
-
-    if (!select_chip()) return -1;
-    int32_t np = rx_begin(cmd);
-    int32_t v = (np == 1) ? (int32_t)rx_param_u32() : -1;
-    if (np >= 0) (void)xfer(0xff);                 // END_CMD
-    deselect_chip();
-    return v;
+    nina_arg_t a = { &arg, 1, false };
+    nina_reply_t r;
+    if (!nina_xact(cmd, &a, 1, &r)) return -1;
+    return r.n == 1 ? (int32_t)val_u32(&r, 0) : -1;
 }
 
 // Close whatever the dead have left behind. Runs in the wifi thread, where
@@ -1017,6 +1090,13 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
     case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
     case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
     case MYRTOS_MSG_WIFI_ADDR: return myrtos_wifi_ipaddr(r->buf, r->len);
+    case MYRTOS_MSG_WIFI_STATS: {
+        if (r->len < 16u) return -1;
+        uint32_t *o = (uint32_t*)r->buf;
+        o[0] = nina_commands; o[1] = nina_resyncs;
+        o[2] = nina_retries;  o[3] = nina_failures;
+        return 0;
+    }
     case MYRTOS_MSG_WIFI_RESET:
         wifi_chip_reset();
         // Everything the chip knew about is gone with it, this side's

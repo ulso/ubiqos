@@ -745,6 +745,42 @@ which is not fussiness. A driver that takes an interrupt at boot and gets it
 wrong takes the machine down before USB is up, and the only way back in is the
 BOOTSEL button.
 
+## Talking to the WiFi coprocessor
+
+A command is a **transaction**: write the frame, read the whole reply into a
+buffer, then decide. Every check is against the buffer and never against the
+wire, every failure lands on one `resync()`, and a failed transaction is sent
+again exactly once.
+
+That shape is the answer to a measured fault. The channel would go one step out
+of step and stay there -- the chip demonstrably on the network and answering
+ICMP while every command over SPI failed, `GET_FW_VERSION` included, which
+shares nothing with the socket commands but the framing. The old code decided
+byte by byte while the chip was still talking; one wrong branch left the rest of
+a reply unread, the next command read that tail as its own answer, and every
+command after it was answering the one before. It ran perfectly until the first
+glitch and was gone from then on.
+
+`wifi stats` says how it has actually been going:
+
+```
+commands  2
+resyncs   0
+retries   0
+failures  0
+```
+
+The middle two are the point. A channel that resynchronises occasionally and
+one that resynchronises constantly look identical from outside, and telling
+them apart is the whole question -- a day went on the wrong half of it for want
+of a count. It also separates "the chip answered, and the answer was no" from
+"the command did not get through", which is a distinction the old code could
+not make: `wifi ip` with no network now reports no address with **no** failures.
+
+Still on the old path and next in line: the scan, the connect, and the bulk
+socket transfers. Then DMA, which is a small step once a frame is already a
+buffer.
+
 ## Status: what a device is, rather than what it carries
 
 `getstat` and `setstat`, from OS-9, and deliberately not Unix's `ioctl`. The

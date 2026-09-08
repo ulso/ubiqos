@@ -725,6 +725,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 // microseconds, which is too short to tell the two mechanisms apart -- so the
 // experiment has to make its own.
 #define SYS_CRITHOLD  63u
+#define SYS_WIFISTATS 64u   // a0 = &uint32_t[4]: commands, resyncs, retries, failures
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
@@ -962,6 +963,14 @@ typedef struct {
 #define MYRTOS_MSG_WIFI_SOCK 14u
 // Hold the coprocessor in reset and let it come back. It loses the network.
 #define MYRTOS_MSG_WIFI_RESET 15u
+// How the command channel to the chip has actually been behaving: commands
+// sent, times a reply had to be resynchronised, times one was retried, times
+// one failed anyway. Four uint32_t into r->buf.
+//
+// It exists because a channel that resynchronises occasionally and one that
+// resynchronises constantly look identical from outside, and the difference is
+// the entire question. Without a count, a day was spent on the wrong half.
+#define MYRTOS_MSG_WIFI_STATS 16u
 
 #define MYRTOS_SOCK_LISTEN 0u   // arg = port      -> the listening socket, or -1
 #define MYRTOS_SOCK_ACCEPT 1u   // arg = that sock -> a client socket, or -1 for nobody
@@ -1446,6 +1455,19 @@ static inline int32_t myrtos_wifi_address(char *buf, uint32_t len)
 // Reset the coprocessor. The one recovery that does not depend on the protocol
 // being in a state fit to ask anything -- and it disconnects the machine, so it
 // is something a person asks for rather than something a driver does quietly.
+// How the command channel to the coprocessor has been behaving. Four numbers:
+// commands sent, replies that had to be resynchronised, commands retried,
+// commands that failed anyway.
+//
+// The middle two are the interesting ones. This driver's whole failure mode was
+// a channel that went one step out of step and stayed there, and from outside
+// that looks exactly like a chip that has stopped working. A count separates
+// them.
+static inline int32_t myrtos_wifi_stats(uint32_t *four)
+{
+    return myrtos_syscall(SYS_WIFISTATS, (uint32_t)(uintptr_t)four, 0, 0);
+}
+
 static inline int32_t myrtos_wifi_reset(void)
 {
     return myrtos_syscall(SYS_WIFIRESET, 0, 0, 0);

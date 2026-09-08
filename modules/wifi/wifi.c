@@ -12,7 +12,7 @@ static bool is(const char *a, const char *b) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: wifi [scan | connect | ip | reset]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one; the password is typed on this machine's own\n            keyboard and never appears as an argument\n  ip        the address it was given\n  reset     hold the chip in reset and let it come back. The way out\n            when the link is wrong in a way talking cannot fix; it\n            comes back knowing no network.\n")) return;
+            "usage: wifi [scan | connect | ip | stats | reset]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one; the password is typed on this machine's own\n            keyboard and never appears as an argument\n  ip        the address it was given\n  stats     how the command channel to the chip has been behaving\n  reset     hold the chip in reset and let it come back. The way out\n            when the link is wrong in a way talking cannot fix; it\n            comes back knowing no network.\n")) return;
 
     myrtos_line_t line;
     char version[16];
@@ -26,6 +26,27 @@ void module_main(int argc, char **argv) {
             myrtos_write_str(MYRTOS_STDOUT, "\r\n");
         } else {
             myrtos_write_str(MYRTOS_STDOUT, "wifi: no address -- not on a network\r\n");
+        }
+        return;
+    }
+
+    // How the command channel has been behaving, which is a different question
+    // from whether the chip works. The driver's whole failure mode was a
+    // channel one step out of step, and from outside that looks exactly like a
+    // dead coprocessor.
+    if (argc > 1 && is(argv[1], "stats")) {
+        uint32_t n[4] = {0};
+        if (myrtos_wifi_stats(n) != 0) {
+            myrtos_write_str(MYRTOS_STDERR, "wifi: no coprocessor to ask\r\n");
+            return;
+        }
+        static const char *what[] = { "commands  ", "resyncs   ", "retries   ", "failures  " };
+        for (uint32_t i = 0; i < 4; i++) {
+            myrtos_line_reset(&line);
+            myrtos_line_str(&line, what[i]);
+            myrtos_line_u32(&line, n[i]);
+            myrtos_line_str(&line, "\r\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &line);
         }
         return;
     }
