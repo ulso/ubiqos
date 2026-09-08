@@ -816,6 +816,16 @@ With all three paths checked and counted, 120 requests with the BLE scanner
 running: **120 of 120, and zero resyncs, retries and failures.** The load that
 used to kill the link after two.
 
+**The rule, since it is not written anywhere in the protocol:** in nina-fw a
+`memcpy` means host order -- the chip is little-endian -- and a hand-written
+`>> 8` first means network order. The same file mixes them, with nothing at the
+command level to say which. Every command this driver sends has been checked
+against the firmware source; `getDataBufTcp`'s reply length was the only one
+wrong. One other network-order field exists in the Arduino-style commands, the
+port in `getRemoteData`, and we do not use it -- and the whole BSD-like socket
+section is full of the same pattern. Adopt either and check the endianness of
+every multi-byte reply field first.
+
 Still on the old path: the scan and the connect, neither of which runs while a
 page is being served. Then DMA, which is a small step once a frame is already a
 buffer.
