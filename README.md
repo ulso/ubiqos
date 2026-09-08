@@ -777,9 +777,29 @@ of a count. It also separates "the chip answered, and the answer was no" from
 "the command did not get through", which is a distinction the old code could
 not make: `wifi ip` with no network now reports no address with **no** failures.
 
-Still on the old path and next in line: the scan, the connect, and the bulk
-socket transfers. Then DMA, which is a small step once a frame is already a
-buffer.
+**Retries are opt-in, and off for sends.** A query may be asked twice: it costs
+a round trip and tells the truth either way. A send may not. A transaction fails
+when the *reply* did not parse, and the chip may perfectly well have taken the
+data and sent it -- so asking again puts the same bytes on the wire twice, and a
+page that arrives corrupted is worse than one that does not arrive, because the
+far end cannot tell.
+
+Measured with the BLE scanner running, which used to kill the link after two
+fetches:
+
+| | |
+|---|---|
+| `/api/sensors`, 40 rounds | 40 of 40, every one 671 bytes |
+| the 4 kB page, 40 rounds | 39 full, one empty, and it recovered |
+| the command channel over both | 580 commands, **0** resyncs, retries, failures |
+
+The one empty page is the useful part. It did not appear in any counter,
+because the bulk send was still on the old path and nothing was watching it --
+which is exactly what the counters are for: they said *where the fault was not*.
+That send is on the transaction path now.
+
+Still on the old path: the scan, the connect, and the bulk receive. Then DMA,
+which is a small step once a frame is already a buffer.
 
 ## Status: what a device is, rather than what it carries
 

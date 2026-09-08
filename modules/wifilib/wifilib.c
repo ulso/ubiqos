@@ -227,13 +227,22 @@ static void tx_param(const uint8_t *p, uint8_t len);
 static void tx_param_long(const uint8_t *p, uint16_t len);
 static void tx_end(void);
 
-// A command, start to finish. One retry, because a single glitch on a wire
-// should not reach a web server as "no client" -- and exactly one, because a
-// chip that is genuinely wedged is not helped by being asked five times, and
-// the caller needs to hear about it while it is still true.
-static bool nina_xact(uint8_t cmd, const nina_arg_t *args, uint8_t nargs, nina_reply_t *r) {
+// A command, start to finish.
+//
+// ONE retry, and only when the command can bear one. A query can: asking twice
+// costs a round trip and tells the truth either way. A SEND cannot -- a
+// transaction fails when the REPLY did not parse, and the chip may perfectly
+// well have taken the data and sent it. Retrying then puts the same bytes on
+// the wire twice, and a page that arrives corrupted is worse than one that does
+// not arrive, because the far end cannot tell.
+//
+// Exactly one where it is allowed, because a chip that is genuinely wedged is
+// not helped by being asked five times and the caller needs to hear about it
+// while it is still true.
+static bool nina_xact_n(uint8_t cmd, const nina_arg_t *args, uint8_t nargs,
+                        nina_reply_t *r, bool may_retry) {
     nina_commands++;
-    for (int attempt = 0; attempt < 2; attempt++) {
+    for (int attempt = 0; attempt < (may_retry ? 2 : 1); attempt++) {
         if (attempt) nina_retries++;
 
         if (!select_chip()) continue;
@@ -252,6 +261,11 @@ static bool nina_xact(uint8_t cmd, const nina_arg_t *args, uint8_t nargs, nina_r
     }
     nina_failures++;
     return false;
+}
+
+// The ordinary form: a query, which may be asked again.
+static bool nina_xact(uint8_t cmd, const nina_arg_t *args, uint8_t nargs, nina_reply_t *r) {
+    return nina_xact_n(cmd, args, nargs, r, true);
 }
 
 // A parameter as a little-endian number, which is the order the chip answers
@@ -1049,19 +1063,23 @@ int32_t myrtos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
     if (!len) return 0;
     if (len > 2000u) len = 2000u;                  // one chip buffer at a time
 
-    if (!select_chip()) return -1;
-    tx_begin(SEND_DATA_TCP_CMD, 2);
+    // On the transaction path like the rest, which matters here more than
+    // anywhere: this is the command a web server runs for every byte, and it
+    // was the one path a failure could take without being counted. Forty
+    // rounds of a four-kilobyte page gave one empty answer while the command
+    // channel reported no trouble at all -- because the trouble was here, and
+    // nothing was watching.
+    //
+    // NOT retried, and that is the whole reason nina_xact_n takes the flag. A
+    // transaction fails when the reply did not parse, and the chip may have
+    // taken this data and sent it regardless. Asking again would put the same
+    // bytes on the wire twice, and a page that arrives corrupted is worse than
+    // one that does not arrive: the far end cannot tell.
     uint8_t s = sock;
-    tx_param_long(&s, 1);
-    tx_param_long(buf, (uint16_t)len);
-    tx_end();
-    deselect_chip();
-
-    if (!select_chip()) return -1;
-    int32_t np = rx_begin(SEND_DATA_TCP_CMD);
-    uint32_t sent = (np == 1) ? rx_param_u32() : 0;
-    if (np >= 0) (void)xfer(0xff);
-    deselect_chip();
+    nina_arg_t a[2] = { { &s, 1, true }, { buf, (uint16_t)len, true } };
+    nina_reply_t r;
+    if (!nina_xact_n(SEND_DATA_TCP_CMD, a, 2, &r, false)) return -1;
+    uint32_t sent = r.n == 1 ? val_u32(&r, 0) : 0;
     return sent ? (int32_t)sent : -1;
 }
 
