@@ -15,6 +15,7 @@
 #include "hardware/pio.h"
 #include "hardware/uart.h"
 #include "hardware/i2c.h"
+#include "hardware/dma.h"
 #include "hardware/clocks.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
@@ -25,6 +26,7 @@ void myrtos_print_u32(uint32_t v);
 int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 void *myrtos_tlsf_malloc(void *pool, uint32_t size);
 extern void *myrtos_bulk_pool;
+extern void *myrtos_mem_pool;
 
 // Wrappers rather than the functions themselves, and for two different reasons.
 // gpio_put, gpio_get and gpio_set_dir are inline in the SDK's headers, so there
@@ -88,6 +90,13 @@ static int32_t  k_i2c_write(void *i2c, uint8_t addr, const uint8_t *src, uint32_
 { return i2c_write_blocking((i2c_inst_t*)i2c, addr, src, (size_t)len, nostop); }
 static int32_t  k_i2c_read(void *i2c, uint8_t addr, uint8_t *dst, uint32_t len, bool nostop)
 { return i2c_read_blocking((i2c_inst_t*)i2c, addr, dst, (size_t)len, nostop); }
+// false: a driver that cannot have a channel is told so rather than panicking
+// the machine, which is what "required" would do.
+static int32_t  k_dma_claim(void) { return dma_claim_unused_channel(false); }
+// Straight out of the pool with no owner and no header: a driver's buffer is
+// never given back, so there is nothing to remember about it.
+static void  *k_driver_alloc(uint32_t n)
+{ return myrtos_mem_pool ? myrtos_tlsf_malloc(myrtos_mem_pool, n) : 0; }
 
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
@@ -130,6 +139,8 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .i2c_init          = k_i2c_init,
     .i2c_write         = k_i2c_write,
     .i2c_read          = k_i2c_read,
+    .dma_claim_channel = k_dma_claim,
+    .driver_alloc      = k_driver_alloc,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

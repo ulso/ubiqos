@@ -155,7 +155,13 @@ typedef struct {
 // Version 5 added clock_hz, because a PIO driver has to divide it.
 //
 // Version 6 added the I2C block and its three real functions.
-#define MYRTOS_KERNEL_API_ABI 6
+//
+// Version 7 added dma_claim_channel, so a driver can have one without guessing
+// a number somebody else is using.
+//
+// Version 8 added driver_alloc, because mem_alloc belongs to a process and a
+// driver's buffer does not.
+#define MYRTOS_KERNEL_API_ABI 8
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -267,6 +273,36 @@ typedef struct {
                           uint32_t len, bool nostop);
     int32_t  (*i2c_read)(void *i2c, uint8_t addr, uint8_t *dst,
                          uint32_t len, bool nostop);
+
+    // --- version 7 ---------------------------------------------------------
+
+    // A DMA channel of one's own. The only part of the DMA a module cannot do
+    // for itself -- everything else is register writes that compile in -- and
+    // the one part that must not be guessed: PIO-USB, the SD card and the
+    // video all hold channels, and a driver picking a number would eventually
+    // pick one of theirs.
+    int32_t (*dma_claim_channel)(void);
+
+    // --- version 8 ---------------------------------------------------------
+
+    // SRAM that belongs to the DRIVER and not to a process.
+    //
+    // mem_alloc above is process-owned: it links the block to whoever asked
+    // and reap() gives it back when that process ends. That is right for a
+    // program and wrong for a driver, in two ways that both bit.
+    //
+    // It refuses outright in kernel context -- alloc_from returns NULL when
+    // current_pid is the kernel -- so a driver configuring at boot gets
+    // nothing, which is how the audio ring failed to exist at all.
+    //
+    // And where it does work it is worse than failing: sdlib asked for its DMA
+    // control blocks through it, and got them, because its init happens to run
+    // in the file server's thread. Those blocks would have been freed under
+    // the driver if that process ever died.
+    //
+    // This is never given back. A driver's buffer lives as long as the
+    // machine, which is the honest lifetime for it.
+    void  *(*driver_alloc)(uint32_t bytes);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
