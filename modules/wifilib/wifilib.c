@@ -1026,7 +1026,8 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
     if (!len) return 0;
     if (len > 4000u) len = 4000u;                  // the chip's own buffer limit
 
-    if (!select_chip()) return -1;
+    nina_commands++;
+    if (!select_chip()) { nina_failures++; return -1; }
     tx_begin(GET_DATABUF_TCP_CMD, 2);
     // Both parameters carry two-byte lengths in this command, the socket
     // included -- the length prefix is a property of the command and not of the
@@ -1041,30 +1042,23 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
     if (!select_chip()) return -1;
     uint8_t b = 0;
     for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    if (b != START_CMD) { drain(); deselect_chip(); return -1; }
+    if (b != START_CMD) { resync(); deselect_chip(); nina_failures++; return -1; }
     int32_t got = -1;
     if (xfer(0xff) == (GET_DATABUF_TCP_CMD | REPLY_FLAG) && xfer(0xff) == 1) {
-        // BIG-endian, and this was wrong for as long as the file has existed.
+        // BIG-endian, and this was wrong for as long as the file existed.
         // nina-fw builds this one by hand --
         //
         //     response[3] = (read >> 8) & 0xff;   // parameter 1 length
         //     response[4] = (read >> 0) & 0xff;
         //
         // -- while every other length in the protocol is memcpy'd out of a
-        // uint16 on a little-endian chip. So this is the one field that does
-        // not follow the rest, and reading it the other way round turned a
-        // 255-byte reply into a claim of 65280.
-        //
-        // It worked anyway, which is why it lasted: the length was then capped
-        // to the caller's buffer, the extra reads got the chip's 0xff idle
-        // filler, and a web server finds its request in the first part and
-        // ignores the tail. What it did NOT do was leave the frame where the
-        // chip thought it was -- so the byte after the payload was never the
-        // end marker, and any code that checked for one failed every time.
-        //
-        // Found by counting what was actually in that position over a hundred
-        // receives: end marker 0 times, data 100 times. Reasoning about it had
-        // already produced two wrong answers.
+        // uint16 on a little-endian chip. Reading it the other way round turned
+        // a 255-byte reply into a claim of 65280; it was then capped to the
+        // caller's buffer, the extra reads got the chip's 0xff filler, and a
+        // web server found its request in the first part and ignored the tail.
+        // So it worked, and left the frame nowhere near where the chip thought
+        // it was -- which is why the end marker below was never there, and why
+        // adding a check for it broke every receive at once.
         uint32_t hi = xfer(0xff), lo = xfer(0xff);
         uint32_t n = (hi << 8) | lo;
         if (n > len) n = len;
@@ -1072,15 +1066,17 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
         // four-kilobyte read was four thousand calls through the kernel table
         // -- the largest single piece of per-byte work in this driver.
         if (n) K->spi_read(WIFI_SPI, 0xff, buf, n);
-        // Looked at but not acted on. See the counters above.
+        // Checked now that it means something. Measured over a hundred
+        // receives before and after: never the end marker before the byte
+        // order was fixed, always it after.
         uint8_t e = xfer(0xff);
-        if (e == END_CMD) nina_end_ok++;
-        else { nina_end_bad++; nina_end_last = e; nina_recv_n = n; }
-        got = (int32_t)n;
+        if (e == END_CMD) { nina_end_ok++; got = (int32_t)n; }
+        else { nina_end_bad++; nina_end_last = e; nina_recv_n = n; resync(); }
     } else {
-        drain();                                   // the reply was not ours
+        resync();                                  // the reply was not ours
     }
     deselect_chip();
+    if (got < 0) nina_failures++;
     return got;
 }
 

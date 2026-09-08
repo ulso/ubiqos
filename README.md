@@ -793,20 +793,28 @@ fetches:
 | the 4 kB page, 40 rounds | 39 full, one empty, and it recovered |
 | the command channel over both | 580 commands, **0** resyncs, retries, failures |
 
-A second run with the send converted, 180 page fetches and 100 sensor fetches
-interleaved: two empty answers in all of them, both recovered from, against
-1385 commands with **0** resyncs, retries and failures. The old behaviour was
-total death after two fetches.
+**And then the receive, which is where the real bug was.** The reply's length
+field in `getDataBufTcp` is **big-endian** -- nina-fw builds that one by hand
+where every other length in the protocol is a `memcpy` out of a `uint16` on a
+little-endian chip -- and this file read it the other way round from the day it
+was written. A 255-byte reply became a claim of 65280, was capped to the
+caller's buffer, and the extra reads got the chip's `0xff` idle filler. A web
+server finds its request in the first part and ignores the tail, so it worked,
+and the frame was never where the chip thought it was.
 
-The one empty page is the useful part. It did not appear in any counter,
-because the bulk send was still on the old path and nothing was watching it --
-which is exactly what the counters are for: they said *where the fault was not*.
-That send is on the transaction path now.
+That is why adding a check for the frame's end marker broke every receive at
+once: it was correct, and it was the first thing ever to look. Counting what
+was actually in that position settled it in three minutes after two arguments
+had produced two wrong answers:
 
-Both remaining failures were in the bulk **receive**, which read the frame's end
-marker and threw it away without looking -- the same fault the whole overhaul is
-about, on the one path that moves the most bytes. It is on the transaction path
-now and counted; whether that was the last of it is the next measurement.
+| | end marker seen | data seen |
+|---|---|---|
+| before the fix | 0 of 100 | 100 of 100 |
+| after | 120 of 120 | 0 |
+
+With all three paths checked and counted, 120 requests with the BLE scanner
+running: **120 of 120, and zero resyncs, retries and failures.** The load that
+used to kill the link after two.
 
 Still on the old path: the scan and the connect, neither of which runs while a
 page is being served. Then DMA, which is a small step once a frame is already a
