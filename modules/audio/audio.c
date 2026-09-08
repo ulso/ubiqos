@@ -39,6 +39,80 @@
 static const myrtos_kernel_api_t *K;
 static bool ready;
 
+// --- THE DAC ---------------------------------------------------------------
+// The TLV320DAC3100 at 0x18, which is the other half of "audio" and has no
+// business being somebody else's problem: a sound device that needs twenty
+// register writes typed at it before it makes a noise is not a device.
+//
+// It goes over the same I2C the i2cbus driver owns, and that is safe rather
+// than lucky: this runs once, inside configure, at boot, before any process
+// exists to be using the bus.
+//
+// The clocks are the whole difficulty and they were worked out rather than
+// copied. The PLL takes BCLK, which the state machine above makes at
+// 32 x 48000 = 1.536 MHz. P=1, R=1, J=64 puts the PLL at 98.304 MHz, inside
+// the 80-110 MHz the part requires. Then NDAC 8, MDAC 2 and DOSR 128 divide it
+// down: 98.304e6 / (8 x 2 x 128) is exactly 48000, with nothing rounded
+// anywhere in the chain.
+//
+// The proof that it is right is readable: the DACs refuse to power up without
+// a valid clock, so page 0 register 37 coming back 0x88 -- left powered, right
+// powered -- says the PLL locked.
+#define DAC_ADDR 0x18
+
+typedef struct { uint8_t page, reg, val, wait_ms; } dac_step_t;
+
+static const dac_step_t dac_init[] = {
+    { 0, 0x01, 0x01, 10 },   // software reset, and give it a moment
+
+    // Clocks. PLL from BCLK, codec from the PLL.
+    { 0, 0x04, 0x07,  0 },
+    { 0, 0x05, 0x91,  0 },   // PLL on, P=1, R=1
+    { 0, 0x06, 0x40,  0 },   // J=64
+    { 0, 0x07, 0x00,  0 },   // D=0
+    { 0, 0x08, 0x00, 10 },
+    { 0, 0x0b, 0x88,  0 },   // NDAC on, 8
+    { 0, 0x0c, 0x82,  0 },   // MDAC on, 2
+    { 0, 0x0d, 0x00,  0 },   // DOSR high
+    { 0, 0x0e, 0x80,  0 },   // DOSR = 128
+
+    { 0, 0x1b, 0x00,  0 },   // I2S, 16 bit, and we are the master of the clocks
+
+    { 0, 0x3f, 0xd4, 10 },   // both DACs on, left to left and right to right
+    { 0, 0x40, 0x00,  0 },   // unmuted
+    { 0, 0x41, 0x00,  0 },   // 0 dB
+    { 0, 0x42, 0x00,  0 },
+
+    // The analogue side.
+    { 1, 0x01, 0x08,  0 },   // no weak AVDD-to-DVDD tie
+    { 1, 0x02, 0x01, 10 },   // analogue blocks powered
+    { 1, 0x1f, 0xc4, 50 },   // headphone drivers up; they take a while
+    { 1, 0x21, 0x4e,  0 },   // de-pop on the way up
+    { 1, 0x23, 0x44,  0 },   // DAC left to HPL, DAC right to HPR
+    { 1, 0x24, 0x80,  0 },   // and the volume path in circuit
+    { 1, 0x25, 0x80,  0 },
+    { 1, 0x28, 0x06,  0 },   // drivers unmuted at 0 dB
+    { 1, 0x29, 0x06, 10 },
+    { 0, 0x00, 0x00,  0 },   // leave it on page 0, where a reader expects it
+};
+
+static bool dac_configure(void)
+{
+    uint8_t page = 0xff;
+    for (uint32_t i = 0; i < sizeof dac_init / sizeof dac_init[0]; i++) {
+        const dac_step_t *st = &dac_init[i];
+        if (st->page != page) {
+            uint8_t sel[2] = { 0x00, st->page };
+            if (K->i2c_write(K->i2c, DAC_ADDR, sel, 2, false) < 0) return false;
+            page = st->page;
+        }
+        uint8_t w[2] = { st->reg, st->val };
+        if (K->i2c_write(K->i2c, DAC_ADDR, w, 2, false) < 0) return false;
+        if (st->wait_ms) K->busy_wait_us((uint64_t)st->wait_ms * 1000u);
+    }
+    return true;
+}
+
 static int32_t audio_configure(const void *config, uint32_t size)
 {
     (void)config; (void)size;
@@ -79,8 +153,18 @@ static int32_t audio_configure(const void *config, uint32_t size)
     K->pio_sm_init(I2S_PIO, I2S_SM, (uint32_t)offset + audio_i2s_offset_entry_point, &c);
     pio_sm_set_enabled(I2S_PIO, I2S_SM, true);
 
+    // The clocks are running now, which is the order the DAC needs: its PLL
+    // locks to BCLK, so it cannot be configured -- or even report that it is
+    // well -- until something is driving the bus.
+    if (!dac_configure()) {
+        K->print("  audio driver: no DAC answering at 0x18\n");
+        // The state machine stays running. A board with no codec still has an
+        // I2S output, and somebody with a logic analyser would rather have the
+        // clocks than a driver that gave up.
+    }
+
     ready = true;
-    K->print("  audio driver: I2S on GP24/26/27, 48 kHz, PIO2\n");
+    K->print("  audio driver: I2S on GP24/26/27, 48 kHz, PIO2, TLV320 at 0x18\n");
     return 0;
 }
 
