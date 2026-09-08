@@ -510,8 +510,13 @@ static bool sdlib_init(const myrtos_kernel_api_t *api)
     // SRAM, and the two allocations are separate because they are different
     // things: the vendored driver's DMA control blocks and CRC landing area,
     // and this file's own bounce buffer. Both must be memory DMA can reach.
-    uint32_t *dma = (uint32_t *)api->mem_alloc(sd_dma_buffer_words() * 4);
-    sd_bounce = (uint32_t *)api->mem_alloc(512);
+    // driver_alloc, not mem_alloc. These were process-owned, and got away with
+    // it only because this init happens to run in the file server's thread --
+    // so if that process had ever died, the DMA control blocks would have been
+    // freed while this driver was still handing their address to the hardware.
+    // A driver's buffers belong to the driver.
+    uint32_t *dma = (uint32_t *)api->driver_alloc(sd_dma_buffer_words() * 4);
+    sd_bounce = (uint32_t *)api->driver_alloc(512);
     if (!dma || !sd_bounce) {
         api->print("sd: no SRAM for the DMA buffers\n");
         return false;
