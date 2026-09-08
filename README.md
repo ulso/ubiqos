@@ -487,6 +487,53 @@ result. Inline wrappers for all of them are in the ABI header.
 | 39 | `SYS_READABLE` | path → bytes waiting, 0 for none, -1 for no such path |
 | 40 | `SYS_KILL` | pid → 0, or -1 if there is no such process or it is refused |
 | 41 | `SYS_FOREGRND` | path, pid or 0 → 0, or -1 if there is no such path |
+| 42 | `SYS_WIFIJOIN` | "ssid\0pass" → 0 joined, otherwise the status |
+| 43 | `SYS_WIFIADDR` | buffer, length → 0 if there is an address |
+| 44 | `SYS_RECEIVETMO` | &message out, milliseconds |
+| 45 | `SYS_SEEK` | descriptor, offset, whence |
+| 46 | `SYS_FSSTAT` | &stat → attributes, or -1 |
+| 47 | `SYS_DUP` | descriptor, new one or -1 → the new one |
+| 48 | `SYS_PIPE` | &fds[2] → 0, or -1 if none can be had |
+| 49 | `SYS_LOADMOD` | module name → 0, or -1 if not on the card or no room |
+| 50 | `SYS_REBOOT` | starts the machine again; never returns |
+| 51 | `SYS_USBDISK` | 1 hands the card to the host, 0 takes it back |
+| 52 | `SYS_PULSE` | pid, type, value → 0, or -1; never blocks |
+| 53 | `SYS_ARM` | path, pulse type, 0 cancels → 0, or -1 if there is no room |
+| 54 | `SYS_DISARM` | → how many watches this process held |
+| 55 | `SYS_USBINFO` | which field → that field of the USB host state |
+| 56 | `SYS_RANDOM` | buffer, length → bytes filled |
+| 57 | `SYS_CATCHINTR` | pulse type, 0 to go back to being killed |
+| 58 | `SYS_WIFISOCK` | op, port or socket, &{buffer,length} |
+| 59 | `SYS_FSRENAME` | &rename → 0, or -1 |
+| 60 | `SYS_WIFIRESET` | — ; the chip comes back on no network |
+| 61 | `SYS_GETSTAT` | path, code, &{data,length} → 0, or -1 |
+| 62 | `SYS_SETSTAT` | path, code, &{data,length} → 0, or -1 |
+
+## Status: what a device is, rather than what it carries
+
+`getstat` and `setstat`, from OS-9, and deliberately not Unix's `ioctl`. The
+direction is which call you made rather than bits packed into the request
+number, and the length travels beside the pointer, so a caller that thinks a
+setting is a byte and a driver that thinks it is a word disagree once instead
+of reading three bytes of somebody's stack ever after.
+
+```c
+uint32_t v = 40;
+myrtos_setstat(fd, MYRTOS_SS_VOLUME, &v, sizeof v);
+myrtos_getstat(fd, MYRTOS_SS_RATE, &v, sizeof v);   /* 48000 */
+```
+
+Codes below `0x100` mean the same on every device that answers them at all;
+from `0x100` they belong to one kind of device. **An unknown code is always
+-1**, and that is the discovery mechanism: a caller finds out what a device can
+do by asking it, and a driver that has no settings implements neither entry.
+
+The alternative is what this replaced. `volume` used to write the audio
+codec's registers over `/dev/i2c`, so the chip's address, its two volume
+registers and the fact that they hold signed half-decibels lived in a command
+as well as in the driver -- and a second program could have changed the volume
+without the driver ever knowing what it now was.
+
 
 The trap vector hooks the SDK's weak vector symbols instead of owning `mtvec`
 itself. That was not the first attempt: taking `mtvec` worked until TinyUSB was

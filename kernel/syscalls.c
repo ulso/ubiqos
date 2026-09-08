@@ -566,6 +566,26 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_GETSTAT:
+        case SYS_SETSTAT: {
+            const myrtos_stat_t *a = (const myrtos_stat_t *)(uintptr_t)frame->a2;
+            if (!a) { frame->a0 = (uint32_t)-1; break; }
+            // Files go nowhere yet. The filesystem's own questions -- how big,
+            // when written -- are what SYS_FSSTAT already answers, and giving
+            // a file a second way to be asked before anything wants one would
+            // be inventing a shape rather than finding it.
+            if (myrtos_io_is_file((int32_t)frame->a0, myrtos_current_pid())) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            int32_t r = (frame->a7 == SYS_GETSTAT)
+                ? myrtos_io_getstat((int32_t)frame->a0, frame->a1, a->data, a->len,
+                                    myrtos_current_pid())
+                : myrtos_io_setstat((int32_t)frame->a0, frame->a1, a->data, a->len,
+                                    myrtos_current_pid());
+            frame->a0 = (uint32_t)r;
+            break;
+        }
         case SYS_CLOSE:
             frame->a0 = (uint32_t)myrtos_io_close((int32_t)frame->a0, myrtos_current_pid());
             break;

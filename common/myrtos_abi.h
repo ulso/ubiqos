@@ -345,9 +345,19 @@ typedef struct {
     // without this can only fall quiet, and a reader waits; /dev/null has an
     // end, and a reader that waited for it would wait for ever.
     int32_t (*at_eof)(void);
+    // Everything about a device that is not its data. See the status codes
+    // below. Both are optional: a driver that has nothing to say leaves them
+    // out and every code asked of it answers -1.
+    int32_t (*getstat)(uint32_t code, void *data, uint32_t len);
+    int32_t (*setstat)(uint32_t code, const void *data, uint32_t len);
 } myrtos_driver_t;
 
-#define MYRTOS_DRIVER_ABI 1
+// Two, because getstat and setstat were added to the end of the table above.
+// A driver module built against 1 does not have those two words, and the
+// version is what stops the I/O manager reading past the end of its data and
+// calling whatever it finds. An old driver on the card is refused by name
+// instead, which is a message rather than a crash.
+#define MYRTOS_DRIVER_ABI 2
 
 // What exec_offset points at in a driver module, under the symbol
 // myrtos_driver. init comes first and is called once, like a library's entry
@@ -610,6 +620,35 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_USBINFO   55u   // a0 = what -> a0 = that field of the USB host state
 #define SYS_RANDOM    56u   // a0 = buffer, a1 = length -> a0 = bytes filled
 #define SYS_CATCHINTR 57u   // a0 = pulse type, 0 to go back to being killed
+#define SYS_GETSTAT   61u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
+#define SYS_SETSTAT   62u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
+
+// --- STATUS -----------------------------------------------------------------
+// Everything about a device that is not its data: how loud, how fast, how big.
+//
+// This is OS-9's getstat and setstat rather than Unix's ioctl, and the
+// difference is the point. ioctl is one call whose direction and argument size
+// are packed into bits of the request number, so a wrong number is a wrong
+// pointer used the wrong way; here the direction is which call you made, and
+// the length travels with the pointer so a driver can refuse a caller that
+// disagrees with it about the size. There is no _IOWR and nothing to decode.
+//
+// The alternative, which this replaces, was a command per setting that reached
+// around the driver: `volume` wrote the audio codec's registers over /dev/i2c,
+// so the chip's address and the meaning of its registers lived in two places
+// and a second program could have set the volume without the driver knowing.
+typedef struct {
+    void    *data;
+    uint32_t len;
+} myrtos_stat_t;
+
+// Codes below 0x100 mean the same thing on every device that answers them at
+// all. From 0x100 they belong to one kind of device and are listed with it.
+// Unknown is always -1: a caller finds out what a device can do by asking.
+#define MYRTOS_SS_RATE     0x0001u  // uint32_t, samples or bits per second
+
+// Audio.
+#define MYRTOS_SS_VOLUME   0x0100u  // uint32_t 0-100; 100 is full scale
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -1674,6 +1713,22 @@ static inline int32_t myrtos_pipe(int32_t fds[2])
 static inline int32_t myrtos_dup(int32_t path, int32_t new_path)
 {
     return myrtos_syscall(SYS_DUP, (uint32_t)path, (uint32_t)new_path, 0);
+}
+
+// Ask a device about itself, and tell it something. Both take the length so a
+// driver can check it: a caller that thinks MYRTOS_SS_VOLUME is a byte and a
+// driver that thinks it is a word disagree once, loudly, rather than reading
+// three bytes of somebody's stack for ever after.
+static inline int32_t myrtos_getstat(int32_t path, uint32_t code, void *data, uint32_t len)
+{
+    myrtos_stat_t s = { data, len };
+    return myrtos_syscall(SYS_GETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
+}
+
+static inline int32_t myrtos_setstat(int32_t path, uint32_t code, const void *data, uint32_t len)
+{
+    myrtos_stat_t s = { (void *)data, len };
+    return myrtos_syscall(SYS_SETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
 }
 
 static inline int32_t myrtos_close(int32_t path)

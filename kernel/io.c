@@ -619,6 +619,29 @@ int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t 
     return p->device->driver->write(buf, len);
 }
 
+// --- STATUS ---------------------------------------------------------------
+// A device is asked about itself, or told something, without that going through
+// its data. Both refuse a pipe: a pipe has no device behind it and nothing to
+// answer with.
+
+int32_t myrtos_io_getstat(int32_t path, uint32_t code, void *data, uint32_t len,
+                          int32_t owner_pid)
+{
+    if (pipe_entry(path, owner_pid)) return -1;
+    myrtos_path_t *p = path_of(path, owner_pid);
+    if (!p || !p->device->driver->getstat) return -1;
+    return p->device->driver->getstat(code, data, len);
+}
+
+int32_t myrtos_io_setstat(int32_t path, uint32_t code, const void *data, uint32_t len,
+                          int32_t owner_pid)
+{
+    if (pipe_entry(path, owner_pid)) return -1;
+    myrtos_path_t *p = path_of(path, owner_pid);
+    if (!p || !p->device->driver->setstat) return -1;
+    return p->device->driver->setstat(code, data, len);
+}
+
 // --- THE INTERRUPT KEY ----------------------------------------------------
 // Ctrl-C has to be caught where the byte arrives, not where it is read. The
 // process it is meant for is usually blocked in a rendezvous and reading

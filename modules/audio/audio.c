@@ -169,6 +169,55 @@ static bool dac_configure(void)
     return true;
 }
 
+// --- STATUS ---------------------------------------------------------------
+// The volume lives here now rather than in a command that wrote the codec's
+// registers over /dev/i2c. That the chip is a TLV320 at 0x18, and that its
+// volume is two registers in half-decibel steps, is this file's business and
+// nobody else's -- which is the whole reason getstat and setstat exist.
+
+#define DAC_VOL_L  0x41
+#define DAC_VOL_R  0x42
+
+// 0-100 onto the register's signed half-decibels: 100 is 0 dB, which is full
+// scale, and 0 is -50 dB. Not silence -- muting is a different register and a
+// different question, and a volume of nought that is merely very quiet is
+// easier to recover from than one that looks like broken hardware.
+static uint8_t vol_now = 100u - 36u;    // what dac_init writes: -18 dB
+
+static bool dac_set(uint8_t page, uint8_t reg, uint8_t val)
+{
+    uint8_t sel[2] = { 0x00, page };
+    if (K->i2c_write(K->i2c, DAC_ADDR, sel, 2, false) < 0) return false;
+    uint8_t w[2] = { reg, val };
+    return K->i2c_write(K->i2c, DAC_ADDR, w, 2, false) >= 0;
+}
+
+static int32_t audio_getstat(uint32_t code, void *data, uint32_t len)
+{
+    if (!data || len != 4) return -1;
+    switch (code) {
+    case MYRTOS_SS_VOLUME: *(uint32_t *)data = vol_now; return 0;
+    // Fixed, and not by choice: the PIO divider is an integer at this system
+    // clock and 48000 is the rate that comes out exact. Worth answering all
+    // the same -- a player has to know whether the file it holds can be
+    // played at all, and the honest answer to that is a number.
+    case MYRTOS_SS_RATE:   *(uint32_t *)data = I2S_HZ; return 0;
+    default:               return -1;
+    }
+}
+
+static int32_t audio_setstat(uint32_t code, const void *data, uint32_t len)
+{
+    if (!data || len != 4) return -1;
+    if (code != MYRTOS_SS_VOLUME) return -1;
+    uint32_t v = *(const uint32_t *)data;
+    if (v > 100u) return -1;
+    uint8_t reg = (uint8_t)(int8_t)((int32_t)v - 100);
+    if (!dac_set(0, DAC_VOL_L, reg) || !dac_set(0, DAC_VOL_R, reg)) return -1;
+    vol_now = (uint8_t)v;
+    return 0;
+}
+
 static int32_t audio_configure(const void *config, uint32_t size)
 {
     (void)config; (void)size;
@@ -340,10 +389,13 @@ const myrtos_driver_module_t myrtos_driver = {
         .configure = audio_configure,
         .open = audio_open, .write = audio_write, .read = 0,
         .close = audio_close, .writable = audio_writable,
+        .getstat = audio_getstat, .setstat = audio_setstat,
     },
 };
 
 // --- WHAT THIS IS NOT -----------------------------------------------------
-// There is no volume control, and nothing to ask the device for its rate. Both
-// want somewhere for a device to take a command that is not data -- an ioctl,
-// which this system does not have and probably should.
+// The rate cannot be set, only asked. Changing it means a new PIO divider and
+// a new DAC clock chain -- NDAC, MDAC and DOSR all follow from it -- and only
+// the rates that come out exact at this system clock could be offered. That is
+// real work rather than another status code, and nothing wants it yet: a WAV
+// player can ask what the rate is and resample or refuse.

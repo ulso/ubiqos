@@ -2,58 +2,44 @@
 
 // volume -- how loud the headphone output is.
 //
-//   volume        what it is now
+//   volume        what it is now, and what rate the device runs at
 //   volume N      0 to 100, where 100 is full scale
 //
-// This writes the codec's own digital volume over /dev/i2c, which means the
-// TLV320's address and register numbers appear here as well as in the audio
-// driver. That is a wart and it is worth naming: the right home for this is
-// the audio device itself, through some way of handing a device a command that
-// is not data. myrtos has no ioctl, so until it does, this is the honest
-// version -- a separate command that says plainly which chip it is poking.
-//
-// Nought to a hundred maps onto half-decibel steps: 100 is 0 dB and 0 is -50,
-// which is quiet rather than silent. Muting is what not writing is for.
-
-#define DAC_ADDR  0x18
-#define REG_LEFT  0x41
-#define REG_RIGHT 0x42
-
-static bool xfer(int32_t fd, uint8_t nw, uint8_t nr, const uint8_t *w) {
-    uint8_t b[4 + 4];
-    b[0] = DAC_ADDR; b[1] = nw; b[2] = nr; b[3] = 0;
-    for (uint8_t i = 0; i < nw; i++) b[4 + i] = w[i];
-    return myrtos_write(fd, b, (uint32_t)(4 + nw)) >= 0;
-}
+// This asks the audio device, and knows nothing about what is behind it. The
+// first version wrote a TLV320's registers over /dev/i2c, so this file had to
+// know the codec's address, which two registers held the volume, and that they
+// were signed half-decibels; a different codec meant a different command, and
+// nothing stopped a second program setting the volume without the driver
+// knowing what it now was. All of that was the driver's business and is now
+// kept there. See MYRTOS_SS_VOLUME in myrtos_abi.h.
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: volume [0-100]\n\n100 is full scale, 0 is about -50 dB. With no argument, reports.\n"))
         return;
 
-    int32_t fd = myrtos_open("/dev/i2c");
-    if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "volume: no /dev/i2c\n"); return; }
-
-    // Page 0, where the DAC volume lives. The audio driver leaves the codec
-    // there, but saying so costs one write and removes an assumption.
-    uint8_t page[2] = { 0x00, 0x00 };
-    xfer(fd, 2, 0, page);
+    int32_t fd = myrtos_open("/dev/audio");
+    if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "volume: no /dev/audio\n"); return; }
 
     if (argc == 1) {
-        uint8_t reg = REG_LEFT, got = 0;
-        if (!xfer(fd, 1, 1, &reg) || myrtos_read(fd, &got, 1) != 1) {
-            myrtos_write_str(MYRTOS_STDERR, "volume: no answer from the codec\n");
+        uint32_t v = 0, rate = 0;
+        if (myrtos_getstat(fd, MYRTOS_SS_VOLUME, &v, sizeof v) < 0) {
+            myrtos_write_str(MYRTOS_STDERR, "volume: the device has no volume\n");
             myrtos_close(fd);
             return;
         }
-        // Signed half-decibels back to the scale above.
-        int32_t steps = (int32_t)(int8_t)got;
-        int32_t n = 100 + steps;
-        if (n < 0) n = 0;
         myrtos_line_t l;
         myrtos_line_reset(&l);
         myrtos_line_str(&l, "volume ");
-        myrtos_line_u32(&l, (uint32_t)n);
+        myrtos_line_u32(&l, v);
+        // Not an error to be without one: a device that answers the volume
+        // need not answer the rate, and saying nothing is the right amount to
+        // say about a question this device did not take.
+        if (myrtos_getstat(fd, MYRTOS_SS_RATE, &rate, sizeof rate) == 0) {
+            myrtos_line_str(&l, ", ");
+            myrtos_line_u32(&l, rate);
+            myrtos_line_str(&l, " Hz");
+        }
         myrtos_line_str(&l, "\n");
         myrtos_line_flush(MYRTOS_STDOUT, &l);
         myrtos_close(fd);
@@ -68,9 +54,8 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    uint8_t v = (uint8_t)(int8_t)((int32_t)n - 100);
-    uint8_t w[2];
-    w[0] = REG_LEFT;  w[1] = v; xfer(fd, 2, 0, w);
-    w[0] = REG_RIGHT; w[1] = v; xfer(fd, 2, 0, w);
+    if (myrtos_setstat(fd, MYRTOS_SS_VOLUME, &n, sizeof n) < 0)
+        myrtos_write_str(MYRTOS_STDERR, "volume: the device would not take it\n");
+
     myrtos_close(fd);
 }

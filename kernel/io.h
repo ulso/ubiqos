@@ -49,6 +49,13 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid);
 int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid);
 int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_pid);
 int32_t myrtos_io_close(int32_t path, int32_t owner_pid);
+
+// Everything about a device that is not its data. A pipe has none, a driver
+// that does not implement them answers -1, and so does an unknown code.
+int32_t myrtos_io_getstat(int32_t path, uint32_t code, void *data, uint32_t len,
+                          int32_t owner_pid);
+int32_t myrtos_io_setstat(int32_t path, uint32_t code, const void *data, uint32_t len,
+                          int32_t owner_pid);
 void    myrtos_io_close_all(int32_t owner_pid);
 void    myrtos_io_inherit(int32_t parent_pid, int32_t child_pid);
 
