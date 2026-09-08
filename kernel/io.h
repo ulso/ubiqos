@@ -13,9 +13,21 @@
 // handles it, and carrying a configuration only the driver interprets. Adding a
 // device is then a matter of adding a file.
 
-#define MYRTOS_MAX_DRIVERS 8
-#define MYRTOS_MAX_DEVICES 8
-#define MYRTOS_MAX_PATHS   8
+// Sixteen, up from eight on 8 Sep 2026, and eight was reached without a word
+// being said. Adding the I2C and I2S drivers made nine of each -- five built
+// into io.c and four modules -- and /dev quietly came up one short: `term`
+// simply was not there. Both limits now say so when they are hit; see
+// myrtos_io_add_descriptor.
+//
+// The cost of the extra eight is about two hundred bytes of kernel data, which
+// is a bad trade only if the number is never approached, and it just was.
+#define MYRTOS_MAX_DRIVERS 16
+#define MYRTOS_MAX_DEVICES 16
+// Twelve, up from eight on 8 Sep 2026. Twelve bytes an entry across every
+// process, so the whole rise costs under a kilobyte -- and three of a
+// process's eight were always stdin, stdout and stderr, which left five for
+// its own work and a pipeline with redirection on both halves can want more.
+#define MYRTOS_MAX_PATHS   12
 #define MYRTOS_PATH_NONE   (-1)
 
 // myrtos_driver_t was here. It is in common/myrtos_abi.h now, because a driver
@@ -64,10 +76,11 @@ bool     myrtos_io_writable(int32_t path, int32_t owner_pid);
 // twelve times over is under a kilobyte, and it costs the filesystem a walk per
 // read that a handle would have saved. That is the wrong trade for a database
 // and the right one for a machine whose files are read once from start to end.
-// Eight, not twelve: the build's heap check refused twelve, which is exactly
-// what it is for. Eight open files across the whole machine is generous for
-// eight paths per process and thirty-two processes that mostly hold devices.
-#define MYRTOS_MAX_OPEN_FILES 8
+// Sixteen. It was eight, and the note here said the build's heap check had
+// REFUSED twelve -- so this is the one number on the list that was not chosen
+// but forced, back when moving the drivers out of the kernel had not yet
+// happened. Seventy-two bytes an entry.
+#define MYRTOS_MAX_OPEN_FILES 16
 
 // Bind an already-resolved absolute path to a free descriptor. Called by the
 // filesystem server, which is the only thing that knows the path is real.
@@ -93,7 +106,8 @@ int32_t  myrtos_io_file_seek(int32_t path, int32_t owner_pid,
 // The waiting is the same machinery devices use -- block_on_read, the readable
 // check, and the wake on the timer tick -- because a pipe is exactly a thing
 // that sometimes has bytes and sometimes does not.
-#define MYRTOS_MAX_PIPES 4
+// Eight, up from four. A hundred and forty-four bytes each, buffer included.
+#define MYRTOS_MAX_PIPES 8
 #define MYRTOS_PIPE_BUF  128
 
 // Two descriptors: fds[0] reads, fds[1] writes. -1 when none can be had.

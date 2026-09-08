@@ -1512,7 +1512,12 @@ typedef struct {
 // PSRAM stalls the display's own reads and the monitor drops sync, which was
 // measured and is written down in video.c. So every feature from here is paid
 // for out of a table like this one.
-#define MYRTOS_MAX_PROCESSES 16
+// Twenty-four, up from sixteen on 8 Sep 2026. This is the expensive one at 188
+// bytes a slot -- a process carries its name, its paths and its bookkeeping --
+// so it goes up by half rather than doubling. Seven of the sixteen were always
+// spoken for: the kernel as idle, two shells, and the console, filesystem,
+// wifi and USB services.
+#define MYRTOS_MAX_PROCESSES 24
 
 // How much memory each process running this module is given: the command line,
 // argv, the thread-local block and the data area at the bottom, the stack from

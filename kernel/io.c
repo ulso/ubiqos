@@ -218,7 +218,13 @@ extern const myrtos_kernel_api_t myrtos_kernel_api;
 
 static const myrtos_driver_t *driver_from_module(const char *name)
 {
-    if (driver_count >= MYRTOS_MAX_DRIVERS) return 0;
+    // Said out loud. Returning zero here reads to the caller exactly like "no
+    // such driver", and the message it prints then sends the reader looking
+    // for a missing module rather than a full table.
+    if (driver_count >= MYRTOS_MAX_DRIVERS) {
+        myrtos_print("  no room for another driver (MYRTOS_MAX_DRIVERS)\n");
+        return 0;
+    }
 
     const myrtos_driver_module_t *m = myrtos_driver_link(name, 0);
     if (!m) return 0;
@@ -368,7 +374,15 @@ bool myrtos_io_has_device(const char *name) {
 }
 
 bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
-    if (device_count >= MYRTOS_MAX_DEVICES) return false;
+    // Also said out loud. This returned false in silence, and a device that
+    // never appears in /dev with nothing printed anywhere is a thing you find
+    // by counting the entries and wondering.
+    if (device_count >= MYRTOS_MAX_DEVICES) {
+        myrtos_print("  no room for device '");
+        myrtos_print(desc->device_name);
+        myrtos_print("' (MYRTOS_MAX_DEVICES)\n");
+        return false;
+    }
 
     const myrtos_driver_t *drv = 0;
     for (uint32_t i = 0; i < driver_count; i++) {

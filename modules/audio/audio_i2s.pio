@@ -1,0 +1,29 @@
+; I2S out, 16-bit stereo. The shape is pico-extras' audio_i2s, which is the
+; canonical one for this chip family, with the comments rewritten for what this
+; board actually wires.
+;
+; Side-set carries the two clocks: bit 0 is BCLK and bit 1 is LRCLK, so they
+; must be consecutive pins. The Fruit Jam obliges -- BCLK on GP26 and WS on
+; GP27 -- and the data goes out on GP24.
+;
+; Two instructions per bit and thirty-two bits per frame, so a frame is 64 PIO
+; cycles and BCLK is half the PIO clock. That is where the divider comes from:
+; sys / (fs * 64), which the driver computes in 8.8 fixed point without ever
+; touching a float. See the note there about what floats cost a module.
+
+.program audio_i2s
+.side_set 2
+
+                    ;        /--- LRCLK
+                    ;        |/-- BCLK
+bitloop1:                    ;
+    out pins, 1       side 0b10
+    jmp x-- bitloop1  side 0b11
+    out pins, 1       side 0b00
+    set x, 14         side 0b01
+bitloop0:
+    out pins, 1       side 0b00
+    jmp x-- bitloop0  side 0b01
+    out pins, 1       side 0b10
+public entry_point:
+    set x, 14         side 0b11

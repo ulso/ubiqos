@@ -6,6 +6,7 @@
 //   i2c ADDR             does this one answer
 //   i2c ADDR REG [N]     N bytes from a register, one by default
 //   i2c ADDR - N         N bytes with no register named at all
+//   i2c ADDR REG = VAL   write one byte to a register
 //
 // Addresses and registers are hex, with or without 0x, because that is how
 // every datasheet writes them.
@@ -52,7 +53,8 @@ void module_main(int argc, char **argv) {
             "  ADDR            does this one answer\n"
             "  ADDR REG [N]    N bytes from a register, one by default\n"
             "  ADDR - N        N bytes with no register named -- for a device that\n"
-            "                  has no registers, like an IMU speaking SHTP\n\n"
+            "                  has no registers, like an IMU speaking SHTP\n"
+            "  ADDR REG = VAL  write one byte to a register\n\n"
             "Addresses and registers are hex, 0x optional.\n"))
         return;
 
@@ -93,6 +95,23 @@ void module_main(int argc, char **argv) {
         put_hex2(&l, addr);
         myrtos_line_str(&l, xfer(fd, (uint8_t)addr, 0, 0, 1) ? " answers\n" : " no answer\n");
         myrtos_line_flush(MYRTOS_STDOUT, &l);
+        myrtos_close(fd);
+        return;
+    }
+
+    // ADDR REG = VAL. The equals sign is a separate word so the shell splits
+    // it for us and there is nothing to parse: three arguments means read,
+    // four with "=" in the middle means write.
+    if (argc == 5 && argv[3][0] == '=' && !argv[3][1]) {
+        uint32_t reg, val;
+        if (!from_hex(argv[2], &reg) || reg > 0xff || !from_hex(argv[4], &val) || val > 0xff) {
+            myrtos_write_str(MYRTOS_STDERR, "i2c: register and value are hex 00-ff\n");
+            myrtos_close(fd);
+            return;
+        }
+        uint8_t w[2] = { (uint8_t)reg, (uint8_t)val };
+        if (!xfer(fd, (uint8_t)addr, w, 2, 0))
+            myrtos_write_str(MYRTOS_STDERR, "i2c: no answer\n");
         myrtos_close(fd);
         return;
     }

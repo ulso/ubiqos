@@ -20,7 +20,9 @@ extern tlsf_pool_t myrtos_bulk_pool;
 extern tlsf_pool_t myrtos_mem_pool;
 void myrtos_print(const char *s);
 
-#define TMP_MAX_FILES 8
+// Sixteen, up from eight. Eighty-four bytes an entry now that a name is a real
+// name rather than twelve characters -- see the note on the name field.
+#define TMP_MAX_FILES 16
 #define TMP_GROW      1024        // rounded up to this, so appending is not a
                                   // reallocation per byte
 

@@ -1155,6 +1155,16 @@ target_compile_definitions(i2cbus_app PRIVATE
 myrtos_add_data_module(i2cdesc modules/i2cbus/i2c_desc.c)
 myrtos_add_module(i2c modules/i2c/i2c.c)
 
+# I2S out. PIO2 state machine 1 -- the neopixel driver has 0, and a block has
+# four state machines and thirty-two instruction slots between them.
+myrtos_add_module(i2sout modules/audio/audio.c DRIVER)
+target_include_directories(i2sout_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(i2sout_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+pico_generate_pio_header(i2sout_app ${CMAKE_CURRENT_SOURCE_DIR}/modules/audio/audio_i2s.pio)
+myrtos_add_data_module(audiodesc modules/audio/audio_desc.c)
+
 myrtos_add_module(uart modules/uart/uart.c DRIVER)
 target_include_directories(uart_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
@@ -1377,6 +1387,8 @@ set(MYRTOS_RESIDENT
     i2cbus
     i2cdesc
     i2c
+    i2sout
+    audiodesc
     leds
     httpd
     sockstat
