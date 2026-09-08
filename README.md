@@ -838,6 +838,25 @@ that the payload was never the expense. And the faster poll nearly tripled the
 traffic to the chip -- 2682 commands in one run -- with **zero** resyncs,
 retries and failures, and 667 receives all ending where they should.
 
+**Connections are kept**, which is worth about a third of a page fetch to a
+client that reuses one and costs eight milliseconds to a client that does not:
+
+| | one connection each | one connection reused |
+|---|---|---|
+| before | 46 ms a page | -- |
+| after | 54 ms | **29 ms** |
+
+Every reply goes through one function with a real `Content-Length`, so a body is
+always delimited -- which is the precondition, not a detail.
+
+**The wait for a follow-up is fifteen milliseconds and that number matters.**
+This server answers one client at a time, so every millisecond spent waiting is
+charged to whoever is next. The first attempt waited 300, and measured: the
+reusing client went 46 to 35 and everybody else went 46 to **287**. That is not
+a trade, it is a regression with a beneficiary. A browser sends its next request
+within a round trip; fifteen catches that and no more. Serving several
+connections at once is the real answer and is a different piece of work.
+
 **The rule, since it is not written anywhere in the protocol:** in nina-fw a
 `memcpy` means host order -- the chip is little-endian -- and a hand-written
 `>> 8` first means network order. The same file mixes them, with nothing at the

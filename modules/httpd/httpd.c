@@ -178,9 +178,11 @@ static void send_head(int32_t sock, const char *status, const char *type, uint32
     for (uint32_t p = 0; p < 5; p++)
         for (const char *q = parts[p]; *q && n < sizeof(head) - 40; q++) head[n++] = *q;
     n += u32_to_dec(len, head + n);
-    // Closed after every answer. Keep-alive would need a second timeout and a
-    // second state, and this serves one client at a time anyway.
-    for (const char *q = "\r\nConnection: close\r\n\r\n"; *q; q++) head[n++] = *q;
+    // Kept open. Every reply here goes through this function with a real
+    // Content-Length, so a client always knows where a body ends and the next
+    // reply begins -- which is the whole precondition for keeping a connection,
+    // and the reason it is safe to say so.
+    for (const char *q = "\r\nConnection: keep-alive\r\n\r\n"; *q; q++) head[n++] = *q;
     head[n] = 0;
     myrtos_sock_send(sock, (const uint8_t *)head, n);
 }
@@ -405,39 +407,65 @@ void module_main(int argc, char **argv) {
         // The request line is all that is read. Headers after it are skipped by
         // not reading them, which is allowed and is what lets this answer
         // without a parser.
-        // Says which step failed, and there is a reason it is a line and not a
-        // count. Roughly six requests in a thousand come back empty, and the
-        // SPI channel is provably not the cause -- thousands of commands with
-        // no resynchronisation, no retry and no failure -- so the fault is
-        // above it and nobody knows where. It is too rare to catch by watching
-        // and too rare to flood anything by printing. The next one will say
-        // what it was instead of being another round of theories.
-        uint32_t n = 0;
-        int32_t why = 0;                       // 0 fine, -1 recv, -2 nothing read
-        for (int spin = 0; spin < 100 && n < sizeof(req) - 1; spin++) {
-            int32_t got = myrtos_sock_recv(client, (uint8_t *)req + n, sizeof(req) - 1 - n);
-            if (got < 0) { why = -1; break; }
-            if (got == 0) { myrtos_sleep(5); continue; }
-            n += (uint32_t)got;
+        // Requests, plural. A browser fetching a page and its script sends the
+        // second the moment the first is answered, and a connection per request
+        // costs a socket, a handshake and an accept poll each time.
+        //
+        // Bounded HARD, and the first attempt at this was not. A connection
+        // held open is a connection nobody else can have, because this server
+        // answers one client at a time -- so every millisecond spent waiting
+        // for a follow-up is a millisecond charged to whoever is next.
+        //
+        // Measured with 300 ms of patience: a client that reuses its
+        // connection went from 46 ms a page to 35, and a client that does not
+        // went from 46 to 287. That is not a trade, it is a regression with a
+        // beneficiary.
+        //
+        // Fifteen milliseconds. A browser sends its next request within a
+        // round trip of receiving the last one -- under a millisecond on a
+        // local network, plus its own thinking -- so this catches the case it
+        // is for while charging a lone client at most fifteen milliseconds for
+        // the possibility. The real answer is serving several connections at
+        // once, and that is a different piece of work.
+        for (uint32_t served = 0; served < 32u; served++) {
+            uint32_t n = 0;
+            int32_t why = 0;                   // 0 fine, -1 recv failed
+            // The first request is already on its way -- that is why accept
+            // returned -- so the long wait is only for the ones after it.
+            uint32_t patience = served ? 3u : 100u;
+            for (uint32_t spin = 0; spin < patience && n < sizeof(req) - 1; spin++) {
+                int32_t got = myrtos_sock_recv(client, (uint8_t *)req + n, sizeof(req) - 1 - n);
+                if (got < 0) { why = -1; break; }
+                if (got == 0) { myrtos_sleep(5); continue; }
+                n += (uint32_t)got;
+                req[n] = 0;
+                bool done = false;
+                for (uint32_t i = 3; i < n; i++)
+                    if (req[i - 3] == '\r' && req[i - 2] == '\n' &&
+                        req[i - 1] == '\r' && req[i] == '\n') done = true;
+                if (done) break;
+            }
             req[n] = 0;
-            bool done = false;
-            for (uint32_t i = 3; i < n; i++)
-                if (req[i - 3] == '\r' && req[i - 2] == '\n' &&
-                    req[i - 1] == '\r' && req[i] == '\n') done = true;
-            if (done) break;
+            if (!n) {
+                // Silence on a kept connection is the client having finished,
+                // which is ordinary and not worth a word. On the FIRST request
+                // it is the fault nobody has explained yet, so that one is
+                // still reported: six requests in a thousand come back empty
+                // and the SPI channel is provably not the cause.
+                if (!served) {
+                    myrtos_line_t e;
+                    myrtos_line_reset(&e);
+                    myrtos_line_str(&e, "httpd: empty request, sock ");
+                    myrtos_line_u32(&e, (uint32_t)client);
+                    myrtos_line_str(&e, why ? " (recv failed)" : " (nothing arrived)");
+                    myrtos_line_str(&e, "\r\n");
+                    myrtos_line_flush(MYRTOS_STDERR, &e);
+                }
+                break;
+            }
+            last_request_ms = myrtos_ticks_now();
+            serve(client, req);
         }
-        req[n] = 0;
-        last_request_ms = myrtos_ticks_now();
-        if (!n) {
-            myrtos_line_t e;
-            myrtos_line_reset(&e);
-            myrtos_line_str(&e, "httpd: empty request, sock ");
-            myrtos_line_u32(&e, (uint32_t)client);
-            myrtos_line_str(&e, why ? " (recv failed)" : " (nothing arrived)");
-            myrtos_line_str(&e, "\r\n");
-            myrtos_line_flush(MYRTOS_STDERR, &e);
-        }
-        if (n) serve(client, req);
         myrtos_sock_close(client);
     }
 }
