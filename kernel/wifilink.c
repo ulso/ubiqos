@@ -14,6 +14,7 @@
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "hardware/uart.h"
+#include "hardware/i2c.h"
 #include "hardware/clocks.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
@@ -81,6 +82,12 @@ static void   k_spi_write(void *spi, const uint8_t *src, uint32_t len)
 static void   k_spi_read(void *spi, uint8_t repeated, uint8_t *dst, uint32_t len)
 { spi_read_blocking((spi_inst_t*)spi, repeated, dst, (size_t)len); }
 static uint32_t k_clock_hz(void) { return clock_get_hz(clk_sys); }
+static uint32_t k_i2c_init(void *i2c, uint32_t baud)
+{ return i2c_init((i2c_inst_t*)i2c, baud); }
+static int32_t  k_i2c_write(void *i2c, uint8_t addr, const uint8_t *src, uint32_t len, bool nostop)
+{ return i2c_write_blocking((i2c_inst_t*)i2c, addr, src, (size_t)len, nostop); }
+static int32_t  k_i2c_read(void *i2c, uint8_t addr, uint8_t *dst, uint32_t len, bool nostop)
+{ return i2c_read_blocking((i2c_inst_t*)i2c, addr, dst, (size_t)len, nostop); }
 
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
@@ -119,6 +126,10 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .spi_write         = k_spi_write,
     .spi_read          = k_spi_read,
     .clock_hz          = k_clock_hz,
+    .i2c               = i2c0,
+    .i2c_init          = k_i2c_init,
+    .i2c_write         = k_i2c_write,
+    .i2c_read          = k_i2c_read,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

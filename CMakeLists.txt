@@ -224,7 +224,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
-    tinyusb_device)
+    hardware_i2c tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
@@ -1146,6 +1146,15 @@ target_compile_definitions(neopixel_app PRIVATE
 pico_generate_pio_header(neopixel_app ${CMAKE_CURRENT_SOURCE_DIR}/modules/neopixel/ws2812.pio)
 myrtos_add_data_module(leddesc modules/neopixel/led_desc.c)
 
+# The I2C bus, on the pins the Stemma QT connector uses.
+myrtos_add_module(i2cbus modules/i2cbus/i2cbus.c DRIVER)
+target_include_directories(i2cbus_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(i2cbus_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+myrtos_add_data_module(i2cdesc modules/i2cbus/i2c_desc.c)
+myrtos_add_module(i2c modules/i2c/i2c.c)
+
 myrtos_add_module(uart modules/uart/uart.c DRIVER)
 target_include_directories(uart_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
@@ -1365,6 +1374,9 @@ set(MYRTOS_RESIDENT
     uart
     neopixel
     leddesc
+    i2cbus
+    i2cdesc
+    i2c
     leds
     httpd
     sockstat

@@ -153,7 +153,9 @@ typedef struct {
 // of bytes in one transaction instead of one call per byte.
 //
 // Version 5 added clock_hz, because a PIO driver has to divide it.
-#define MYRTOS_KERNEL_API_ABI 5
+//
+// Version 6 added the I2C block and its three real functions.
+#define MYRTOS_KERNEL_API_ABI 6
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -248,6 +250,23 @@ typedef struct {
     // and a driver that assumed 125 MHz would be wrong here -- this machine
     // runs 120, chosen so PIO-USB's 48 and 96 MHz divide exactly.
     uint32_t (*clock_hz)(void);
+
+    // --- version 6 ---------------------------------------------------------
+
+    // The I2C block and the three real functions to drive it. i2c0_inst is an
+    // extern variable rather than an address, so the block is handed over the
+    // way spi1 is; gpio_pull_up is inline and reaches gpio_set_pulls, which is
+    // already here.
+    //
+    // nostop is what makes a register read one transaction instead of two: the
+    // write of the register number ends with a repeated start rather than a
+    // stop, so nothing else can take the bus in between.
+    void    *i2c;
+    uint32_t (*i2c_init)(void *i2c, uint32_t baud);
+    int32_t  (*i2c_write)(void *i2c, uint8_t addr, const uint8_t *src,
+                          uint32_t len, bool nostop);
+    int32_t  (*i2c_read)(void *i2c, uint8_t addr, uint8_t *dst,
+                         uint32_t len, bool nostop);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
@@ -359,6 +378,28 @@ typedef struct {
     uint8_t count;         // how many the kernel has
     uint16_t cols, rows;   // the grid that cell gives on this display
 } myrtos_confont_t;
+
+// --- I2C ------------------------------------------------------------------
+// One transaction, written to /dev/i2c as a header followed by the bytes to
+// send. The bus is not a byte stream -- every exchange names a device and says
+// how much to say and how much to hear -- so the device takes a description of
+// the exchange rather than pretending otherwise.
+//
+// write() performs it and answers with how many bytes were sent, or -1 if
+// nobody acknowledged. read() afterwards gives back what came in, which is why
+// nread is here rather than being the length of the read: the driver has to
+// know before it starts.
+//
+// A scan is nwrite 0, nread 1: address the device, ask for a byte, and see
+// whether anything answers at all.
+#define MYRTOS_I2C_MAX_READ 64
+
+typedef struct {
+    uint8_t addr;      // 7-bit, without the read/write bit
+    uint8_t nwrite;    // bytes following this header
+    uint8_t nread;     // bytes to fetch afterwards, up to MYRTOS_I2C_MAX_READ
+    uint8_t reserved;
+} myrtos_i2c_xfer_t;
 
 #define MYRTOS_CLASS_CHAR  1   // character stream: terminal, serial port
 #define MYRTOS_CLASS_BLOCK 2   // block oriented: SD, disk
