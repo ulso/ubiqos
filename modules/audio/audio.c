@@ -67,9 +67,17 @@ static bool ready;
 // ring twice, which at 48 kHz stereo is 384 kB/s of memory traffic and beneath
 // notice, and it means a writer that stops -- or falls behind, or is killed --
 // runs into silence rather than into its own past.
-#define RING_BYTES 2048u
+// 4096, which is 1024 stereo frames and so 21 ms of audio at 48 kHz. It was
+// 2048, and 10 ms turned out to be less slack than a player needs: a read off
+// the SD card is a message to the file server and a FAT walk behind it, and
+// when one of those took longer than the ring had left, the ring ran dry and
+// it was audible as a stutter. The cost is SRAM and it is paid twice -- the
+// DMA's read-address wrapping needs the buffer aligned to its own size, and
+// the only way to get that out of a general allocator is to ask for double and
+// align up inside it.
+#define RING_BYTES 4096u
 #define RING_WORDS (RING_BYTES / 4u)
-#define RING_BITS  11u          // 2^11 = RING_BYTES, which the DMA masks with
+#define RING_BITS  12u          // 2^12 = RING_BYTES, which the DMA masks with
 
 static volatile uint32_t *ring;
 static int32_t dma_ch = -1;
