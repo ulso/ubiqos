@@ -41,7 +41,8 @@ void module_main(int argc, char **argv) {
     if (step) {
         uint32_t v = (uint32_t)(argv[1][0] - '0');
         if (myrtos_setstat(fd, MYRTOS_SS_RUN, &v, sizeof v) < 0)
-            myrtos_write_str(MYRTOS_STDERR, "adc: the device would not take that\n");
+            myrtos_write_str(MYRTOS_STDERR,
+                "adc: refused -- one of GP40-43 belongs to something else. Try 'gpio'.\n");
         myrtos_close(fd);
         return;
     }

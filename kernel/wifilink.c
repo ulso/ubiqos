@@ -20,6 +20,7 @@
 #include "hardware/irq.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
+#include "io.h"
 #include "sdcard.h"
 
 void myrtos_print(const char *s);
@@ -180,6 +181,9 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .driver_alloc      = k_driver_alloc,
     .gpio_clock_out    = k_gpio_clock_out,
     .irq_install       = k_irq_install,
+    .pin_claim         = myrtos_pin_claim,
+    .pin_release       = myrtos_pin_release,
+    .pin_owner         = myrtos_pin_owner,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

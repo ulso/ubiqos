@@ -166,7 +166,10 @@ typedef struct {
 // instead of asking it to make one.
 //
 // Version 10 added irq_install, so a driver can own an interrupt.
-#define MYRTOS_KERNEL_API_ABI 10
+//
+// Version 11 added the pin registry, so that two drivers cannot quietly want
+// the same pin and a person can be told who has one.
+#define MYRTOS_KERNEL_API_ABI 11
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -377,6 +380,25 @@ typedef struct {
     // Answers 0, or -1 if the number is not an interrupt or somebody already
     // holds it.
     int32_t (*irq_install)(uint32_t irq, void (*handler)(void), uint32_t priority);
+
+    // --- version 11 --------------------------------------------------------
+
+    // Who owns which pin. A driver claims the pins it is about to configure,
+    // in its configure, and is refused if something already has one -- which
+    // is the moment to say so and carry on rather than to take a pin out from
+    // under whatever was using it.
+    //
+    // The name is not copied, so pass something that outlives the claim: a
+    // string literal, or the driver's own name.
+    //
+    // This is not enforcement. Nothing stops a driver writing to a pin it
+    // never claimed; that would want the memory protection unit and a great
+    // deal more. What it buys is that /dev/gpio can refuse a pin that is
+    // spoken for and say who has it, instead of a person watching their
+    // console go quiet because they asked for GP44 and term was on it.
+    int32_t     (*pin_claim)(uint32_t pin, const char *who);
+    int32_t     (*pin_release)(uint32_t pin);
+    const char *(*pin_owner)(uint32_t pin);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
@@ -748,6 +770,31 @@ typedef struct {
 // Coming up inert and being started from the shell makes a bad experiment cost
 // a power cycle instead.
 #define MYRTOS_SS_RUN      0x0201u
+
+// Digital I/O. A pin is set up once with MODE and then driven with LEVEL; a
+// read of the device gives every pin's input level as two 32-bit words, low
+// pins first.
+#define MYRTOS_SS_GPIO_MODE  0x0300u   // myrtos_gpio_t, .value is a MYRTOS_PIN_*
+#define MYRTOS_SS_GPIO_LEVEL 0x0301u   // myrtos_gpio_t, .value is 0 or 1
+// getstat with this one names the owner instead of refusing silently: the
+// caller puts the pin in .pin and gets up to .value bytes of name back.
+#define MYRTOS_SS_GPIO_OWNER 0x0302u   // myrtos_gpio_owner_t
+
+#define MYRTOS_PIN_IN        0u
+#define MYRTOS_PIN_IN_PULLUP 1u
+#define MYRTOS_PIN_IN_PULLDN 2u
+#define MYRTOS_PIN_OUT       3u
+#define MYRTOS_PIN_RELEASE   4u   // give it back, and leave it an input
+
+typedef struct {
+    uint32_t pin;
+    uint32_t value;
+} myrtos_gpio_t;
+
+typedef struct {
+    uint32_t pin;
+    char     who[24];   // empty if nothing has it
+} myrtos_gpio_owner_t;
 
 typedef struct {
     uint32_t taken;         // how many times the handler has run

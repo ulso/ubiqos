@@ -491,6 +491,9 @@ void myrtos_kernel_main(void) {
     extern void myrtos_timer_init(uint32_t);
 
     myrtos_scheduler_init();
+    // Before any descriptor is added, so that a driver claiming a pin in its
+    // configure finds the board's own fixed functions already there.
+    myrtos_pins_init();
     myrtos_io_init();
     // Before any volume can be added, and before the first path is resolved.
     // /dev exists from here on, so the root is never empty.

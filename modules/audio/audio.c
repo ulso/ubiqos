@@ -398,6 +398,18 @@ static int32_t audio_configure(const void *config, uint32_t size)
     // blocks both want MCLK present, and I2C would answer either way -- so a
     // sequence that configured first and clocked second would look like it had
     // worked.
+    // Said out loud, so that /dev/gpio refuses these four and can name who has
+    // them. A refusal here is not fatal -- the pins are ours on this board
+    // whatever the table thinks -- but it would mean two drivers disagree, and
+    // that is worth a line on the console rather than silence.
+    static const uint8_t mine[] = { I2S_DIN, I2S_MCLK, I2S_BCLK, I2S_WS };
+    for (uint32_t i = 0; i < sizeof mine; i++)
+        if (K->pin_claim(mine[i], "audio") < 0) {
+            K->print("audio: pin already claimed by ");
+            K->print(K->pin_owner(mine[i]));
+            K->print("\n");
+        }
+
     int32_t got = K->gpio_clock_out(I2S_MCLK, MCLK_HZ);
     if (got != (int32_t)MCLK_HZ) {
         K->print("audio: no master clock on GP25\n");

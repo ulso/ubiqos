@@ -33,6 +33,8 @@ static int32_t i2c_configure(const void *config, uint32_t size)
     // GPIO_FUNC_I2C out of the SDK header rather than a number written
     // here. The neopixel driver had to learn that the host build's copy of
     // these differs from the target's.
+    if (K->pin_claim(I2C_SDA, "i2c") < 0 || K->pin_claim(I2C_SCL, "i2c") < 0)
+        K->print("i2c: a pin was already claimed\n");
     K->gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
     K->gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
     // Courtesy only: the RP2350's internal pull-ups are tens of kiloohms and a

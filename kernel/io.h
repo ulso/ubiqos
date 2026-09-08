@@ -35,6 +35,15 @@
 // same move myrtos_fsops_t made when fat32 became a library.
 
 void    myrtos_io_init(void);
+
+// Who owns which pin. See kernel/pins.c: one table, one owner, and a driver
+// that wants a pin says so at the moment it configures itself. Not enforcement
+// -- nothing stops a driver writing to a pin it never claimed -- but it lets a
+// person asking for a pin be told who has it.
+void        myrtos_pins_init(void);
+int32_t     myrtos_pin_claim(uint32_t pin, const char *who);
+int32_t     myrtos_pin_release(uint32_t pin);
+const char *myrtos_pin_owner(uint32_t pin);
 uint32_t myrtos_io_device_count(void);
 
 // The nth device's name, twelve bytes out. False when index is past the end.

@@ -109,7 +109,13 @@ static int32_t adc_configure(const void *config, uint32_t size)
 
 static uint32_t stage;
 
-static void adc_pads(void)
+// Returns false rather than warning. A K->print from inside a system call does
+// not reach the console -- the message is queued behind a USB task that cannot
+// run until the trap returns, and it was simply lost -- so the driver would
+// have gone on to configure a pad it does not own, silently, which is the one
+// thing the registry exists to stop. Refusing sends the failure back up to the
+// caller, which does have somewhere to print.
+static bool adc_pads(void)
 {
     // What adc_gpio_init would do, by register. It is inline in the SDK's
     // header but calls gpio_set_input_enabled, which is not -- and a module
@@ -118,12 +124,14 @@ static void adc_pads(void)
     // of a logic level.
     for (uint32_t i = 0; i < ADC_CHANNELS; i++) {
         uint32_t pin = ADC_FIRST_PIN + i;
+        if (K->pin_claim(pin, "adc") < 0) return false;
         hw_write_masked(&padsbank0_hw->io[pin],
                         PADS_BANK0_GPIO0_OD_BITS,
                         PADS_BANK0_GPIO0_OD_BITS | PADS_BANK0_GPIO0_IE_BITS |
                         PADS_BANK0_GPIO0_PUE_BITS | PADS_BANK0_GPIO0_PDE_BITS);
         iobank0_hw->io[pin].ctrl = GPIO_FUNC_NULL << IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB;
     }
+    return true;
 }
 
 static void adc_block(void)
@@ -153,7 +161,7 @@ static int32_t adc_to_stage(uint32_t want)
         stage = 0;
         return 0;
     }
-    if (want >= 1u && stage < 1u) { adc_pads(); stage = 1; }
+    if (want >= 1u && stage < 1u) { if (!adc_pads()) return -1; stage = 1; }
     if (want >= 2u && stage < 2u) { adc_block(); stage = 2; }
     if (want >= 3u && stage < 3u) {
         // Installed once and never given back: the SDK has no way to take an

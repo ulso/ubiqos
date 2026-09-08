@@ -54,6 +54,8 @@ static int32_t leds_configure(const void *config, uint32_t size)
     }
 
     pio_sm_config c = ws2812_program_get_default_config((uint)offset);
+    if (K->pin_claim(LED_PIN, "neopixel") < 0)
+        K->print("neopixel: that pin is already claimed\n");
     sm_config_set_sideset_pins(&c, LED_PIN);
     // Shifted left and pulled automatically at 24 bits, so a pixel is one word
     // in the FIFO with its colour in the high three bytes.

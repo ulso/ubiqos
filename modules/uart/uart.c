@@ -44,6 +44,11 @@ static int32_t term_configure(const void *config, uint32_t size)
     term_tx_pin = c->tx_pin;
 
     K->uart_init(term_uart, c->baud_rate);
+    if (K->pin_claim(term_tx_pin, "term") < 0) {
+        K->print("uart: pin already claimed by ");
+        K->print(K->pin_owner(term_tx_pin));
+        K->print("\n");
+    }
     K->gpio_set_function(term_tx_pin, UART_FUNCSEL_NUM(term_uart, term_tx_pin));
 
     K->print("  uart driver: base 0x");

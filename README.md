@@ -576,6 +576,50 @@ integer shifts. A module is linked without libgcc, so on the RISC-V half of
 this system -- no hardware FPU -- touching a float at all is a call to a
 soft-float routine that is not there.
 
+## Who owns which pin
+
+`gpio` lists all 48 of them with their level and their owner, and that listing
+is the useful part. This board fixes most of its pins in hardware -- eight for
+video, seven for the SD card, six for the WiFi, three for the USB host -- and
+the drivers take several more. "Which pins can I actually use" has a short
+answer: **GP6 to GP10** on the socket header, GP45, GP47, and whichever of
+GP40-43 the ADC is not using.
+
+`kernel/pins.c` holds one table with one owner per pin. What the board fixes is
+claimed at boot; what a driver uses is claimed by that driver when it
+configures itself, so the table says what is true of this boot rather than what
+is true of the board.
+
+```
+myrtos:/> gpio 44 out
+gpio: GP44 belongs to term
+myrtos:/> gpio 24 out
+gpio: GP24 belongs to audio
+```
+
+That is the whole point. GP44 is A4 on the header and looks like a free
+analogue pin; it is the terminal. Driving it would have taken the console away
+and the machine would have gone quiet with nothing to explain it.
+
+It works in both directions. Take GP40 with `gpio` and the ADC is refused when
+it is started, with a message saying to go and look:
+
+```
+myrtos:/> gpio 40 out
+myrtos:/> adc 1
+adc: refused -- one of GP40-43 belongs to something else. Try 'gpio'.
+```
+
+**It is not enforcement.** Nothing stops a driver writing to a pin it never
+claimed -- that wants the memory protection unit and a great deal more. What it
+buys is that the question can be asked and answered.
+
+A driver that finds a pin taken **returns a failure rather than printing a
+warning**. A `print` from inside a system call does not reach the console: the
+message queues behind a USB task that cannot run until the trap returns, and it
+is simply lost. The ADC did that first, and went on to configure a pad it did
+not own, silently -- which is the one thing the registry exists to stop.
+
 ## An interrupt that belongs to a driver
 
 `irq_install` in the kernel API lets a driver module take an interrupt at a

@@ -170,6 +170,7 @@ add_executable(os_kernel
     kernel/scheduler.c 
     kernel/syscalls.c 
     kernel/io.c
+    kernel/pins.c
     kernel/sdlink.c
     kernel/fat32link.c
     kernel/moddir.c
@@ -1178,11 +1179,14 @@ myrtos_add_module(tone modules/tone/tone.c)
 myrtos_add_module(volume modules/volume/volume.c)
 myrtos_add_module(play modules/play/play.c)
 myrtos_add_module(adc modules/adcread/adcread.c)
+myrtos_add_module(gpio modules/gpiocmd/gpiocmd.c)
 myrtos_add_module(crit modules/crit/crit.c)
 
 # I2S out. PIO2 state machine 1 -- the neopixel driver has 0, and a block has
 # four state machines and thirty-two instruction slots between them.
 myrtos_add_module(i2sout modules/audio/audio.c DRIVER)
+myrtos_add_module(gpiodev modules/gpio/gpio.c DRIVER)
+myrtos_add_data_module(gpiodesc modules/gpio/gpio_desc.c)
 myrtos_add_module(adcdev modules/adc/adc.c DRIVER)
 target_include_directories(adcdev_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
@@ -1423,6 +1427,9 @@ set(MYRTOS_RESIDENT
     adcdev
     adcdesc
     adc
+    gpiodev
+    gpiodesc
+    gpio
     crit
     tone
     volume
