@@ -290,6 +290,8 @@ static void help(int32_t c) {
         "  tone     a sine out of the headphone jack\r\n"
         "  volume   0 to 100, or 'volume' to see it\r\n"
         "  play     a WAV file; 'play -i' says what one is without playing\r\n"
+        "  adc      the analogue inputs; 'adc -i' reports its interrupt\r\n"
+        "  crit     hold a kernel critical section, to measure what that costs\r\n"
         "  kill     end a process by number\r\n"
         "  cu       talk to a device, e.g. 'cu /dev/acm' for a serial dongle\r\n"
         "  cat      show a file\r\n"

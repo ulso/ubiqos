@@ -224,9 +224,20 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
-    hardware_i2c tinyusb_device)
+    hardware_i2c hardware_adc tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.
+# What a kernel critical section masks. Empty means PRIMASK, which masks
+# everything and is what this system has always done. A raw Arm priority value
+# -- 0x80 is the sensible one here -- makes it BASEPRI instead, and every
+# interrupt more urgent than that keeps running while the kernel is inside a
+# critical section. See kernel/critical.h for the rule that comes with it, and
+# `crit` and `adc -i` for how to see the difference.
+set(MYRTOS_BASEPRI "" CACHE STRING "priority value to mask down to, e.g. 0x80; empty for PRIMASK")
+if(MYRTOS_BASEPRI)
+    target_compile_definitions(os_kernel PRIVATE MYRTOS_CRITICAL_BASEPRI=${MYRTOS_BASEPRI})
+endif()
+
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card
@@ -1157,16 +1168,24 @@ myrtos_add_module(i2c modules/i2c/i2c.c)
 myrtos_add_module(tone modules/tone/tone.c)
 myrtos_add_module(volume modules/volume/volume.c)
 myrtos_add_module(play modules/play/play.c)
+myrtos_add_module(adc modules/adcread/adcread.c)
+myrtos_add_module(crit modules/crit/crit.c)
 
 # I2S out. PIO2 state machine 1 -- the neopixel driver has 0, and a block has
 # four state machines and thirty-two instruction slots between them.
 myrtos_add_module(i2sout modules/audio/audio.c DRIVER)
+myrtos_add_module(adcdev modules/adc/adc.c DRIVER)
+target_include_directories(adcdev_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(adcdev_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 target_include_directories(i2sout_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(i2sout_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 pico_generate_pio_header(i2sout_app ${CMAKE_CURRENT_SOURCE_DIR}/modules/audio/audio_i2s.pio)
 myrtos_add_data_module(audiodesc modules/audio/audio_desc.c)
+myrtos_add_data_module(adcdesc modules/adc/adc_desc.c)
 
 myrtos_add_module(uart modules/uart/uart.c DRIVER)
 target_include_directories(uart_app PRIVATE
@@ -1392,6 +1411,10 @@ set(MYRTOS_RESIDENT
     i2c
     i2sout
     audiodesc
+    adcdev
+    adcdesc
+    adc
+    crit
     tone
     volume
     play
