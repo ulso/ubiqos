@@ -562,6 +562,20 @@ PIO clock divider (an integer one at 46875 Hz changed nothing), the DAC's
 processing block, its NDAC/MDAC/DOSR split, its soft-stepping, its output
 common mode, and the digital volume from -35 dB to 0.
 
+**It is not this software.** CircuitPython 10.3.0 with Adafruit's own
+`adafruit_tlv320` library, on the same board at the same rate and level, has
+the same fault: 1 kHz clean, 5 and 10 kHz rough. Two independent stacks fail
+identically, so it is the board or the codec.
+
+What they have in common, and what neither does, is the clock. The board
+routes a master clock to the codec on **GP25** -- `I2S_MCLK` in Adafruit's own
+board definition -- and both firmwares ignore it, letting the DAC's PLL lock to
+the bit clock instead. Feeding a real MCLK with the PLL off is the one
+configuration nobody has tried: 48 MHz on GP25 with `NDAC=2, MDAC=5, DOSR=100`
+is exactly 48000 with no PLL at all, and it satisfies both `MDAC x DOSR >= 256`
+and `DAC_MOD_CLK <= 6.758 MHz`. Bit-clock jitter is already excluded, so the
+suspicion is the PLL itself rather than what it is locked to.
+
 The source of the 68176 Hz is unknown. It is not in the ring, it does not
 scale with any clock this code sets, and it is not present at idle -- it
 appears only with signal, so it modulates rather than adds.
