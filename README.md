@@ -576,6 +576,39 @@ integer shifts. A module is linked without libgcc, so on the RISC-V half of
 this system -- no hardware FPU -- touching a float at all is a call to a
 soft-float routine that is not there.
 
+## An interrupt that belongs to a driver
+
+`irq_install` in the kernel API lets a driver module take an interrupt at a
+priority of its choosing. The analogue inputs are the first thing to use it:
+`/dev/adc` runs its handler at **0x40** against `kernel/critical.h`'s threshold
+of **0x80**, so a kernel critical section never masks it.
+
+Measured, with `crit` holding a critical section for 500 microseconds twenty
+times over and `adc -i` reporting the worst gap between two runs of a handler
+that the hardware asks for every 125 microseconds:
+
+| kernel masks with | worst gap | conversions missed |
+|---|---|---|
+| `PRIMASK` (the default) | 555 us | 20 |
+| `BASEPRI` 0x80 (`-DMYRTOS_BASEPRI=0x80`) | **127 us** | **0** |
+
+The test had to make its own critical section. Real ones in this kernel measure
+under three microseconds -- `tlsftest`, a hundred-kilobyte file read and a WAV
+playback all leave the worst gap at 127 to 128 us -- so against real work the
+two mechanisms are indistinguishable, and an experiment that waited for one to
+happen would have said nothing.
+
+**The rule that comes with it.** A handler above the threshold runs while the
+kernel is halfway through its own data structures. It may not make a system
+call, send a message, allocate, or touch anything that reaches the scheduler or
+the I/O manager. The ADC driver's handler reads a hardware FIFO, writes two
+arrays it owns, and stops.
+
+A driver may also be brought up a step at a time -- `adc 1` through `adc 4` --
+which is not fussiness. A driver that takes an interrupt at boot and gets it
+wrong takes the machine down before USB is up, and the only way back in is the
+BOOTSEL button.
+
 ## Status: what a device is, rather than what it carries
 
 `getstat` and `setstat`, from OS-9, and deliberately not Unix's `ioctl`. The

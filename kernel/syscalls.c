@@ -12,6 +12,7 @@
 #include "crashlog.h"
 #include "hardware/structs/rosc.h"
 #include "pico/time.h"
+#include "critical.h"
 
 void myrtos_print(const char *s);
 void myrtos_putc(char c);
@@ -566,6 +567,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 break;
             }
             return myrtos_switch(sp);
+        case SYS_CRITHOLD: {
+            // Deliberately long, which is the opposite of what every other
+            // critical section here tries to be. It is the only way to ask
+            // whether a handler above the threshold really is let through:
+            // real sections are under three microseconds and both mechanisms
+            // look identical against them.
+            uint32_t us = frame->a0;
+            if (us > 5000u) us = 5000u;      // a test, not a way to hang the machine
+            uint32_t st = myrtos_critical_enter();
+            busy_wait_us(us);
+            myrtos_critical_exit(st);
+            frame->a0 = 0;
+            break;
+        }
         case SYS_GETSTAT:
         case SYS_SETSTAT: {
             const myrtos_stat_t *a = (const myrtos_stat_t *)(uintptr_t)frame->a2;
