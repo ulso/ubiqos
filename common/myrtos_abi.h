@@ -161,7 +161,10 @@ typedef struct {
 //
 // Version 8 added driver_alloc, because mem_alloc belongs to a process and a
 // driver's buffer does not.
-#define MYRTOS_KERNEL_API_ABI 8
+//
+// Version 9 added gpio_clock_out, so a driver can give a chip a real clock
+// instead of asking it to make one.
+#define MYRTOS_KERNEL_API_ABI 9
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -303,6 +306,26 @@ typedef struct {
     // This is never given back. A driver's buffer lives as long as the
     // machine, which is the honest lifetime for it.
     void  *(*driver_alloc)(uint32_t bytes);
+
+    // --- version 9 ---------------------------------------------------------
+
+    // A clock, out of a pin, at the frequency asked for or not at all.
+    //
+    // Some chips want a master clock and can otherwise be told to make their
+    // own with an internal PLL. The audio codec on this board is one, and the
+    // second way is what everybody does because it costs a pin -- both myrtos
+    // and Adafruit's own firmware locked its PLL to the bit clock, and both
+    // sound the same kind of wrong above 5 kHz.
+    //
+    // Only some pins can do this: 13, 15, 21, 23, 24 and 25 on this part, one
+    // clock generator each. The frequency has to come out of an integer
+    // division of a clock the machine already has, because the alternative is
+    // a fractional divider, and a fractional divider is jitter -- which is the
+    // thing a chip is being given a clean clock to avoid.
+    //
+    // Answers the frequency it actually made, or -1 if it could not make that
+    // one exactly.
+    int32_t (*gpio_clock_out)(uint32_t pin, uint32_t hz);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one

@@ -536,51 +536,37 @@ interpolation and box average this replaced:
 | 10 kHz, 44100 → 48000 | -72 dB | **-103 dB** |
 | a 30 kHz tone folding down, 96000 → 48000 | -5 dB | **-100 dB** |
 
-### The distortion that is still there
+### The clock the codec is given
 
-The headphone output amplitude-modulates the audio with a disturbance at a
-**fixed 68176 Hz**, which the DAC's sampling folds down to `|68176 - fs|`. The
-sidebands then sit at that, plus and minus the tone. Measured at three rates:
+The codec runs off a **master clock on GP25**, 48 MHz out of `clk_usb` divided
+by one, with its own PLL powered down. `NDAC=2, MDAC=4, DOSR=128` divides that
+to exactly 46875 Hz.
 
-| device rate | sidebands about | sum |
+It did not always. The PLL used to lock to the bit clock, because MCLK costs a
+pin and so nobody wires it -- Adafruit's CircuitPython does the same on this
+board, and **both distorted identically**: a 10 kHz tone came out with
+sidebands 16 dB down, and with a 2.35 kHz component that was most of what
+anybody actually heard. Two independent stacks failing the same way is what
+pointed at the one thing they had in common.
+
+| | codec PLL on BCLK | MCLK, PLL off |
 |---|---|---|
-| 48000 | 20172 | 68172 |
-| 46875 | 21305 | 68180 |
-| 44100 | 24078 | 68178 |
+| sideband at 11314 Hz | -16.0 dB | **-59.2 dB** |
+| sideband at 17822 Hz | -19.6 dB | **-54.9 dB** |
+| audible junk under 9 kHz | -25.7 dB at 2350 Hz | nothing above the mains hum |
 
-Constant to four hertz across nearly four kilohertz of `fs`, and the third row
-was a prediction before it was a measurement -- 24076 calculated, 24078 came
-back. **That is why it gets worse with pitch**: at 1 kHz the sidebands land at
-19 and 21 kHz where nobody hears them; at 10 kHz one of them lands at 14 kHz,
-15 dB down and plainly audible.
+**46875 and not 48000**, because 48 kHz with `DOSR=128` needs a 49.152 MHz
+master clock, and that family cannot be divided out of a 12 MHz crystal at all.
+That is precisely why the board leaves MCLK unconnected in the first place.
+Nothing has to care: `/dev/audio` answers `MYRTOS_SS_RATE` and `play` resamples
+to whatever it says. The PIO divider comes out at exactly 40 as well.
 
-What it is not, each measured rather than reasoned: the resampler (`play -d`
-dumps the ring, and the samples reaching the DAC are a clean sine at exactly
-the file's amplitude), the headphone driver (20 dB of analogue attenuation
-before it leaves the sideband unchanged relative to the tone), the fractional
-PIO clock divider (an integer one at 46875 Hz changed nothing), the DAC's
-processing block, its NDAC/MDAC/DOSR split, its soft-stepping, its output
-common mode, and the digital volume from -35 dB to 0.
+**DOSR must be a multiple of eight.** Interpolation filter A upsamples by eight
+before the rest of the oversampling. A first attempt used `DOSR=100` to hit
+48000 exactly from 48 MHz, and put a comb of 2 kHz sidebands around every tone
+-- worse than the fault it was fixing.
 
-**It is not this software.** CircuitPython 10.3.0 with Adafruit's own
-`adafruit_tlv320` library, on the same board at the same rate and level, has
-the same fault: 1 kHz clean, 5 and 10 kHz rough. Two independent stacks fail
-identically, so it is the board or the codec.
-
-What they have in common, and what neither does, is the clock. The board
-routes a master clock to the codec on **GP25** -- `I2S_MCLK` in Adafruit's own
-board definition -- and both firmwares ignore it, letting the DAC's PLL lock to
-the bit clock instead. Feeding a real MCLK with the PLL off is the one
-configuration nobody has tried: 48 MHz on GP25 with `NDAC=2, MDAC=5, DOSR=100`
-is exactly 48000 with no PLL at all, and it satisfies both `MDAC x DOSR >= 256`
-and `DAC_MOD_CLK <= 6.758 MHz`. Bit-clock jitter is already excluded, so the
-suspicion is the PLL itself rather than what it is locked to.
-
-The source of the 68176 Hz is unknown. It is not in the ring, it does not
-scale with any clock this code sets, and it is not present at idle -- it
-appears only with signal, so it modulates rather than adds.
-
-`play -v` times a playback against the board's own clock and prints what the
+`play -v` times a playback against the board's own clock`play -v` times a playback against the board's own clock and prints what the
 work cost against what the audio is worth. Everything is at or under real time
 except 32-bit float, which is 36% over and stutters; the cause is recorded in
 the source and is not the arithmetic.

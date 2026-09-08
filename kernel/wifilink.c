@@ -97,6 +97,29 @@ static int32_t  k_dma_claim(void) { return dma_claim_unused_channel(false); }
 // never given back, so there is nothing to remember about it.
 static void  *k_driver_alloc(uint32_t n)
 { return myrtos_mem_pool ? myrtos_tlsf_malloc(myrtos_mem_pool, n) : 0; }
+// Integer divisions only, and of the clocks this machine already has. A
+// fractional divider would widen what can be asked for and would put jitter on
+// the answer, which defeats the purpose of handing a chip a clock at all.
+static int32_t k_gpio_clock_out(uint32_t pin, uint32_t hz)
+{
+    if (!hz) return -1;
+    const uint32_t srcs[] = {
+        CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB,      // 48 MHz
+        CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS,
+        CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_XOSC_CLKSRC,  // 12 MHz
+    };
+    const uint32_t rates[] = {
+        clock_get_hz(clk_usb), clock_get_hz(clk_sys), clock_get_hz(clk_ref),
+    };
+    for (uint32_t i = 0; i < 3; i++) {
+        if (!rates[i] || rates[i] % hz) continue;
+        uint32_t div = rates[i] / hz;
+        if (div < 1u || div > 0xffffu) continue;
+        clock_gpio_init_int_frac16((uint)pin, srcs[i], div, 0);
+        return (int32_t)hz;
+    }
+    return -1;
+}
 
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
@@ -141,6 +164,7 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .i2c_read          = k_i2c_read,
     .dma_claim_channel = k_dma_claim,
     .driver_alloc      = k_driver_alloc,
+    .gpio_clock_out    = k_gpio_clock_out,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

@@ -69,7 +69,14 @@
 // would guess -- at 1 kHz the sidebands sit at 19 and 21 kHz where nobody
 // hears them, and at 10 kHz one of them lands at 14 kHz. The source of the
 // 68176 Hz is not known. See the README.
-#define I2S_HZ     48000
+#define I2S_HZ     46875
+
+// The codec's master clock, which this board wires to GP25 and which nothing
+// used until now. 48 MHz is clk_usb divided by one -- an integer division of a
+// clock the machine already has, so it carries no divider jitter of its own --
+// and it is under the 50 MHz the part allows on that pin.
+#define I2S_MCLK   25u
+#define MCLK_HZ    48000000u
 
 static const myrtos_kernel_api_t *K;
 static bool ready;
@@ -159,16 +166,48 @@ typedef struct { uint8_t page, reg, val, wait_ms; } dac_step_t;
 static const dac_step_t dac_init[] = {
     { 0, 0x01, 0x01, 10 },   // software reset, and give it a moment
 
-    // Clocks. PLL from BCLK, codec from the PLL.
-    { 0, 0x04, 0x07,  0 },
-    { 0, 0x05, 0x91,  0 },   // PLL on, P=1, R=1
-    { 0, 0x06, 0x40,  0 },   // J=64
+    // Clocks. Straight off MCLK, with the codec's own PLL powered down.
+    //
+    // It was not: the PLL locked to BCLK, because MCLK costs a pin and so
+    // nobody wires it. That is the one thing this driver had in common with
+    // Adafruit's CircuitPython while both distorted the same way above 5 kHz,
+    // on the same board, at the same rate -- and everything else about the two
+    // is different, which is what makes the clock the thing to change.
+    //
+    // 48 MHz over NDAC=2, MDAC=4, DOSR=128 is exactly 46875, and every
+    // constraint has room: MDAC x DOSR / 32 is 16 against the 8 that PRB_P1
+    // needs, DAC_MOD_CLK 6 MHz against a 6.758 limit, DAC_CLK 24 MHz against
+    // 49.152.
+    //
+    // 46875 and not 48000 because 48 kHz here would want DOSR = 128 over
+    // NDAC x MDAC = 7.8125, and there is no such divider. Getting DOSR=128 at
+    // 48 kHz needs a 49.152 MHz master clock, which is a 12.288 MHz family and
+    // cannot be divided out of a 12 MHz crystal at all -- which is exactly why
+    // this board leaves MCLK unconnected and lets the codec's own PLL make
+    // that family for itself.
+    //
+    // DOSR has to be a multiple of eight. Interpolation filter A upsamples by
+    // eight before the rest of the oversampling, and 100 -- which is what
+    // 48 kHz allowed -- put a comb of two-kilohertz sidebands around every
+    // tone. That was audible and measurable and entirely self-inflicted.
+    //
+    // Nothing has to care about the odd rate. /dev/audio answers
+    // MYRTOS_SS_RATE and play resamples to whatever it says. The PIO divider
+    // comes out at exactly 40 here as well, which costs nothing and removes
+    // the one bit of jitter this driver was making itself.
+    //
+    // The old chain, kept because it worked and a board without MCLK would
+    // need it: 04=07 and 05=91 put PLL_CLKIN on BCLK at 32 x fs with P=1 R=1,
+    // 06=40 for J=64, then 0b=88, 0c=82, 0e=80 for NDAC=8, MDAC=2, DOSR=128.
+    { 0, 0x04, 0x00,  0 },   // CODEC_CLKIN = MCLK, no PLL in the path
+    { 0, 0x05, 0x11,  0 },   // PLL powered down
+    { 0, 0x06, 0x40,  0 },   // J, which the PLL is no longer using
     { 0, 0x07, 0x00,  0 },   // D=0
     { 0, 0x08, 0x00, 10 },
-    { 0, 0x0b, 0x88,  0 },   // NDAC on, 8
-    { 0, 0x0c, 0x82,  0 },   // MDAC on, 2
+    { 0, 0x0b, 0x82,  0 },   // NDAC on, 2
+    { 0, 0x0c, 0x84,  0 },   // MDAC on, 4
     { 0, 0x0d, 0x00,  0 },   // DOSR high
-    { 0, 0x0e, 0x80,  0 },   // DOSR = 128
+    { 0, 0x0e, 0x80,  0 },   // DOSR = 128, and it must be a multiple of 8
 
     { 0, 0x1b, 0x00,  0 },   // I2S, 16 bit, and we are the master of the clocks
 
@@ -355,6 +394,17 @@ static int32_t audio_configure(const void *config, uint32_t size)
     // The clocks are running now, which is the order the DAC needs: its PLL
     // locks to BCLK, so it cannot be configured -- or even report that it is
     // well -- until something is driving the bus.
+    // Before a single register is written. The codec's reset and its clocked
+    // blocks both want MCLK present, and I2C would answer either way -- so a
+    // sequence that configured first and clocked second would look like it had
+    // worked.
+    int32_t got = K->gpio_clock_out(I2S_MCLK, MCLK_HZ);
+    if (got != (int32_t)MCLK_HZ) {
+        K->print("audio: no master clock on GP25\n");
+        return -1;
+    }
+    K->busy_wait_us(1000);
+
     if (!dac_configure()) {
         K->print("  audio driver: no DAC answering at 0x18\n");
         // The state machine stays running. A board with no codec still has an
