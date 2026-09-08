@@ -770,6 +770,12 @@ typedef struct {
 // Coming up inert and being started from the shell makes a bad experiment cost
 // a power cycle instead.
 #define MYRTOS_SS_RUN      0x0201u
+// A pin below 32 for the handler to toggle on every run, or 0xffffffff for
+// none. It exists so that the latency a driver measures with the board's own
+// clock can be checked from outside with an oscilloscope, which is a different
+// instrument answering the same question -- and the first one was measuring
+// itself.
+#define MYRTOS_SS_IRQPIN   0x0202u
 
 // Digital I/O. A pin is set up once with MODE and then driven with LEVEL; a
 // read of the device gives every pin's input level as two 32-bit words, low

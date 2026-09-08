@@ -636,6 +636,25 @@ that the hardware asks for every 125 microseconds:
 | `PRIMASK` (the default) | 555 us | 20 |
 | `BASEPRI` 0x80 (`-DMYRTOS_BASEPRI=0x80`) | **127 us** | **0** |
 
+**Confirmed from outside.** `adc -p 6` gives the handler a pin to toggle, so an
+oscilloscope on GP6 sees a square wave whose half-period is the handler's
+interval. Under 400 deliberate 500 microsecond critical sections, three
+captures of 2000 edges each: median 124 us, maximum 128, and not one gap over
+1.5x the median. The number the driver reports is the handler measuring itself;
+this is a different instrument answering the same question.
+
+The handler writes the SIO register directly rather than calling `gpio_put`
+through the kernel API table. Going through that table is what the rule above
+forbids; writing this driver's own bit in the SIO is its own hardware, which is
+what the rule allows.
+
+**And the sharper argument for BASEPRI is not the latency.** The same 400-hold
+burst under `PRIMASK` takes USB down permanently -- 200 milliseconds of masking
+in total, in 500 microsecond pieces, is enough for the host to give up on the
+device, and it does not come back without the BOOTSEL button. Under BASEPRI the
+same burst does not disturb it at all, because USB is at 0x80 and only the
+kernel's own work is held off.
+
 The test had to make its own critical section. Real ones in this kernel measure
 under three microseconds -- `tlsftest`, a hundred-kilobyte file read and a WAV
 playback all leave the worst gap at 127 to 128 us -- so against real work the

@@ -26,6 +26,7 @@
 #include "hardware/timer.h"
 #include "hardware/structs/padsbank0.h"
 #include "hardware/structs/iobank0.h"
+#include "hardware/structs/sio.h"
 
 static const myrtos_kernel_api_t *K;
 
@@ -53,8 +54,15 @@ static volatile uint32_t worst_gap_us;  // the number this was all built for
 static volatile uint32_t best_gap_us = 0xffffffffu;
 static uint32_t next_channel;
 
+// A single register store, and deliberately not K->gpio_put. Going through the
+// kernel API table from a handler above the threshold is the thing the rule
+// beside irq_install forbids; writing this driver's own bit in the SIO is its
+// own hardware, which is what the rule allows. See the README.
+static volatile uint32_t scope_mask;
+
 static void adc_handler(void)
 {
+    if (scope_mask) sio_hw->gpio_togl = scope_mask;
     // The clock first and the work second: what is being measured is when the
     // handler ran, not how long it took.
     uint32_t now = timer_hw->timerawl;
@@ -227,6 +235,27 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
 // measurement is that one number.
 static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
 {
+    if (code == MYRTOS_SS_IRQPIN) {
+        if (!data || len != 4) return -1;
+        uint32_t pin = *(const uint32_t *)data;
+        if (pin == 0xffffffffu) {
+            if (scope_mask) {
+                for (uint32_t i = 0; i < 32u; i++)
+                    if (scope_mask == (1u << i)) K->pin_release(i);
+            }
+            scope_mask = 0;
+            return 0;
+        }
+        // Below 32 only: the SIO splits its registers there and one store is
+        // the whole point of this. And claimed like any other pin -- a
+        // diagnostic is not a reason to take one from somebody.
+        if (pin >= 32u) return -1;
+        if (K->pin_claim(pin, "adc scope") < 0) return -1;
+        K->gpio_init(pin);
+        K->gpio_set_dir(pin, true);
+        scope_mask = 1u << pin;
+        return 0;
+    }
     if (code == MYRTOS_SS_RUN) {
         if (!data || len != 4) return -1;
         return adc_to_stage(*(const uint32_t *)data);

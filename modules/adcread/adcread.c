@@ -22,11 +22,19 @@ static void u32(myrtos_line_t *l, const char *label, uint32_t v, const char *tai
     myrtos_line_str(l, tail);
 }
 
+static uint32_t to_u32(const char *p, bool *ok)
+{
+    uint32_t v = 0, n = 0;
+    for (; *p >= '0' && *p <= '9'; p++, n++) v = v * 10u + (uint32_t)(*p - '0');
+    if (!n || *p) *ok = false;
+    return v;
+}
+
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: adc [-o | -f | -i | -r]\n\nWith no argument, the four analogue inputs in millivolts.\n"
             "A digit brings it up a step at a time: 1 pads, 2 the ADC block,\n3 the interrupt installed, 4 converting. 0 stops.\n"
-            "-i reports the interrupt; -r clears its worst case.\n"))
+            "-i reports the interrupt; -r clears its worst case.\n-p N gives the handler a pin to toggle, for a scope.\n"))
         return;
 
     int32_t fd = myrtos_open("/dev/adc");
@@ -37,6 +45,16 @@ void module_main(int argc, char **argv) {
     // A digit is how far to bring the driver up: 1 pads, 2 the ADC block,
     // 3 the interrupt installed, 4 converting. Each includes the ones before.
     bool step  = argc > 1 && argv[1][0] >= '0' && argv[1][1] == 0;
+
+    // adc -p N gives the handler a pin to toggle; adc -p alone takes it back.
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'p') {
+        uint32_t pin = 0xffffffffu;
+        if (argc > 2) { bool k = true; pin = to_u32(argv[2], &k); if (!k) pin = 0xffffffffu; }
+        if (myrtos_setstat(fd, MYRTOS_SS_IRQPIN, &pin, sizeof pin) < 0)
+            myrtos_write_str(MYRTOS_STDERR, "adc: that pin is taken, or is not below 32\n");
+        myrtos_close(fd);
+        return;
+    }
 
     if (step) {
         uint32_t v = (uint32_t)(argv[1][0] - '0');
