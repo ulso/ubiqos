@@ -340,13 +340,34 @@ typedef struct {
     // see kernel/critical.h, where the same numbers decide what a critical
     // section is allowed to mask.
     //
-    // A HANDLER MORE URGENT THAN MYRTOS_CRITICAL_BASEPRI RUNS WHILE THE KERNEL
-    // IS HALFWAY THROUGH ITS OWN DATA STRUCTURES. It may not make a system
-    // call, send a message, allocate, or touch anything that reaches the
-    // scheduler or the I/O manager. It owns its hardware and its own memory
-    // and hands work over through something lock-free. That rule is not
-    // checkable here and breaking it gives corruption that looks like anything
-    // but its cause.
+    // A HANDLER MORE URGENT THAN THE THRESHOLD MAY NOT CALL ANYTHING IN THIS
+    // SYSTEM. Not one function. Specifically:
+    //
+    //   - no system call, so none of myrtos_read, myrtos_write, myrtos_open,
+    //     myrtos_sleep or anything else in this header that traps;
+    //   - no messages, no pulses;
+    //   - no allocation, and no free;
+    //   - nothing through this table, print included -- it reaches the console
+    //     driver and the I/O manager;
+    //   - no printing at all, which is the one people reach for while
+    //     debugging and the one that corrupts what is being debugged.
+    //
+    // The reason is that the kernel protects its data with critical sections,
+    // and a critical section is exactly what such a handler ignores: it runs
+    // while the process table, the path table or the allocator's free lists
+    // are half-updated. Touching them then corrupts them, and the corruption
+    // surfaces somewhere else entirely and much later, looking like anything
+    // but its cause. Nothing here can check this rule for you.
+    //
+    // What a handler may do is its own hardware and its own memory. It hands
+    // work out through something lock-free -- an aligned 32-bit store is
+    // atomic on both machines, which is enough for a latest value or a counter
+    // -- and a reader picks it up later in thread context, where all of the
+    // above is allowed again. See the README under "What a handler above the
+    // kernel may not do", and modules/adc for the whole shape of one.
+    //
+    // A handler that seems to need a lock is at the wrong priority. Put it at
+    // 0x80 with everything else, where a critical section does hold it off.
     //
     // A driver module may have plain writable statics -- it is instantiated
     // once, by the kernel -- so a handler keeps its state there rather than in

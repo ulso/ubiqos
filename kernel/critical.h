@@ -44,10 +44,15 @@ typedef uint32_t myrtos_critical_t;
 // threshold configMAX_SYSCALL_INTERRUPT_PRIORITY and the rule there is the
 // same. Breaking it gives corruption that looks like anything but its cause.
 //
-// Nothing needs this yet. It is here so that the day a driver does -- something
-// with a hard latency bound, where being held off by an allocator's walk is not
-// acceptable -- the decision is one symbol rather than a sweep through the
-// kernel.
+// ON BY DEFAULT since the ADC driver, which was the first thing to want it.
+// CMakeLists.txt sets MYRTOS_BASEPRI to 0x80; setting it empty goes back to
+// PRIMASK. Measured against a deliberately long critical section, a handler at
+// 0x40 saw 127 microseconds of worst-case latency where PRIMASK gave it 555 --
+// `crit 500 20` then `adc -i` is the whole experiment.
+//
+// The rule above is written out for driver authors beside irq_install in
+// common/myrtos_abi.h and in the README, because this file is not one they
+// read.
 #if defined(MYRTOS_CRITICAL_BASEPRI) && (defined(__arm__) || defined(__thumb__))
 
 static inline myrtos_critical_t myrtos_critical_enter(void)

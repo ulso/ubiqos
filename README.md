@@ -598,11 +598,48 @@ playback all leave the worst gap at 127 to 128 us -- so against real work the
 two mechanisms are indistinguishable, and an experiment that waited for one to
 happen would have said nothing.
 
-**The rule that comes with it.** A handler above the threshold runs while the
-kernel is halfway through its own data structures. It may not make a system
-call, send a message, allocate, or touch anything that reaches the scheduler or
-the I/O manager. The ADC driver's handler reads a hardware FIFO, writes two
-arrays it owns, and stops.
+### What a handler above the kernel may not do
+
+**A handler more urgent than the threshold may not call anything in this system.
+Not one function. That is the price of never being masked, and it is not
+negotiable.**
+
+Concretely, from such a handler:
+
+- **No system calls.** Not `myrtos_write`, not `myrtos_read`, not `myrtos_open`,
+  not `myrtos_sleep`. A system call is a trap, and traps here are how the kernel
+  is entered from a thread -- taking one from inside an interrupt is not a
+  smaller version of that, it is a different thing entirely.
+- **No messages.** `myrtos_send`, `myrtos_receive`, `myrtos_reply` and
+  `myrtos_pulse` all walk the process table.
+- **No allocation.** `mem_alloc`, `driver_alloc` and `free` walk the allocator's
+  own structures, which is very likely what the kernel was doing when it was
+  interrupted.
+- **Nothing through the kernel API table.** `print` included: it reaches the
+  console driver and the I/O manager.
+- **No printing at all**, which is the one people reach for while debugging and
+  the one that will corrupt the thing being debugged.
+
+What a handler may do is its own hardware, its own memory, and nothing else.
+The ADC driver's handler is the whole shape of it: read the FIFO, write two
+arrays this driver owns, return. A reader picks those arrays up later, in
+ordinary thread context, where every one of the above is allowed again.
+
+**Why the rule exists.** The kernel protects its data with critical sections,
+and a critical section is exactly what a handler above the threshold ignores.
+So such a handler runs while the process table, the path table or the
+allocator's free lists are half-updated. Touching them then corrupts them, and
+the corruption surfaces somewhere else entirely, minutes later, looking like
+anything but its cause. FreeRTOS calls the same threshold
+`configMAX_SYSCALL_INTERRUPT_PRIORITY` and draws the same line for the same
+reason.
+
+**Handing work out.** Something lock-free, and simple enough to be obviously
+so. A single aligned 32-bit store is atomic on both machines here, which is
+enough for a latest-value or a counter -- that is all the ADC driver needs. A
+ring wants a little more care and no locks either. If a handler seems to need a
+lock, it is at the wrong priority: put it at 0x80 with everything else, where a
+critical section does hold it off and the rules are the ordinary ones.
 
 A driver may also be brought up a step at a time -- `adc 1` through `adc 4` --
 which is not fussiness. A driver that takes an interrupt at boot and gets it

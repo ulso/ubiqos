@@ -227,13 +227,22 @@ target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardwar
     hardware_i2c hardware_adc tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.
-# What a kernel critical section masks. Empty means PRIMASK, which masks
-# everything and is what this system has always done. A raw Arm priority value
-# -- 0x80 is the sensible one here -- makes it BASEPRI instead, and every
-# interrupt more urgent than that keeps running while the kernel is inside a
-# critical section. See kernel/critical.h for the rule that comes with it, and
-# `crit` and `adc -i` for how to see the difference.
-set(MYRTOS_BASEPRI "" CACHE STRING "priority value to mask down to, e.g. 0x80; empty for PRIMASK")
+# What a kernel critical section masks, and it is BASEPRI by default.
+#
+# 0x80 is the threshold, and it is chosen rather than found: every peripheral
+# the SDK sets up takes 0x80 and the scheduler sits at 0xF0, so masking down to
+# 0x80 masks everything that exists while leaving 0x00 to 0x70 entirely free
+# for a driver that needs to outrank the kernel. Measured against a deliberate
+# 500 us critical section, a handler at 0x40 sees a worst-case latency of 127
+# microseconds where PRIMASK gave it 555 -- see `crit` and `adc -i`.
+#
+# Set it empty to go back to PRIMASK, which masks everything and is what this
+# system did before. Arm only: RISC-V has no equivalent and takes the hammer
+# either way, which kernel/critical.h decides for itself.
+#
+# THE RULE THAT COMES WITH IT is in the README under "What a handler above the
+# kernel may not do", and it is not optional.
+set(MYRTOS_BASEPRI "0x80" CACHE STRING "priority value to mask down to; empty for PRIMASK")
 if(MYRTOS_BASEPRI)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_CRITICAL_BASEPRI=${MYRTOS_BASEPRI})
 endif()
