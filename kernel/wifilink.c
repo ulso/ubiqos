@@ -17,6 +17,7 @@
 #include "hardware/i2c.h"
 #include "hardware/dma.h"
 #include "hardware/clocks.h"
+#include "hardware/irq.h"
 #include "../common/myrtos_abi.h"
 #include "moddir.h"
 #include "sdcard.h"
@@ -121,6 +122,19 @@ static int32_t k_gpio_clock_out(uint32_t pin, uint32_t hz)
     return -1;
 }
 
+// Refused rather than shared. irq_set_exclusive_handler would panic the machine
+// on a second claim, and a driver that cannot have the interrupt it wants
+// should be told so and carry on without it.
+static int32_t k_irq_install(uint32_t irq, void (*handler)(void), uint32_t priority)
+{
+    if (irq >= (uint32_t)NUM_IRQS || !handler) return -1;
+    if (irq_get_exclusive_handler((uint)irq)) return -1;
+    irq_set_priority((uint)irq, (uint8_t)priority);
+    irq_set_exclusive_handler((uint)irq, handler);
+    irq_set_enabled((uint)irq, true);
+    return 0;
+}
+
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
 const myrtos_kernel_api_t myrtos_kernel_api = {
@@ -165,6 +179,7 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .dma_claim_channel = k_dma_claim,
     .driver_alloc      = k_driver_alloc,
     .gpio_clock_out    = k_gpio_clock_out,
+    .irq_install       = k_irq_install,
 };
 
 // The entries wifilib publishes, in the order its table documents them.

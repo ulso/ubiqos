@@ -164,7 +164,9 @@ typedef struct {
 //
 // Version 9 added gpio_clock_out, so a driver can give a chip a real clock
 // instead of asking it to make one.
-#define MYRTOS_KERNEL_API_ABI 9
+//
+// Version 10 added irq_install, so a driver can own an interrupt.
+#define MYRTOS_KERNEL_API_ABI 10
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
@@ -326,6 +328,34 @@ typedef struct {
     // Answers the frequency it actually made, or -1 if it could not make that
     // one exactly.
     int32_t (*gpio_clock_out)(uint32_t pin, uint32_t hz);
+
+    // --- version 10 --------------------------------------------------------
+
+    // An interrupt of the driver's own, at a priority of its choosing.
+    //
+    // The priority is a raw Arm priority register value: this part has four
+    // priority bits, so the levels are 0x00, 0x10 ... 0xF0, and a SMALLER
+    // number is more urgent. Every peripheral the SDK sets up takes 0x80 and
+    // the scheduler sits at 0xF0, which leaves 0x00 to 0x70 entirely empty --
+    // see kernel/critical.h, where the same numbers decide what a critical
+    // section is allowed to mask.
+    //
+    // A HANDLER MORE URGENT THAN MYRTOS_CRITICAL_BASEPRI RUNS WHILE THE KERNEL
+    // IS HALFWAY THROUGH ITS OWN DATA STRUCTURES. It may not make a system
+    // call, send a message, allocate, or touch anything that reaches the
+    // scheduler or the I/O manager. It owns its hardware and its own memory
+    // and hands work over through something lock-free. That rule is not
+    // checkable here and breaking it gives corruption that looks like anything
+    // but its cause.
+    //
+    // A driver module may have plain writable statics -- it is instantiated
+    // once, by the kernel -- so a handler keeps its state there rather than in
+    // thread-local storage, which in interrupt context belongs to whatever
+    // thread happened to be interrupted.
+    //
+    // Answers 0, or -1 if the number is not an interrupt or somebody already
+    // holds it.
+    int32_t (*irq_install)(uint32_t irq, void (*handler)(void), uint32_t priority);
 } myrtos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
@@ -645,6 +675,13 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_CATCHINTR 57u   // a0 = pulse type, 0 to go back to being killed
 #define SYS_GETSTAT   61u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
 #define SYS_SETSTAT   62u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
+// a0 = microseconds to hold a kernel critical section. It exists to test the
+// one thing that cannot be tested by waiting for it to happen: whether an
+// interrupt more urgent than MYRTOS_CRITICAL_BASEPRI really does run while the
+// kernel is inside one. Real critical sections here measure under three
+// microseconds, which is too short to tell the two mechanisms apart -- so the
+// experiment has to make its own.
+#define SYS_CRITHOLD  63u
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
@@ -677,6 +714,28 @@ typedef struct {
 // hardware is actually being fed, short of a probe on the I2S pins, and it is
 // what separates a fault in the writer from a fault in the codec.
 #define MYRTOS_SS_RINGDUMP 0x0101u  // the whole ring, as bytes
+
+// A driver that owns an interrupt, reporting on how well it is being let run.
+// getstat fills the struct; setstat with any data resets the worst case, which
+// otherwise stands for ever after one early stall and makes every later
+// measurement that same number.
+#define MYRTOS_SS_IRQSTATS 0x0200u  // myrtos_irqstats_t
+// setstat: uint32_t, non-zero to start the interrupt and the conversions.
+//
+// A driver that takes an interrupt at boot and gets it wrong takes the machine
+// with it before USB is up, and the only way back in is the BOOTSEL button.
+// Coming up inert and being started from the shell makes a bad experiment cost
+// a power cycle instead.
+#define MYRTOS_SS_RUN      0x0201u
+
+typedef struct {
+    uint32_t taken;         // how many times the handler has run
+    uint32_t overruns;      // times it found more than one thing waiting
+    uint32_t worst_gap_us;  // longest it was ever kept from running
+    uint32_t best_gap_us;
+    uint32_t expected_us;   // what the hardware asks for
+    uint32_t priority;      // its raw Arm priority value
+} myrtos_irqstats_t;
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -1757,6 +1816,13 @@ static inline int32_t myrtos_setstat(int32_t path, uint32_t code, const void *da
 {
     myrtos_stat_t s = { (void *)data, len };
     return myrtos_syscall(SYS_SETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
+}
+
+// Holds a kernel critical section for that many microseconds. A test
+// instrument, and nothing else should call it.
+static inline void myrtos_crit_hold(uint32_t us)
+{
+    myrtos_syscall(SYS_CRITHOLD, us, 0, 0);
 }
 
 static inline int32_t myrtos_close(int32_t path)
