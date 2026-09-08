@@ -785,6 +785,37 @@ typedef struct {
 // getstat with this one names the owner instead of refusing silently: the
 // caller puts the pin in .pin and gets up to .value bytes of name back.
 #define MYRTOS_SS_GPIO_OWNER 0x0302u   // myrtos_gpio_owner_t
+// Every pin's input level at once, as a uint64_t, low pin in bit 0. A snapshot
+// rather than a stream: reading the device gives edge events instead.
+#define MYRTOS_SS_GPIO_LEVELS 0x0303u  // uint64_t
+// Watch a pin for edges, or stop. Reading the device then gives one
+// myrtos_gpio_event_t per edge, and a read blocks until there is one -- which
+// is how a program waits for a button without spinning on it.
+#define MYRTOS_SS_GPIO_WATCH 0x0304u   // myrtos_gpio_watch_t
+
+// What the hardware and the handler actually think, for when a watch produces
+// nothing and the question is which half is wrong.
+#define MYRTOS_SS_GPIO_DEBUG 0x0305u   // uint32_t[6]: inte, intr, ints, calls, pending, dropped
+
+#define MYRTOS_GPIO_FALL 1u
+#define MYRTOS_GPIO_RISE 2u
+
+typedef struct {
+    uint32_t pin;
+    uint32_t edges;        // MYRTOS_GPIO_FALL, MYRTOS_GPIO_RISE, both, or 0 to stop
+    // How long after an accepted edge to ignore that pin. A mechanical button
+    // makes a burst of edges over several milliseconds and there is no
+    // arrangement of hardware here that removes them; 20 ms is the usual
+    // answer and 0 means take everything, which is what a clean signal wants.
+    uint32_t debounce_ms;
+} myrtos_gpio_watch_t;
+
+typedef struct {
+    uint8_t  pin;
+    uint8_t  level;        // what it became
+    uint16_t reserved;
+    uint32_t at_ms;        // when, by the same clock as myrtos_ticks_now
+} myrtos_gpio_event_t;
 
 #define MYRTOS_PIN_IN        0u
 #define MYRTOS_PIN_IN_PULLUP 1u

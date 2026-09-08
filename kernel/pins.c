@@ -31,8 +31,12 @@ static const char *owner[MYRTOS_PINS];
 // The pins a DRIVER uses are not here. Those are claimed by the driver that
 // uses them, at the moment it configures itself, so that the table says what
 // is true of this boot rather than what was true of the board.
+// The buttons are NOT here, and that distinction is the point: nothing owns
+// them. They are three switches wired to three pins, and a program that wants
+// to read one should be able to. Ownership is about who would be broken if the
+// pin changed under them -- what a pin is CALLED on the board is a different
+// fact and lives in the gpio driver, which is what prints it.
 static const struct { uint8_t pin; const char *who; } board_fixed[] = {
-    { 0, "boot/button1" }, { 4, "button2" }, { 5, "button3" },
     { 1, "usb host" }, { 2, "usb host" }, { 11, "usb 5V" },
     { 3, "wifi" }, { 22, "wifi reset" }, { 28, "wifi" }, { 30, "wifi" },
     { 31, "wifi" }, { 46, "wifi" },

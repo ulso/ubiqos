@@ -610,6 +610,42 @@ myrtos:/> adc 1
 adc: refused -- one of GP40-43 belongs to something else. Try 'gpio'.
 ```
 
+### Waiting for a button
+
+```
+myrtos:/> gpio 4 up
+myrtos:/> gpio watch 4
+watching GP4, ctrl-C to stop
+GP4 pressed at 102756 ms
+GP4 released at 104050 ms
+```
+
+`gpio watch PIN [DEBOUNCE_MS]` **blocks**. It does not poll: the driver's
+`readable` tells the scheduler whether an event is waiting, the scheduler runs
+the process again when one is, and in between it uses no time at all. The
+handler never wakes anybody -- it may not, and it does not need to.
+
+**The handler is at 0x80, not 0x40.** The ADC's outranks the kernel because it
+has a deadline; a button does not. At the ordinary peripheral level a kernel
+critical section does hold this off, which is right: a few microseconds late to
+a button press is not measurable, and the rules that come with outranking the
+kernel are not worth taking on for nothing.
+
+Debouncing is in the handler, 20 ms by default. Measured on this board it never
+fires -- eight presses gave sixteen interrupts and sixteen events, so the
+switches do not bounce measurably and there is presumably an RC filter on them.
+The mechanism is there for a switch that does.
+
+Ownership and what a pin is *called* are different questions. The buttons own
+nothing -- they are three switches on three pins, and a program that wants one
+should have it -- so they are not in the board's claim table. What they are
+called lives in the driver, and the listing shows it in brackets:
+
+```
+GP 4  1  (button2)     free, and named
+GP44  1  term          owned
+```
+
 **It is not enforcement.** Nothing stops a driver writing to a pin it never
 claimed -- that wants the memory protection unit and a great deal more. What it
 buys is that the question can be asked and answered.

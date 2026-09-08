@@ -1186,6 +1186,10 @@ myrtos_add_module(crit modules/crit/crit.c)
 # four state machines and thirty-two instruction slots between them.
 myrtos_add_module(i2sout modules/audio/audio.c DRIVER)
 myrtos_add_module(gpiodev modules/gpio/gpio.c DRIVER)
+target_include_directories(gpiodev_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(gpiodev_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 myrtos_add_data_module(gpiodesc modules/gpio/gpio_desc.c)
 myrtos_add_module(adcdev modules/adc/adc.c DRIVER)
 target_include_directories(adcdev_app PRIVATE
