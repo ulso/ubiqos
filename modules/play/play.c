@@ -1,4 +1,5 @@
 #include "../../common/myrtos_abi.h"
+#include "sinc_table.h"
 
 // play -- a WAV file out of /dev/audio.
 //
@@ -12,18 +13,30 @@
 // MYRTOS_SS_RATE -- instead of having 48000 written in a second time. Point it
 // at a device that runs at 32000 and it plays there.
 //
-// Linear interpolation, which is the honest description of what this does. It
-// is not a good resampler: the error it makes lands as quiet high-frequency
-// junk near the top of the band, worst on material with a lot of treble. It is
-// two multiplies a sample and needs no tables, and going 44100 to 48000 is a
-// ratio near one, where linear interpolation is at its least bad. A proper
-// polyphase filter is the upgrade, and it wants somewhere to keep its
-// coefficients.
+// The resampler is a polyphase FIR: a Kaiser-windowed sinc, ten zero crossings
+// each side, sampled 64 times between each pair with the fraction interpolated
+// between those. tools/make_sinc.py generates the coefficients, because a
+// module has no floating point to compute them with -- the RISC-V half of this
+// system has no FPU and no libgcc to fake one -- and no libm to ask for a sine.
+//
+// The filter stretches with the ratio. Upward it is a fixed 20 taps; downward
+// the impulse response is scaled by the ratio, which moves the cutoff down to
+// the OUTPUT Nyquist, and that is the whole trick -- it is what stops content
+// above the new Nyquist folding back into the band, and what the linear
+// interpolation and box average that came before could not do.
 
 MYRTOS_MEM_SIZE(24576);
 
 #define IN_FRAMES   512u          // read this many source frames at a time
 #define OUT_FRAMES  704u          // more than IN_FRAMES: upsampling makes more
+
+// How far the filter reaches, in source frames, on each side of an output.
+// That is SINC_NZERO / time_scale, so it grows as the rate falls; 8 is the
+// steepest decimation the filter is stretched for, and beyond it the cutoff
+// stops following the rate down. 8:1 is 192000 into a 24000 Hz device, which
+// no file here is going to ask for.
+#define MAX_DECIM   8u
+#define GUARD       (SINC_NZERO * MAX_DECIM)
 
 // --- READING NUMBERS OUT OF THE FILE ---------------------------------------
 // A byte at a time, because a WAV's fields are little-endian and packed with no
@@ -40,34 +53,50 @@ static bool tag_is(const uint8_t *p, const char *s) {
         && p[2] == (uint8_t)s[2] && p[3] == (uint8_t)s[3];
 }
 
-// One sample, whatever the file keeps it as, as the int16 the device wants.
+// A 32-bit IEEE float as the int16 the device wants, decoded with integer
+// arithmetic on purpose.
 //
-// The 32-bit float case is decoded with integer arithmetic on purpose. A module
-// is linked without libgcc, so on a machine with no hardware FPU -- which is
-// the RISC-V half of this system -- touching a float at all is a call to a
-// soft-float routine that is not there, and the failure is at link time in a
-// build nobody may have run. Taking the exponent and mantissa apart by hand
-// costs a few shifts and works the same on both.
-static inline int16_t sample_of(const uint8_t *p, uint32_t bits, bool is_float)
+// UNEXPLAINED, and measured with `play -v` on the board's own clock: this loop
+// costs about 400 cycles a sample, where the 32-bit integer loop beside it --
+// same reads, same stores, same count, four instructions instead of sixteen --
+// costs a handful. A second of 32-bit float audio takes 1360 ms of work and so
+// stutters; the same file with its format tag saying integer takes 1080. Five
+// explanations were tried and measured and none of them was it: byte-wise
+// loads (made them word loads, no change), the branches (made it branchless,
+// no change), the layout on the card (played a fresh copy, no change), the
+// hot path branching across a literal pool (marked the clamps unlikely, no
+// change), and my own timing (an SD card left slow by usbdisk, which did
+// explain one contradictory run and nothing else). What is left is instruction
+// fetch, since a module is executed through a cache, but that is a hypothesis
+// and not a measurement, and it is written here as one.
+//
+// Every other format plays at or under real time. 32-bit float is a production
+// format and rare in delivered audio, which is why this is recorded rather
+// than worked around. A module is linked without libgcc, so on a machine
+// with no hardware FPU -- which is the RISC-V half of this system -- touching a
+// float at all is a call to a soft-float routine that is not there. Taking the
+// exponent and mantissa apart by hand costs a few shifts and works on both.
+static inline int16_t float_sample(uint32_t u)
 {
-    if (bits == 8u) return (int16_t)(((int32_t)p[0] - 128) << 8);   // unsigned, 128 is silence
-    if (bits == 16u) return (int16_t)(uint16_t)u16le(p);
-    if (bits == 24u) return (int16_t)(uint16_t)u16le(p + 1);        // the top two bytes
-    if (!is_float) return (int16_t)(uint16_t)u16le(p + 2);          // 32-bit int, likewise
-
-    uint32_t u = u32le(p);
-    int32_t  exp = (int32_t)((u >> 23) & 0xffu);
-    if (!exp) return 0;                          // zero and denormals: silence
-    int32_t  m = (int32_t)((u & 0x7fffffu) | 0x800000u);
-    // The value is m * 2^(exp-127-23), and the sample wanted is that times
-    // 32768. Nan and infinity fall out as the clamp below, which is the right
-    // answer for a file that should not have contained them.
-    int32_t  sh = exp - 127 - 23 + 15;
-    int32_t  v = (sh >= 0) ? ((sh < 24) ? (m << sh) : 0x7fffffff)
-                           : ((-sh < 31) ? (m >> -sh) : 0);
+    int32_t m  = (int32_t)((u & 0x7fffffu) | 0x800000u);
+    // 135 is 127 for the exponent bias, 23 for the mantissa and -15 for the
+    // scaling to a 16-bit sample, so this is the right shift that turns the
+    // one into the other. Every case that is not an ordinary number falls out
+    // of clamping it rather than being tested for: a shift of nought or less
+    // means the value was at or above 1.0 and clips, 31 or more means it
+    // underflows to silence, and a zero exponent -- zero itself, and
+    // denormals -- lands in the second of those. NaN and infinity clip, which
+    // is the right answer for a file that should not have contained them.
+    int32_t sh = 135 - (int32_t)((u >> 23) & 0xffu);
+    if (sh < 0) sh = 0;
+    if (sh > 31) sh = 31;
+    int32_t v = m >> sh;
     if (v > 32767) v = 32767;
     return (int16_t)((u & 0x80000000u) ? -v : v);
 }
+
+// Which of the five the file keeps its samples as, worked out once.
+enum { K_U8, K_S16, K_S24, K_S32, K_F32 };
 
 typedef struct {
     uint32_t rate;
@@ -153,9 +182,32 @@ static bool wav_open(int32_t fd, wav_t *w) {
 // or .bss section outright -- and __thread puts these in the process's own area
 // instead. Locals would work too; three and a half kilobytes of them would not,
 // on a stack that also has to hold everything play calls.
-static __thread uint8_t  raw[IN_FRAMES * 8u];   // 32-bit stereo is the widest frame
-static __thread int16_t  src[IN_FRAMES * 2u];   // decoded to stereo, always
+// Aligned so the 32-bit formats can be read a word at a time. A WAV's fields
+// are packed with no regard for alignment and are read a byte at a time for
+// that reason, but the SAMPLES are not fields: at 4 bytes each they sit on
+// word boundaries from the start of the buffer, and this is the only thing
+// that makes them do so.
+static __thread __attribute__((aligned(4))) uint8_t raw[IN_FRAMES * 8u];
+// GUARD frames of history in front and GUARD of lookahead behind: the filter
+// reaches both ways from every output, and a buffer that held only the new
+// frames would have to invent silence at each end of it.
+static __thread int16_t  src[(IN_FRAMES + 2u * GUARD) * 2u];
 static __thread int16_t  out[OUT_FRAMES * 2u];
+
+// One coefficient, with the fraction between two table entries interpolated.
+// 64 phases would be audible as a phase-quantisation whine on its own; the
+// interpolation is what makes a table this small enough.
+static inline int32_t sinc_at(uint32_t tp) {
+    uint32_t i = tp >> 16;
+    int32_t a = sinc_h[i], b = sinc_h[i + 1];
+    return a + (((b - a) * (int32_t)((tp >> 8) & 0xffu)) >> 8);
+}
+
+static inline int16_t clamp16(int64_t v) {
+    if (v > 32767) return 32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
 
 // Everything the device took, however many calls that is. A short write is the
 // normal answer from /dev/audio -- the ring is as full as the DMA has left it --
@@ -178,12 +230,17 @@ static bool push(int32_t fd, const int16_t *frames, uint32_t n) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: play [-i] FILE\n\nPlays a PCM WAV file. 8- and 16-bit, mono or stereo, any rate --\n"
+            "usage: play [-i] [-v] FILE\n\nPlays a PCM WAV file. 8- and 16-bit, mono or stereo, any rate --\n"
             "it is resampled to whatever /dev/audio runs at.\n-i says what the file is without playing it.\n"))
         return;
 
-    bool info_only = false;
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'i' && !argv[1][2]) { info_only = true; argv++; argc--; }
+    bool info_only = false, verbose = false;
+    while (argc > 1 && argv[1][0] == '-' && argv[1][1] && !argv[1][2]) {
+        if (argv[1][1] == 'i') info_only = true;
+        else if (argv[1][1] == 'v') verbose = true;
+        else break;
+        argv++; argc--;
+    }
     if (argc < 2) { say("usage: play [-i] FILE", 0); return; }
 
     int32_t f = myrtos_open_flags(argv[1], MYRTOS_O_RDONLY);
@@ -238,132 +295,170 @@ void module_main(int argc, char **argv) {
     uint32_t step = ((w.rate / dst_rate) << 16)
                   + (((w.rate % dst_rate) << 16) / dst_rate);
 
-    // Two ways of doing it, and which one depends on which direction the rate
-    // is going.
+    // The filter's time scale: how much of its own length it covers per source
+    // frame. Upward it is one -- the response is used as designed. Downward it
+    // is 1/step, which stretches the impulse response in time and so pulls its
+    // cutoff down in frequency, from the input Nyquist to the output one. That
+    // is the entire reason a polyphase FIR handles decimation and the box
+    // average it replaced did not.
     //
-    // Going UP -- 44100 to 48000, the common case -- each output frame lands
-    // between two input frames and is interpolated between them.
-    //
-    // Going DOWN, interpolation is the wrong tool: picking one value out of
-    // every two and a bit is decimation, and everything in the source above
-    // half the new rate folds back into the audible band as tones that were
-    // never there. A 96000 Hz file with content at 30 kHz would come out with
-    // a whistle at 18. So each output frame is instead the AVERAGE of the
-    // input frames it spans -- a box filter, one add a sample and one divide
-    // an output frame.
-    //
-    // Measured rather than assumed, and the measurement is worth writing down
-    // because it is worse than it sounds: a box nulls at multiples of the
-    // OUTPUT rate and does very little just above output Nyquist, which is
-    // exactly where the first aliases land. 96000 to 48000 with a 30 kHz tone
-    // attenuates the fold-down by 5 dB; at 24 kHz it would be 3. It helps most
-    // where the ratio is large and the offending content is well up the band,
-    // and it is genuinely weak at 2:1.
-    //
-    // The real fix is a polyphase FIR, which is also the only thing that would
-    // make the interpolating side better than it is. Not done: it wants
-    // coefficients, and coefficients want either a table or a way to compute
-    // them, and neither belongs in the first version of this. What is here
-    // does not pretend otherwise.
-    bool decimating = step > 0x10000u;
+    // 0xffffffff rather than 1 << 32: the value wanted is 2^32/step and that
+    // numerator does not fit in the word doing the dividing. One part in four
+    // billion low is not a rate error anybody can measure.
+    uint32_t ts_q16 = (step <= 0x10000u) ? 0x10000u : (0xffffffffu / step);
+    if (ts_q16 < 0x10000u / MAX_DECIM) ts_q16 = 0x10000u / MAX_DECIM;
 
-    int16_t prev_l = 0, prev_r = 0;   // last frame of the previous buffer
-    uint32_t pos = 0;                 // 16.16, from the start of this buffer
-    int32_t acc_l = 0, acc_r = 0;     // the box filter, carried across buffers
-    uint32_t acc_n = 0, frac = 0;
+    // How far along the table one source frame moves, in Q16 table entries.
+    uint32_t tstep = ts_q16 * SINC_NPHASE;
+    uint32_t tend  = (uint32_t)(SINC_NZERO * SINC_NPHASE) << 16;
+
+    // Silence in front of the file, so the first output has a left wing to
+    // read. The file's own first frame lands at src[GUARD], which is where pos
+    // starts.
+    for (uint32_t i = 0; i < GUARD * 2u; i++) src[i] = 0;
+    uint32_t have = GUARD;
+    uint32_t pos = GUARD << 16;
+
+    uint32_t t0 = myrtos_ticks_now(), frames_in = 0, frames_out = 0;
     uint32_t left = w.data_bytes;
-    bool ok = true;
+    int kind = w.is_float ? K_F32
+             : w.bits == 8u  ? K_U8
+             : w.bits == 16u ? K_S16
+             : w.bits == 24u ? K_S24 : K_S32;
+    bool ok = true, drained = false;
 
-    while (left && ok) {
-        uint32_t want = IN_FRAMES * frame_bytes;
-        if (want > left) want = left;
-        int32_t got = myrtos_read(f, raw, want);
-        if (got <= 0) break;
-        uint32_t n = (uint32_t)got / frame_bytes;
-        if (!n) break;
-        left -= n * frame_bytes;
-
-        // Everything becomes 16-bit stereo here, so the resampler below has one
-        // case instead of ten.
-        // The common shape -- 16-bit stereo -- gets its own loop rather than
-        // going through sample_of, and it is worth the duplication. Everything
-        // else pays a call, two branches on the bit depth and a branch on the
-        // channel count PER SAMPLE, which measured at 1.24 seconds of work for
-        // a second of 32-bit audio: over real time, so the ring emptied and it
-        // stuttered. The decision does not change within a file, so it does
-        // not belong inside the loop.
-        uint32_t sample_bytes = w.bits / 8u;
-        if (w.bits == 16u && w.channels == 2u) {
-            for (uint32_t i = 0; i < n; i++) {
-                const uint8_t *p = raw + i * 4u;
-                src[i * 2]     = (int16_t)(uint16_t)u16le(p);
-                src[i * 2 + 1] = (int16_t)(uint16_t)u16le(p + 2);
-            }
-        } else if (w.channels == 2u) {
-            for (uint32_t i = 0; i < n; i++) {
-                const uint8_t *p = raw + i * frame_bytes;
-                src[i * 2]     = sample_of(p, w.bits, w.is_float);
-                src[i * 2 + 1] = sample_of(p + sample_bytes, w.bits, w.is_float);
-            }
-        } else {
-            for (uint32_t i = 0; i < n; i++) {
-                int16_t a = sample_of(raw + i * frame_bytes, w.bits, w.is_float);
-                src[i * 2] = a;
-                src[i * 2 + 1] = a;
+    while (ok && !drained) {
+        // Fill up behind what is already there.
+        uint32_t room = IN_FRAMES + 2u * GUARD - have;
+        uint32_t n = 0;
+        if (left && room) {
+            uint32_t want = (room < IN_FRAMES ? room : IN_FRAMES) * frame_bytes;
+            if (want > left) want = left;
+            int32_t got = myrtos_read(f, raw, want);
+            if (got > 0) {
+                n = (uint32_t)got / frame_bytes;
+                left -= n * frame_bytes;
+            } else {
+                left = 0;
             }
         }
 
+        if (!n && !left) {
+            // End of the file. GUARD frames of silence let the filter run off
+            // the end of the audio instead of stopping in the middle of its
+            // own impulse response, which would be a click.
+            n = GUARD;
+            if (n > room) n = room;
+            for (uint32_t i = 0; i < n * 2u; i++) src[(have + i / 2u) * 2u + (i & 1u)] = 0;
+            drained = true;
+        }
+
+        // One loop per format, chosen once per buffer, and the format decision
+        // never inside it. This was a single loop calling sample_of per
+        // sample, and on this machine that cost 40% of real time on 32-bit
+        // files -- enough that the ring emptied and it stuttered -- while the
+        // one shape that did have its own loop, 16-bit stereo, ran at 1.02.
+        // Same arithmetic, same file, same resampler: the difference was
+        // entirely the call and the branches around it.
+        //
+        // Stereo decodes straight into place, since a WAV's samples are
+        // already interleaved the way src wants them. Mono decodes flat and is
+        // then spread outwards, backwards so it does not overwrite itself.
+        if (!drained) {
+            int16_t *d = src + have * 2u;
+            uint32_t nsamp = n * w.channels;
+            switch (kind) {
+            case K_U8:
+                for (uint32_t i = 0; i < nsamp; i++)
+                    d[i] = (int16_t)(((int32_t)raw[i] - 128) << 8);
+                break;
+            case K_S16:
+                for (uint32_t i = 0; i < nsamp; i++)
+                    d[i] = (int16_t)(uint16_t)u16le(raw + i * 2u);
+                break;
+            case K_S24:
+                for (uint32_t i = 0; i < nsamp; i++)
+                    d[i] = (int16_t)(uint16_t)u16le(raw + i * 3u + 1u);
+                break;
+            case K_S32: {
+                const uint32_t *q = (const uint32_t *)(const void *)raw;
+                for (uint32_t i = 0; i < nsamp; i++) d[i] = (int16_t)(uint16_t)(q[i] >> 16);
+                break;
+            }
+            default: {
+                const uint32_t *q = (const uint32_t *)(const void *)raw;
+                for (uint32_t i = 0; i < nsamp; i++) d[i] = float_sample(q[i]);
+                break;
+            }
+            }
+            if (w.channels == 1u)
+                for (uint32_t i = n; i-- > 0; ) { d[i * 2] = d[i * 2 + 1] = d[i]; }
+        }
+        have += n;
+        frames_in += n;
+
+        // An output can be made while the filter's right wing still has real
+        // frames to read. GUARD is its longest reach.
         uint32_t nout = 0;
-        if (decimating) {
-            // Every input frame goes into the accumulator; an output frame
-            // comes out each time enough of them have. The accumulator and the
-            // fraction live outside this loop, so a span that straddles a
-            // buffer boundary is averaged across it rather than cut in two.
-            for (uint32_t i = 0; i < n && ok; i++) {
-                acc_l += src[i * 2];
-                acc_r += src[i * 2 + 1];
-                acc_n++;
-                frac += 0x10000u;
-                if (frac >= step) {
-                    frac -= step;
-                    out[nout * 2]     = (int16_t)(acc_l / (int32_t)acc_n);
-                    out[nout * 2 + 1] = (int16_t)(acc_r / (int32_t)acc_n);
-                    acc_l = acc_r = 0;
-                    acc_n = 0;
-                    if (++nout == OUT_FRAMES) { ok = push(dev, out, nout); nout = 0; }
-                }
+        while (ok && (pos >> 16) + GUARD < have) {
+            uint32_t i = pos >> 16;
+            uint32_t fr = pos & 0xffffu;
+            int32_t accl = 0, accr = 0;
+
+            // Left wing: src[i], src[i-1], ... at distances fr, fr+1, fr+2 in
+            // source frames, which is fr*tstep, +tstep, +tstep along the table.
+            uint32_t tp = (uint32_t)(((uint64_t)fr * tstep) >> 16);
+            for (uint32_t j = i; tp < tend; tp += tstep) {
+                int32_t h = sinc_at(tp);
+                accl += (int32_t)src[j * 2] * h;
+                accr += (int32_t)src[j * 2 + 1] * h;
+                if (!j--) break;
             }
-        } else {
-            // Linear interpolation between the sample before the position and
-            // the one after. Index 0 reaches back into the previous buffer,
-            // which is what prev_l/prev_r are for: without them every buffer
-            // boundary would interpolate from silence and put a click there,
-            // 187 times a second.
-            while ((pos >> 16) < n) {
-                uint32_t i = pos >> 16;
-                // Half the fraction's bits. (b - a) can be 65535 and the
-                // fraction 65535, and their product does not fit in 32 bits;
-                // eight bits of interpolation is inaudible here and always
-                // fits.
-                int32_t fr = (int32_t)((pos & 0xffffu) >> 8);
-                int16_t al = (i == 0) ? prev_l : src[(i - 1) * 2];
-                int16_t ar = (i == 0) ? prev_r : src[(i - 1) * 2 + 1];
-                int16_t bl = src[i * 2], br = src[i * 2 + 1];
-                out[nout * 2]     = (int16_t)(al + (((int32_t)bl - al) * fr >> 8));
-                out[nout * 2 + 1] = (int16_t)(ar + (((int32_t)br - ar) * fr >> 8));
-                pos += step;
-                if (++nout == OUT_FRAMES) {
-                    if (!(ok = push(dev, out, nout))) break;
-                    nout = 0;
-                }
+            // Right wing: src[i+1], src[i+2], ... at distances 1-fr, 2-fr, ...
+            tp = (uint32_t)(((uint64_t)(0x10000u - fr) * tstep) >> 16);
+            for (uint32_t j = i + 1; tp < tend && j < have; j++, tp += tstep) {
+                int32_t h = sinc_at(tp);
+                accl += (int32_t)src[j * 2] * h;
+                accr += (int32_t)src[j * 2 + 1] * h;
             }
-            pos -= n << 16;                 // carry the fraction into the next buffer
-            prev_l = src[(n - 1) * 2];
-            prev_r = src[(n - 1) * 2 + 1];
+
+            // Q15 out of the coefficients, then times the time scale, because
+            // a stretched filter has proportionally more taps under it and
+            // would otherwise come out that much louder.
+            out[nout * 2]     = clamp16(((int64_t)(accl >> 15) * (int32_t)ts_q16) >> 16);
+            out[nout * 2 + 1] = clamp16(((int64_t)(accr >> 15) * (int32_t)ts_q16) >> 16);
+            pos += step;
+            frames_out++;
+            if (++nout == OUT_FRAMES) { ok = push(dev, out, nout); nout = 0; }
         }
         if (ok && nout) ok = push(dev, out, nout);
+
+        // Keep GUARD frames of history in front of where the next output sits,
+        // and move them to the start so the read above has room behind them.
+        uint32_t shift = (pos >> 16) - GUARD;
+        if (shift) {
+            uint32_t keep = have - shift;
+            for (uint32_t i = 0; i < keep * 2u; i++) src[i] = src[shift * 2u + i];
+            have = keep;
+            pos -= shift << 16;
+        }
     }
 
+    if (verbose) {
+        // The board's own clock, because timing this from the far end of a
+        // serial line measures the serial line. Expected is what the output
+        // frames are worth at the device's rate; anything much over it is the
+        // ring running dry, which is heard as a stutter.
+        uint32_t ms = myrtos_ticks_now() - t0;
+        myrtos_line_t v;
+        myrtos_line_reset(&v);
+        myrtos_line_str(&v, "in "); myrtos_line_u32(&v, frames_in);
+        myrtos_line_str(&v, ", out "); myrtos_line_u32(&v, frames_out);
+        myrtos_line_str(&v, ", "); myrtos_line_u32(&v, ms);
+        myrtos_line_str(&v, " ms for "); myrtos_line_u32(&v, frames_out / (dst_rate / 1000u));
+        myrtos_line_str(&v, " ms of audio\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &v);
+    }
     if (!ok) say("play: the device stopped taking audio", 0);
     myrtos_close(dev);
     myrtos_close(f);

@@ -519,13 +519,27 @@ divider gives from a 120 MHz system clock -- and most of the free WAV files on
 the internet are 44100. So the player resamples, and it asks the device what
 rate to resample *to* rather than having 48000 written in a second time.
 
-Two methods, chosen by direction. Upward is linear interpolation between the
-two source frames the output lands between. Downward it is the average of the
-frames each output spans, because interpolating while decimating leaves
-everything above the new Nyquist to fold back into the band as tones that were
-never played. Both are cheap and neither is good: measured, 44100 to 48000 puts
-the worst artefact 72 dB down on a 10 kHz tone, and 96000 to 48000 attenuates a
-fold-down by only 5 dB. A polyphase FIR is the upgrade for both.
+One method, a polyphase FIR: a Kaiser-windowed sinc, ten zero crossings each
+side, sampled 64 times between each pair with the fraction interpolated between
+those. `tools/make_sinc.py` generates the coefficients, because a module has no
+floating point to compute them with and no libm to ask for a sine.
+
+The filter stretches with the ratio, and that is the whole trick. Upward it is
+a fixed 20 taps. Downward the impulse response is scaled by the ratio, which
+moves the cutoff from the input Nyquist down to the **output** Nyquist, and so
+stops content above it folding back into the band. Measured, against the linear
+interpolation and box average this replaced:
+
+| | before | after |
+|---|---|---|
+| 440 Hz, 44100 → 48000 | -90 dB | **-109 dB** |
+| 10 kHz, 44100 → 48000 | -72 dB | **-103 dB** |
+| a 30 kHz tone folding down, 96000 → 48000 | -5 dB | **-100 dB** |
+
+`play -v` times a playback against the board's own clock and prints what the
+work cost against what the audio is worth. Everything is at or under real time
+except 32-bit float, which is 36% over and stutters; the cause is recorded in
+the source and is not the arithmetic.
 
 The 32-bit float case is decoded by taking the exponent and mantissa apart with
 integer shifts. A module is linked without libgcc, so on the RISC-V half of
