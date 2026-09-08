@@ -16,7 +16,7 @@
 # and platform are settled at import and cannot be changed afterwards -- and
 # because pico-vscode.cmake reads the toolchain's NAME to guess the platform.
 # Everything further down that differs by machine follows from this one word.
-set(MYRTOS_ARCH riscv CACHE STRING "riscv (Hazard3) or arm (Cortex-M33)")
+set(MYRTOS_ARCH arm CACHE STRING "riscv (Hazard3) or arm (Cortex-M33)")
 set_property(CACHE MYRTOS_ARCH PROPERTY STRINGS riscv arm)
 
 if(MYRTOS_ARCH STREQUAL "riscv")
@@ -100,7 +100,16 @@ else()
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.3.1)
-set(toolchainVersion ${myrtosToolchain})
+# A LITERAL, and it has to be. This block is the one the VS Code extension
+# tells you not to edit, and the reason is that the extension PARSES it as
+# text rather than running it -- so a ${variable} here is stored verbatim and
+# comes back as a compiler path with the dollar sign still in it. That is
+# exactly what happened: CMAKE_C_COMPILER ended up as
+# .../toolchain/${myrtosToolchain}/bin/arm-none-eabi-gcc.
+#
+# So the Arm toolchain is named here, and the RISC-V one is put in place below
+# the include instead, where ordinary CMake rules apply.
+set(toolchainVersion 15_2_Rel1)
 # Deliberately not 2.3.1. The SDK asks for the picotool version it needs and
 # 2.3.1 asks for 2.3.0 -- tools/CMakeLists.txt sets picotool_VERSION_REQUIRED --
 # so raising this to match sdkVersion would point at a directory that does not
@@ -109,6 +118,13 @@ set(picotoolVersion 2.3.0)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
     include(${picoVscode})
+endif()
+
+# After the include and before project(), which is the window where this still
+# takes effect: pico-vscode.cmake builds PICO_TOOLCHAIN_PATH from the literal
+# above, and MYRTOS_ARCH is what actually decides.
+if(NOT myrtosToolchain STREQUAL toolchainVersion)
+    set(PICO_TOOLCHAIN_PATH ${USERHOME}/.pico-sdk/toolchain/${myrtosToolchain})
 endif()
 # ====================================================================================
 # ====================================================================================

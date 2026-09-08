@@ -25,22 +25,29 @@
     "cmake.configureSettings": {
         "CMAKE_BUILD_TYPE": "Release"
     },
+    // These say Arm because MYRTOS_ARCH in CMakeLists.txt says Arm. The
+    // extension wrote them when this was a RISC-V project and does not know
+    // about MYRTOS_ARCH, so the two have to be kept in step by hand -- and when
+    // they disagree the symptom is a RISC-V toolchain directory with an Arm
+    // compiler name in it, which reads as a broken install rather than a stale
+    // setting. They affect the integrated terminal; the configure gets its
+    // compiler from cmake-kits.json, which asks the extension.
     "cmake.cmakePath": "cmake",
     "C_Cpp.debugShortcut": false,
     "terminal.integrated.env.windows": {
-        "PICO_SDK_PATH": "${env:USERPROFILE}/.pico-sdk/sdk/2.3.0",
-        "PICO_TOOLCHAIN_PATH": "${env:USERPROFILE}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3",
-        "Path": "${env:USERPROFILE}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin;${env:USERPROFILE}/.pico-sdk/picotool/2.2.0-a4/picotool;;${env:USERPROFILE}/.pico-sdk/ninja/v1.12.1;${env:PATH}"
+        "PICO_SDK_PATH": "${env:USERPROFILE}/.pico-sdk/sdk/2.3.1",
+        "PICO_TOOLCHAIN_PATH": "${env:USERPROFILE}/.pico-sdk/toolchain/15_2_Rel1",
+        "Path": "${env:USERPROFILE}/.pico-sdk/toolchain/15_2_Rel1/bin;${env:USERPROFILE}/.pico-sdk/picotool/2.2.0-a4/picotool;;${env:USERPROFILE}/.pico-sdk/ninja/v1.12.1;${env:PATH}"
     },
     "terminal.integrated.env.osx": {
-        "PICO_SDK_PATH": "${env:HOME}/.pico-sdk/sdk/2.3.0",
-        "PICO_TOOLCHAIN_PATH": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3",
-        "PATH": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin:${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool::${env:HOME}/.pico-sdk/ninja/v1.12.1:${env:PATH}"
+        "PICO_SDK_PATH": "${env:HOME}/.pico-sdk/sdk/2.3.1",
+        "PICO_TOOLCHAIN_PATH": "${env:HOME}/.pico-sdk/toolchain/15_2_Rel1",
+        "PATH": "${env:HOME}/.pico-sdk/toolchain/15_2_Rel1/bin:${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool::${env:HOME}/.pico-sdk/ninja/v1.12.1:${env:PATH}"
     },
     "terminal.integrated.env.linux": {
-        "PICO_SDK_PATH": "${env:HOME}/.pico-sdk/sdk/2.3.0",
-        "PICO_TOOLCHAIN_PATH": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3",
-        "PATH": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin:${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool::${env:HOME}/.pico-sdk/ninja/v1.12.1:${env:PATH}"
+        "PICO_SDK_PATH": "${env:HOME}/.pico-sdk/sdk/2.3.1",
+        "PICO_TOOLCHAIN_PATH": "${env:HOME}/.pico-sdk/toolchain/15_2_Rel1",
+        "PATH": "${env:HOME}/.pico-sdk/toolchain/15_2_Rel1/bin:${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool::${env:HOME}/.pico-sdk/ninja/v1.12.1:${env:PATH}"
     },
     "raspberry-pi-pico.cmakeAutoConfigure": false,
     "raspberry-pi-pico.useCmakeTools": true,
