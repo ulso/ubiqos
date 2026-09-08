@@ -502,7 +502,7 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             myrtos_wifi_req_t req;
             req.index = 0;
             req.buf   = (char*)(uintptr_t)frame->a0;
-            req.len   = 16;
+            req.len   = 32;
             if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_STATS, &req)) {
                 frame->a0 = (uint32_t)-1;
                 break;

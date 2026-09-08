@@ -1463,9 +1463,9 @@ static inline int32_t myrtos_wifi_address(char *buf, uint32_t len)
 // a channel that went one step out of step and stayed there, and from outside
 // that looks exactly like a chip that has stopped working. A count separates
 // them.
-static inline int32_t myrtos_wifi_stats(uint32_t *four)
+static inline int32_t myrtos_wifi_stats(uint32_t *eight)
 {
-    return myrtos_syscall(SYS_WIFISTATS, (uint32_t)(uintptr_t)four, 0, 0);
+    return myrtos_syscall(SYS_WIFISTATS, (uint32_t)(uintptr_t)eight, 0, 0);
 }
 
 static inline int32_t myrtos_wifi_reset(void)

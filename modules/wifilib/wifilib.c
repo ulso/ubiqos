@@ -180,6 +180,12 @@ typedef struct {
 // day. `wifi stats` reports them.
 static uint32_t nina_resyncs, nina_retries, nina_failures, nina_commands;
 
+// Observation only, and it changes nothing. The receive path reads a byte where
+// the frame's end marker should be and throws it away without looking; adding a
+// check there took the machine down, so before adding it again the question is
+// what is actually in that position. Counting it costs nothing and answers it.
+static uint32_t nina_end_ok, nina_end_bad, nina_end_last, nina_recv_n;
+
 // THE one way back. Read forward to the end of whatever the chip was saying, so
 // the next command starts at a frame boundary.
 //
@@ -261,54 +267,6 @@ static bool nina_xact_n(uint8_t cmd, const nina_arg_t *args, uint8_t nargs,
     }
     nina_failures++;
     return false;
-}
-
-// A reply whose one parameter is too big for rx_acc -- which is only
-// GET_DATABUF_TCP, and it is up to four kilobytes. The payload goes straight
-// into the caller's buffer, so nothing is copied twice, but the FRAME is
-// checked exactly as strictly as any other: the command byte, the parameter
-// count, and the end marker.
-//
-// That end marker is the reason this exists. The version it replaces read it
-// and threw it away without looking. A reply that did not end where it said it
-// did left the channel one step out of step, silently, on the one path that
-// moves the most bytes.
-//
-// Not retried. A GET_DATABUF that half-happened may have taken data out of the
-// chip's buffer, and asking again would lose it.
-static int32_t nina_xact_bulk(uint8_t cmd, const nina_arg_t *args, uint8_t nargs,
-                              uint8_t *out, uint32_t max) {
-    nina_commands++;
-    if (!select_chip()) { nina_failures++; return -1; }
-    tx_begin(cmd, nargs);
-    for (uint8_t i = 0; i < nargs; i++) {
-        if (args[i].long_form) tx_param_long(args[i].p, args[i].len);
-        else                   tx_param(args[i].p, (uint8_t)args[i].len);
-    }
-    tx_end();
-    deselect_chip();
-
-    if (!select_chip()) { nina_failures++; return -1; }
-    int32_t got = -1;
-    uint8_t b = 0;
-    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
-    if (b == START_CMD &&
-        xfer(0xff) == (uint8_t)(cmd | REPLY_FLAG) &&
-        xfer(0xff) == 1) {
-        // This command answers its length in two bytes, little-endian, because
-        // its parameters carry two-byte lengths in both directions.
-        uint32_t lo = xfer(0xff), hi = xfer(0xff);
-        uint32_t n = lo | (hi << 8);
-        if (n > max) n = max;
-        if (n) K->spi_read(WIFI_SPI, 0xff, out, n);
-        if (xfer(0xff) == END_CMD) got = (int32_t)n;
-        else                       resync();
-    } else {
-        resync();
-    }
-    deselect_chip();
-    if (got < 0) nina_failures++;
-    return got;
 }
 
 // The ordinary form: a query, which may be asked again.
@@ -1068,13 +1026,62 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
     if (!len) return 0;
     if (len > 4000u) len = 4000u;                  // the chip's own buffer limit
 
+    if (!select_chip()) return -1;
+    tx_begin(GET_DATABUF_TCP_CMD, 2);
     // Both parameters carry two-byte lengths in this command, the socket
     // included -- the length prefix is a property of the command and not of the
     // parameter, which is the part that is easy to get wrong.
     uint8_t s = sock;
+    tx_param_long(&s, 1);
     uint8_t want[2] = { (uint8_t)(len & 0xffu), (uint8_t)(len >> 8) };
-    nina_arg_t a[2] = { { &s, 1, true }, { want, 2, true } };
-    return nina_xact_bulk(GET_DATABUF_TCP_CMD, a, 2, buf, len);
+    tx_param_long(want, 2);
+    tx_end();
+    deselect_chip();
+
+    if (!select_chip()) return -1;
+    uint8_t b = 0;
+    for (int i = 0; i < 64; i++) { b = xfer(0xff); if (b == START_CMD || b == ERR_CMD) break; }
+    if (b != START_CMD) { drain(); deselect_chip(); return -1; }
+    int32_t got = -1;
+    if (xfer(0xff) == (GET_DATABUF_TCP_CMD | REPLY_FLAG) && xfer(0xff) == 1) {
+        // BIG-endian, and this was wrong for as long as the file has existed.
+        // nina-fw builds this one by hand --
+        //
+        //     response[3] = (read >> 8) & 0xff;   // parameter 1 length
+        //     response[4] = (read >> 0) & 0xff;
+        //
+        // -- while every other length in the protocol is memcpy'd out of a
+        // uint16 on a little-endian chip. So this is the one field that does
+        // not follow the rest, and reading it the other way round turned a
+        // 255-byte reply into a claim of 65280.
+        //
+        // It worked anyway, which is why it lasted: the length was then capped
+        // to the caller's buffer, the extra reads got the chip's 0xff idle
+        // filler, and a web server finds its request in the first part and
+        // ignores the tail. What it did NOT do was leave the frame where the
+        // chip thought it was -- so the byte after the payload was never the
+        // end marker, and any code that checked for one failed every time.
+        //
+        // Found by counting what was actually in that position over a hundred
+        // receives: end marker 0 times, data 100 times. Reasoning about it had
+        // already produced two wrong answers.
+        uint32_t hi = xfer(0xff), lo = xfer(0xff);
+        uint32_t n = (hi << 8) | lo;
+        if (n > len) n = len;
+        // One transaction. This was a loop of single-byte transfers, so a
+        // four-kilobyte read was four thousand calls through the kernel table
+        // -- the largest single piece of per-byte work in this driver.
+        if (n) K->spi_read(WIFI_SPI, 0xff, buf, n);
+        // Looked at but not acted on. See the counters above.
+        uint8_t e = xfer(0xff);
+        if (e == END_CMD) nina_end_ok++;
+        else { nina_end_bad++; nina_end_last = e; nina_recv_n = n; }
+        got = (int32_t)n;
+    } else {
+        drain();                                   // the reply was not ours
+    }
+    deselect_chip();
+    return got;
 }
 
 // Hand a block to the chip and wait for it to say it went. The wait matters:
@@ -1135,6 +1142,10 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
         uint32_t *o = (uint32_t*)r->buf;
         o[0] = nina_commands; o[1] = nina_resyncs;
         o[2] = nina_retries;  o[3] = nina_failures;
+        if (r->len >= 32u) {
+            o[4] = nina_end_ok; o[5] = nina_end_bad;
+            o[6] = nina_end_last; o[7] = nina_recv_n;
+        }
         return 0;
     }
     case MYRTOS_MSG_WIFI_RESET:

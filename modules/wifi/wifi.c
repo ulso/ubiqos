@@ -35,13 +35,19 @@ void module_main(int argc, char **argv) {
     // channel one step out of step, and from outside that looks exactly like a
     // dead coprocessor.
     if (argc > 1 && is(argv[1], "stats")) {
-        uint32_t n[4] = {0};
+        // Zeroed by hand. An initialiser this size makes the compiler emit a
+        // memset, and a module links no C library -- the same trap the Zig and
+        // neopixel modules hit, in a different disguise.
+        uint32_t n[8];
+        for (uint32_t i = 0; i < 8; i++) n[i] = 0;
         if (myrtos_wifi_stats(n) != 0) {
             myrtos_write_str(MYRTOS_STDERR, "wifi: no coprocessor to ask\r\n");
             return;
         }
-        static const char *what[] = { "commands  ", "resyncs   ", "retries   ", "failures  " };
-        for (uint32_t i = 0; i < 4; i++) {
+        static const char *what[] = { "commands  ", "resyncs   ", "retries   ",
+                                      "failures  ", "recv end ok   ", "recv end bad  ",
+                                      "  last byte   ", "  its length  " };
+        for (uint32_t i = 0; i < 8; i++) {
             myrtos_line_reset(&line);
             myrtos_line_str(&line, what[i]);
             myrtos_line_u32(&line, n[i]);
