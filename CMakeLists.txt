@@ -100,34 +100,40 @@ else()
     set(USERHOME $ENV{HOME})
 endif()
 set(sdkVersion 2.3.1)
-# A LITERAL, and it has to be. This block is the one the VS Code extension
-# tells you not to edit, and the reason is that the extension PARSES it as
-# text rather than running it -- so a ${variable} here is stored verbatim and
-# comes back as a compiler path with the dollar sign still in it. That is
-# exactly what happened: CMAKE_C_COMPILER ended up as
-# .../toolchain/${myrtosToolchain}/bin/arm-none-eabi-gcc.
-#
-# So the Arm toolchain is named here, and the RISC-V one is put in place below
-# the include instead, where ordinary CMake rules apply.
 set(toolchainVersion 15_2_Rel1)
-# Deliberately not 2.3.1. The SDK asks for the picotool version it needs and
-# 2.3.1 asks for 2.3.0 -- tools/CMakeLists.txt sets picotool_VERSION_REQUIRED --
-# so raising this to match sdkVersion would point at a directory that does not
-# exist and send the build off to compile picotool from source.
 set(picotoolVersion 2.3.0)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
+# ====================================================================================
+# ====================================================================================
 
-# After the include and before project(), which is the window where this still
-# takes effect: pico-vscode.cmake builds PICO_TOOLCHAIN_PATH from the literal
-# above, and MYRTOS_ARCH is what actually decides.
+# NOTHING ABOVE THIS LINE MAY CONTAIN A VARIABLE, NOT EVEN IN A COMMENT.
+#
+# The extension reads that block as TEXT rather than running it, and hands the
+# result to CMake as -DCMAKE_C_COMPILER on the command line -- where it beats
+# anything this file works out. A dollar sign survives the trip and arrives as
+# part of a path, so the compiler is looked for at a directory whose name still
+# has the reference in it, and the error says the toolchain is not installed.
+#
+# This has now happened twice. The first time the toolchain version was set from
+# a variable. The second time it was a COMMENT explaining the first time, which
+# spelled the same path out to describe it -- and the parser does not know the
+# difference between a line and a line about a line.
+#
+# So the version above names the Arm toolchain literally, and the other machine
+# is selected here instead, where ordinary CMake rules apply. It has to be
+# before project(), and it is.
 if(NOT myrtosToolchain STREQUAL toolchainVersion)
     set(PICO_TOOLCHAIN_PATH ${USERHOME}/.pico-sdk/toolchain/${myrtosToolchain})
 endif()
-# ====================================================================================
-# ====================================================================================
+
+# picotoolVersion above is deliberately not sdkVersion: the SDK asks for the
+# picotool it needs and 2.3.1 asks for 2.3.0 -- tools/CMakeLists.txt sets
+# picotool_VERSION_REQUIRED -- so matching them would point at a directory that
+# does not exist and send the build off to compile picotool from source.
+
 # Select the development board for your hardware
 set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Board type")
 
