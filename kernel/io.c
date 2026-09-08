@@ -451,7 +451,7 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
             if (paths[owner_pid][p].device) continue;
             if (paths[owner_pid][p].file >= 0) continue;
             if (paths[owner_pid][p].pipe >= 0) continue;
-            if (devices[i].driver->open() != 0) return -1;
+            if (devices[i].driver->open && devices[i].driver->open() != 0) return -1;
             paths[owner_pid][p].device = &devices[i];
             paths[owner_pid][p].file = -1;
             paths[owner_pid][p].pipe = -1;
@@ -467,7 +467,7 @@ int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path) {
     if (path < 0 || path >= MYRTOS_MAX_PATHS) return -1;
     for (uint32_t i = 0; i < device_count; i++) {
         if (!str_eq(devices[i].name, name)) continue;
-        if (devices[i].driver->open() != 0) return -1;
+        if (devices[i].driver->open && devices[i].driver->open() != 0) return -1;
         paths[owner_pid][path].device = &devices[i];
         return path;
     }
@@ -778,7 +778,14 @@ int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
     }
     myrtos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
-    if (!device_shared(path, owner_pid)) p->device->driver->close();
+    // Guarded, like readable and at_eof beside it. close is optional: a device
+    // with nothing to shut down leaves it out, and the first driver that did
+    // -- the ADC -- called a null pointer here and took the machine down with
+    // it. The failure looked like anything but this, because the console
+    // output that would have said where was still in the USB buffer when the
+    // fault hit.
+    if (!device_shared(path, owner_pid) && p->device->driver->close)
+        p->device->driver->close();
     p->device = 0;
     return 0;
 }
@@ -876,7 +883,8 @@ void myrtos_io_close_all(int32_t owner_pid) {
         if (paths[owner_pid][i].file >= 0) file_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].pipe >= 0) pipe_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].device) {
-            paths[owner_pid][i].device->driver->close();
+            if (paths[owner_pid][i].device->driver->close)
+                paths[owner_pid][i].device->driver->close();
             paths[owner_pid][i].device = 0;
         }
     }
