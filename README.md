@@ -509,6 +509,29 @@ result. Inline wrappers for all of them are in the ABI header.
 | 61 | `SYS_GETSTAT` | path, code, &{data,length} → 0, or -1 |
 | 62 | `SYS_SETSTAT` | path, code, &{data,length} → 0, or -1 |
 
+## Playing a WAV file
+
+`play FILE`, and `play -i FILE` to see what a file is without playing it. PCM
+only, 8, 16, 24 or 32 bits, integer or IEEE float, mono or stereo, **any rate**.
+
+The device runs at 48000 and only 48000, because that is what an integer PIO
+divider gives from a 120 MHz system clock -- and most of the free WAV files on
+the internet are 44100. So the player resamples, and it asks the device what
+rate to resample *to* rather than having 48000 written in a second time.
+
+Two methods, chosen by direction. Upward is linear interpolation between the
+two source frames the output lands between. Downward it is the average of the
+frames each output spans, because interpolating while decimating leaves
+everything above the new Nyquist to fold back into the band as tones that were
+never played. Both are cheap and neither is good: measured, 44100 to 48000 puts
+the worst artefact 72 dB down on a 10 kHz tone, and 96000 to 48000 attenuates a
+fold-down by only 5 dB. A polyphase FIR is the upgrade for both.
+
+The 32-bit float case is decoded by taking the exponent and mantissa apart with
+integer shifts. A module is linked without libgcc, so on the RISC-V half of
+this system -- no hardware FPU -- touching a float at all is a call to a
+soft-float routine that is not there.
+
 ## Status: what a device is, rather than what it carries
 
 `getstat` and `setstat`, from OS-9, and deliberately not Unix's `ioctl`. The

@@ -1156,6 +1156,7 @@ myrtos_add_data_module(i2cdesc modules/i2cbus/i2c_desc.c)
 myrtos_add_module(i2c modules/i2c/i2c.c)
 myrtos_add_module(tone modules/tone/tone.c)
 myrtos_add_module(volume modules/volume/volume.c)
+myrtos_add_module(play modules/play/play.c)
 
 # I2S out. PIO2 state machine 1 -- the neopixel driver has 0, and a block has
 # four state machines and thirty-two instruction slots between them.
@@ -1393,6 +1394,7 @@ set(MYRTOS_RESIDENT
     audiodesc
     tone
     volume
+    play
     leds
     httpd
     sockstat
