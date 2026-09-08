@@ -23,11 +23,13 @@
                 "PICO_PLATFORM=\"rp2350-riscv\"",
                 "ARCH_RISCV=1"
             ],
-            // RISC-V, not ARM. The import replaced this with arm-none-eabi-gcc,
-            // which is a different architecture and a different set of builtin
-            // macros. cpptools has no riscv intelliSenseMode, so the mode below
-            // is only a fallback -- what matters is that it asks this compiler.
-            "compilerPath": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin/riscv32-unknown-elf-gcc",
+            // Arm, because MYRTOS_ARCH in CMakeLists.txt is Arm. This said
+            // RISC-V, correctly, while the project was RISC-V-first; the
+            // architecture decides a different set of builtin macros, so
+            // leaving it behind means IntelliSense reads the code as a machine
+            // nobody is building for. It has to be changed by hand alongside
+            // MYRTOS_ARCH -- the extension does not know that variable exists.
+            "compilerPath": "${env:HOME}/.pico-sdk/toolchain/15_2_Rel1/bin/arm-none-eabi-gcc",
             "cStandard": "c11",
             "cppStandard": "c++17",
             "intelliSenseMode": "macos-gcc-arm64"

@@ -8,6 +8,12 @@
             "cwd": "${workspaceFolder}",
             "executable": "${workspaceFolder}/build/os_kernel.elf",
             "servertype": "jlink",
+            // LEFT AS RISC-V ON PURPOSE, unlike the compiler paths beside it.
+            // This is a J-Link configuration for Hazard3 and it is correct for
+            // what it is; the Arm side is debugged with the Debug Probe and
+            // OpenOCD instead, which is a different server and a different
+            // device name. Changing the path alone would give a working gdb
+            // pointed at the wrong core.
             "gdbPath": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin/riscv32-unknown-elf-gdb",
             // RP2350_RV32_0 väljer Hazard3-kärna 0. J-Link har fyra RP2350-enheter:
             // _M33_0, _M33_1, _RV32_0, _RV32_1, och byter läge efter enhetsnamnet.
