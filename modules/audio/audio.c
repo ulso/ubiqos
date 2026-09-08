@@ -132,12 +132,13 @@ static const dac_step_t dac_init[] = {
 
     { 0, 0x3f, 0xd4, 10 },   // both DACs on, left to left and right to right
     { 0, 0x40, 0x00,  0 },   // unmuted
-    // -18 dB, in half-decibel steps of a signed byte, and NOT 0 dB. Nought is
+    // -35 dB, in half-decibel steps of a signed byte, and NOT 0 dB. Nought is
     // full scale, which is what this was, and the first tone anybody heard
     // through headphones was too loud. A device somebody puts on their head
-    // should not come up at maximum. `volume` moves these two.
-    { 0, 0x41, 0xdc,  0 },
-    { 0, 0x42, 0xdc,  0 },
+    // should not come up at maximum, and this is the level Ulf picked by ear
+    // out of three. `volume` moves these two; keep it and vol_now agreeing.
+    { 0, 0x41, 0xba,  0 },
+    { 0, 0x42, 0xba,  0 },
 
     // The analogue side.
     { 1, 0x01, 0x08,  0 },   // no weak AVDD-to-DVDD tie
@@ -182,7 +183,7 @@ static bool dac_configure(void)
 // scale, and 0 is -50 dB. Not silence -- muting is a different register and a
 // different question, and a volume of nought that is merely very quiet is
 // easier to recover from than one that looks like broken hardware.
-static uint8_t vol_now = 100u - 36u;    // what dac_init writes: -18 dB
+static uint8_t vol_now = 100u - 70u;    // what dac_init writes: -35 dB
 
 static bool dac_set(uint8_t page, uint8_t reg, uint8_t val)
 {
