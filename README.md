@@ -816,6 +816,28 @@ With all three paths checked and counted, 120 requests with the BLE scanner
 running: **120 of 120, and zero resyncs, retries and failures.** The load that
 used to kill the link after two.
 
+**DMA was the plan and the measurement said no.** The reason for DMA was
+reliability, and reliability was fixed by the framing -- so it had to justify
+itself on cost instead, and it could not. A small reply took 101 ms and a four
+kilobyte page 164; the four kilobytes over SPI at 8 MHz are about **four**.
+Under three per cent, and the big buffers live in PSRAM which DMA cannot reach,
+so it would have wanted a bounce through SRAM to save a fraction of that.
+
+The 101 ms was `httpd` sleeping 200 ms between asking whether anyone had
+connected. That interval had a reason -- "each one is a chance for the protocol
+to go wrong" -- and the reason had just stopped being true. Five milliseconds
+for the first second after a request, then back to 200:
+
+| | before | after |
+|---|---|---|
+| small reply | 101 ms | **46 ms** |
+| 4 kB page | 164 ms | **46 ms** |
+
+The page and the small reply now cost the same, which is the clearest statement
+that the payload was never the expense. And the faster poll nearly tripled the
+traffic to the chip -- 2682 commands in one run -- with **zero** resyncs,
+retries and failures, and 667 receives all ending where they should.
+
 **The rule, since it is not written anywhere in the protocol:** in nina-fw a
 `memcpy` means host order -- the chip is little-endian -- and a hand-written
 `>> 8` first means network order. The same file mixes them, with nothing at the

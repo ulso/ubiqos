@@ -374,21 +374,31 @@ void module_main(int argc, char **argv) {
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 
     char req[REQ_MAX];
+    uint32_t last_request_ms = 0;
     for (;;) {
         int32_t client = myrtos_sock_accept(server);
         if (client < 0) {
-            // Two hundred milliseconds, not twenty. Every ask is an
-            // AVAIL_DATA_TCP over SPI, so twenty meant fifty transactions a
-            // second for ever, whether or not anybody was connecting -- and
-            // each one is a chance for the protocol to go wrong. Nobody
-            // notices a fifth of a second before a page starts loading, and
-            // nine tenths of the traffic to the chip was this loop asking
-            // whether anything had happened yet.
+            // Fast while anything is happening, slow when nothing is.
             //
-            // Sleeping and not spinning, which was always the point: a loop
-            // that never yields is a loop nothing else runs beside, including
-            // the console that has to deliver the ctrl-C that ends this.
-            myrtos_sleep(200);
+            // This was a flat 200 ms, and the reason given was that every ask
+            // is an AVAIL_DATA_TCP over SPI -- "and each one is a chance for
+            // the protocol to go wrong". That second half is no longer true.
+            // The protocol went wrong because a reply's length was read with
+            // the wrong byte order and the frame never ended where the chip
+            // said; with that fixed the channel took 932 commands under load
+            // without a single resynchronisation. So the cost of asking is
+            // just the asking.
+            //
+            // And it was expensive: measured, a small reply took 101 ms, which
+            // is this sleep and almost nothing else. A page took 164, of which
+            // the four kilobytes of SPI are about four.
+            //
+            // Five milliseconds for the first second after a request, then
+            // back to 200. A browser fetching a page and its script gets the
+            // fast path for both; an idle server costs five transactions a
+            // second, not two hundred.
+            uint32_t idle = myrtos_ticks_now() - last_request_ms;
+            myrtos_sleep(idle < 1000u ? 5 : 200);
             continue;
         }
 
@@ -409,6 +419,7 @@ void module_main(int argc, char **argv) {
             if (done) break;
         }
         req[n] = 0;
+        last_request_ms = myrtos_ticks_now();
         if (n) serve(client, req);
         myrtos_sock_close(client);
     }
