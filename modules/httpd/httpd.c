@@ -405,10 +405,18 @@ void module_main(int argc, char **argv) {
         // The request line is all that is read. Headers after it are skipped by
         // not reading them, which is allowed and is what lets this answer
         // without a parser.
+        // Says which step failed, and there is a reason it is a line and not a
+        // count. Roughly six requests in a thousand come back empty, and the
+        // SPI channel is provably not the cause -- thousands of commands with
+        // no resynchronisation, no retry and no failure -- so the fault is
+        // above it and nobody knows where. It is too rare to catch by watching
+        // and too rare to flood anything by printing. The next one will say
+        // what it was instead of being another round of theories.
         uint32_t n = 0;
+        int32_t why = 0;                       // 0 fine, -1 recv, -2 nothing read
         for (int spin = 0; spin < 100 && n < sizeof(req) - 1; spin++) {
             int32_t got = myrtos_sock_recv(client, (uint8_t *)req + n, sizeof(req) - 1 - n);
-            if (got < 0) break;
+            if (got < 0) { why = -1; break; }
             if (got == 0) { myrtos_sleep(5); continue; }
             n += (uint32_t)got;
             req[n] = 0;
@@ -420,6 +428,15 @@ void module_main(int argc, char **argv) {
         }
         req[n] = 0;
         last_request_ms = myrtos_ticks_now();
+        if (!n) {
+            myrtos_line_t e;
+            myrtos_line_reset(&e);
+            myrtos_line_str(&e, "httpd: empty request, sock ");
+            myrtos_line_u32(&e, (uint32_t)client);
+            myrtos_line_str(&e, why ? " (recv failed)" : " (nothing arrived)");
+            myrtos_line_str(&e, "\r\n");
+            myrtos_line_flush(MYRTOS_STDERR, &e);
+        }
         if (n) serve(client, req);
         myrtos_sock_close(client);
     }
