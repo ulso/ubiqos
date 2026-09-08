@@ -42,15 +42,19 @@ static uint32_t to_u32(const char *s, bool *ok) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: tone [HZ [MS]]\n\nA sine out of /dev/audio. 440 Hz for a second by default.\n"))
+            "usage: tone [-v] [HZ [MS]]\n\nA sine out of /dev/audio. 440 Hz for a second by default.\n-v reports what the device took, which is how the ring is checked.\n"))
         return;
 
     uint32_t hz = 440, ms = 1000;
-    bool ok = true;
+    bool ok = true, verbose = false;
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'v' && !argv[1][2]) {
+        verbose = true;
+        argv++; argc--;
+    }
     if (argc > 1) hz = to_u32(argv[1], &ok);
     if (ok && argc > 2) ok = (ms = to_u32(argv[2], &ok), ok);
     if (!ok || !hz || hz > RATE / 2 || !ms || ms > 30000) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: tone [HZ [MS]]  -- up to 24000 Hz, 30000 ms\n");
+        myrtos_write_str(MYRTOS_STDERR, "usage: tone [-v] [HZ [MS]]  -- up to 24000 Hz, 30000 ms\n");
         return;
     }
 
@@ -65,6 +69,7 @@ void module_main(int argc, char **argv) {
     uint32_t total = (RATE * ms) / 1000u;
 
     int16_t buf[FRAMES * 2];
+    uint32_t asked = total, wrote = 0, shorts = 0, zeros = 0;
     while (total) {
         uint32_t n = total < FRAMES ? total : FRAMES;
         for (uint32_t i = 0; i < n; i++) {
@@ -73,9 +78,32 @@ void module_main(int argc, char **argv) {
             buf[i * 2 + 1] = s;
             phase += step;
         }
-        if (myrtos_write(fd, (const uint8_t *)buf, n * 4u) < 0) break;
-        total -= n;
+        int32_t w = myrtos_write(fd, (const uint8_t *)buf, n * 4u);
+        if (w < 0) break;
+        if (w == 0) { if (++zeros > 100000) break; continue; }
+        if ((uint32_t)w < n * 4u) shorts++;
+        wrote += (uint32_t)w / 4u;
+        // Only what actually went. Decrementing by what was OFFERED was the
+        // bug that made a three-second tone finish instantly and silently: the
+        // device answers with what it took, and a short answer means try again
+        // rather than move on.
+        total -= (uint32_t)w / 4u;
+        phase -= step * (n - (uint32_t)w / 4u);   // rewind what was not taken
     }
+
+    // Kept, but not in the way. These four numbers are how the ring was
+    // debugged -- a silent tone that "finished" instantly showed up here as
+    // asked 144000, wrote 2048 -- so they are worth a flag rather than a
+    // deletion. They are not worth printing at every beep.
+    if (!verbose) { myrtos_close(fd); return; }
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, "asked "); myrtos_line_u32(&l, asked);
+    myrtos_line_str(&l, ", wrote "); myrtos_line_u32(&l, wrote);
+    myrtos_line_str(&l, ", short writes "); myrtos_line_u32(&l, shorts);
+    myrtos_line_str(&l, ", empty "); myrtos_line_u32(&l, zeros);
+    myrtos_line_str(&l, "\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
 
     myrtos_close(fd);
 }
