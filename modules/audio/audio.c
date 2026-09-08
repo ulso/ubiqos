@@ -14,15 +14,16 @@
 // well until something is driving the bus. Which is why this exists before any
 // of the DAC's configuration does.
 //
-// Blocking writes into the FIFO, not DMA, and that is a first cut rather than
-// the answer. DMA would need the buffer to be somewhere DMA can reach, and a
-// module's memory is PSRAM, which it cannot -- the same wall sdlib hit, with
-// the same way round it. See the note at the bottom.
+// DMA out of a ring, so playing something costs the processor a copy rather
+// than its whole attention. The ring is SRAM asked for from the kernel and not
+// a buffer of this module's own: a module lives in PSRAM, which DMA cannot
+// reach -- the same wall sdlib hit, and the same way round it.
 #include <stdint.h>
 #include <stdbool.h>
 #include "../../common/myrtos_abi.h"
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
+#include "hardware/dma.h"
 #include "audio_i2s.pio.h"
 
 #define I2S_DIN    24
@@ -38,6 +39,57 @@
 
 static const myrtos_kernel_api_t *K;
 static bool ready;
+
+// --- THE RING -------------------------------------------------------------
+// The DMA reads it and wraps for ever; this side writes ahead of where the DMA
+// has got to. There is no interrupt and no end: the transfer count is set to
+// the largest there is, which at 48000 words a second runs for a day, and the
+// hardware's own address wrapping keeps it inside the buffer.
+//
+// The wrap is why the size is a power of two AND why the buffer has to be
+// aligned to its own size -- the DMA masks the low bits of the read address
+// rather than comparing against a limit. mem_alloc makes no promises about
+// alignment, so twice the ring is asked for and the aligned part used.
+//
+// 2048 bytes is 512 stereo frames, which is 10.7 ms at 48 kHz. Enough that a
+// writer scheduled a few milliseconds late does not run dry, and small enough
+// that four kilobytes of SRAM is a fair price for a sound device.
+//
+// Silence is written AHEAD of the data, which is what stops the ring becoming
+// a loop pedal. The DMA never ends -- there is no interrupt and no stopping it
+// -- so whatever it finds, it plays; and what it found, until this was fixed,
+// was the last ten milliseconds of the tone, for ever. "A buzz is a better
+// symptom than silence" is what the comment here used to say, and it was wrong
+// in the way that only becomes obvious with headphones on: a device that never
+// goes quiet is not a device.
+//
+// So every write also clears the space in front of it. The cost is writing the
+// ring twice, which at 48 kHz stereo is 384 kB/s of memory traffic and beneath
+// notice, and it means a writer that stops -- or falls behind, or is killed --
+// runs into silence rather than into its own past.
+#define RING_BYTES 2048u
+#define RING_WORDS (RING_BYTES / 4u)
+#define RING_BITS  11u          // 2^11 = RING_BYTES, which the DMA masks with
+
+static volatile uint32_t *ring;
+static int32_t dma_ch = -1;
+static uint32_t write_at;       // in words, where this side has got to
+
+// Where the DMA is reading, as a word index into the ring. Read from the
+// channel's live address rather than counted, because counting would have to
+// be kept in step with hardware that never stops.
+static uint32_t dma_at(void)
+{
+    uintptr_t addr = (uintptr_t)dma_channel_hw_addr((uint)dma_ch)->read_addr;
+    return (uint32_t)((addr - (uintptr_t)ring) / 4u) & (RING_WORDS - 1u);
+}
+
+// Words this side may still write without overtaking the reader. One is kept
+// back so that full and empty are not the same arrangement.
+static uint32_t ring_free(void)
+{
+    return (dma_at() - write_at - 1u) & (RING_WORDS - 1u);
+}
 
 // --- THE DAC ---------------------------------------------------------------
 // The TLV320DAC3100 at 0x18, which is the other half of "audio" and has no
@@ -80,8 +132,12 @@ static const dac_step_t dac_init[] = {
 
     { 0, 0x3f, 0xd4, 10 },   // both DACs on, left to left and right to right
     { 0, 0x40, 0x00,  0 },   // unmuted
-    { 0, 0x41, 0x00,  0 },   // 0 dB
-    { 0, 0x42, 0x00,  0 },
+    // -18 dB, in half-decibel steps of a signed byte, and NOT 0 dB. Nought is
+    // full scale, which is what this was, and the first tone anybody heard
+    // through headphones was too loud. A device somebody puts on their head
+    // should not come up at maximum. `volume` moves these two.
+    { 0, 0x41, 0xdc,  0 },
+    { 0, 0x42, 0xdc,  0 },
 
     // The analogue side.
     { 1, 0x01, 0x08,  0 },   // no weak AVDD-to-DVDD tie
@@ -153,6 +209,46 @@ static int32_t audio_configure(const void *config, uint32_t size)
     K->pio_sm_init(I2S_PIO, I2S_SM, (uint32_t)offset + audio_i2s_offset_entry_point, &c);
     pio_sm_set_enabled(I2S_PIO, I2S_SM, true);
 
+    // The ring, and the DMA that empties it into the state machine's FIFO.
+    // Twice the size is asked for because mem_alloc promises nothing about
+    // alignment and the hardware's wrapping demands it.
+    // Two failures, two messages. "no SRAM or no DMA channel" was one message
+    // for two causes, and it sent the reader to weigh both when the machine
+    // knew perfectly well which.
+    // driver_alloc and not mem_alloc: this runs at boot in kernel context,
+    // where mem_alloc refuses on purpose because it hands out memory OWNED by
+    // a process. A driver's ring belongs to the driver and lives as long as
+    // the machine. See the note beside driver_alloc in the ABI.
+    uint8_t *raw = (uint8_t *)K->driver_alloc(RING_BYTES * 2u);
+    if (!raw) {
+        K->print("  audio driver: no SRAM for the ring\n");
+        return -1;
+    }
+    dma_ch = K->dma_claim_channel();
+    if (dma_ch < 0) {
+        K->print("  audio driver: every DMA channel is taken\n");
+        return -1;
+    }
+    ring = (volatile uint32_t *)(((uintptr_t)raw + (RING_BYTES - 1u)) & ~(uintptr_t)(RING_BYTES - 1u));
+    for (uint32_t i = 0; i < RING_WORDS; i++) ring[i] = 0;
+
+    dma_channel_config_t dc = dma_channel_get_default_config((uint)dma_ch);
+    channel_config_set_transfer_data_size(&dc, DMA_SIZE_32);
+    channel_config_set_read_increment(&dc, true);
+    channel_config_set_write_increment(&dc, false);
+    // The read address wraps inside the ring; the write address is one FIFO
+    // register and never moves.
+    channel_config_set_ring(&dc, false, RING_BITS);
+    // Paced by the state machine: a word leaves only when the FIFO has room,
+    // which is what makes this play at 48 kHz rather than as fast as memory.
+    channel_config_set_dreq(&dc, pio_get_dreq(I2S_PIO, I2S_SM, true));
+
+    dma_channel_configure((uint)dma_ch, &dc,
+                          &I2S_PIO->txf[I2S_SM],   // to the FIFO
+                          (const void *)ring,      // from the ring
+                          0xffffffffu,             // effectively never ending
+                          true);                   // and start now
+
     // The clocks are running now, which is the order the DAC needs: its PLL
     // locks to BCLK, so it cannot be configured -- or even report that it is
     // well -- until something is driving the bus.
@@ -169,35 +265,63 @@ static int32_t audio_configure(const void *config, uint32_t size)
 }
 
 static int32_t audio_open(void)  { return ready ? 0 : -1; }
-static int32_t audio_close(void) { return 0; }
+
+// Closing means silence, and it has to be said rather than assumed. The DMA
+// never stops -- there is no interrupt and nothing to stop it with -- so it
+// keeps reading the ring for ever. Clearing ahead of the writer is not enough
+// on its own: once the reader has gone all the way round through that silence
+// it arrives back at the data it played before, and the result is the tone
+// coming and going, which sounds like interference rather than like a loop.
+//
+// So the whole ring goes to zero here. It costs up to the last ten
+// milliseconds of whatever was playing, which nobody can hear, and it means
+// the machine is quiet when nothing is using it -- which turns out to matter
+// more than a tidy tail when the thing is on somebody's head.
+static int32_t audio_close(void)
+{
+    if (ready) for (uint32_t i = 0; i < RING_WORDS; i++) ring[i] = 0;
+    write_at = 0;
+    return 0;
+}
 
 // One 32-bit word is one stereo frame: left in the high half, right in the
 // low, because the shift register goes out most significant bit first and I2S
 // sends the left channel first.
+//
+// As much as fits and no more. This does not wait: a short answer is the
+// contract for a device that can fill up, and the I/O manager parks the writer
+// on WAIT_WRITE until writable() says there is room again. Waiting here would
+// be waiting inside a system call, which on this machine is how a driver
+// starves everything else -- see the note in myrtos_long_syscalls.
 static int32_t audio_write(const uint8_t *buf, uint32_t len)
 {
     if (!ready) return -1;
 
-    uint32_t frames = len / 4;
-    for (uint32_t i = 0; i < frames; i++) {
+    uint32_t want = len / 4u;
+    uint32_t room = ring_free();
+    uint32_t n = want < room ? want : room;
+
+    for (uint32_t i = 0; i < n; i++) {
         uint32_t l = (uint32_t)buf[i * 4 + 0] | ((uint32_t)buf[i * 4 + 1] << 8);
         uint32_t r = (uint32_t)buf[i * 4 + 2] | ((uint32_t)buf[i * 4 + 3] << 8);
-        pio_sm_put_blocking(I2S_PIO, I2S_SM, (l << 16) | (r & 0xffffu));
+        ring[write_at] = (l << 16) | (r & 0xffffu);
+        write_at = (write_at + 1u) & (RING_WORDS - 1u);
     }
-    // Whatever was left over was not a whole frame and is not played. Claiming
-    // it anyway keeps a caller that writes in odd-sized pieces from looping for
-    // ever on a remainder it can never make bigger.
-    return (int32_t)len;
+
+    // And clear what lies in front, as far as there is room. Only ever space
+    // the reader has already passed, so nothing waiting to be played is lost.
+    uint32_t ahead = ring_free();
+    for (uint32_t i = 0, at = write_at; i < ahead; i++, at = (at + 1u) & (RING_WORDS - 1u))
+        ring[at] = 0;
+
+    return (int32_t)(n * 4u);
 }
 
-// Room in the FIFO, in bytes. A caller that asks before writing does not block
-// at all; one that does not, blocks in the write, which is the ordinary
-// contract for a device that can fill up.
+// Room in the ring, in bytes. A caller that asks before writing never blocks;
+// one that does not, blocks in the I/O manager rather than in here.
 static int32_t audio_writable(void)
 {
-    if (!ready) return 0;
-    uint32_t free_words = 8u - pio_sm_get_tx_fifo_level(I2S_PIO, I2S_SM);
-    return (int32_t)(free_words * 4u);
+    return ready ? (int32_t)(ring_free() * 4u) : 0;
 }
 
 static bool audio_init(const myrtos_kernel_api_t *api)
@@ -220,9 +344,6 @@ const myrtos_driver_module_t myrtos_driver = {
 };
 
 // --- WHAT THIS IS NOT -----------------------------------------------------
-// Every frame goes through a system call and a blocking FIFO push, so playing
-// anything continuously spends the machine on it. The answer is DMA with a
-// ring, and the obstacle is known rather than guessed: this module's memory is
-// PSRAM and DMA cannot reach it, so the ring has to come from the kernel's
-// mem_alloc -- exactly what sdlib's control blocks had to do, and for exactly
-// the same reason.
+// There is no volume control, and nothing to ask the device for its rate. Both
+// want somewhere for a device to take a command that is not data -- an ioctl,
+// which this system does not have and probably should.
