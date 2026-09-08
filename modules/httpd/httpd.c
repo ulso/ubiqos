@@ -375,97 +375,134 @@ void module_main(int argc, char **argv) {
     myrtos_line_str(&l, ", ctrl-C to stop\r\n");
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 
-    char req[REQ_MAX];
+    // Several connections at once, which is what makes keeping them free.
+    //
+    // Before this, one client was accepted, served to the end and closed
+    // before the next was looked at -- so every millisecond spent waiting for
+    // one client's next request was charged to whoever was queued behind it.
+    // That is why the keep-alive wait had to be cut to fifteen milliseconds:
+    // it was a direct tax on everybody else. With a table there is no waiting
+    // at all. A connection that has nothing to say is simply skipped.
+    //
+    // Not parallel, and worth being clear about: the wifi service handles one
+    // command at a time, so this interleaves rather than overlaps. That is
+    // still the whole difference, because what a client mostly does is think.
+    //
+    // Four, because four request buffers is a kilobyte and the chip has ten
+    // sockets with one of them the listener. It is not a limit anybody will
+    // reach on a board with one page to serve.
+    #define MAX_CONNS 4
+    struct {
+        int32_t  sock;                 // -1 when free
+        uint32_t n;                    // bytes of the request so far
+        uint32_t quiet_since;
+        bool     served;               // has this connection answered anything
+        bool     asked;                // whether the chip has been asked if it is still there
+        char     req[REQ_MAX];
+    } conn[MAX_CONNS];
+    for (uint32_t i = 0; i < MAX_CONNS; i++) {
+        conn[i].sock = -1; conn[i].n = 0; conn[i].served = false; conn[i].asked = false;
+    }
+
     uint32_t last_request_ms = 0;
+
     for (;;) {
-        int32_t client = myrtos_sock_accept(server);
-        if (client < 0) {
-            // Fast while anything is happening, slow when nothing is.
-            //
-            // This was a flat 200 ms, and the reason given was that every ask
-            // is an AVAIL_DATA_TCP over SPI -- "and each one is a chance for
-            // the protocol to go wrong". That second half is no longer true.
-            // The protocol went wrong because a reply's length was read with
-            // the wrong byte order and the frame never ended where the chip
-            // said; with that fixed the channel took 932 commands under load
-            // without a single resynchronisation. So the cost of asking is
-            // just the asking.
-            //
-            // And it was expensive: measured, a small reply took 101 ms, which
-            // is this sleep and almost nothing else. A page took 164, of which
-            // the four kilobytes of SPI are about four.
-            //
-            // Five milliseconds for the first second after a request, then
-            // back to 200. A browser fetching a page and its script gets the
-            // fast path for both; an idle server costs five transactions a
-            // second, not two hundred.
-            uint32_t idle = myrtos_ticks_now() - last_request_ms;
-            myrtos_sleep(idle < 1000u ? 5 : 200);
-            continue;
+        bool worked = false;
+        uint32_t now = myrtos_ticks_now();
+
+        // One new client a pass. Asking is an SPI transaction and there is no
+        // hurry: if two arrive together the second is taken on the next pass,
+        // five milliseconds later.
+        for (uint32_t i = 0; i < MAX_CONNS; i++) {
+            if (conn[i].sock >= 0) continue;
+            int32_t c = myrtos_sock_accept(server);
+            if (c >= 0) {
+                conn[i].sock = c; conn[i].n = 0; conn[i].served = false;
+                conn[i].asked = false; conn[i].quiet_since = now;
+                worked = true;
+            }
+            break;
         }
 
-        // The request line is all that is read. Headers after it are skipped by
-        // not reading them, which is allowed and is what lets this answer
-        // without a parser.
-        // Requests, plural. A browser fetching a page and its script sends the
-        // second the moment the first is answered, and a connection per request
-        // costs a socket, a handshake and an accept poll each time.
-        //
-        // Bounded HARD, and the first attempt at this was not. A connection
-        // held open is a connection nobody else can have, because this server
-        // answers one client at a time -- so every millisecond spent waiting
-        // for a follow-up is a millisecond charged to whoever is next.
-        //
-        // Measured with 300 ms of patience: a client that reuses its
-        // connection went from 46 ms a page to 35, and a client that does not
-        // went from 46 to 287. That is not a trade, it is a regression with a
-        // beneficiary.
-        //
-        // Fifteen milliseconds. A browser sends its next request within a
-        // round trip of receiving the last one -- under a millisecond on a
-        // local network, plus its own thinking -- so this catches the case it
-        // is for while charging a lone client at most fifteen milliseconds for
-        // the possibility. The real answer is serving several connections at
-        // once, and that is a different piece of work.
-        for (uint32_t served = 0; served < 32u; served++) {
-            uint32_t n = 0;
-            int32_t why = 0;                   // 0 fine, -1 recv failed
-            // The first request is already on its way -- that is why accept
-            // returned -- so the long wait is only for the ones after it.
-            uint32_t patience = served ? 3u : 100u;
-            for (uint32_t spin = 0; spin < patience && n < sizeof(req) - 1; spin++) {
-                int32_t got = myrtos_sock_recv(client, (uint8_t *)req + n, sizeof(req) - 1 - n);
-                if (got < 0) { why = -1; break; }
-                if (got == 0) { myrtos_sleep(5); continue; }
-                n += (uint32_t)got;
-                req[n] = 0;
-                bool done = false;
-                for (uint32_t i = 3; i < n; i++)
-                    if (req[i - 3] == '\r' && req[i - 2] == '\n' &&
-                        req[i - 1] == '\r' && req[i] == '\n') done = true;
-                if (done) break;
-            }
-            req[n] = 0;
-            if (!n) {
-                // Silence on a kept connection is the client having finished,
-                // which is ordinary and not worth a word. On the FIRST request
-                // it is the fault nobody has explained yet, so that one is
-                // still reported: six requests in a thousand come back empty
-                // and the SPI channel is provably not the cause.
-                if (!served) {
+        for (uint32_t i = 0; i < MAX_CONNS; i++) {
+            if (conn[i].sock < 0) continue;
+            int32_t got = myrtos_sock_recv(conn[i].sock, (uint8_t *)conn[i].req + conn[i].n,
+                                           REQ_MAX - 1 - conn[i].n);
+            if (got < 0) {
+                // A receive that fails is the client gone, or the fault nobody
+                // has explained yet -- six requests in a thousand come back
+                // empty with the SPI channel reporting no trouble at all. It
+                // is worth a word only when nothing was ever served on this
+                // connection, because after that it is just a client leaving.
+                if (!conn[i].served) {
                     myrtos_line_t e;
                     myrtos_line_reset(&e);
-                    myrtos_line_str(&e, "httpd: empty request, sock ");
-                    myrtos_line_u32(&e, (uint32_t)client);
-                    myrtos_line_str(&e, why ? " (recv failed)" : " (nothing arrived)");
+                    myrtos_line_str(&e, "httpd: receive failed before any request, sock ");
+                    myrtos_line_u32(&e, (uint32_t)conn[i].sock);
                     myrtos_line_str(&e, "\r\n");
                     myrtos_line_flush(MYRTOS_STDERR, &e);
                 }
-                break;
+                myrtos_sock_close(conn[i].sock);
+                conn[i].sock = -1;
+                continue;
             }
-            last_request_ms = myrtos_ticks_now();
-            serve(client, req);
+            if (got == 0) {
+                uint32_t quiet = now - conn[i].quiet_since;
+                // A RECEIVE OF NOTHING IS NOT A CLOSED CONNECTION. It means
+                // nothing has arrived yet, and a client that has finished and
+                // gone looks exactly the same from here -- so the chip has to
+                // be asked.
+                //
+                // Leaving that out was worth measuring: every finished
+                // connection sat in this table until it timed out, all four
+                // slots filled with the departed within a fifth of a second,
+                // and a client opening a fresh connection each time went from
+                // 54 milliseconds a page to 484.
+                //
+                // Asked once, after a tenth of a second of silence, because it
+                // is an SPI transaction and a client that is coming back
+                // usually already has. Still established after that and it may
+                // stay until the two-second timeout.
+                if (quiet > 100u && !conn[i].asked) {
+                    conn[i].asked = true;
+                    if (myrtos_sock_state(conn[i].sock) != (int32_t)MYRTOS_TCP_ESTABLISHED) {
+                        myrtos_sock_close(conn[i].sock);
+                        conn[i].sock = -1;
+                        continue;
+                    }
+                }
+                if (quiet > 2000u) {
+                    myrtos_sock_close(conn[i].sock);
+                    conn[i].sock = -1;
+                }
+                continue;
+            }
+
+            worked = true;
+            conn[i].n += (uint32_t)got;
+            conn[i].req[conn[i].n] = 0;
+            conn[i].quiet_since = now;
+
+            bool done = false;
+            for (uint32_t k = 3; k < conn[i].n; k++)
+                if (conn[i].req[k - 3] == '\r' && conn[i].req[k - 2] == '\n' &&
+                    conn[i].req[k - 1] == '\r' && conn[i].req[k] == '\n') done = true;
+            if (!done && conn[i].n < REQ_MAX - 1) continue;   // more to come
+
+            last_request_ms = now;
+            serve(conn[i].sock, conn[i].req);
+            conn[i].n = 0;
+            conn[i].served = true;
+            conn[i].asked = false;
+            conn[i].quiet_since = myrtos_ticks_now();
         }
-        myrtos_sock_close(client);
+
+        // Only when there was nothing to do anywhere. Fast while the board is
+        // busy, slow when it is not: an idle server asks five times a second,
+        // not two hundred.
+        if (!worked) {
+            uint32_t idle = myrtos_ticks_now() - last_request_ms;
+            myrtos_sleep(idle < 1000u ? 5 : 200);
+        }
     }
 }

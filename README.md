@@ -849,13 +849,28 @@ client that reuses one and costs eight milliseconds to a client that does not:
 Every reply goes through one function with a real `Content-Length`, so a body is
 always delimited -- which is the precondition, not a detail.
 
-**The wait for a follow-up is fifteen milliseconds and that number matters.**
-This server answers one client at a time, so every millisecond spent waiting is
-charged to whoever is next. The first attempt waited 300, and measured: the
-reusing client went 46 to 35 and everybody else went 46 to **287**. That is not
-a trade, it is a regression with a beneficiary. A browser sends its next request
-within a round trip; fifteen catches that and no more. Serving several
-connections at once is the real answer and is a different piece of work.
+**Four connections at once**, which is what makes keeping them free. Before the
+table, one client was served to the end before the next was looked at, so every
+millisecond spent waiting for one client's follow-up was charged to whoever was
+queued behind it -- the keep-alive wait had to be cut to fifteen milliseconds
+for exactly that reason. Now a connection with nothing to say is skipped.
+
+| 40 pages | |
+|---|---|
+| one client at a time | 2.3 s, 57 ms each |
+| four clients at once | **1.2 s, 31 ms each** |
+
+Not parallel: the wifi service handles one command at a time, so this
+interleaves rather than overlaps. That is still the whole difference, because
+what a client mostly does is think.
+
+**A receive of nothing is not a closed connection.** It means nothing has
+arrived yet, and a client that finished and went looks identical from here, so
+the chip has to be asked -- once, after a tenth of a second of silence. Leaving
+that out was worth measuring: every finished connection sat in the table until
+it timed out, all four slots filled with the departed within a fifth of a
+second, and a client opening a fresh connection each time went from 54
+milliseconds a page to **484**.
 
 **The rule, since it is not written anywhere in the protocol:** in nina-fw a
 `memcpy` means host order -- the chip is little-endian -- and a hand-written
