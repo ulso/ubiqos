@@ -35,6 +35,24 @@
 // 48 kHz, and the number is not arbitrary: sys is 120 MHz here, and
 // 120e6 * 4 / 48000 is exactly 10000, so the 8.8 divider comes out at 39.0625
 // with no rounding at all. 44100 does not divide as kindly.
+// 48000, and the fractional PIO divider that comes with it is a known and
+// measured non-problem.
+//
+// The divider is 8.8 fixed point and a frame is 64 PIO cycles, so 48 kHz at
+// 120 MHz needs 39.0625. The average rate is exact; the individual bit-clock
+// edges are quantised to the system clock, which is jitter, and jitter on the
+// sample instants is a phase error proportional to signal frequency -- the
+// same shape as the distortion this device actually has.
+//
+// So it was tried: 46875 Hz gives a divider of exactly 40, and the DAC's clock
+// chain follows it with nothing changed (BCLK 1.5 MHz, PLL J=64 to 96 MHz,
+// NDAC=8 MDAC=2 DOSR=128 dividing to exactly 46875). Measured at the
+// headphone jack with an integer divider, the distortion was unchanged to
+// within the measurement: the sideband on a 10 kHz tone stayed at -15 dB.
+//
+// Left at 48000 because that is the rate most files already have, and at that
+// rate they are played rather than resampled. The jitter is real and is not
+// what anybody is hearing.
 #define I2S_HZ     48000
 
 static const myrtos_kernel_api_t *K;
@@ -203,6 +221,17 @@ static bool dac_set(uint8_t page, uint8_t reg, uint8_t val)
 
 static int32_t audio_getstat(uint32_t code, void *data, uint32_t len)
 {
+    // The ring is the exception to the four-byte rule below: it is as big as
+    // it is, and a caller that asks for it with the wrong size is refused
+    // rather than given part of it.
+    if (code == MYRTOS_SS_RINGDUMP) {
+        if (!ready || !data || len != RING_BYTES) return -1;
+        uint32_t at = dma_at();
+        uint32_t *out32 = (uint32_t *)data;
+        for (uint32_t i = 0; i < RING_WORDS; i++)
+            out32[i] = ring[(at + i) & (RING_WORDS - 1u)];
+        return 0;
+    }
     if (!data || len != 4) return -1;
     switch (code) {
     case MYRTOS_SS_VOLUME: *(uint32_t *)data = vol_now; return 0;

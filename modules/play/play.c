@@ -228,16 +228,42 @@ static bool push(int32_t fd, const int16_t *frames, uint32_t n) {
     return true;
 }
 
+// The ring as hex, four frames a line. Slow and enormous and meant to
+// be read by a program at the other end of the serial line, not by a person.
+static __thread uint8_t ringbuf[4096];
+
+static void dump_ring(int32_t dev)
+{
+    if (myrtos_getstat(dev, MYRTOS_SS_RINGDUMP, ringbuf, sizeof ringbuf) < 0) {
+        say("play: the device will not show its ring", 0);
+        return;
+    }
+    myrtos_write_str(MYRTOS_STDOUT, "RING\n");
+    // Sixteen bytes a line, not more. myrtos_line_t holds 96 characters and
+    // hex_byte writes four of them, so 24 bytes is the most that fits -- and a
+    // line that does not fit is silently cut, which came out as a dump that
+    // was almost right and therefore worse than one that failed.
+    myrtos_line_t l;
+    for (uint32_t i = 0; i < sizeof ringbuf; i += 16) {
+        myrtos_line_reset(&l);
+        for (uint32_t j = 0; j < 16; j++) myrtos_line_hex_byte(&l, ringbuf[i + j]);
+        myrtos_line_str(&l, "\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &l);
+    }
+    myrtos_write_str(MYRTOS_STDOUT, "ENDRING\n");
+}
+
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: play [-i] [-v] FILE\n\nPlays a PCM WAV file. 8- and 16-bit, mono or stereo, any rate --\n"
             "it is resampled to whatever /dev/audio runs at.\n-i says what the file is without playing it.\n"))
         return;
 
-    bool info_only = false, verbose = false;
+    bool info_only = false, verbose = false, dump = false;
     while (argc > 1 && argv[1][0] == '-' && argv[1][1] && !argv[1][2]) {
         if (argv[1][1] == 'i') info_only = true;
         else if (argv[1][1] == 'v') verbose = true;
+        else if (argv[1][1] == 'd') dump = true;
         else break;
         argv++; argc--;
     }
@@ -429,6 +455,10 @@ void module_main(int argc, char **argv) {
             out[nout * 2 + 1] = clamp16(((int64_t)(accr >> 15) * (int32_t)ts_q16) >> 16);
             pos += step;
             frames_out++;
+            // Halfway through, hand back what the DMA is actually reading.
+            // This is the only view of the samples the hardware is being fed
+            // that does not need a probe on pins too small to reach.
+            if (dump && frames_out == 24000u) dump_ring(dev);
             if (++nout == OUT_FRAMES) { ok = push(dev, out, nout); nout = 0; }
         }
         if (ok && nout) ok = push(dev, out, nout);

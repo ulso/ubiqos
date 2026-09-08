@@ -18,7 +18,10 @@
 
 MYRTOS_MEM_SIZE(8192);
 
-#define RATE     48000u
+// Asked, not assumed. This was 48000 written in, and when the device moved to
+// 46875 every tone came out 2.3% flat and every duration 2.3% long -- a wrong
+// answer that looked entirely right. The device knows its own rate.
+#define RATE_FALLBACK 48000u
 #define TABLE    64u
 #define FRAMES   256u          // per write: 1 kB, about 5 ms
 
@@ -53,20 +56,28 @@ void module_main(int argc, char **argv) {
     }
     if (argc > 1) hz = to_u32(argv[1], &ok);
     if (ok && argc > 2) ok = (ms = to_u32(argv[2], &ok), ok);
-    if (!ok || !hz || hz > RATE / 2 || !ms || ms > 30000) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: tone [-v] [HZ [MS]]  -- up to 24000 Hz, 30000 ms\n");
-        return;
-    }
 
     int32_t fd = myrtos_open("/dev/audio");
     if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "tone: no /dev/audio\n"); return; }
 
+    // The device is opened before the arguments are checked, because half of
+    // what makes an argument wrong is the rate, and only the device knows it.
+    uint32_t rate = RATE_FALLBACK;
+    if (myrtos_getstat(fd, MYRTOS_SS_RATE, &rate, sizeof rate) < 0 || !rate)
+        rate = RATE_FALLBACK;
+
+    if (!ok || !hz || hz > rate / 2 || !ms || ms > 30000) {
+        myrtos_write_str(MYRTOS_STDERR, "usage: tone [-v] [HZ [MS]]  -- up to half the device rate, 30000 ms\n");
+        myrtos_close(fd);
+        return;
+    }
+
     // Phase in 8.8 of a table entry, so the step is exact enough that nobody
     // can hear the rounding: 440 Hz asks for 150.19 and gets 150, which is
     // 439.5 Hz.
-    uint32_t step = (hz * TABLE * 256u) / RATE;
+    uint32_t step = (hz * TABLE * 256u) / rate;
     uint32_t phase = 0;
-    uint32_t total = (RATE * ms) / 1000u;
+    uint32_t total = (rate * ms) / 1000u;
 
     int16_t buf[FRAMES * 2];
     uint32_t asked = total, wrote = 0, shorts = 0, zeros = 0;

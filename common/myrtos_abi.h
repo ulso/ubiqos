@@ -649,6 +649,11 @@ typedef struct {
 
 // Audio.
 #define MYRTOS_SS_VOLUME   0x0100u  // uint32_t 0-100; 100 is full scale
+// The DMA's ring, copied out in the order it is being played, starting from
+// where the DMA is reading now. Diagnostic: it is the only way to see what the
+// hardware is actually being fed, short of a probe on the I2S pins, and it is
+// what separates a fault in the writer from a fault in the codec.
+#define MYRTOS_SS_RINGDUMP 0x0101u  // the whole ring, as bytes
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
