@@ -793,13 +793,24 @@ fetches:
 | the 4 kB page, 40 rounds | 39 full, one empty, and it recovered |
 | the command channel over both | 580 commands, **0** resyncs, retries, failures |
 
+A second run with the send converted, 180 page fetches and 100 sensor fetches
+interleaved: two empty answers in all of them, both recovered from, against
+1385 commands with **0** resyncs, retries and failures. The old behaviour was
+total death after two fetches.
+
 The one empty page is the useful part. It did not appear in any counter,
 because the bulk send was still on the old path and nothing was watching it --
 which is exactly what the counters are for: they said *where the fault was not*.
 That send is on the transaction path now.
 
-Still on the old path: the scan, the connect, and the bulk receive. Then DMA,
-which is a small step once a frame is already a buffer.
+Both remaining failures were in the bulk **receive**, which read the frame's end
+marker and threw it away without looking -- the same fault the whole overhaul is
+about, on the one path that moves the most bytes. It is on the transaction path
+now and counted; whether that was the last of it is the next measurement.
+
+Still on the old path: the scan and the connect, neither of which runs while a
+page is being served. Then DMA, which is a small step once a frame is already a
+buffer.
 
 ## Status: what a device is, rather than what it carries
 
