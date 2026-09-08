@@ -53,6 +53,22 @@
 // Left at 48000 because that is the rate most files already have, and at that
 // rate they are played rather than resampled. The jitter is real and is not
 // what anybody is hearing.
+//
+// Changing the rate did settle something else, though. The distortion this
+// device has is an amplitude modulation by a disturbance at a FIXED 68176 Hz
+// which the DAC's sampling folds down to |68176 - fs|, and the sidebands land
+// there plus and minus the tone. Measured at three rates:
+//
+//     fs 48000 -> sidebands about 20172      68172
+//     fs 46875 -> sidebands about 21305      68180
+//     fs 44100 -> sidebands about 24078      68178
+//
+// Constant to four hertz across nearly four kilohertz of fs, and the third was
+// a prediction before it was a measurement: 24076 was calculated and 24078
+// came back. That is why the fault gets worse with pitch and not why anyone
+// would guess -- at 1 kHz the sidebands sit at 19 and 21 kHz where nobody
+// hears them, and at 10 kHz one of them lands at 14 kHz. The source of the
+// 68176 Hz is not known. See the README.
 #define I2S_HZ     48000
 
 static const myrtos_kernel_api_t *K;

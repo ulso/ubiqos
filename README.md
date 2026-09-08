@@ -536,6 +536,36 @@ interpolation and box average this replaced:
 | 10 kHz, 44100 → 48000 | -72 dB | **-103 dB** |
 | a 30 kHz tone folding down, 96000 → 48000 | -5 dB | **-100 dB** |
 
+### The distortion that is still there
+
+The headphone output amplitude-modulates the audio with a disturbance at a
+**fixed 68176 Hz**, which the DAC's sampling folds down to `|68176 - fs|`. The
+sidebands then sit at that, plus and minus the tone. Measured at three rates:
+
+| device rate | sidebands about | sum |
+|---|---|---|
+| 48000 | 20172 | 68172 |
+| 46875 | 21305 | 68180 |
+| 44100 | 24078 | 68178 |
+
+Constant to four hertz across nearly four kilohertz of `fs`, and the third row
+was a prediction before it was a measurement -- 24076 calculated, 24078 came
+back. **That is why it gets worse with pitch**: at 1 kHz the sidebands land at
+19 and 21 kHz where nobody hears them; at 10 kHz one of them lands at 14 kHz,
+15 dB down and plainly audible.
+
+What it is not, each measured rather than reasoned: the resampler (`play -d`
+dumps the ring, and the samples reaching the DAC are a clean sine at exactly
+the file's amplitude), the headphone driver (20 dB of analogue attenuation
+before it leaves the sideband unchanged relative to the tone), the fractional
+PIO clock divider (an integer one at 46875 Hz changed nothing), the DAC's
+processing block, its NDAC/MDAC/DOSR split, its soft-stepping, its output
+common mode, and the digital volume from -35 dB to 0.
+
+The source of the 68176 Hz is unknown. It is not in the ring, it does not
+scale with any clock this code sets, and it is not present at idle -- it
+appears only with signal, so it modulates rather than adds.
+
 `play -v` times a playback against the board's own clock and prints what the
 work cost against what the audio is worth. Everything is at or under real time
 except 32-bit float, which is 36% over and stutters; the cause is recorded in
