@@ -1,0 +1,13 @@
+{
+    "buildType": {
+        "default": "release",
+        "description": "Release is the only choice, and that is on purpose",
+        "choices": {
+            "release": {
+                "short": "Release",
+                "long": "A debug build of the kernel does not fit. The framebuffer is 307200 bytes of a 520 kB part and the kernel is linked copy_to_ram, so -Og -g overflows the RAM region at the link with no hint as to why. CMake Tools defaults to Debug and would offer it here.",
+                "buildType": "Release"
+            }
+        }
+    }
+}
