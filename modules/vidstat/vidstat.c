@@ -92,7 +92,7 @@ static void trace_dump(void)
 }
 
 void module_main(int argc, char **argv) {
-    uint32_t s[8];
+    uint32_t s[10];
 
     // -s dumps the console's cells as text. It is not printed by default
     // because thirty lines of screen every time hides the four numbers that
@@ -130,11 +130,13 @@ void module_main(int argc, char **argv) {
     row("Scanline buffers:  ", s[3], "");
     row("Scrolled back:     ", s[6], " rows");
     row("History to go back:", s[7], " rows");
+    row("  of which in PSRAM:", s[8], " rows");
     row("Beam is at line:   ", s[4], "");
     row("Built up to line:  ", s[5], "");
     row("Pumps:             ", s[1], "");
     row("Scanlines built:   ", s[2], "");
     row("Underruns:         ", s[0], "");
+    if (s[0]) row("  first at pump:   ", s[9], "");
 
     // Three questions, in the order that makes the next one worth asking.
     if (s[1] == 0) {

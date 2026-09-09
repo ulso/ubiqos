@@ -50,6 +50,7 @@ void     myrtos_chargen_view_end(void);            // return to live
 void     myrtos_chargen_view_home(void);           // as far back as there is
 uint32_t myrtos_chargen_view_back(void);
 uint32_t myrtos_chargen_history(void);
+uint32_t myrtos_chargen_deep(void);
 
 // One scanline of MYRTOS_H_ACTIVE bytes. Called from an interrupt above the
 // kernel's threshold, so it must touch nothing but its own memory.

@@ -234,6 +234,7 @@ static void build_frame_list(void) {
 #define PUMP_US 500
 
 uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
+static uint32_t first_underrun_pump;
 
 static int      pump_alarm = -1;
 static uint32_t beam_epoch;     // active lines completed in whole frames
@@ -265,16 +266,18 @@ void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
         out[i] = p[i];
 }
 
-void myrtos_video_stats_fill(uint32_t *eight)
+void myrtos_video_stats_fill(uint32_t *ten)
 {
-    eight[0] = myrtos_video_underruns;
-    eight[1] = myrtos_video_pumps;
-    eight[2] = myrtos_video_lines;
-    eight[3] = LINE_BUFS;
-    eight[4] = beam_line();
-    eight[5] = rendered_to;
-    eight[6] = myrtos_chargen_view_back();
-    eight[7] = myrtos_chargen_history();
+    ten[0] = myrtos_video_underruns;
+    ten[1] = myrtos_video_pumps;
+    ten[2] = myrtos_video_lines;
+    ten[3] = LINE_BUFS;
+    ten[4] = beam_line();
+    ten[5] = rendered_to;
+    ten[6] = myrtos_chargen_view_back();
+    ten[7] = myrtos_chargen_history();
+    ten[8] = myrtos_chargen_deep();
+    ten[9] = first_underrun_pump;
 }
 
 static void video_pump(void)
@@ -290,6 +293,8 @@ static void video_pump(void)
     // Say so and start again from where it is, rather than racing to catch up
     // with work whose result is already on the screen.
     if (rendered_to < now) {
+        if (!myrtos_video_underruns)
+            first_underrun_pump = myrtos_video_pumps;   // when, not just how many
         myrtos_video_underruns += now - rendered_to;
         rendered_to = now;
     }
@@ -314,12 +319,22 @@ static void pump_isr(void)
 
 static void pump_start(void)
 {
-    // Fill every buffer once before the first alarm, so the first frame is not
-    // a screenful of whatever SRAM held at reset.
-    beam_epoch = beam_last = rendered_to = 0;
+    // Fill every buffer once so the first frame is not a screenful of whatever
+    // SRAM held at reset. The cells are blank at this point, so which line
+    // index each buffer was built for does not matter.
     for (uint32_t i = 0; i < LINE_BUFS; i++)
         myrtos_chargen_line(i, linebuf[i]);
-    rendered_to = LINE_BUFS;
+
+    // THEN start the bookkeeping from where the beam actually is. The DMA chain
+    // has been running since dma_channel_start, so claiming that forty-eight
+    // lines are already accounted for makes the first pump compare that against
+    // a beam somewhere else entirely and book the difference as lateness. It
+    // read as 77 underruns at pump zero, and it had been reading zero only
+    // because the timing happened to fall the other way -- which is worse,
+    // because the whole design is judged by this counter.
+    beam_epoch = 0;
+    beam_last = rendered_to = beam_line();
+    video_pump();                    // and fill the real window before arming
 
     pump_alarm = (int)hardware_alarm_claim_unused(true);
     uint irq = hardware_alarm_get_irq_num(pump_alarm);

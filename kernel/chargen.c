@@ -1,6 +1,11 @@
 // The character generator. See chargen.h for the shape and video.c for who
 // calls myrtos_chargen_line and when.
 #include "chargen.h"
+#include "tlsf.h"
+
+void myrtos_print(const char *s);
+void myrtos_print_u32(uint32_t v);
+void myrtos_print_hex(uint32_t v);
 
 extern const uint8_t myrtos_font8x16[224][MYRTOS_CELL_H];
 extern const uint8_t myrtos_ansi_colour[16];
@@ -20,6 +25,35 @@ static uint32_t view_back;
 static uint32_t history;
 
 #define MAX_BACK (MYRTOS_CELL_RING - MYRTOS_CELL_ROWS)
+
+// --- THE DEEP HISTORY, IN PSRAM -------------------------------------------
+//
+// The SRAM ring is what the generator can read, and the generator runs from an
+// interrupt above the kernel's priority threshold: it may not touch PSRAM, and
+// in the framebuffer days a console writing scattered bytes there held the QMI
+// long enough to starve the display. That is why the ring stays where it is.
+//
+// What PSRAM can do is catch the rows falling out of it. 4096 rows at 80 cells
+// of two bytes is 640 kB of the eight megabytes, and about a hundred and thirty
+// screens.
+//
+// Reading them back means copying: when the view reaches past the ring, the
+// thirty rows it wants are assembled into an SRAM buffer and the generator is
+// pointed at that instead. The copy happens in whoever moved the view -- the
+// USB task, with interrupts on -- never in the generator.
+//
+// This is only safe because chargen took the display off the QMI. The picture
+// now streams from linebuf in SRAM, so a PSRAM write no longer competes with it.
+#define DEEP_ROWS 4096
+
+extern tlsf_pool_t myrtos_bulk_pool;
+
+static myrtos_cell_t *deep;
+static uint32_t deep_head;       // next slot to write
+static uint32_t deep_count;      // rows kept, saturating at DEEP_ROWS
+
+static myrtos_cell_t view_buf[MYRTOS_CELL_ROWS * MYRTOS_CELL_COLS];
+static bool view_deep;
 
 static uint32_t cur_row, cur_col;
 static bool     cur_on;
@@ -49,11 +83,44 @@ static inline myrtos_cell_t *cell_at(uint32_t row, uint32_t col)
     return &cells[r * MYRTOS_CELL_COLS + col];
 }
 
-// Where the generator reads: the same, moved back by the view.
+// Where the generator reads: the ring moved back by the view, or the assembled
+// buffer once the view has gone past what the ring holds.
 static inline const myrtos_cell_t *view_at(uint32_t row)
 {
+    if (view_deep)
+        return &view_buf[row * MYRTOS_CELL_COLS];
     uint32_t r = (row_origin + MYRTOS_CELL_RING - view_back + row) % MYRTOS_CELL_RING;
     return &cells[r * MYRTOS_CELL_COLS];
+}
+
+// One row of history, counted back from the top of the live screen. Rows within
+// the ring come from it directly; older ones come from PSRAM, where index 0 is
+// the oldest still kept.
+static const myrtos_cell_t *row_back(uint32_t back)
+{
+    if (back <= history) {
+        uint32_t r = (row_origin + MYRTOS_CELL_RING - back) % MYRTOS_CELL_RING;
+        return &cells[r * MYRTOS_CELL_COLS];
+    }
+    uint32_t d = back - history;                  // 1 .. deep_count
+    uint32_t j = deep_count - d;                  // 0 is the oldest kept
+    uint32_t slot = (deep_head + DEEP_ROWS - deep_count + j) % DEEP_ROWS;
+    return &deep[slot * MYRTOS_CELL_COLS];
+}
+
+// Assemble the window when it reaches past the ring. Called only from thread
+// context, because it reads PSRAM.
+static void view_rebuild(void)
+{
+    if (view_back <= history) { view_deep = false; return; }
+
+    for (uint32_t r = 0; r < MYRTOS_CELL_ROWS; r++) {
+        const myrtos_cell_t *src = row_back(view_back - r);
+        myrtos_cell_t *dst = &view_buf[r * MYRTOS_CELL_COLS];
+        for (uint32_t i = 0; i < MYRTOS_CELL_COLS; i++)
+            dst[i] = src[i];
+    }
+    view_deep = true;      // set last: the generator reads this one word
 }
 
 void myrtos_chargen_put(uint32_t row, uint32_t col, uint8_t glyph, uint8_t attr)
@@ -97,23 +164,27 @@ uint32_t myrtos_chargen_view_back(void) { return view_back; }
 // anything, which the ring's capacity does not.
 uint32_t myrtos_chargen_history(void)
 {
-    return history < MAX_BACK ? history : MAX_BACK;
+    return (history < MAX_BACK ? history : MAX_BACK) + deep_count;
 }
+
+uint32_t myrtos_chargen_deep(void) { return deep_count; }
 
 void myrtos_chargen_view_move(int32_t rows)
 {
     int32_t back = (int32_t)view_back - rows;      // negative rows goes back
-    int32_t cap  = (int32_t)(history < MAX_BACK ? history : MAX_BACK);
+    int32_t cap  = (int32_t)myrtos_chargen_history();
     if (back < 0)   back = 0;
     if (back > cap) back = cap;
     view_back = (uint32_t)back;
+    view_rebuild();
 }
 
-void myrtos_chargen_view_end(void) { view_back = 0; }
+void myrtos_chargen_view_end(void) { view_back = 0; view_deep = false; }
 
 void myrtos_chargen_view_home(void)
 {
-    view_back = history < MAX_BACK ? history : MAX_BACK;
+    view_back = myrtos_chargen_history();
+    view_rebuild();
 }
 
 // Blank the row that is about to become the bottom one, and only then move the
@@ -127,13 +198,36 @@ void myrtos_chargen_view_home(void)
 // be overwritten.
 void myrtos_chargen_scroll(uint8_t attr)
 {
+    // The slot that is about to become the bottom row holds the oldest row in
+    // the ring once the ring is full. Keep it before it is blanked, or it is
+    // simply gone.
+    if (deep && history >= MAX_BACK) {
+        const myrtos_cell_t *old = cell_at(MYRTOS_CELL_ROWS, 0);
+        myrtos_cell_t *dst = &deep[deep_head * MYRTOS_CELL_COLS];
+        for (uint32_t i = 0; i < MYRTOS_CELL_COLS; i++)
+            dst[i] = old[i];
+        deep_head = (deep_head + 1) % DEEP_ROWS;
+        if (deep_count < DEEP_ROWS)
+            deep_count++;
+    }
+
     myrtos_chargen_fill(MYRTOS_CELL_ROWS, 0, MYRTOS_CELL_COLS - 1, attr);
     row_origin = (row_origin + 1) % MYRTOS_CELL_RING;
 
     if (history < MAX_BACK)
         history++;
-    if (view_back && view_back < MAX_BACK)
-        view_back++;
+
+    // A view that is scrolled back moves with the origin so the text being read
+    // stays put. Past the ring that also means the assembled window is now one
+    // row stale, so it is built again -- which is affordable because it only
+    // happens while somebody is reading history and something is printing.
+    if (view_back) {
+        uint32_t cap = myrtos_chargen_history();
+        if (view_back < cap)
+            view_back++;
+        if (view_deep || view_back > history)
+            view_rebuild();
+    }
 }
 
 // The cursor is a register here rather than pixels flipped in place, which is
@@ -149,7 +243,38 @@ void myrtos_chargen_init(uint8_t attr)
 {
     row_origin = 0;
     view_back = history = 0;
+    deep_head = deep_count = 0;
+    view_deep = false;
     cur_on = false;
+
+    // Once, and only where there is PSRAM to put it. myrtos_mem_alloc_bulk
+    // falls back to SRAM when the bulk pool cannot serve the request, and
+    // 640 kB of SRAM is not a fallback, it is a failure to boot -- so the
+    // address is checked rather than trusted, the way myrtos_pool_of_address
+    // learned to.
+    if (!deep && myrtos_bulk_pool) {
+        // Straight out of the pool, the way k_driver_alloc does it for drivers
+        // and for the same reason: this is never given back, so there is
+        // nothing to remember about it. myrtos_mem_alloc_bulk cannot be used
+        // here -- it goes through alloc_from, which links every block to a
+        // process for cleanup and therefore refuses outright while
+        // current_pid is KERNEL_PID, which is what it is this early. That
+        // returned a null pointer that the first version wrote through, and
+        // the machine died just after "Card ready".
+        void *p = myrtos_tlsf_malloc(myrtos_bulk_pool,
+                                     DEEP_ROWS * MYRTOS_CELL_COLS * sizeof(myrtos_cell_t));
+        if (p && myrtos_tlsf_owns(myrtos_bulk_pool, p))
+            deep = (myrtos_cell_t *)p;
+        myrtos_print("chargen: ");
+        if (deep) {
+            myrtos_print_u32(DEEP_ROWS);
+            myrtos_print(" rows of history in PSRAM at 0x");
+            myrtos_print_hex((uint32_t)(uintptr_t)deep);
+            myrtos_print("\n");
+        } else {
+            myrtos_print("history is the SRAM ring only\n");
+        }
+    }
 
     // The whole ring, not just the screen: history that was never written must
     // read as blank rather than as whatever SRAM held at reset.
