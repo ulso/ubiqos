@@ -95,8 +95,23 @@ static void usb_thread(void) {
             extern void myrtos_lwip_start(void);
             extern void myrtos_lwip_poll(void);
             static bool up;
-            if (!up && tud_ready()) { myrtos_lwip_start(); up = true; }
-            if (up) myrtos_lwip_poll();
+            if (!up && tud_ready()) {
+                extern void myrtos_lwip_sock_init(void);
+                myrtos_lwip_start();
+                myrtos_lwip_sock_init();   // this thread is stack 1's server
+                up = true;
+            }
+            if (up) {
+                myrtos_lwip_poll();
+
+                // And the socket server, in the same turn and the same
+                // context: lwIP may not be touched from anywhere else, so the
+                // process that answers socket calls for stack 1 has to be this
+                // one. Zero milliseconds, so a turn with nothing waiting costs
+                // a single look.
+                extern void myrtos_lwip_serve(void);
+                myrtos_lwip_serve();
+            }
         }
 #endif
 

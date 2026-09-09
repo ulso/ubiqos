@@ -189,6 +189,18 @@ void myrtos_lwip_stats(uint32_t *out)
     out[12] = myrtos_lwip_other_frames;
     out[13] = myrtos_lwip_for_us;
     out[14] = myrtos_lwip_icmp_frames;
+    {
+        extern uint32_t myrtos_lwipsock_served, myrtos_lwipsock_queued,
+                        myrtos_lwipsock_taken, myrtos_lwipsock_recv,
+                        myrtos_lwipsock_sent;
+        out[15] = myrtos_lwipsock_served;
+        out[16] = myrtos_lwipsock_queued;
+        out[17] = myrtos_lwipsock_taken;
+        out[18] = myrtos_lwipsock_recv;
+        out[19] = myrtos_lwipsock_sent;
+        extern uint32_t myrtos_lwipsock_why;
+        out[20] = myrtos_lwipsock_why;
+    }
 }
 
 // The address AutoIP settled on, host order, or 0 while it is still deciding.

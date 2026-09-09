@@ -36,7 +36,7 @@ void module_main(void) {
     // The USB network device, which is a different thing from the host side
     // above: this is what the Mac sees when it enumerates this board.
     {
-        uint32_t n[24];
+        uint32_t n[28];
         if (myrtos_netdev_stats(n) == 0) {
             // What was observed, not a state that cannot be asked for: NCM
             // gives no link callback, so a frame arriving is the evidence.
@@ -96,6 +96,21 @@ void module_main(void) {
             myrtos_line_u32(&l, n[19]);
             myrtos_line_str(&l, ", of which icmp ");
             myrtos_line_u32(&l, n[20]);
+            myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, "sock: served ");
+            myrtos_line_u32(&l, n[21]);
+            myrtos_line_str(&l, ", accepts queued ");
+            myrtos_line_u32(&l, n[22]);
+            myrtos_line_str(&l, " taken ");
+            myrtos_line_u32(&l, n[23]);
+            myrtos_line_str(&l, "\n      bytes in ");
+            myrtos_line_u32(&l, n[24]);
+            myrtos_line_str(&l, " out ");
+            myrtos_line_u32(&l, n[25]);
+            myrtos_line_str(&l, ", last refusal ");
+            myrtos_line_u32(&l, n[26]);
             myrtos_line_str(&l, "\n");
         }
     }
