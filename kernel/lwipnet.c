@@ -111,7 +111,16 @@ static err_t if_init(struct netif *n)
     n->name[1] = 's';
     n->mtu = 1500;
     n->hwaddr_len = 6;
+    // ONE BIT DIFFERENT FROM THE HOST'S. In NCM the address in the descriptor
+    // is what the HOST takes for its own end -- macOS showed en27 with exactly
+    // the MAC this board advertises -- so giving the netif the same one puts
+    // the same address at both ends of a two-node link. ARP then never
+    // completes: the host asks, the reply is addressed to the asker's own MAC,
+    // and its cache stays "(incomplete)" for ever.
+    //
+    // TinyUSB's own lwIP example flips this bit for the same reason.
     memcpy(n->hwaddr, tud_network_mac_address, 6);
+    n->hwaddr[5] ^= 0x01;
     // NETIF_FLAG_ETHERNET as well as ETHARP: the first says the device speaks
     // ethernet at all, the second that it resolves addresses with ARP, and
     // leaving the first out is a link that answers nothing while the frames
