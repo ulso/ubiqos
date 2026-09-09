@@ -320,7 +320,14 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # scrollback, the vector lists and now lwIP. At 184 the C heap was 6644
         # bytes, and a C heap that reaches zero has already crashed this board
         # once. The pool is still four times what it was this morning.
-        set(myrtosHeapKB 160)
+        # 128. It has come down all day as the kernel's own statics grew --
+        # scanline buffers, scrollback, vector lists, lwIP, and mDNS last of
+        # all, which cost 22 kB and took the Arm C heap to 8912 bytes while
+        # RISC-V simply would not link. Every one of those comes out of the C
+        # heap and not out of this pool, and a C heap that reaches zero has
+        # crashed this board before. The pool is still three times what it was
+        # this morning and `free` has never been near it.
+        set(myrtosHeapKB 128)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
