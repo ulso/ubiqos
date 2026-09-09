@@ -50,7 +50,8 @@ void module_main(int argc, char **argv) {
         "vec -- line segments drawn over the console\n"
         "  vec clear\n"
         "  vec line x0 y0 x1 y1 [colour]\n"
-        "  vec demo\n"))
+        "  vec demo\n"
+        "  vec text on|off [background]\n"))
         return;
 
     if (argc < 2) {
@@ -73,6 +74,15 @@ void module_main(int argc, char **argv) {
 
     if (cmd[0] == 'd') { demo(); return; }
 
+    // vec text off  -- the console stops being drawn, and the processor it was
+    // using goes to the segments. The text itself is untouched: turn it back on
+    // and the screen is where it was.
+    if (cmd[0] == 't') {
+        int32_t on = (argc >= 3 && argv[2][0] == 'o' && argv[2][1] == 'n');
+        myrtos_vec_text(on, argc >= 4 ? num(argv[3], 0) : 0);
+        return;
+    }
+
     if (cmd[0] == 'l') {
         if (argc < 6) { myrtos_write_str(MYRTOS_STDOUT, "vec line x0 y0 x1 y1 [colour]\n"); return; }
         int32_t r = myrtos_vec_line((int32_t)num(argv[2], 0), (int32_t)num(argv[3], 0),
@@ -83,5 +93,5 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    myrtos_write_str(MYRTOS_STDOUT, "vec: clear, line or demo\n");
+    myrtos_write_str(MYRTOS_STDOUT, "vec: clear, line, demo or text\n");
 }

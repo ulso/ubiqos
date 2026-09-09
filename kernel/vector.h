@@ -20,14 +20,18 @@
 
 // How many segments may cross one scanline. This is the real limit, not the
 // list size: the display builds a line every 32 microseconds and a segment
-// costs about one per cent of the processor for every scanline it crosses, so
+// costs about 1.5 per cent of the processor for every scanline it crosses, so
 // an unbounded active list lets a picture starve the machine that draws it.
-// Measured on 9 Sep 2026 -- text alone is 48 per cent, and each full-height
-// segment adds one. Sixty-four is the point past which nothing else runs.
-//
-// Over the cap, segments are simply not taken up: the picture loses lines and
+// Over the cap, segments are simply not taken up -- the picture loses lines and
 // the machine keeps going, which is the right way round.
+//
+// The number belongs to whoever is building the machine, not to this file.
+// MYRTOS_VEC_ACTIVE in CMake sets it; 64 is what fits beside a text console at
+// 49 per cent, and roughly twice that fits with the text turned off. There is
+// no safe value that is also universal, which is exactly why it is a knob.
+#ifndef MYRTOS_VEC_ACTIVE_MAX
 #define MYRTOS_VEC_ACTIVE_MAX 64
+#endif
 
 int32_t  myrtos_vector_add(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint8_t colour);
 void     myrtos_vector_clear(void);

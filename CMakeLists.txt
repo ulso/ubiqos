@@ -342,6 +342,13 @@ math(EXPR myrtosDmesgBytes "${myrtosDmesgKB} * 1024")
 target_compile_definitions(os_kernel PRIVATE DMESG_SIZE=${myrtosDmesgBytes})
 message(STATUS "Kernel log: ${myrtosDmesgKB} kB")
 
+# How many line segments may cross one scanline. The display has to build a
+# line every 32 microseconds whatever is on it, so this is the bound that keeps
+# a picture from starving the machine drawing it -- see kernel/vector.h.
+set(MYRTOS_VEC_ACTIVE "64" CACHE STRING "line segments allowed to cross one scanline")
+target_compile_definitions(os_kernel PRIVATE MYRTOS_VEC_ACTIVE_MAX=${MYRTOS_VEC_ACTIVE})
+message(STATUS "Vector segments per scanline: ${MYRTOS_VEC_ACTIVE}")
+
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card

@@ -730,6 +730,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define MYRTOS_VEC_CLEAR 0u
 #define MYRTOS_VEC_ADD   1u
 #define MYRTOS_VEC_COUNT 2u
+#define MYRTOS_VEC_TEXT  3u   // a1 = 0 off, 1 on; a2 = background colour index
 #define SYS_VIDSTAT   65u   // a0 = &uint32_t[10]: underruns, pumps, lines, buffers,
                             //   beam, rendered, view back, history, of which deep
 
@@ -1497,6 +1498,15 @@ static inline int32_t myrtos_vec_line(int32_t x0, int32_t y0,
 {
     myrtos_vecline_t v = { x0, y0, x1, y1, colour };
     return myrtos_syscall(SYS_VECTOR, MYRTOS_VEC_ADD, (uint32_t)(uintptr_t)&v, 0);
+}
+
+// Turn the character console off, leaving the display to the segments alone.
+// The text is not lost -- the cells and the scrollback are untouched -- it is
+// simply not drawn, and the processor that went into decoding eighty cells a
+// line goes to whatever else wants it.
+static inline int32_t myrtos_vec_text(int32_t on, uint32_t bg_index)
+{
+    return myrtos_syscall(SYS_VECTOR, MYRTOS_VEC_TEXT, (uint32_t)on, bg_index);
 }
 
 static inline int32_t myrtos_vec_count(void)
