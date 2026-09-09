@@ -16,7 +16,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MYRTOS_VEC_MAX 256
+// How many segments the picture may hold. This is a different limit from the
+// one below and they are confused easily: a trace across the screen is 640
+// short segments, but only the handful that cross a given scanline cost
+// anything to draw. The total bounds the memory; the active count bounds the
+// time.
+//
+// 1024 segments is about 12 kB with the sort index, and enough for a full-width
+// trace plus a graticule. MYRTOS_VEC_SEGMENTS in CMake sets it.
+#ifndef MYRTOS_VEC_MAX
+#define MYRTOS_VEC_MAX 1024
+#endif
 
 // How many segments may cross one scanline. This is the real limit, not the
 // list size: the display builds a line every 32 microseconds and a segment

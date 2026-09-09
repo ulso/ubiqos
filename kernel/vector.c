@@ -109,7 +109,11 @@ static void rebuild(uint32_t y)
 
         act[nact].x = x;
         act[nact].step = step;
-        act[nact].prev = x - step;   // as if it had been drawn on the line above
+        // A horizontal segment has no line above to have come from, and the
+        // span it wants is its whole length on this one scanline. Without this
+        // it drew a single pixel at x0, which is what the graticule's rules
+        // came out as.
+        act[nact].prev = dy ? x - step : ((int32_t)s->x1 << 16);
         act[nact].y1 = s->y1;
         act[nact].colour = s->colour;
         nact++;
@@ -153,7 +157,7 @@ void myrtos_vector_line(uint32_t y, uint8_t *dst)
                 int32_t step = dy ? (((int32_t)s->x1 - s->x0) << 16) / dy : 0;
                 act[nact].x = (int32_t)s->x0 << 16;
                 act[nact].step = step;
-                act[nact].prev = act[nact].x;
+                act[nact].prev = dy ? act[nact].x : ((int32_t)s->x1 << 16);
                 act[nact].y1 = s->y1;
                 act[nact].colour = s->colour;
                 nact++;
