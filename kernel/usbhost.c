@@ -7,6 +7,7 @@
 #include "hardware/structs/sysinfo.h"
 #include "tusb.h"
 #include "chargen.h"
+#include "hardware/sync.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -28,7 +29,45 @@ void myrtos_print_hex(uint32_t v);
 #define ESP_BOOT          0   // to the ESP32-C6's GPIO9, and the BOOT button
 
 static uint8_t keys[32];
-static uint32_t head, tail;
+static volatile uint32_t head, tail;
+
+// The key ring has TWO producers, which is easy to miss: the keyboard fills it,
+// and console.c answers a cursor-position report through it as well, because a
+// terminal's reply to a program goes to that program's input. One core made
+// that harmless. Two do not, so it takes a hardware spinlock -- disabling
+// interrupts would only protect it from the core already holding it.
+static spin_lock_t *keylock;
+
+// --- WHAT CORE 1 MAY NOT DO ITSELF -----------------------------------------
+//
+// The USB host is moving to the second core, and the rule is the one already
+// written for a handler above the kernel's threshold: touch your own memory,
+// call nothing. Three things in here broke that -- delivering an interrupt to a
+// process, moving the console's scrollback, and printing -- and all three are
+// reached from the key path, which already had a ring. So they become events
+// instead, and core 0 does the work when it drains them.
+//
+// Nothing carries a pointer. The log messages are ids and numbers, so no string
+// crosses between the cores at all.
+enum { EV_LOG = 1, EV_INTR, EV_VIEW };
+enum { LOG_MOUNT = 1, LOG_UMOUNT, LOG_HID_KBD, LOG_HID_OTHER, LOG_ARMED,
+       LOG_HID_GONE, LOG_CDC_UP, LOG_CDC_GONE };
+enum { VIEW_MOVE = 1, VIEW_HOME, VIEW_END };
+
+typedef struct { uint8_t kind, id; uint32_t a, b; } usb_event_t;
+static usb_event_t evq[32];
+static volatile uint32_t ev_head, ev_tail;
+
+static void ev_push(uint8_t kind, uint8_t id, uint32_t a, uint32_t b) {
+    uint32_t next = (ev_head + 1u) % (sizeof(evq) / sizeof(evq[0]));
+    if (next == ev_tail) return;            // full: an event is dropped, not queued late
+    evq[ev_head].kind = kind;
+    evq[ev_head].id = id;
+    evq[ev_head].a = a;
+    evq[ev_head].b = b;
+    __dmb();                                 // the entry before the index that publishes it
+    ev_head = next;
+}
 
 // TinyUSB asks the port for the time. It is declared in tusb.h and defined
 // nowhere in the SDK, so it is ours to supply. The hardware clock rather than
@@ -38,6 +77,8 @@ uint32_t tusb_time_millis_api(void) {
 }
 
 void myrtos_usbhost_init(void) {
+    if (!keylock) keylock = spin_lock_instance((uint)spin_lock_claim_unused(true));
+
     // GP22 releases the USB hub, the audio DAC and the ESP32-C6 together, so the
     // ESP's reset happens here whether or not anybody wants WiFi.
     //
@@ -74,6 +115,65 @@ void myrtos_usbhost_init(void) {
 
 void myrtos_usbhost_task(void) { tuh_task(); }
 
+bool myrtos_io_interrupt(const char *device_name);
+static void push_locked(const char *sq, uint32_t n);
+
+// --- CORE 0 DRAINS WHAT CORE 1 COULD NOT DO --------------------------------
+// Everything here touches the kernel, and that is the point: it runs on the
+// core that owns it. The events carry ids and numbers, never a pointer, so
+// nothing that crosses can dangle.
+void myrtos_usbhost_drain(void)
+{
+    while (ev_tail != ev_head) {
+        usb_event_t e = evq[ev_tail];
+        __dmb();
+        ev_tail = (ev_tail + 1u) % (sizeof(evq) / sizeof(evq[0]));
+
+        switch (e.kind) {
+        case EV_INTR:
+            // Nobody wanted it, so it is a character after all -- which is what
+            // the old code decided at the keyboard, in a place that no longer
+            // knows enough to decide it.
+            if (!myrtos_io_interrupt("con") && !myrtos_io_interrupt("kbd")) {
+                char c = 3;
+                push_locked(&c, 1);
+            }
+            break;
+
+        case EV_VIEW:
+#if MYRTOS_VIDEO_CHARGEN
+            if (e.id == VIEW_MOVE) myrtos_chargen_view_move((int32_t)e.a);
+            else if (e.id == VIEW_HOME) myrtos_chargen_view_home();
+            else myrtos_chargen_view_end();
+#endif
+            break;
+
+        case EV_LOG:
+            switch (e.id) {
+            case LOG_MOUNT:
+            case LOG_UMOUNT:
+                myrtos_print("USB host: device ");
+                myrtos_print_u32(e.a);
+                myrtos_print(e.id == LOG_MOUNT ? " attached\n" : " removed\n");
+                break;
+            case LOG_HID_KBD:   myrtos_print("USB host: keyboard ready\n"); break;
+            case LOG_HID_OTHER: myrtos_print("USB host: HID device, not a keyboard\n"); break;
+            case LOG_ARMED:     myrtos_print("USB host:   armed\n"); break;
+            case LOG_HID_GONE:  myrtos_print("USB host: HID gone\n"); break;
+            case LOG_CDC_GONE:  myrtos_print("USB host: CDC-ACM device gone\n"); break;
+            case LOG_CDC_UP:
+                myrtos_print("USB host: CDC-ACM ready as 'acm', ");
+                myrtos_print_hex(e.a >> 16);
+                myrtos_print(":");
+                myrtos_print_hex(e.a & 0xffffu);
+                myrtos_print(e.b ? ", DTR high\n" : ", DTR low\n");
+                break;
+            }
+            break;
+        }
+    }
+}
+
 // What the driver hands out. A ring, because keys arrive in an interrupt-ish
 // context and are read from a system call.
 int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len) {
@@ -94,18 +194,23 @@ static void push(uint8_t c) {
     if (next != tail) { keys[head] = c; head = next; }
 }
 
+// Both halves of a sequence or neither, and now across two cores as well.
+static void push_locked(const char *sq, uint32_t n) {
+    uint32_t save = spin_lock_blocking(keylock);
+    uint32_t free_slots = (tail - head - 1 + sizeof(keys)) % sizeof(keys);
+    if (free_slots >= n)
+        for (uint32_t i = 0; i < n; i++) push((uint8_t)sq[i]);
+    spin_unlock(keylock, save);
+}
+
 // --- what TinyUSB calls back ----------------------------------------------
 
 void tuh_mount_cb(uint8_t addr) {
-    myrtos_print("USB host: device ");
-    myrtos_print_u32(addr);
-    myrtos_print(" attached\n");
+    ev_push(EV_LOG, LOG_MOUNT, addr, 0);
 }
 
 void tuh_umount_cb(uint8_t addr) {
-    myrtos_print("USB host: device ");
-    myrtos_print_u32(addr);
-    myrtos_print(" removed\n");
+    ev_push(EV_LOG, LOG_UMOUNT, addr, 0);
 }
 
 // Asking for the next report is the only thing that keeps a keyboard alive, and
@@ -381,8 +486,7 @@ void tuh_hid_mount_cb(uint8_t addr, uint8_t instance,
                       uint8_t const *desc, uint16_t len) {
     (void)desc; (void)len;
     uint8_t proto = tuh_hid_interface_protocol(addr, instance);
-    myrtos_print(proto == HID_ITF_PROTOCOL_KEYBOARD
-                 ? "USB host: keyboard ready\n" : "USB host: HID device, not a keyboard\n");
+    ev_push(EV_LOG, proto == HID_ITF_PROTOCOL_KEYBOARD ? LOG_HID_KBD : LOG_HID_OTHER, 0, 0);
     hid_want(addr, instance);
 
     // Said after the ask and not before it, because the boot has stopped
@@ -391,7 +495,7 @@ void tuh_hid_mount_cb(uint8_t addr, uint8_t instance,
     // enumerating the next interface. Seen 6 Sep 2026, intermittently, on a
     // keyboard that presents two HID interfaces. One line at boot is cheap
     // against a hang that only shows up sometimes.
-    myrtos_print("USB host:   armed\n");
+    ev_push(EV_LOG, LOG_ARMED, 0, 0);
 }
 
 void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
@@ -481,9 +585,12 @@ void myrtos_usbhost_push_str(const char *sq);   // defined below
 // Both halves or neither. A lone lead byte in the queue would be read as a
 // broken character, and there is no way to take it back.
 static void emit(uint8_t c) {
-    if (c == 3 && (myrtos_io_interrupt("con") || myrtos_io_interrupt("kbd")))
-        return;
-    if (c < 0x80) { push(c); return; }
+    // Whether an interrupt goes to a process or falls through as a character
+    // is a question about the kernel's process table, which is core 0's to
+    // answer. So the key is reported and core 0 decides -- and pushes ^C into
+    // the ring itself if nothing wanted it.
+    if (c == 3) { ev_push(EV_INTR, 0, 0, 0); return; }
+    if (c < 0x80) { push_locked((const char *)&c, 1); return; }
 
     char pair[3];
     pair[0] = (char)(0xc0 | (c >> 6));
@@ -516,10 +623,10 @@ static bool scroll_key(uint8_t k, uint8_t mods) {
     if (!(mods & 0x22))                       // either shift
         return false;
     switch (k) {
-    case 0x4b: myrtos_chargen_view_move(-(int32_t)(MYRTOS_CELL_ROWS / 2)); return true;
-    case 0x4e: myrtos_chargen_view_move(+(int32_t)(MYRTOS_CELL_ROWS / 2)); return true;
-    case 0x4a: myrtos_chargen_view_home(); return true;
-    case 0x4d: myrtos_chargen_view_end();  return true;
+    case 0x4b: ev_push(EV_VIEW, VIEW_MOVE, (uint32_t)(-(int32_t)(MYRTOS_CELL_ROWS / 2)), 0); return true;
+    case 0x4e: ev_push(EV_VIEW, VIEW_MOVE, (uint32_t)(int32_t)(MYRTOS_CELL_ROWS / 2), 0); return true;
+    case 0x4a: ev_push(EV_VIEW, VIEW_HOME, 0, 0); return true;
+    case 0x4d: ev_push(EV_VIEW, VIEW_END, 0, 0);  return true;
     default:   return false;
     }
 #else
@@ -533,7 +640,7 @@ static bool scroll_key(uint8_t k, uint8_t mods) {
 // should not yank the page away, and that difference is the whole of the rule.
 static void scroll_to_live(void) {
 #if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_view_end();
+    ev_push(EV_VIEW, VIEW_END, 0, 0);
 #endif
 }
 
@@ -562,9 +669,7 @@ static const char *nav_sequence(uint8_t k) {
 void myrtos_usbhost_push_str(const char *sq) {
     uint32_t n = 0;
     while (sq[n]) n++;
-    uint32_t free_slots = (tail - head - 1 + sizeof(keys)) % sizeof(keys);
-    if (free_slots < n) return;
-    for (uint32_t i = 0; i < n; i++) push((uint8_t)sq[i]);
+    push_locked(sq, n);
 }
 
 void myrtos_usbhost_repeat(void) {

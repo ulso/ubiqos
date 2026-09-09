@@ -86,6 +86,7 @@ static void usb_thread(void) {
     for (;;) {
         myrtos_usb_task();          // the console, on the hardware controller
         myrtos_usbhost_task();      // the keyboard, on PIO
+        { extern void myrtos_usbhost_drain(void); myrtos_usbhost_drain(); }
         { extern void myrtos_usbhost_repeat(void); myrtos_usbhost_repeat(); }
         // A refused request for the next HID report is retried here rather than
         // being the end of the keyboard. See the note in usbhost.c.
