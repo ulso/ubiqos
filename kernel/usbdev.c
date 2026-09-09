@@ -82,15 +82,14 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
 // gives a device to answer a standard request with no data stage. Fifty times
 // the margin, for a sleep that costs nothing.
 static void usb_thread(void) {
-    extern void myrtos_usbhost_task(void);
     for (;;) {
         myrtos_usb_task();          // the console, on the hardware controller
-        myrtos_usbhost_task();      // the keyboard, on PIO
+
+        // The keyboard is not here any more. tuh_task, the repeat clock and the
+        // rearm sweep all run on core 1; what is left on this side is taking
+        // delivery of what they could not do themselves -- an interrupt for a
+        // process, a scrollback move, a line of log.
         { extern void myrtos_usbhost_drain(void); myrtos_usbhost_drain(); }
-        { extern void myrtos_usbhost_repeat(void); myrtos_usbhost_repeat(); }
-        // A refused request for the next HID report is retried here rather than
-        // being the end of the keyboard. See the note in usbhost.c.
-        { extern void myrtos_usbhost_rearm(void); myrtos_usbhost_rearm(); }
         myrtos_sleep(1);
 
 

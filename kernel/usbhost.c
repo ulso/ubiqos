@@ -8,6 +8,7 @@
 #include "tusb.h"
 #include "chargen.h"
 #include "hardware/sync.h"
+#include "pico/multicore.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -51,7 +52,7 @@ static spin_lock_t *keylock;
 // crosses between the cores at all.
 enum { EV_LOG = 1, EV_INTR, EV_VIEW };
 enum { LOG_MOUNT = 1, LOG_UMOUNT, LOG_HID_KBD, LOG_HID_OTHER, LOG_ARMED,
-       LOG_HID_GONE, LOG_CDC_UP, LOG_CDC_GONE };
+       LOG_HID_GONE, LOG_CDC_UP, LOG_CDC_GONE, LOG_STARTED, LOG_INIT_FAIL };
 enum { VIEW_MOVE = 1, VIEW_HOME, VIEW_END };
 
 typedef struct { uint8_t kind, id; uint32_t a, b; } usb_event_t;
@@ -76,6 +77,10 @@ uint32_t tusb_time_millis_api(void) {
     return (uint32_t)(time_us_64() / 1000u);
 }
 
+// The board's own power-up, which is NOT the USB host and must not move with
+// it: GP22 releases the hub, the audio DAC and the ESP32-C6 together, and the
+// drivers that come later in boot depend on having happened after it. Only the
+// PIO half belongs on the other core.
 void myrtos_usbhost_init(void) {
     if (!keylock) keylock = spin_lock_instance((uint)spin_lock_claim_unused(true));
 
@@ -104,13 +109,46 @@ void myrtos_usbhost_init(void) {
     gpio_put(USB_HOST_POWER, 1);          // the port is dead without this
 
     sleep_ms(100);                        // the hub needs a moment to come up
+}
 
+// --- THE SECOND CORE -------------------------------------------------------
+//
+// tuh_configure and tuh_init run HERE and not on core 0, because the interrupts
+// they set up belong to whichever core enables them. PIO-USB drives its start
+// of frame from a repeating timer every millisecond, and that is the one thing
+// on this board that genuinely cannot be late -- putting it on a core that also
+// builds 31000 scanlines a second is what took the keyboard down.
+//
+// Nothing below reaches into the kernel. Keys go through a spinlocked ring and
+// everything else through the event queue, which core 0 drains. That is the
+// rule already written for a handler above the kernel's threshold, applied to a
+// core instead of a handler.
+void myrtos_usbhost_repeat(void);
+void myrtos_usbhost_rearm(void);
+
+static void core1_main(void)
+{
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = USB_HOST_DP_PIN;
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
 
-    if (!tuh_init(1)) { myrtos_print("USB host: tuh_init failed\n"); return; }
-    myrtos_print("USB host started on PIO, D+ GP1, power GP11\n");
+    if (!tuh_init(1)) {
+        ev_push(EV_LOG, LOG_INIT_FAIL, 0, 0);
+        for (;;) tight_loop_contents();
+    }
+    ev_push(EV_LOG, LOG_STARTED, 0, 0);
+
+    for (;;) {
+        tuh_task();
+        myrtos_usbhost_repeat();
+        myrtos_usbhost_rearm();
+        busy_wait_us(200);
+    }
+}
+
+void myrtos_usbhost_start_core1(void)
+{
+    multicore_launch_core1(core1_main);
 }
 
 void myrtos_usbhost_task(void) { tuh_task(); }
@@ -161,6 +199,8 @@ void myrtos_usbhost_drain(void)
             case LOG_ARMED:     myrtos_print("USB host:   armed\n"); break;
             case LOG_HID_GONE:  myrtos_print("USB host: HID gone\n"); break;
             case LOG_CDC_GONE:  myrtos_print("USB host: CDC-ACM device gone\n"); break;
+            case LOG_STARTED:   myrtos_print("USB host on core 1, PIO, D+ GP1, power GP11\n"); break;
+            case LOG_INIT_FAIL: myrtos_print("USB host: tuh_init failed\n"); break;
             case LOG_CDC_UP:
                 myrtos_print("USB host: CDC-ACM ready as 'acm', ");
                 myrtos_print_hex(e.a >> 16);
@@ -177,11 +217,16 @@ void myrtos_usbhost_drain(void)
 // What the driver hands out. A ring, because keys arrive in an interrupt-ish
 // context and are read from a system call.
 int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len) {
+    // The reader takes the lock as well, now that the writer is on another
+    // core. Reading an index the other core is updating is the same race as
+    // writing one.
+    uint32_t save = spin_lock_blocking(keylock);
     uint32_t n = 0;
     while (n < len && head != tail) {
         buf[n++] = keys[tail];
         tail = (tail + 1) % sizeof(keys);
     }
+    spin_unlock(keylock, save);
     return (int32_t)n;
 }
 

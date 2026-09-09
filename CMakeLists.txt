@@ -247,7 +247,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # pico_standard_link provides only linker scripts and link flags. The startup
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
-target_link_libraries(os_kernel pico_runtime hardware_uart hardware_gpio hardware_spi pico_time
+target_link_libraries(os_kernel pico_runtime pico_multicore hardware_uart hardware_gpio hardware_spi pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
     hardware_i2c hardware_adc tinyusb_device)
 
