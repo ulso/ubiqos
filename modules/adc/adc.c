@@ -60,6 +60,22 @@ static uint32_t next_channel;
 // own hardware, which is what the rule allows. See the README.
 static volatile uint32_t scope_mask;
 
+// --- A SWEEP ---------------------------------------------------------------
+// The handler fills this and nothing else touches it while cap_want is set.
+// cap_want going to zero is what says the sweep is over, and it is a single
+// store, so a reader sees it done or not done and never half way.
+#define CAP_MAX 1024u
+static uint16_t cap_buf[CAP_MAX];
+static volatile uint32_t cap_want;      // 0 when idle
+static volatile uint32_t cap_have;
+static volatile uint32_t cap_channel;
+static volatile uint32_t cap_first_us, cap_last_us;
+
+// The rate as it stands, not as it was compiled. Reading back a constant while
+// the divider says something else is the kind of answer that makes a timebase
+// lie about the signal it is measuring.
+static uint32_t rate_hz = SAMPLE_HZ;
+
 static void adc_handler(void)
 {
     if (scope_mask) sio_hw->gpio_togl = scope_mask;
@@ -80,8 +96,21 @@ static void adc_handler(void)
     while (!adc_fifo_is_empty()) {
         uint16_t v = adc_fifo_get();
         // Bit 15 is the error flag when err_in_fifo is on; it is not data.
-        latest[next_channel] = (uint16_t)(v & 0x0fffu);
-        next_channel = (next_channel + 1u) % ADC_CHANNELS;
+        uint16_t sample = (uint16_t)(v & 0x0fffu);
+        uint32_t ch = next_channel;
+        latest[ch] = sample;
+
+        // A sweep takes the chosen channel as it comes round, so its interval
+        // is the round-robin's, not the conversion rate. The span says what it
+        // actually was.
+        if (cap_want && ch == cap_channel && cap_have < cap_want) {
+            if (!cap_have) cap_first_us = now;
+            cap_buf[cap_have++] = sample;
+            cap_last_us = now;
+            if (cap_have >= cap_want) cap_want = 0;
+        }
+
+        next_channel = (ch + 1u) % ADC_CHANNELS;
         taken++;
         n++;
     }
@@ -214,8 +243,30 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
 {
     if (!data) return -1;
     if (code == MYRTOS_SS_RATE && len == 4) {
-        *(uint32_t *)data = SAMPLE_HZ / ADC_CHANNELS;   // per channel
+        *(uint32_t *)data = rate_hz / ADC_CHANNELS;    // per channel
         return 0;
+    }
+    if (code == MYRTOS_SS_CAPTURE && len == sizeof(myrtos_adccap_t)) {
+        myrtos_adccap_t *o = (myrtos_adccap_t *)data;
+        uint32_t have = cap_have;
+        o->channel = cap_channel;
+        o->count   = cap_want ? cap_want : have;
+        o->taken   = have;
+        o->span_us = have > 1u ? (cap_last_us - cap_first_us) : 0u;
+        return 0;
+    }
+    if (code == MYRTOS_SS_CAPDATA) {
+        // Refused while the handler is still writing: half a sweep drawn as a
+        // whole one is a picture that lies about the signal.
+        if (cap_want) return -1;
+        uint32_t n = cap_have * 2u;
+        if (len < n) n = len & ~1u;
+        uint8_t *out = (uint8_t *)data;
+        for (uint32_t i = 0; i < n / 2u; i++) {
+            out[i * 2]     = (uint8_t)(cap_buf[i] & 0xffu);
+            out[i * 2 + 1] = (uint8_t)(cap_buf[i] >> 8);
+        }
+        return (int32_t)n;
     }
     if (code == MYRTOS_SS_IRQSTATS && len == sizeof(myrtos_irqstats_t)) {
         myrtos_irqstats_t *o = (myrtos_irqstats_t *)data;
@@ -223,7 +274,7 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
         o->overruns = overruns;
         o->worst_gap_us = worst_gap_us;
         o->best_gap_us = best_gap_us == 0xffffffffu ? 0u : best_gap_us;
-        o->expected_us = 1000000u / SAMPLE_HZ;
+        o->expected_us = 1000000u / rate_hz;   // the rate now, not the one compiled in
         o->priority = stage;
         return 0;
     }
@@ -235,6 +286,27 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
 // measurement is that one number.
 static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
 {
+    if (code == MYRTOS_SS_CAPTURE && len == sizeof(myrtos_adccap_t)) {
+        const myrtos_adccap_t *a = (const myrtos_adccap_t *)data;
+        if (stage < 4u) return -1;            // nothing is converting
+        if (a->channel >= ADC_CHANNELS) return -1;
+        uint32_t n = a->count;
+        if (!n || n > CAP_MAX) return -1;
+        // Order matters: everything the handler reads is set before the flag
+        // that lets it start, and cap_want is a single store.
+        cap_have = 0;
+        cap_first_us = cap_last_us = 0;
+        cap_channel = a->channel;
+        cap_want = n;
+        return 0;
+    }
+    if (code == MYRTOS_SS_RATE && len == 4) {
+        uint32_t hz = *(const uint32_t *)data * ADC_CHANNELS;   // per channel in
+        if (hz < 1000u || hz > 500000u) return -1;
+        adc_hw->div = ((48000000u / hz) - 1u) << ADC_DIV_INT_LSB;
+        rate_hz = hz;
+        return 0;
+    }
     if (code == MYRTOS_SS_IRQPIN) {
         if (!data || len != 4) return -1;
         uint32_t pin = *(const uint32_t *)data;

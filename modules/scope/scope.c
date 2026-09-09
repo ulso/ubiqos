@@ -41,35 +41,69 @@ int main(int argc, char **argv);
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
         "scope -- the ADC drawn as a trace\n"
-        "  scope [channel] [sweeps]\n"
+        "  scope [channel] [sweeps] [samples/s per channel]\n"
         "Needs the ADC converting: run 'adc 4' first.\n"
         "Leaves the picture behind; 'vec clear' takes it away.\n"))
         return;
 
     uint32_t ch = argc > 1 ? to_u32(argv[1]) : 0;
     uint32_t sweeps = argc > 2 ? to_u32(argv[2]) : 20;
+    uint32_t rate   = argc > 3 ? to_u32(argv[3]) : 0;    // per channel
     if (ch > 3) ch = 3;
 
     int32_t fd = myrtos_open("/dev/adc");
     if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "scope: no /dev/adc\n"); return; }
 
+    if (rate && myrtos_setstat(fd, MYRTOS_SS_RATE, &rate, sizeof rate) < 0)
+        myrtos_write_str(MYRTOS_STDERR, "scope: that rate was refused; keeping the old one\n");
+
     for (uint32_t s = 0; s < sweeps; s++) {
-        // One sweep: fill the buffer as fast as the device will answer. The
-        // sample rate is whatever this loop achieves, which is the honest
-        // thing to say about it -- there is no timebase here yet.
-        for (uint32_t x = 0; x < W; x++) {
-            uint8_t buf[8];
-            int32_t n = myrtos_read(fd, buf, sizeof buf);
-            uint32_t raw = 0;
-            if (n >= (int32_t)(ch * 2 + 2))
-                raw = (uint32_t)buf[ch * 2] | ((uint32_t)buf[ch * 2 + 1] << 8);
+        // One sweep, taken by the ADC's own interrupt rather than by this
+        // loop. Arm it, wait, read it back: the samples are then evenly spaced
+        // by the hardware, which is what makes the horizontal axis mean
+        // anything at all.
+        myrtos_adccap_t cap = { ch, W, 0, 0 };
+        if (myrtos_setstat(fd, MYRTOS_SS_CAPTURE, &cap, sizeof cap) < 0) {
+            myrtos_write_str(MYRTOS_STDERR,
+                "scope: the device would not arm a sweep. Run 'adc 4' first.\n");
+            myrtos_close(fd);
+            return;
+        }
+
+        // Sleep for as long as the sweep is expected to take, then ask. Asking
+        // every two milliseconds meant a hundred and sixty system calls per
+        // sweep, and a trap runs with interrupts off -- there is no reason to
+        // hold them off a hundred and sixty times to learn something that could
+        // be worked out from the rate.
+        uint32_t hz = 0;
+        if (myrtos_getstat(fd, MYRTOS_SS_RATE, &hz, sizeof hz) < 0 || !hz)
+            hz = 2000;
+        myrtos_sleep(W * 1000u / hz);
+
+        for (uint32_t wait = 0; wait < 100; wait++) {
+            if (myrtos_getstat(fd, MYRTOS_SS_CAPTURE, &cap, sizeof cap) < 0) break;
+            if (cap.taken >= W) break;
+            myrtos_sleep(10);
+        }
+
+        int32_t got = myrtos_getstat(fd, MYRTOS_SS_CAPDATA, sample, sizeof sample);
+        if (got <= 0) {
+            myrtos_write_str(MYRTOS_STDERR, "scope: the sweep did not finish\n");
+            myrtos_close(fd);
+            return;
+        }
+        uint32_t n = (uint32_t)got / 2u;
+
+        // In place: the read left raw counts here and the picture wants rows.
+        for (uint32_t x = 0; x < n; x++) {
+            uint32_t raw = sample[x];
             if (raw > 4095) raw = 4095;
             sample[x] = (uint16_t)(TOP + TRACE_H - raw * TRACE_H / 4095u);
         }
 
         myrtos_vec_clear();
         graticule();
-        for (uint32_t x = 0; x + 1 < W; x++)
+        for (uint32_t x = 0; x + 1 < n; x++)
             myrtos_vec_line((int32_t)x, sample[x], (int32_t)x + 1, sample[x + 1], 0x1c);
 
         // The reading, in the console rows the graticule leaves free.
@@ -81,7 +115,14 @@ void module_main(int argc, char **argv) {
         myrtos_line_u32(&l, ch);
         myrtos_line_str(&l, "  centre ");
         myrtos_line_u32(&l, mv);
-        myrtos_line_str(&l, " mV   sweep ");
+        // The timebase is the span the handler measured across the sweep,
+        // divided by the graticule. Not the rate that was asked for -- what
+        // the samples actually took.
+        myrtos_line_str(&l, " mV   ");
+        myrtos_line_u32(&l, cap.span_us / 8000u ? cap.span_us / 8000u : 0u);
+        myrtos_line_str(&l, ".");
+        myrtos_line_u32(&l, (cap.span_us / 800u) % 10u);
+        myrtos_line_str(&l, " ms/div   sweep ");
         myrtos_line_u32(&l, s + 1);
         myrtos_line_str(&l, "/");
         myrtos_line_u32(&l, sweeps);

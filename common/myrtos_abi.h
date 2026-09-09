@@ -785,6 +785,20 @@ typedef struct {
 // itself.
 #define MYRTOS_SS_IRQPIN   0x0202u
 
+// A sweep. setstat arms it with a channel and a count and the handler fills the
+// buffer as the conversions come round; getstat says how far it has got. The
+// span is MEASURED between the first sample and the last rather than worked out
+// from the nominal rate, so a timebase drawn from it is what happened and not
+// what was asked for.
+#define MYRTOS_SS_CAPTURE  0x0203u  // myrtos_adccap_t
+#define MYRTOS_SS_CAPDATA  0x0204u  // uint16_t[], the samples themselves
+typedef struct {
+    uint32_t channel;
+    uint32_t count;      // asked for
+    uint32_t taken;      // filled so far; equal to count when the sweep is done
+    uint32_t span_us;    // first sample to last, measured
+} myrtos_adccap_t;
+
 // Digital I/O. A pin is set up once with MODE and then driven with LEVEL; a
 // read of the device gives every pin's input level as two 32-bit words, low
 // pins first.
