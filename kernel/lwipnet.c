@@ -207,6 +207,17 @@ void myrtos_lwip_stats(uint32_t *out)
         out[23] = myrtos_lwipsock_oncalls;
         out[24] = myrtos_lwipsock_onbytes;
     }
+    {
+        // TCP's own view, which was the gap: ip and icmp were exposed and this
+        // was not, so "the segment never arrived" and "TCP threw it away" have
+        // been indistinguishable all along.
+        out[25] = lwip_stats.tcp.recv;
+        out[26] = lwip_stats.tcp.drop;
+        out[27] = lwip_stats.tcp.err;
+        out[28] = lwip_stats.tcp.chkerr;
+        out[29] = lwip_stats.tcp.proterr;
+        out[30] = lwip_stats.tcp.xmit;
+    }
 }
 
 // The address AutoIP settled on, host order, or 0 while it is still deciding.

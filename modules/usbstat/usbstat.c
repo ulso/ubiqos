@@ -36,7 +36,7 @@ void module_main(void) {
     // The USB network device, which is a different thing from the host side
     // above: this is what the Mac sees when it enumerates this board.
     {
-        uint32_t n[32];
+        uint32_t n[40];
         if (myrtos_netdev_stats(n) == 0) {
             // What was observed, not a state that cannot be asked for: NCM
             // gives no link callback, so a frame arriving is the evidence.
@@ -119,6 +119,30 @@ void module_main(void) {
             myrtos_line_str(&l, " pbufs, ");
             myrtos_line_u32(&l, n[30]);
             myrtos_line_str(&l, " bytes\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, " tcp: recv ");
+            myrtos_line_u32(&l, n[31]);
+            myrtos_line_str(&l, " drop ");
+            myrtos_line_u32(&l, n[32]);
+            myrtos_line_str(&l, " err ");
+            myrtos_line_u32(&l, n[33]);
+            myrtos_line_str(&l, "\n      chkerr ");
+            myrtos_line_u32(&l, n[34]);
+            myrtos_line_str(&l, " proterr ");
+            myrtos_line_u32(&l, n[35]);
+            myrtos_line_str(&l, " xmit ");
+            myrtos_line_u32(&l, n[36]);
+            myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            myrtos_line_reset(&l);
+            // What the server actually replied, which is the one value that
+            // separates "the server refused" from "the caller saw a refusal".
+            myrtos_line_str(&l, " last op ");
+            myrtos_line_u32(&l, n[27]);
+            myrtos_line_str(&l, " -> 0x");
+            myrtos_line_hex(&l, n[28]);
+            myrtos_line_str(&l, "\n");
         }
     }
     myrtos_line_str(&l, "repeating:      ");

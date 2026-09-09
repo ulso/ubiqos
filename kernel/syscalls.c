@@ -66,6 +66,15 @@ static bool server_request(int32_t srv, uint32_t type, void *data) {
 // process can only be blocked in one send at a time, which is the same argument
 // that lets a sender's buffer be passed by pointer at all.
 static myrtos_fs_fdio_t fdio_req[MYRTOS_MAX_PROCESSES];
+
+// And the same for a socket call, for the same reason and one that took a
+// while to see: the message carries a POINTER, and a request left on the trap
+// stack is only safe while the server reads it before the next trap reuses
+// that stack. The NINA server is a process of its own and does; the lwIP
+// server is the USB task, which looks once a millisecond, and in that window
+// another trap overwrites the request -- which read as a socket operation of
+// 2290649225 and varied from run to run depending on what else was happening.
+static myrtos_wifi_sock_t sock_req[MYRTOS_MAX_PROCESSES];
 static myrtos_fs_open_t open_req[MYRTOS_MAX_PROCESSES];
 static myrtos_fs_seek_t seek_req[MYRTOS_MAX_PROCESSES];
 static myrtos_fs_exec_t exec_req[MYRTOS_MAX_PROCESSES];
@@ -466,21 +475,21 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             int32_t npid = myrtos_net_pid(stack);
             if (npid < 0) { frame->a0 = (uint32_t)-1; break; }
 
-            myrtos_wifi_sock_t req;
+            myrtos_wifi_sock_t *rq = &sock_req[myrtos_current_pid()];
             // Both listens are one operation to the server; the choice of
             // server is what the two forms differ by, and that is settled.
-            req.op  = (frame->a0 == MYRTOS_SOCK_LISTEN_ON) ? MYRTOS_SOCK_LISTEN : frame->a0;
-            req.arg = arg;
-            req.buf = 0;
-            req.len = 0;
+            rq->op  = (frame->a0 == MYRTOS_SOCK_LISTEN_ON) ? MYRTOS_SOCK_LISTEN : frame->a0;
+            rq->arg = arg;
+            rq->buf = 0;
+            rq->len = 0;
             if (frame->a2) {
                 // The buffer and its length arrive together, because a syscall
                 // has three arguments and this wants four.
                 const myrtos_sockbuf_t *b = (const myrtos_sockbuf_t*)(uintptr_t)frame->a2;
-                req.buf = b->buf;
-                req.len = b->len;
+                rq->buf = b->buf;
+                rq->len = b->len;
             }
-            if (!server_request(npid, MYRTOS_MSG_WIFI_SOCK, &req)) {
+            if (!server_request(npid, MYRTOS_MSG_WIFI_SOCK, rq)) {
                 frame->a0 = (uint32_t)-1;
                 break;
             }
