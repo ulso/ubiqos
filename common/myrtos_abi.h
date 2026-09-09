@@ -1008,6 +1008,32 @@ typedef struct {
 #define MYRTOS_SOCK_STATE  5u   // arg = socket    -> the chip's TCP state
 #define MYRTOS_SOCK_OWNER  6u   // arg = socket    -> pid, -1 nobody, -2 reaped
 #define MYRTOS_SOCK_PORT   7u   // arg = socket    -> the port it serves, or 0
+#define MYRTOS_SOCK_LISTEN_ON 8u // arg = (stack << 16) | port -> socket, or -1
+
+// --- WHICH STACK ------------------------------------------------------------
+//
+// There is going to be more than one. The NINA coprocessor carries its own
+// TCP/IP and answers these calls over SPI; lwIP over CDC-NCM would be a second,
+// with its own sockets, its own numbering and no knowledge of the first.
+//
+// So a socket number says which stack owns it. The stack is the high byte and
+// the index the low one, which leaves NINA -- stack 0, sockets 0 to 9 -- with
+// exactly the numbers it always had. Nothing that speaks to it today changes.
+//
+// This is the same answer a file descriptor gives: the number does not say
+// which driver is behind it, the table does. What makes it work here is that
+// each stack is already a SERVER PROCESS -- a socket call is a message, because
+// waiting inside a trap stops the machine -- so dispatching is choosing a pid.
+#define MYRTOS_NET_STACKS  4u
+#define MYRTOS_NET_NINA    0u   // the coprocessor, over SPI
+#define MYRTOS_NET_LWIP    1u   // reserved: lwIP, over CDC-NCM
+
+// A stack RETURNS numbers already carrying its own byte, and receives them
+// with the byte stripped. So NINA, whose byte is zero, needs no change at all,
+// and a second stack tags what it hands out with MYRTOS_SOCK_MAKE.
+#define MYRTOS_SOCK_MAKE(stack, n) ((int32_t)(((uint32_t)(stack) << 8) | ((uint32_t)(n) & 0xffu)))
+#define MYRTOS_SOCK_STACK(s)       ((((uint32_t)(s)) >> 8) & 0xffu)
+#define MYRTOS_SOCK_INDEX(s)       (((uint32_t)(s)) & 0xffu)
 
 // TCP's own state numbers, as nina-fw reports them.
 #define MYRTOS_TCP_CLOSED      0u
@@ -1588,6 +1614,15 @@ typedef struct { uint8_t *buf; uint32_t len; } myrtos_sockbuf_t;
 static inline int32_t myrtos_sock_listen(uint16_t port)
 {
     return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_LISTEN, port, 0);
+}
+
+// The same, on a named stack. myrtos_sock_listen is this with MYRTOS_NET_NINA,
+// and stays that way so that everything written before there was a choice goes
+// on meaning what it meant.
+static inline int32_t myrtos_sock_listen_on(uint32_t stack, uint16_t port)
+{
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_LISTEN_ON,
+                          (stack << 16) | port, 0);
 }
 
 // Somebody's socket, or -1 for nobody yet. It does not wait: a server that

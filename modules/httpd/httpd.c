@@ -345,7 +345,10 @@ static void serve(int32_t sock, const char *req) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: httpd [port]\n\n"
+            "usage: httpd [port] [stack]\n\n"
+            "The stack is 0 for the WiFi coprocessor, which is the default.\n"
+            "Asking for one that is not there is refused rather than served\n"
+            "on a different network.\n"
             "Serves /sd over HTTP, and /status for the machine's own numbers.\n"
             "Needs the board to be on a network -- 'wifi connect' first.\n"))
         return;
@@ -357,14 +360,35 @@ void module_main(int argc, char **argv) {
         if (!port || port > 65535) { say("httpd: that is not a port\r\n"); return; }
     }
 
+    // Which stack. The default form is kept rather than always naming
+    // MYRTOS_NET_NINA, because it is the one every caller written before there
+    // was a choice uses, and it should go on meaning what it meant.
+    uint32_t stack = MYRTOS_NET_NINA;
+    if (argc > 2) {
+        stack = 0;
+        for (const char *q = argv[2]; *q >= '0' && *q <= '9'; q++)
+            stack = stack * 10 + (uint32_t)(*q - '0');
+    }
+
+    // The address check belongs to the coprocessor and only to it. Asking it
+    // whether lwIP has an address would be the wrong question, and answering
+    // it would refuse a stack that is perfectly well connected.
     char addr[48];
-    if (myrtos_wifi_address(addr, sizeof addr) != 0) {
+    if (stack == MYRTOS_NET_NINA && myrtos_wifi_address(addr, sizeof addr) != 0) {
         say("httpd: not on a network. 'wifi connect <ssid>' first.\r\n");
         return;
     }
+    if (stack != MYRTOS_NET_NINA) {
+        addr[0] = '?'; addr[1] = 0;
+    }
 
-    int32_t server = myrtos_sock_listen((uint16_t)port);
-    if (server < 0) { say("httpd: the chip would not listen\r\n"); return; }
+    int32_t server = (argc > 2) ? myrtos_sock_listen_on(stack, (uint16_t)port)
+                                : myrtos_sock_listen((uint16_t)port);
+    if (server < 0) {
+        say(argc > 2 ? "httpd: no such network stack, or it would not listen\r\n"
+                     : "httpd: the chip would not listen\r\n");
+        return;
+    }
 
     myrtos_line_t l;
     myrtos_line_reset(&l);

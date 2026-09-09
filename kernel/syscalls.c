@@ -6,6 +6,8 @@
 #include "../common/modules.h"
 #include "video.h"
 #include "chargen.h"
+
+int32_t myrtos_net_pid(uint32_t stack);
 #include "vector.h"
 
 int32_t myrtos_console_trace_at(uint32_t offset);
@@ -446,9 +448,29 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             // waits, and waiting inside a trap stops the machine. The request
             // sits on this stack, which is safe because send blocks until the
             // answer -- the same argument as the three above.
+            // Which stack, and therefore which server. LISTEN_ON names it in
+            // the argument because there is no socket yet; everything else
+            // reads it out of the socket number, which carries it.
+            uint32_t stack;
+            uint32_t arg = frame->a1;
+            if (frame->a0 == MYRTOS_SOCK_LISTEN_ON) {
+                stack = (arg >> 16) & 0xffu;
+                arg   = arg & 0xffffu;              // the port
+            } else if (frame->a0 == MYRTOS_SOCK_LISTEN) {
+                stack = MYRTOS_NET_NINA;
+            } else {
+                stack = MYRTOS_SOCK_STACK(arg);
+                arg   = MYRTOS_SOCK_INDEX(arg);     // the stack never sees its own byte
+            }
+
+            int32_t npid = myrtos_net_pid(stack);
+            if (npid < 0) { frame->a0 = (uint32_t)-1; break; }
+
             myrtos_wifi_sock_t req;
-            req.op  = frame->a0;
-            req.arg = frame->a1;
+            // Both listens are one operation to the server; the choice of
+            // server is what the two forms differ by, and that is settled.
+            req.op  = (frame->a0 == MYRTOS_SOCK_LISTEN_ON) ? MYRTOS_SOCK_LISTEN : frame->a0;
+            req.arg = arg;
             req.buf = 0;
             req.len = 0;
             if (frame->a2) {
@@ -458,10 +480,16 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 req.buf = b->buf;
                 req.len = b->len;
             }
-            if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_SOCK, &req)) {
+            if (!server_request(npid, MYRTOS_MSG_WIFI_SOCK, &req)) {
                 frame->a0 = (uint32_t)-1;
                 break;
             }
+            // Nothing is done to the answer. A stack returns socket numbers
+            // already carrying its own byte -- NINA's are 0 to 9 and its byte
+            // is zero, so they are unchanged, and a second stack tags its own.
+            // Re-tagging here would mean reaching into the reply on its way
+            // back to the caller, and there is no reason to: the stack knows
+            // which stack it is.
             return myrtos_switch(sp);
         }
         case SYS_WIFISCAN: {

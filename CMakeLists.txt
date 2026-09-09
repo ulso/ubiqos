@@ -207,6 +207,7 @@ add_executable(os_kernel
     kernel/console.c
     kernel/chargen.c
     kernel/vector.c
+    kernel/net.c
     kernel/fsserver.c
     kernel/wifilink.c
     kernel/font8x16.c
