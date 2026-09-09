@@ -6,6 +6,8 @@
 #include "../common/modules.h"
 #include "video.h"
 #include "chargen.h"
+
+int32_t myrtos_console_trace_at(uint32_t offset);
 #include "trap.h"
 #include "io.h"
 #include "fat32.h"
@@ -598,13 +600,25 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         }
         case SYS_VIDSTAT: {
+            // a1 says what is wanted, a2 is its index. Kind 3 is not about the
+            // display at all and works in either build, which is the point of
+            // it: the same trace can be taken from a framebuffer kernel and
+            // compared.
+            uint8_t *out = (uint8_t *)(uintptr_t)frame->a0;
+            if (frame->a1 == 3) {
+                uint32_t i = 0;
+                for (; i < 64; i++) {
+                    int32_t c = myrtos_console_trace_at(frame->a2 + i);
+                    if (c < 0) break;
+                    out[i] = (uint8_t)c;
+                }
+                frame->a0 = i;
+                break;
+            }
 #if MYRTOS_VIDEO_CHARGEN
-            if (frame->a1 && frame->a2)
-                myrtos_chargen_peek_row(frame->a1 - 1, (uint8_t *)(uintptr_t)frame->a0, 80);
-            else if (frame->a1)
-                myrtos_video_peek_line(frame->a1 - 1, (uint8_t *)(uintptr_t)frame->a0, 64);
-            else
-                myrtos_video_stats_fill((uint32_t *)(uintptr_t)frame->a0);
+            if (frame->a1 == 2)      myrtos_chargen_peek_row(frame->a2, out, 80);
+            else if (frame->a1 == 1) myrtos_video_peek_line(frame->a2, out, 64);
+            else                     myrtos_video_stats_fill((uint32_t *)out);
             frame->a0 = 0;
 #else
             frame->a0 = (uint32_t)-1;    // a framebuffer keeps up by existing

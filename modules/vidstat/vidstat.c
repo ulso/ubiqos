@@ -32,6 +32,65 @@ static void peek(uint32_t line) {
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 }
 
+// One line per record. The body is rendered compactly -- <E> for escape, <r>
+// and <n> for the line ending -- and cut at sixty characters, because what is
+// being looked for is where one writer's bytes land inside another's, and that
+// shows in the first few.
+static void trace_dump(void)
+{
+    uint8_t b[64];
+    uint32_t off = 0, left = 0, shown = 0;
+    int state = 0;                       // 0 seeking, 1 pid, 2 length, 3 body
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+
+    for (;;) {
+        int32_t got = myrtos_console_trace(off, b);
+        if (got <= 0) break;
+
+        for (int32_t i = 0; i < got; i++) {
+            uint8_t c = b[i];
+            switch (state) {
+            case 0:
+                if (c == 0xfe) state = 1;
+                break;
+            case 1:
+                if (l.len) { myrtos_line_str(&l, "\n"); myrtos_line_flush(MYRTOS_STDOUT, &l); }
+                myrtos_line_reset(&l);
+                myrtos_line_str(&l, "pid ");
+                myrtos_line_u32(&l, c);
+                myrtos_line_str(&l, "  ");
+                state = 2;
+                break;
+            case 2:
+                left = c; shown = 0;
+                state = left ? 3 : 0;
+                break;
+            default: {
+                if (shown < 60) {
+                    const char *rep = 0;
+                    char one = (char)c;
+                    if (c == 0x1b)      rep = "<E>";
+                    else if (c == '\r') rep = "<r>";
+                    else if (c == '\n') rep = "<n>";
+                    else if (c < 32 || c > 126) rep = ".";
+                    if (rep) myrtos_line_str(&l, rep);
+                    else     myrtos_line_chars(&l, &one, 1);
+                    shown++;
+                } else if (shown == 60) {
+                    myrtos_line_str(&l, "...");
+                    shown++;
+                }
+                if (--left == 0) state = 0;
+                break;
+            }
+            }
+        }
+        off += (uint32_t)got;
+    }
+    if (l.len) { myrtos_line_str(&l, "\n"); myrtos_line_flush(MYRTOS_STDOUT, &l); }
+}
+
 void module_main(int argc, char **argv) {
     uint32_t s[8];
 
@@ -40,6 +99,7 @@ void module_main(int argc, char **argv) {
     // are the point -- but it is what told us, on 9 Sep 2026, that a glyph
     // appearing in the wrong column was not the console putting it there.
     bool show_screen = (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 's');
+    if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 't') { trace_dump(); return; }
 
     if (myrtos_video_stats(s) < 0) {
         myrtos_write_str(MYRTOS_STDOUT,

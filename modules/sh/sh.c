@@ -210,7 +210,23 @@ static void browse_forward(editor_t *e) {
 #define WIDTH_WAIT_MS 150
 
 static uint32_t ask_width(int32_t out, int32_t in) {
-    myrtos_write_str(out, "\x1b[999C\x1b[6n");
+    // The carriage return goes in the SAME write as the probe, and that is the
+    // whole of it. The reply is produced when the sequence is parsed, not when
+    // this reads it, so returning the cursor immediately still reports 79 --
+    // and it closes the window in which the cursor sits parked at the right
+    // edge waiting for an answer.
+    //
+    // That window was milliseconds wide and it was being hit. At boot the USB
+    // host task announces devices while this runs, its line began at column 79
+    // because that is where the cursor was, and one character was left behind
+    // at the edge with the rest wrapped onto the next row -- the "U" of "USB
+    // host:", every time the two happened to coincide. A console byte trace is
+    // what showed it; see vidstat -t.
+    //
+    // One write, because myrtos_console_put takes a whole call into the ring
+    // with interrupts off. Split across two, another writer could still land
+    // between them.
+    myrtos_write_str(out, "\x1b[999C\x1b[6n\r");
 
     uint32_t deadline = myrtos_ticks_now() + WIDTH_WAIT_MS;
     uint32_t col = 0, seen = 0;

@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include "video.h"
 #include "chargen.h"
+
+int32_t myrtos_current_pid(void);
 #include "hardware/sync.h"
 
 #include "../common/modules.h"   // myrtos_sleep, through the shared ABI
@@ -733,13 +735,64 @@ uint32_t myrtos_console_room(void)
 // Returns how much was taken. Nothing taken means full, and the caller's write
 // blocks on WAIT_WRITE exactly as it does for a full USB endpoint -- machinery
 // that already existed and needed no changing.
+// --- WHAT WENT INTO THE RING, AND FROM WHOM ------------------------------
+//
+// Everything reaching the console passes through myrtos_console_put, so this is
+// the one place that sees the byte order the ANSI parser will later see. The
+// rule myrtos_print states is that two writers may interleave between lines but
+// not within one -- and an escape sequence is not a line, nor is a prompt
+// redraw. This records enough to check that: one record per CALL, because
+// myrtos_console_write loops over this function when the ring is full and that
+// split is itself a way for one writer to land inside another's sequence.
+//
+// A record is 0xfe, the writer's pid, the length, then the bytes. 0xfe cannot
+// occur in the text: the console is UTF-8 and 0xfe is not a legal byte in it.
+#define TRACE_SIZE 2048
+static uint8_t  trace_buf[TRACE_SIZE];
+static uint32_t trace_head;
+static bool     trace_wrapped;
+
+static void trace_byte(uint8_t b) {
+    trace_buf[trace_head++] = b;
+    if (trace_head >= TRACE_SIZE) { trace_head = 0; trace_wrapped = true; }
+}
+
+uint32_t myrtos_console_trace_size(void) {
+    return trace_wrapped ? TRACE_SIZE : trace_head;
+}
+
+int32_t myrtos_console_trace_at(uint32_t offset) {
+    uint32_t n = myrtos_console_trace_size();
+    if (offset >= n) return -1;
+    uint32_t start = trace_wrapped ? trace_head : 0;
+    return (uint8_t)trace_buf[(start + offset) % TRACE_SIZE];
+}
+
 uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len)
 {
     uint32_t st = save_and_disable_interrupts();
     uint32_t room = RING_SIZE - 1u - ((ring_head - ring_tail) & RING_MASK);
-    
+
     if (len > room)
         len = room;
+
+    // AFTER the clamp, and only for what is actually taken. Recording what was
+    // offered instead hung the machine at /sd/startup: a full ring makes this
+    // return zero, myrtos_console_write loops until it does not, and every one
+    // of those spins was writing a full record with interrupts off. The trace
+    // is meant to say what the parser will see, and a byte that was refused is
+    // not that.
+    //
+    // Sixty-four bytes of any one record is plenty -- escape sequences and
+    // prompt fragments are what matters here -- and it bounds how long this
+    // holds interrupts.
+    if (len) {
+        uint32_t k = len > 64 ? 64 : len;
+        trace_byte(0xfe);
+        trace_byte((uint8_t)myrtos_current_pid());
+        trace_byte((uint8_t)k);
+        for (uint32_t i = 0; i < k; i++) trace_byte(buf[i]);
+    }
 
     for (uint32_t i = 0; i < len; i++)
         ring[(ring_head + i) & RING_MASK] = buf[i];

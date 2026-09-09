@@ -1484,14 +1484,23 @@ static inline int32_t myrtos_video_stats(uint32_t *eight)
 // the DMA reads. Sixty-four bytes is eight character cells.
 static inline int32_t myrtos_video_peek(uint32_t line, uint8_t *buf64)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, line + 1, 0);
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 1, line);
+}
+
+// The bytes that entered the console ring, as records of
+// {0xfe, pid, length, bytes...} -- one per call, because a call is the unit
+// that cannot be interleaved and anything larger can. Returns how many bytes
+// were copied; zero is the end. Works in a framebuffer build too.
+static inline int32_t myrtos_console_trace(uint32_t offset, uint8_t *buf64)
+{
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 3, offset);
 }
 
 // One screen row of the console as characters, 80 of them. This is what the
 // console wrote, not what the generator built out of it.
 static inline int32_t myrtos_console_peek_row(uint32_t row, uint8_t *buf80)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf80, row + 1, 1);
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf80, 2, row);
 }
 
 static inline int32_t myrtos_wifi_reset(void)
