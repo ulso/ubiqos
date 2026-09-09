@@ -160,12 +160,29 @@ static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
 // "transfer closed with outstanding read data remaining" and a browser showed a
 // page missing its script. A short write that is not looped is a bug that hides
 // until the day something gets big.
+// ZERO IS NOT AN ERROR, and treating it as one cost a page. The NINA chip
+// always takes something, so this could say "sent <= 0 means gone" and be
+// right by accident for a year. lwIP has a send buffer of its own and answers
+// 0 when it is full, which happens on any page bigger than TCP_SND_BUF -- the
+// four kilobyte one arrived as exactly 2920 bytes, which is that buffer to the
+// byte, and curl reported it as a closed transfer.
+//
+// So 0 means ask again, as it already does for receive, and only a negative
+// answer is the client having gone. The wait is bounded because a client that
+// has stopped reading must not hold this here for ever.
 static void send_str(int32_t sock, const char *s) {
     uint32_t n = 0;
     while (s[n]) n++;
+    uint32_t stalled = 0;
     for (uint32_t done = 0; done < n; ) {
         int32_t sent = myrtos_sock_send(sock, (const uint8_t *)s + done, n - done);
-        if (sent <= 0) return;                 // the client has gone
+        if (sent < 0) return;                  // the client has gone
+        if (sent == 0) {
+            if (++stalled > 1000) return;      // a second of nothing taken
+            myrtos_sleep(1);                   // let the acknowledgements in
+            continue;
+        }
+        stalled = 0;
         done += (uint32_t)sent;
     }
 }
