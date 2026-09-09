@@ -74,6 +74,14 @@
 #define CFG_TUD_MSC_EP_BUFSIZE  512
 #define CFG_TUD_HID             0
 #define CFG_TUD_MIDI            0
+
+// --- ETHERNET OVER USB -----------------------------------------------------
+// NCM rather than ECM or RNDIS: it is what macOS, Linux and Windows 10 onward
+// all speak without a driver, and it is what the Rust bridges on this bench
+// already use, so the host side is known ground.
+#define CFG_TUD_ECM_RNDIS       0
+#define CFG_TUD_NCM             1
+#define CFG_TUD_NET_MTU         1514
 #define CFG_TUD_VENDOR          0
 
 #define CFG_TUD_CDC_RX_BUFSIZE  256

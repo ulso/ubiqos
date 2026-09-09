@@ -726,6 +726,8 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 // experiment has to make its own.
 #define SYS_CRITHOLD  63u
 #define SYS_WIFISTATS 64u   // a0 = &uint32_t[4]: commands, resyncs, retries, failures
+#define SYS_NETDEV    67u   // a0 = &uint32_t[6]: up, rx frames, rx bytes,
+                            //   tx frames, dropped, and the MAC's low word
 #define SYS_VECTOR    66u   // a0 = op, a1 = &myrtos_vecline_t for VEC_ADD
 #define MYRTOS_VEC_CLEAR 0u
 #define MYRTOS_VEC_ADD   1u
@@ -1528,6 +1530,15 @@ static inline int32_t myrtos_wifi_stats(uint32_t *eight)
 // are RGB332 bytes, the same as the test card and the console palette: three
 // bits of red, three of green, two of blue.
 typedef struct { int32_t x0, y0, x1, y1; uint32_t colour; } myrtos_vecline_t;
+
+// The USB network device: whether the host has brought the link up, and what
+// has crossed it. There is no IP stack behind it yet, so every frame is
+// counted and dropped -- which is exactly what proves the descriptor, the
+// endpoints and the class driver work before anything depends on them.
+static inline int32_t myrtos_netdev_stats(uint32_t *six)
+{
+    return myrtos_syscall(SYS_NETDEV, (uint32_t)(uintptr_t)six, 0, 0);
+}
 
 static inline int32_t myrtos_vec_clear(void)
 {

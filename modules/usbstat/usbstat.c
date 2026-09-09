@@ -33,6 +33,28 @@ void module_main(void) {
     uint32_t rk = myrtos_usbinfo(MYRTOS_USB_REPEATKEY);
     myrtos_line_t l;
     myrtos_line_reset(&l);
+    // The USB network device, which is a different thing from the host side
+    // above: this is what the Mac sees when it enumerates this board.
+    {
+        uint32_t n[6];
+        if (myrtos_netdev_stats(n) == 0) {
+            // What was observed, not a state that cannot be asked for: NCM
+            // gives no link callback, so a frame arriving is the evidence.
+            myrtos_line_str(&l, "net: ");
+            myrtos_line_str(&l, n[0] ? "the host has sent frames" : "nothing has crossed it yet");
+            myrtos_line_str(&l, ", mac 02:xx:");
+            myrtos_line_hex(&l, n[5]);
+            myrtos_line_str(&l, "\nnet frames in:  ");
+            myrtos_line_u32(&l, n[1]);
+            myrtos_line_str(&l, " (");
+            myrtos_line_u32(&l, n[2]);
+            myrtos_line_str(&l, " bytes), out ");
+            myrtos_line_u32(&l, n[3]);
+            myrtos_line_str(&l, ", dropped ");
+            myrtos_line_u32(&l, n[4]);
+            myrtos_line_str(&l, " -- no stack behind it yet\n");
+        }
+    }
     myrtos_line_str(&l, "repeating:      ");
     if (rk) { myrtos_line_str(&l, "HID usage "); myrtos_line_hex(&l, rk); }
     else    { myrtos_line_str(&l, "nothing"); }

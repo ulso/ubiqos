@@ -11,6 +11,7 @@
 #include "moddir.h"
 #include "flashmod.h"
 #include "pico/bootrom.h"
+#include "pico/unique_id.h"
 #include "hardware/watchdog.h"
 #include "hardware/psram.h"
 #include "pico/time.h"
@@ -523,6 +524,15 @@ void myrtos_kernel_main(void) {
     // PSRAM, and there is no PSRAM to put them in until now.
     { extern void myrtos_tmpfs_init(void); myrtos_tmpfs_init(); }
     myrtos_pio_probe();
+    // The network device's MAC, from the chip's own unique id, so that two of
+    // these boards on one desk do not answer to the same address.
+    {
+        extern void myrtos_usb_net_id(const uint8_t *unique, uint32_t n);
+        pico_unique_board_id_t id;
+        pico_get_unique_board_id(&id);
+        myrtos_usb_net_id(id.id, sizeof id.id);
+    }
+
     myrtos_usbhost_init();
     // And then the host itself, on the other core. Its interrupts belong to
     // whichever core enables them, so tuh_init runs over there rather than

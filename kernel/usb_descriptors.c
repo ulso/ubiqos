@@ -40,20 +40,50 @@ const uint8_t *tud_descriptor_device_cb(void) {
     return (const uint8_t *)&desc_device;
 }
 
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
+enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC,
+       ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
 
 #define EPNUM_CDC_NOTIF   0x81
 #define EPNUM_CDC_OUT     0x02
 #define EPNUM_CDC_IN      0x82
 #define EPNUM_MSC_OUT     0x03
 #define EPNUM_MSC_IN      0x83
+#define EPNUM_NCM_NOTIF   0x84
+#define EPNUM_NCM_OUT     0x05
+#define EPNUM_NCM_IN      0x85
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
+// The SDK's TUD_CDC_NCM_DESCRIPTOR with ONE BYTE CHANGED, which is why it is
+// copied here rather than used: its NCM functional descriptor ends with
+// bmNetworkCapabilities = 0, and it has to be 1.
+//
+// Bit 0 claims SetEthernetPacketFilter. macOS will not bring the link up
+// reliably without the claim -- it is the same byte that was found in
+// embassy-usb on this bench and fixed upstream as 0f26db1, where a device
+// declaring it went from 3 recoveries in 9 attachments to 0 in 19. What macOS
+// needs is the capability DECLARED; whether the request then succeeds or
+// stalls does not matter.
+#define MYRTOS_NCM_DESCRIPTOR(_itfnum, _desc_stridx, _mac_stridx, _ep_notif, _ep_notif_size, _epout, _epin, _epsize, _maxsegmentsize) \
+  8, TUSB_DESC_INTERFACE_ASSOCIATION, _itfnum, 2, TUSB_CLASS_CDC, CDC_COMM_SUBCLASS_NETWORK_CONTROL_MODEL, 0, 0,\
+  9, TUSB_DESC_INTERFACE, _itfnum, 0, 1, TUSB_CLASS_CDC, CDC_COMM_SUBCLASS_NETWORK_CONTROL_MODEL, 0, _desc_stridx,\
+  5, TUSB_DESC_CS_INTERFACE, CDC_FUNC_DESC_HEADER, U16_TO_U8S_LE(0x0110),\
+  5, TUSB_DESC_CS_INTERFACE, CDC_FUNC_DESC_UNION, _itfnum, (uint8_t)((_itfnum) + 1),\
+  13, TUSB_DESC_CS_INTERFACE, CDC_FUNC_DESC_ETHERNET_NETWORKING, _mac_stridx, 0, 0, 0, 0, U16_TO_U8S_LE(_maxsegmentsize), U16_TO_U8S_LE(0), 0, \
+  6, TUSB_DESC_CS_INTERFACE, CDC_FUNC_DESC_NCM, U16_TO_U8S_LE(0x0100), 1, \
+  7, TUSB_DESC_ENDPOINT, _ep_notif, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_ep_notif_size), 50,\
+  9, TUSB_DESC_INTERFACE, (uint8_t)((_itfnum)+1), 0, 0, TUSB_CLASS_CDC_DATA, 0, NCM_DATA_PROTOCOL_NETWORK_TRANSFER_BLOCK, 0,\
+  9, TUSB_DESC_INTERFACE, (uint8_t)((_itfnum)+1), 1, 2, TUSB_CLASS_CDC_DATA, 0, NCM_DATA_PROTOCOL_NETWORK_TRANSFER_BLOCK, 0,\
+  7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0,\
+  7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0
+
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN \
+                           + TUD_CDC_NCM_DESC_LEN)
 
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+    MYRTOS_NCM_DESCRIPTOR(ITF_NUM_NCM, 6, 7, EPNUM_NCM_NOTIF, 64,
+                          EPNUM_NCM_OUT, EPNUM_NCM_IN, 64, CFG_TUD_NET_MTU),
 };
 
 const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
@@ -68,7 +98,32 @@ static const char *string_desc_arr[] = {
     "000001",                        // 3: serial number
     "myrtos CDC",                    // 4: the CDC interface
     "myrtos SD card",                // 5: the mass storage interface
+    "myrtos network",                // 6: the NCM interface
+    // 7: the MAC address, which the class requires as TWELVE HEX DIGITS and
+    // not as six bytes. It is filled in at startup from the chip's own unique
+    // id, so two boards on one desk do not collide -- see below.
+    "000000000000",
 };
+
+// The MAC. Locally administered (bit 1 of the first byte) and not multicast
+// (bit 0 clear), which is what the 0x02 is for: 02:xx:xx:xx:xx:xx belongs to
+// whoever made the device and is guaranteed not to clash with a real vendor.
+uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
+
+static char mac_string[13];
+
+void myrtos_usb_net_id(const uint8_t *unique, uint32_t n)
+{
+    static const char hex[] = "0123456789abcdef";
+    for (uint32_t i = 0; i < 5 && i < n; i++)
+        tud_network_mac_address[1 + i] = unique[i];
+    for (uint32_t i = 0; i < 6; i++) {
+        mac_string[i * 2]     = hex[tud_network_mac_address[i] >> 4];
+        mac_string[i * 2 + 1] = hex[tud_network_mac_address[i] & 0x0f];
+    }
+    mac_string[12] = 0;
+    string_desc_arr[7] = mac_string;
+}
 
 static uint16_t desc_str[32];
 

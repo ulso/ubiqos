@@ -628,6 +628,24 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             frame->a0 = 0;
             break;
         }
+        case SYS_NETDEV: {
+            extern uint32_t myrtos_net_rx_frames, myrtos_net_rx_bytes;
+            extern uint32_t myrtos_net_tx_frames, myrtos_net_dropped;
+            extern bool myrtos_net_link_up;
+            extern uint8_t tud_network_mac_address[6];
+            uint32_t *o = (uint32_t *)(uintptr_t)frame->a0;
+            o[0] = myrtos_net_link_up ? 1u : 0u;
+            o[1] = myrtos_net_rx_frames;
+            o[2] = myrtos_net_rx_bytes;
+            o[3] = myrtos_net_tx_frames;
+            o[4] = myrtos_net_dropped;
+            o[5] = ((uint32_t)tud_network_mac_address[2] << 24) |
+                   ((uint32_t)tud_network_mac_address[3] << 16) |
+                   ((uint32_t)tud_network_mac_address[4] << 8) |
+                    (uint32_t)tud_network_mac_address[5];
+            frame->a0 = 0;
+            break;
+        }
         case SYS_VECTOR: {
 #if MYRTOS_VIDEO_CHARGEN
             switch (frame->a0) {
