@@ -34,8 +34,10 @@ static const myrtos_kernel_api_t *K;
 #define ADC_FIRST_PIN  40u
 // The board's inputs are labelled A1 to A5, and the mapping falls straight out
 // of that once you stop counting from zero: board An is ADC channel n on
-// GP(40+n). Measured on 9 Sep 2026 by touching A1 and watching which channel
-// moved -- it was channel 1, on GP41.
+// GP(40+n). Measured on 9 Sep 2026 by touching a pin and watching which channel
+// moved while the others stayed put: A1 moved channel 1 and A5 moved channel 5,
+// so the mapping is proven at both ends of the range and A2 and A3 lie between
+// them.
 //
 // Channel 0 on GP40 is a ghost. It is not on the header, it reads raw zero
 // always, and the driver used to cover it while missing A4 and A5 entirely.
