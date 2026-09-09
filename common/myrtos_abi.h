@@ -726,6 +726,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 // experiment has to make its own.
 #define SYS_CRITHOLD  63u
 #define SYS_WIFISTATS 64u   // a0 = &uint32_t[4]: commands, resyncs, retries, failures
+#define SYS_VIDSTAT   65u   // a0 = &uint32_t[4]: underruns, pumps, lines, buffers
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
@@ -1466,6 +1467,16 @@ static inline int32_t myrtos_wifi_address(char *buf, uint32_t len)
 static inline int32_t myrtos_wifi_stats(uint32_t *eight)
 {
     return myrtos_syscall(SYS_WIFISTATS, (uint32_t)(uintptr_t)eight, 0, 0);
+}
+
+// How the character generator is keeping up. underruns is the only one that
+// decides anything: it counts scanlines the display reached before they were
+// built, so a picture that looks right and a picture that IS right are the same
+// thing only while this stays at zero. -1 means this build has a framebuffer
+// and there is nothing to keep up with.
+static inline int32_t myrtos_video_stats(uint32_t *four)
+{
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)four, 0, 0);
 }
 
 static inline int32_t myrtos_wifi_reset(void)

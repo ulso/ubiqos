@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "video.h"
+#include "chargen.h"
 #include "hardware/sync.h"
 
 #include "../common/modules.h"   // myrtos_sleep, through the shared ABI
@@ -45,7 +46,7 @@ static const console_font_t fonts[] = {
 // values and the pattern was checked against a monitor. The bright half is
 // those same eight bars; the normal half is the same hues at about half
 // intensity, and colour 8 is a grey rather than a second black.
-static const uint8_t ansi_colour[16] = {
+const uint8_t myrtos_ansi_colour[16] = {
     0x00,
     0x80,
     0x10,
@@ -74,18 +75,31 @@ static bool reverse_video;
 // remember to honour it.
 static inline uint8_t eff_fg(void)
 {
-    return ansi_colour[reverse_video ? bg_index : fg_index];
+    return myrtos_ansi_colour[reverse_video ? bg_index : fg_index];
 }
 static inline uint8_t eff_bg(void)
 {
-    return ansi_colour[reverse_video ? fg_index : bg_index];
+    return myrtos_ansi_colour[reverse_video ? fg_index : bg_index];
+}
+
+// The same pair as one byte, which is what a cell stores: foreground index in
+// the high nibble, background in the low.
+static inline uint8_t eff_attr(void)
+{
+    uint8_t f = reverse_video ? bg_index : fg_index;
+    uint8_t b = reverse_video ? fg_index : bg_index;
+    return (uint8_t)((f << 4) | b);
 }
 
 // 6x12 by default: a 22-inch monitor at 640x480 makes 8x16 unnecessarily large,
 // and 6x12 gives 106 columns by 40 rows instead of 80 by 30. `font 8x16`
 // switches back. Both heights divide 480 exactly, which is what the ring
 // framebuffer requires.
+#if MYRTOS_VIDEO_CHARGEN
+static const console_font_t *font = &fonts[0];   // chargen is 8x16 only
+#else
 static const console_font_t *font = &fonts[1];
+#endif
 static uint32_t cell_w = 8, cell_h = 16;
 static uint32_t cols = MYRTOS_H_ACTIVE / 8, rows = MYRTOS_V_ACTIVE / 16;
 // 106 columns of six pixels come to 636, four short of the line. Split them, so
@@ -124,21 +138,28 @@ static bool wrap_pending;
 static bool row_wrapped[ROWS_MAX];
 static bool ready;
 
+#if !MYRTOS_VIDEO_CHARGEN
 // Row and glyph-line to a scanline in the framebuffer, through the origin.
 static inline uint8_t *cell_line(uint32_t row, uint32_t y)
 {
     uint32_t fb = (myrtos_video_origin + row * cell_h + y) % MYRTOS_V_ACTIVE;
     return &myrtos_framebuf[fb * MYRTOS_H_ACTIVE];
 }
+#endif
 
+#if !MYRTOS_VIDEO_CHARGEN
 // Four background pixels in a word, for clearing.
 static inline uint32_t bg_word(void)
 {
     return (uint32_t)eff_bg() * 0x01010101u;
 }
+#endif
 
 static void draw_glyph(uint32_t col, uint32_t row, char c)
 {
+#if MYRTOS_VIDEO_CHARGEN
+    myrtos_chargen_put(row, col, myrtos_chargen_glyph(c), eff_attr());
+#else
     // Latin-1, not ASCII: a Swedish keyboard produces letters above 126 and
     // they have to land somewhere. Anything below space is drawn as one.
     uint8_t b = (uint8_t)c;
@@ -154,14 +175,18 @@ static void draw_glyph(uint32_t col, uint32_t row, char c)
     for (uint32_t y = 0; y < cell_h; y++) {
         uint8_t bits = g[y];
         uint8_t *p = cell_line(row, y) + x_margin + col * cell_w;
-        
+
         for (uint32_t x = 0; x < cell_w; x++)
             p[x] = (bits & (0x80u >> x)) ? on : off;
     }
+#endif
 }
 
 static void clear_row(uint32_t row)
 {
+#if MYRTOS_VIDEO_CHARGEN
+    myrtos_chargen_fill(row, 0, cols - 1, eff_attr());
+#else
     uint32_t w = bg_word();
 
     for (uint32_t y = 0; y < cell_h; y++) {
@@ -169,6 +194,7 @@ static void clear_row(uint32_t row)
         for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++)
             p[x] = w;
     }
+#endif
 
     row_wrapped[row] = false;
 }
@@ -180,11 +206,17 @@ static void cursor(bool on)
     if (on == cursor_shown)
         return;
 
+#if MYRTOS_VIDEO_CHARGEN
+    // A register rather than inverted pixels, which is how a CRTC did it: there
+    // is no state on the screen to get out of step with.
+    myrtos_chargen_cursor(cur_row, cur_col, on);
+#else
     for (uint32_t y = 0; y < cell_h; y++) {
         uint8_t *p = cell_line(cur_row, y) + x_margin + cur_col * cell_w;
         for (uint32_t x = 0; x < cell_w; x++)
             p[x] = (uint8_t)~p[x];
     }
+#endif
 
     cursor_shown = on;
 }
@@ -194,7 +226,11 @@ static void newline(void)
     cur_col = 0;
     if (++cur_row >= rows) {
         cur_row = rows - 1;
+#if MYRTOS_VIDEO_CHARGEN
+        myrtos_chargen_scroll(eff_attr());
+#else
         myrtos_video_set_origin(myrtos_video_origin + cell_h);
+#endif
         for (uint32_t r = 1; r < rows; r++)   // the flags move up with it
             row_wrapped[r - 1] = row_wrapped[r];
         clear_row(rows - 1);   // the row that just came round
@@ -300,6 +336,9 @@ static void erase_cells(uint32_t row, uint32_t from, uint32_t to)
     if (to >= cols)
         to = cols - 1;
 
+#if MYRTOS_VIDEO_CHARGEN
+    myrtos_chargen_fill(row, from, to, eff_attr());
+#else
     uint8_t b = eff_bg();
 
     for (uint32_t y = 0; y < cell_h; y++) {
@@ -308,6 +347,7 @@ static void erase_cells(uint32_t row, uint32_t from, uint32_t to)
         for (uint32_t x = 0; x < (to - from + 1) * cell_w; x++)
             p[x] = b;
     }
+#endif
 }
 
 static uint32_t param(uint32_t i, uint32_t dflt)
@@ -585,6 +625,9 @@ static void set_grid(const console_font_t *f)
 
     x_margin = (MYRTOS_H_ACTIVE - cols * cell_w) / 2;
 
+#if MYRTOS_VIDEO_CHARGEN
+    myrtos_chargen_init(eff_attr());
+#else
     // The origin is a multiple of the old cell height and need not be one of the
     // new. Start the ring over rather than leave a row straddling the join.
     myrtos_video_set_origin(0);
@@ -593,6 +636,7 @@ static void set_grid(const console_font_t *f)
 
     for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
         myrtos_framebuf[i] = b;
+#endif
 
     for (uint32_t r = 0; r < rows; r++)
         row_wrapped[r] = false;
@@ -610,6 +654,14 @@ int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out, bool lo
     if (index >= (int32_t)NFONTS)
         return -1;
 
+#if MYRTOS_VIDEO_CHARGEN
+    // The generator builds eight pixels as two words from a nibble table, which
+    // six does not divide into. Refuse the switch rather than take it and show
+    // eighty of the hundred and six columns the caller was told it had.
+    if (index > 0)
+        return -1;
+#endif
+
     uint32_t i = (index >= 0) ? (uint32_t)index : (uint32_t)(font - fonts);
 
     if (index >= 0 && !look_only)
@@ -619,7 +671,11 @@ int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out, bool lo
         out->index = (uint8_t)i;
         out->cell_w = fonts[i].w;
         out->cell_h = fonts[i].h;
+#if MYRTOS_VIDEO_CHARGEN
+        out->count = 1;
+#else
         out->count = (uint8_t)NFONTS;
+#endif
         out->cols = (uint16_t)(MYRTOS_H_ACTIVE / fonts[i].w);
         out->rows = (uint16_t)(MYRTOS_V_ACTIVE / fonts[i].h);
     }

@@ -6,10 +6,27 @@
 #include <stdbool.h>
 #include "../common/modules.h"   // myrtos_confont_t, through the shared ABI
 
+// Set by CMake's MYRTOS_VIDEO. 0 means a bitmap in SRAM; 1 means character
+// cells and a scanline built as the display asks for it.
+#ifndef MYRTOS_VIDEO_CHARGEN
+#define MYRTOS_VIDEO_CHARGEN 0
+#endif
+
 #define MYRTOS_H_ACTIVE 640
 #define MYRTOS_V_ACTIVE 480
 
 void myrtos_video_init(void);
+
+#if MYRTOS_VIDEO_CHARGEN
+
+// How far ahead of the beam the generator has to stay, and how it is doing.
+// underruns is the number that decides whether this design holds: it counts
+// the times a scanline was still unwritten when the display reached it.
+extern uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
+uint32_t myrtos_video_buffers(void);
+
+#else
+
 void myrtos_video_testcard(void);
 
 extern uint8_t *myrtos_framebuf;
@@ -21,6 +38,8 @@ extern uint8_t *myrtos_framebuf;
 // difference between a scroll nobody notices and one that stutters.
 extern uint32_t myrtos_video_origin;
 void myrtos_video_set_origin(uint32_t line);
+
+#endif
 
 void myrtos_console_init(void);
 void myrtos_console_putc(char c);

@@ -9,6 +9,8 @@
 #include "hardware/structs/hstx_fifo.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/clocks.h"
+#include "hardware/timer.h"
+#include "chargen.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -91,9 +93,26 @@ static uint32_t vactive_line[] = {
 //
 // So the 300 kB stays here. PSRAM is for bulk that is not streamed 57 times a
 // second: module data, file buffers, whatever the shell wants.
+#if MYRTOS_VIDEO_CHARGEN
+
+// Character cells instead, and a handful of scanlines in flight.
+//
+// LINE_BUFS divides V_ACTIVE, which is what makes `line % LINE_BUFS` mean the
+// same thing in the frame table as it does in the renderer: 480 is ten bands of
+// forty-eight. It buys 48 * 32 us = 1.5 ms of slack between the generator and
+// the beam, against a pump that runs every 500 us from a handler the kernel
+// cannot mask. The first version of this display took an interrupt per scanline
+// and died when pre-emption arrived; the slack is the answer to that.
+#define LINE_BUFS 48
+static uint8_t linebuf[LINE_BUFS][MYRTOS_H_ACTIVE] __attribute__((aligned(4)));
+
+#else
+
 static uint8_t framebuf_store[MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE]
     __attribute__((aligned(4)));
 uint8_t *myrtos_framebuf = framebuf_store;
+
+#endif
 
 // --- HOW THE FRAME IS PLAYED ----------------------------------------------
 // Two channels, and no interrupt at all.
@@ -142,6 +161,7 @@ static const void  *frame_addrs[FRAME_ENTRIES]
 
 static int ch_data = -1, ch_count = -1, ch_addr = -1;
 
+#if !MYRTOS_VIDEO_CHARGEN
 uint32_t myrtos_video_origin;
 
 // Point every active display row at a framebuffer line, offset by the origin.
@@ -156,6 +176,7 @@ void myrtos_video_set_origin(uint32_t line) {
         frame_addrs[BLANK_LINES + r * 2 + 1] = &myrtos_framebuf[fb * H_ACTIVE];
     }
 }
+#endif
 
 static void build_frame_list(void) {
     uint n = 0;
@@ -173,10 +194,118 @@ static void build_frame_list(void) {
             frame_counts[n] = count_of(vactive_line);
             frame_addrs[n++] = vactive_line;
             frame_counts[n] = H_ACTIVE / sizeof(uint32_t);
+#if MYRTOS_VIDEO_CHARGEN
+            frame_addrs[n++] = linebuf[(line - BLANK_LINES) % LINE_BUFS];
+#else
             frame_addrs[n++] = &myrtos_framebuf[(line - BLANK_LINES) * H_ACTIVE];
+#endif
         }
     }
 }
+
+#if MYRTOS_VIDEO_CHARGEN
+
+// --- KEEPING AHEAD OF THE BEAM --------------------------------------------
+//
+// The display still runs from the three chained channels and still asks nobody
+// for anything. What changed is that the addresses it plays are forty-eight
+// buffers rather than four hundred and eighty framebuffer lines, so somebody
+// has to write each one again before it comes round.
+//
+// Where the beam is needs no interrupt either: the address channel's read
+// pointer walks frame_addrs, so subtracting the table's own address says which
+// entry is playing. Two entries per active line, after BLANK_LINES of them.
+//
+// The pump runs from a timer alarm at priority 0x40, which is above
+// MYRTOS_CRITICAL_BASEPRI. That is the whole design: a kernel critical section
+// cannot delay it, and the measurement behind the 0x40 choice says the worst
+// case it does see is 127 microseconds against 1.5 milliseconds of slack.
+//
+// THE RULE FOR A HANDLER ABOVE THE KERNEL APPLIES HERE. This one reads two DMA
+// registers, reads cells and font bytes, and writes pixels. It calls nothing.
+
+// ON RISC-V THIS IS EXPECTED TO TEAR, and the counter is there to say so.
+// kernel/critical.h only takes the BASEPRI path on Arm; Hazard3 gets the hammer
+// and masks everything, so a critical section stops the pump exactly the way it
+// stopped the per-scanline interrupt the first time. Prioritised traps on
+// RISC-V were tried once and reverted, and a trap stack is the prerequisite --
+// so on RISC-V the honest answer today is MYRTOS_VIDEO=framebuffer.
+
+#define PUMP_US 500
+
+uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
+
+static int      pump_alarm = -1;
+static uint32_t beam_epoch;     // active lines completed in whole frames
+static uint32_t beam_last;      // the line seen last time, to catch the wrap
+static uint32_t rendered_to;    // the next line to build, on the same scale
+
+uint32_t myrtos_video_buffers(void) { return LINE_BUFS; }
+
+static inline uint32_t beam_line(void)
+{
+    uint32_t idx = (uint32_t)(((uintptr_t)dma_hw->ch[ch_addr].read_addr
+                               - (uintptr_t)frame_addrs) / sizeof(frame_addrs[0]));
+    if (idx >= FRAME_ENTRIES || idx < BLANK_LINES)
+        return 0;                       // still in the vertical blanking
+    idx = (idx - BLANK_LINES) / 2;
+    return idx < V_ACTIVE ? idx : V_ACTIVE - 1;
+}
+
+static void video_pump(void)
+{
+    uint32_t cur = beam_line();
+    if (cur < beam_last)
+        beam_epoch += V_ACTIVE;         // a frame went by
+    beam_last = cur;
+
+    uint32_t now = beam_epoch + cur;
+
+    // Behind the beam: the display has already shown a line this never wrote.
+    // Say so and start again from where it is, rather than racing to catch up
+    // with work whose result is already on the screen.
+    if (rendered_to < now) {
+        myrtos_video_underruns += now - rendered_to;
+        rendered_to = now;
+    }
+
+    // One buffer of margin at each end: the one being played, and the one the
+    // DMA may have already latched the address of.
+    uint32_t target = now + LINE_BUFS - 2;
+    while (rendered_to < target) {
+        myrtos_chargen_line(rendered_to % V_ACTIVE, linebuf[rendered_to % LINE_BUFS]);
+        rendered_to++;
+        myrtos_video_lines++;
+    }
+    myrtos_video_pumps++;
+}
+
+static void pump_isr(void)
+{
+    timer_hw->intr = 1u << pump_alarm;                     // acknowledge
+    timer_hw->alarm[pump_alarm] = timer_hw->timerawl + PUMP_US;
+    video_pump();
+}
+
+static void pump_start(void)
+{
+    // Fill every buffer once before the first alarm, so the first frame is not
+    // a screenful of whatever SRAM held at reset.
+    beam_epoch = beam_last = rendered_to = 0;
+    for (uint32_t i = 0; i < LINE_BUFS; i++)
+        myrtos_chargen_line(i, linebuf[i]);
+    rendered_to = LINE_BUFS;
+
+    pump_alarm = (int)hardware_alarm_claim_unused(true);
+    uint irq = hardware_alarm_get_irq_num(pump_alarm);
+    irq_set_exclusive_handler(irq, pump_isr);
+    irq_set_priority(irq, 0x40);
+    irq_set_enabled(irq, true);
+    hw_set_bits(&timer_hw->inte, 1u << pump_alarm);
+    timer_hw->alarm[pump_alarm] = timer_hw->timerawl + PUMP_US;
+}
+
+#endif
 
 void myrtos_video_init(void) {
     // set_sys_clock_khz does not touch clk_hstx: it kept its own source, the
@@ -266,6 +395,11 @@ void myrtos_video_init(void) {
 
     dma_channel_start(ch_count);
 
+#if MYRTOS_VIDEO_CHARGEN
+    myrtos_chargen_init(0x07);      // light grey on black, before anything prints
+    pump_start();
+#endif
+
     myrtos_print("Video: clk_sys ");
     myrtos_print_u32(clock_get_hz(clk_sys) / 1000000);
     myrtos_print(" MHz, clk_hstx ");
@@ -284,6 +418,7 @@ void myrtos_video_init(void) {
     myrtos_print("\n");
 }
 
+#if !MYRTOS_VIDEO_CHARGEN
 // Something recognisable, so the first picture says whether the pinout and the
 // timing are right rather than merely that something came out.
 void myrtos_video_testcard(void) {
@@ -317,3 +452,4 @@ void myrtos_video_testcard(void) {
         }
     }
 }
+#endif

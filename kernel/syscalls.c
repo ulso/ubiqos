@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../common/modules.h"
+#include "video.h"
 #include "trap.h"
 #include "io.h"
 #include "fat32.h"
@@ -593,6 +594,19 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             busy_wait_us(us);
             myrtos_critical_exit(st);
             frame->a0 = 0;
+            break;
+        }
+        case SYS_VIDSTAT: {
+#if MYRTOS_VIDEO_CHARGEN
+            uint32_t *out = (uint32_t *)(uintptr_t)frame->a0;
+            out[0] = myrtos_video_underruns;
+            out[1] = myrtos_video_pumps;
+            out[2] = myrtos_video_lines;
+            out[3] = myrtos_video_buffers();
+            frame->a0 = 0;
+#else
+            frame->a0 = (uint32_t)-1;    // a framebuffer keeps up by existing
+#endif
             break;
         }
         case SYS_GETSTAT:

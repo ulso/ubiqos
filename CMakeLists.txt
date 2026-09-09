@@ -205,6 +205,7 @@ add_executable(os_kernel
     kernel/usbhost.c
     kernel/video.c
     kernel/console.c
+    kernel/chargen.c
     kernel/fsserver.c
     kernel/wifilink.c
     kernel/font8x16.c
@@ -1133,6 +1134,7 @@ myrtos_add_module(reboot modules/reboot/reboot.c)
 myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
+myrtos_add_module(vidstat modules/vidstat/vidstat.c)
 myrtos_add_module(pecho modules/pecho/pecho.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
