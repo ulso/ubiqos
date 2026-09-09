@@ -26,6 +26,21 @@
 #define LWIP_DNS                    1
 #define LWIP_NETIF_HOSTNAME         1
 
+// --- mDNS AND DNS-SD -------------------------------------------------------
+// So the board answers to a name instead of to a link-local address that moves
+// whenever the MAC does -- AutoIP seeds from the hardware address, and flipping
+// one bit of it moved this board from .92.150 to .91.150 in an afternoon.
+//
+// IGMP is not optional here and mdns.c says so with an #error: the responder
+// joins 224.0.0.251, and IPv4 multicast needs group management. LWIP_RAND is
+// required too, for the query jitter that keeps two responders from answering
+// in the same millisecond.
+#define LWIP_MDNS_RESPONDER         1
+#define LWIP_IGMP                   1
+#define LWIP_NUM_NETIF_CLIENT_DATA  1
+#define MDNS_MAX_SERVICES           2
+#define LWIP_RAND()                 ((u32_t)rand())
+
 // AutoIP and not DHCP, and that is the whole address story for a link with one
 // host on the other end. macOS gave itself 169.254.221.131 the moment the
 // interface appeared, with nothing offering DHCP -- so a server would have
@@ -37,11 +52,11 @@
 #define MEM_ALIGNMENT               4
 #define MEM_SIZE                    4000
 #define MEMP_NUM_PBUF               8
-#define MEMP_NUM_UDP_PCB            4
+#define MEMP_NUM_UDP_PCB            5    // one of them is the responder
 #define MEMP_NUM_TCP_PCB            4
 #define MEMP_NUM_TCP_PCB_LISTEN     2
 #define MEMP_NUM_TCP_SEG            8
-#define MEMP_NUM_SYS_TIMEOUT        8
+#define MEMP_NUM_SYS_TIMEOUT        12   // mDNS wants several of its own
 #define PBUF_POOL_SIZE              6
 #define PBUF_POOL_BUFSIZE           1536
 

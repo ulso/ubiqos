@@ -19,6 +19,7 @@
 #include "lwip/timeouts.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
+#include "lwip/apps/mdns.h"
 #include "class/net/net_device.h"
 
 void myrtos_print(const char *s);
@@ -125,16 +126,35 @@ static err_t if_init(struct netif *n)
     // ethernet at all, the second that it resolves addresses with ARP, and
     // leaving the first out is a link that answers nothing while the frames
     // arrive perfectly well.
-    n->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET;
+    // NETIF_FLAG_IGMP as well, because the mDNS responder joins 224.0.0.251
+    // and igmp_joingroup_netif refuses an interface that does not claim to do
+    // group management -- mdns_resp_add_netif then fails with nothing said
+    // about why. This is the second flag on this line to be found by its
+    // absence; lwIP's own ethernet netif sets all of them together.
+    n->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET
+             | NETIF_FLAG_IGMP;
     n->output = etharp_output;
     n->linkoutput = link_output;
     return ERR_OK;
+}
+
+// What a browser or `dns-sd -B _http._tcp` sees beside the name. It is a
+// callback rather than a table because the responder asks again on every
+// announcement, so a value that changes does not need re-registering.
+static void http_txt(struct mdns_service *service, void *arg)
+{
+    (void)arg;
+    mdns_resp_add_service_txtitem(service, "path=/", 6);
 }
 
 static void on_status(struct netif *n)
 {
     if (!ip4_addr_isany_val(*netif_ip4_addr(n))) {
         const uint8_t *a = (const uint8_t *)&netif_ip4_addr(n)->addr;
+        // Say it again with an address, because that is when a name becomes
+        // useful to anybody -- and mdns_resp_announce is how the responder is
+        // told the settings changed.
+        mdns_resp_announce(n);
         myrtos_print("net: address ");
         for (int i = 0; i < 4; i++) {
             myrtos_print_u32(a[i]);
@@ -155,6 +175,18 @@ void myrtos_lwip_start(void)
     netif_set_up(&nif);
     netif_set_link_up(&nif);
     autoip_start(&nif);
+
+    // The responder goes up with the interface rather than when an address
+    // arrives: it announces again by itself once AutoIP settles, and a name
+    // that exists before the address does is one less thing to sequence.
+    mdns_resp_init();
+    if (mdns_resp_add_netif(&nif, "myrtos") == ERR_OK) {
+        mdns_resp_add_service(&nif, "myrtos", "_http", DNSSD_PROTO_TCP, 80, http_txt, NULL);
+        mdns_resp_announce(&nif);
+        myrtos_print("net: answering to myrtos.local\n");
+    } else {
+        myrtos_print("net: the mDNS responder would not start\n");
+    }
 
     started = true;
     myrtos_print("net: lwIP up, asking AutoIP for an address\n");
