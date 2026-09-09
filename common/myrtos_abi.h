@@ -1528,9 +1528,9 @@ static inline int32_t myrtos_vec_count(void)
     return myrtos_syscall(SYS_VECTOR, MYRTOS_VEC_COUNT, 0, 0);
 }
 
-static inline int32_t myrtos_video_stats(uint32_t *twelve)
+static inline int32_t myrtos_video_stats(uint32_t *thirteen)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)twelve, 0, 0);
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)thirteen, 0, 0);
 }
 
 // The first 64 bytes the display plays for one scanline, live out of the buffer

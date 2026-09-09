@@ -352,7 +352,18 @@ target_compile_definitions(os_kernel PRIVATE MYRTOS_VEC_MAX=${MYRTOS_VEC_SEGMENT
 
 # And this one bounds time: only the segments crossing a given scanline are
 # drawn on it, so a full-width trace is cheap and a fan of long diagonals is not.
-set(MYRTOS_VEC_ACTIVE "64" CACHE STRING "line segments allowed to cross one scanline")
+# 256, not 64. Sixty-four looked prudent and was measured to be wrong: a scope
+# trace of a wobbling input drew to the middle of the screen and stopped, which
+# is indistinguishable from a signal that does that. The refusals are counted
+# and vidstat reports them now, so a truncated picture says so.
+#
+# The cap cannot tell the two dangerous shapes apart, and it is worth knowing
+# why. A HORIZONTAL segment lives on exactly one scanline, so five hundred of
+# them make one expensive line and the ring's 1.5 ms absorbs it. A full-height
+# diagonal is active on every line, and a hundred of those took the processor
+# the keyboard needed. One number cannot express that difference; what says
+# which one you have is vidstat's share of the CPU.
+set(MYRTOS_VEC_ACTIVE "256" CACHE STRING "line segments allowed to cross one scanline")
 target_compile_definitions(os_kernel PRIVATE MYRTOS_VEC_ACTIVE_MAX=${MYRTOS_VEC_ACTIVE})
 message(STATUS "Vector segments: ${MYRTOS_VEC_SEGMENTS} held, ${MYRTOS_VEC_ACTIVE} per scanline")
 

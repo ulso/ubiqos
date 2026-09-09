@@ -92,7 +92,7 @@ static void trace_dump(void)
 }
 
 void module_main(int argc, char **argv) {
-    uint32_t s[12];
+    uint32_t s[13];
 
     // -s dumps the console's cells as text. It is not printed by default
     // because thirty lines of screen every time hides the four numbers that
@@ -149,6 +149,7 @@ void module_main(int argc, char **argv) {
     row("  worst one call:  ", s[11], " us of 500");
     if (s[1]) row("  share of the CPU:", (s[10] / 8) * 100 / (s[1] * 500 / 8), " %");
     row("Underruns:         ", s[0], "");
+    if (s[12]) row("Segments refused:  ", s[12], " (raise MYRTOS_VEC_ACTIVE)");
     if (s[0]) row("  first at pump:   ", s[9], "");
 
     // Three questions, in the order that makes the next one worth asking.

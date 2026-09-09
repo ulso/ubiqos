@@ -289,20 +289,21 @@ void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
         out[i] = p[i];
 }
 
-void myrtos_video_stats_fill(uint32_t *twelve)
+void myrtos_video_stats_fill(uint32_t *thirteen)
 {
-    twelve[0] = myrtos_video_underruns;
-    twelve[1] = myrtos_video_pumps;
-    twelve[2] = myrtos_video_lines;
-    twelve[3] = LINE_BUFS;
-    twelve[4] = beam_line();
-    twelve[5] = rendered_to;
-    twelve[6] = myrtos_chargen_view_back();
-    twelve[7] = myrtos_chargen_history();
-    twelve[8] = myrtos_chargen_deep();
-    twelve[9]  = first_underrun_pump;
-    twelve[10] = myrtos_video_us_total;
-    twelve[11] = myrtos_video_us_max;
+    thirteen[0] = myrtos_video_underruns;
+    thirteen[1] = myrtos_video_pumps;
+    thirteen[2] = myrtos_video_lines;
+    thirteen[3] = LINE_BUFS;
+    thirteen[4] = beam_line();
+    thirteen[5] = rendered_to;
+    thirteen[6] = myrtos_chargen_view_back();
+    thirteen[7] = myrtos_chargen_history();
+    thirteen[8] = myrtos_chargen_deep();
+    thirteen[9]  = first_underrun_pump;
+    thirteen[10] = myrtos_video_us_total;
+    thirteen[11] = myrtos_video_us_max;
+    thirteen[12] = myrtos_vector_dropped;
 }
 
 static void video_pump(void)

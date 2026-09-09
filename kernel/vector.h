@@ -46,6 +46,7 @@
 int32_t  myrtos_vector_add(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint8_t colour);
 void     myrtos_vector_clear(void);
 uint32_t myrtos_vector_count(void);
+extern uint32_t myrtos_vector_dropped;
 
 // One scanline, drawn over whatever is already in dst. Called from the display
 // interrupt, so it touches nothing but its own state.

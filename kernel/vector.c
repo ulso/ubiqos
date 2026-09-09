@@ -30,11 +30,18 @@ typedef struct {
 
 static active_t act[MYRTOS_VEC_ACTIVE_MAX];
 static uint16_t nact;
+
+// Segments the cap refused. A truncated picture is indistinguishable from a
+// signal that stops half way across, which is exactly the wrong thing for an
+// instrument to be quiet about: a trace of a wobbling input drew to the middle
+// of the screen and looked like data.
+uint32_t myrtos_vector_dropped;
 static uint16_t next_add;                   // position in order[] for this y
 static uint32_t expect_y = 0xffffffffu;     // the y this state is valid for
 
 void myrtos_vector_clear(void)
 {
+    myrtos_vector_dropped = 0;
     nsegs = 0;
     nact = 0;
     next_add = 0;
@@ -101,7 +108,7 @@ static void rebuild(uint32_t y)
         if ((uint32_t)s->y0 > y) break;
         next_add = (uint16_t)(k + 1);
         if ((uint32_t)s->y1 < y) continue;
-        if (nact >= MYRTOS_VEC_ACTIVE_MAX) continue;
+        if (nact >= MYRTOS_VEC_ACTIVE_MAX) { myrtos_vector_dropped++; continue; }
 
         int32_t dy = s->y1 - s->y0;
         int32_t step = dy ? (((int32_t)s->x1 - s->x0) << 16) / dy : 0;
@@ -152,6 +159,8 @@ void myrtos_vector_line(uint32_t y, uint8_t *dst)
         // Take up what starts here. order[] is sorted, so this walks forward.
         while (next_add < nsegs && (uint32_t)segs[order[next_add]].y0 <= y) {
             const seg_t *s = &segs[order[next_add]];
+            if ((uint32_t)s->y1 >= y && nact >= MYRTOS_VEC_ACTIVE_MAX)
+                myrtos_vector_dropped++;
             if ((uint32_t)s->y1 >= y && nact < MYRTOS_VEC_ACTIVE_MAX) {
                 int32_t dy = s->y1 - s->y0;
                 int32_t step = dy ? (((int32_t)s->x1 - s->x0) << 16) / dy : 0;

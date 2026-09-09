@@ -103,8 +103,27 @@ void module_main(int argc, char **argv) {
 
         myrtos_vec_clear();
         graticule();
-        for (uint32_t x = 0; x + 1 < n; x++)
-            myrtos_vec_line((int32_t)x, sample[x], (int32_t)x + 1, sample[x + 1], 0x1c);
+        // A segment per column is right for a signal that moves and disastrous
+        // for one that does not: a flat trace puts every one of them on the
+        // SAME scanline, and the per-scanline cap then draws sixty-four of
+        // them and stops. That is what a dead input looked like -- a short
+        // green stub in the bottom left corner rather than a line.
+        //
+        // So a run of equal samples becomes one horizontal segment, and only
+        // the steps between runs cost a segment each. A signal that really does
+        // move gives the same output as before; a flat one gives two.
+        uint32_t refused = 0, start = 0;
+        for (uint32_t x = 1; x <= n; x++) {
+            if (x < n && sample[x] == sample[start])
+                continue;
+            if (x - 1 > start)
+                refused += myrtos_vec_line((int32_t)start, sample[start],
+                                           (int32_t)x - 1, sample[start], 0x1c) < 0;
+            if (x < n)
+                refused += myrtos_vec_line((int32_t)x - 1, sample[start],
+                                           (int32_t)x, sample[x], 0x1c) < 0;
+            start = x;
+        }
 
         // The reading, in the console rows the graticule leaves free.
         uint32_t mid = sample[W / 2];
@@ -126,6 +145,12 @@ void module_main(int argc, char **argv) {
         myrtos_line_u32(&l, s + 1);
         myrtos_line_str(&l, "/");
         myrtos_line_u32(&l, sweeps);
+        // Say so rather than drawing a picture that is quietly incomplete.
+        if (refused) {
+            myrtos_line_str(&l, "   ");
+            myrtos_line_u32(&l, refused);
+            myrtos_line_str(&l, " SEGMENTS REFUSED");
+        }
         myrtos_line_str(&l, "\n");
         myrtos_line_flush(MYRTOS_STDOUT, &l);
     }
