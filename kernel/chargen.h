@@ -15,6 +15,17 @@
 #define MYRTOS_CELL_COLS (MYRTOS_H_ACTIVE / MYRTOS_CELL_W)   // 80
 #define MYRTOS_CELL_ROWS (MYRTOS_V_ACTIVE / MYRTOS_CELL_H)   // 30
 
+// Rows kept, of which MYRTOS_CELL_ROWS are on the screen and the rest are
+// history. The cells were always a ring; this makes the ring longer than the
+// window, which is the whole of the scrollback.
+//
+//   256 rows * 80 columns * 2 bytes = 40960, and 8.5 screens of history.
+//
+// It comes out of .bss, so it is spent against the C heap between end and the
+// stack rather than against the module pool. The framebuffer this replaced was
+// 307200 bytes, so eight screens of history still costs an eighth of it.
+#define MYRTOS_CELL_RING 256
+
 // ch is the glyph's index into the font, not the character: the generator runs
 // under a deadline and should not be deciding what to do about control codes.
 // attr is the foreground index in the high nibble and the background in the low.
@@ -32,8 +43,17 @@ void myrtos_chargen_clear(uint8_t attr);
 void myrtos_chargen_scroll(uint8_t attr);
 void myrtos_chargen_cursor(uint32_t row, uint32_t col, bool on);
 
+// Scrollback. The view is a window onto the ring, counted in rows back from the
+// live screen; writing always goes to the live screen whatever the view shows.
+void     myrtos_chargen_view_move(int32_t rows);   // negative is back in time
+void     myrtos_chargen_view_end(void);            // return to live
+void     myrtos_chargen_view_home(void);           // as far back as there is
+uint32_t myrtos_chargen_view_back(void);
+uint32_t myrtos_chargen_history(void);
+
 // One scanline of MYRTOS_H_ACTIVE bytes. Called from an interrupt above the
 // kernel's threshold, so it must touch nothing but its own memory.
+void myrtos_chargen_peek_row(uint32_t row, uint8_t *out, uint32_t n);
 void myrtos_chargen_line(uint32_t y, uint8_t *dst);
 
 #endif

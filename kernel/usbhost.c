@@ -6,6 +6,7 @@
 #include "pio_usb_ll.h"
 #include "hardware/structs/sysinfo.h"
 #include "tusb.h"
+#include "chargen.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -500,6 +501,42 @@ static void emit(uint8_t c) {
 //
 // HID usages: 0x4a Home, 0x4b PgUp, 0x4c Delete, 0x4d End, 0x4e PgDn,
 // 0x4f right, 0x50 left, 0x51 down, 0x52 up.
+// Scrolling the screen back, with nothing but a keyboard.
+//
+// Shift and the navigation keys, which is what a Linux virtual console does and
+// for the same reason: an UNSHIFTED PageUp has to go on reaching the program --
+// an editor wants it -- while shift is free in every layout. So the modifier is
+// what separates "scroll the terminal" from "page up in what I am running", and
+// no application can lose a key to this.
+//
+// Shift+PgUp and Shift+PgDn move half a screen, Shift+Home goes as far back as
+// there is, Shift+End returns to the live screen.
+static bool scroll_key(uint8_t k, uint8_t mods) {
+#if MYRTOS_VIDEO_CHARGEN
+    if (!(mods & 0x22))                       // either shift
+        return false;
+    switch (k) {
+    case 0x4b: myrtos_chargen_view_move(-(int32_t)(MYRTOS_CELL_ROWS / 2)); return true;
+    case 0x4e: myrtos_chargen_view_move(+(int32_t)(MYRTOS_CELL_ROWS / 2)); return true;
+    case 0x4a: myrtos_chargen_view_home(); return true;
+    case 0x4d: myrtos_chargen_view_end();  return true;
+    default:   return false;
+    }
+#else
+    (void)k; (void)mods;
+    return false;                             // a bitmap has no history to show
+#endif
+}
+
+// Anything that is going to be read as input puts the screen back where the
+// cursor is. Output does not: a line printed while you are reading history
+// should not yank the page away, and that difference is the whole of the rule.
+static void scroll_to_live(void) {
+#if MYRTOS_VIDEO_CHARGEN
+    myrtos_chargen_view_end();
+#endif
+}
+
 static const char *nav_sequence(uint8_t k) {
     switch (k) {
     case 0x4a: return "\x1b[H";
@@ -652,12 +689,19 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
             for (int j = 0; j < 6; j++) if (was[j] == k) held = true;
             if (held) continue;
 
+            if (scroll_key(k, report[0])) {
+                // Not input, and deliberately not set up to repeat: holding it
+                // would page straight past what you are trying to read.
+                continue;
+            }
+
             const char *sq = nav_sequence(k);
             if (sq) {
+                scroll_to_live();
                 myrtos_usbhost_push_str(sq);
             } else {
                 uint8_t c = translate(k, report[0]);
-                if (c) emit(c);
+                if (c) { scroll_to_live(); emit(c); }
             }
 
             // The newest key down is the one that repeats, as it is everywhere:

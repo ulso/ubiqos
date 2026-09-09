@@ -727,7 +727,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_CRITHOLD  63u
 #define SYS_WIFISTATS 64u   // a0 = &uint32_t[4]: commands, resyncs, retries, failures
 #define SYS_VIDSTAT   65u   // a0 = &uint32_t[8]: underruns, pumps, lines, buffers,
-                            //                  beam, rendered, alarm, irq
+                            //                  beam, rendered, view back, history
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
@@ -1485,6 +1485,13 @@ static inline int32_t myrtos_video_stats(uint32_t *eight)
 static inline int32_t myrtos_video_peek(uint32_t line, uint8_t *buf64)
 {
     return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, line + 1, 0);
+}
+
+// One screen row of the console as characters, 80 of them. This is what the
+// console wrote, not what the generator built out of it.
+static inline int32_t myrtos_console_peek_row(uint32_t row, uint8_t *buf80)
+{
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf80, row + 1, 1);
 }
 
 static inline int32_t myrtos_wifi_reset(void)

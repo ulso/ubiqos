@@ -273,8 +273,8 @@ void myrtos_video_stats_fill(uint32_t *eight)
     eight[3] = LINE_BUFS;
     eight[4] = beam_line();
     eight[5] = rendered_to;
-    eight[6] = (uint32_t)pump_alarm;
-    eight[7] = pump_alarm < 0 ? 0 : hardware_alarm_get_irq_num((uint)pump_alarm);
+    eight[6] = myrtos_chargen_view_back();
+    eight[7] = myrtos_chargen_history();
 }
 
 static void video_pump(void)

@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "../common/modules.h"
 #include "video.h"
+#include "chargen.h"
 #include "trap.h"
 #include "io.h"
 #include "fat32.h"
@@ -598,7 +599,9 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         }
         case SYS_VIDSTAT: {
 #if MYRTOS_VIDEO_CHARGEN
-            if (frame->a1)
+            if (frame->a1 && frame->a2)
+                myrtos_chargen_peek_row(frame->a1 - 1, (uint8_t *)(uintptr_t)frame->a0, 80);
+            else if (frame->a1)
                 myrtos_video_peek_line(frame->a1 - 1, (uint8_t *)(uintptr_t)frame->a0, 64);
             else
                 myrtos_video_stats_fill((uint32_t *)(uintptr_t)frame->a0);
