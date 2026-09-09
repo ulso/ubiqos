@@ -24,6 +24,8 @@ void myrtos_video_init(void);
 // the times a scanline was still unwritten when the display reached it.
 extern uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
 uint32_t myrtos_video_buffers(void);
+void myrtos_video_stats_fill(uint32_t *eight);
+void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n);
 
 #else
 

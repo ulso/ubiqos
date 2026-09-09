@@ -95,11 +95,20 @@ static inline uint8_t eff_attr(void)
 // and 6x12 gives 106 columns by 40 rows instead of 80 by 30. `font 8x16`
 // switches back. Both heights divide 480 exactly, which is what the ring
 // framebuffer requires.
+// One place decides the cell, because two did and they no longer agreed: the
+// pointer said 8x16 under chargen while myrtos_console_init still asked for
+// 6x12 by number, so the boot messages appeared and the console then cleared
+// them and wrote the prompt onto rows the generator does not show.
+//
+// The generator builds eight pixels as two words through a nibble table, which
+// six does not divide into.
 #if MYRTOS_VIDEO_CHARGEN
-static const console_font_t *font = &fonts[0];   // chargen is 8x16 only
+#define DEFAULT_FONT 0     // 8x16
 #else
-static const console_font_t *font = &fonts[1];
+#define DEFAULT_FONT 1     // 6x12
 #endif
+
+static const console_font_t *font = &fonts[DEFAULT_FONT];
 static uint32_t cell_w = 8, cell_h = 16;
 static uint32_t cols = MYRTOS_H_ACTIVE / 8, rows = MYRTOS_V_ACTIVE / 16;
 // 106 columns of six pixels come to 636, four short of the line. Split them, so
@@ -812,7 +821,7 @@ void myrtos_console_start_server(void)
 
 void myrtos_console_init(void)
 {
-    set_grid(&fonts[1]);       // 6x12; see the note above the font pointer
+    set_grid(&fonts[DEFAULT_FONT]);   // see the note above the font pointer
     ready = true;
     cursor(true);
 }

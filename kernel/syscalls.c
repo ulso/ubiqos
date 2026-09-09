@@ -598,11 +598,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
         }
         case SYS_VIDSTAT: {
 #if MYRTOS_VIDEO_CHARGEN
-            uint32_t *out = (uint32_t *)(uintptr_t)frame->a0;
-            out[0] = myrtos_video_underruns;
-            out[1] = myrtos_video_pumps;
-            out[2] = myrtos_video_lines;
-            out[3] = myrtos_video_buffers();
+            if (frame->a1)
+                myrtos_video_peek_line(frame->a1 - 1, (uint8_t *)(uintptr_t)frame->a0, 64);
+            else
+                myrtos_video_stats_fill((uint32_t *)(uintptr_t)frame->a0);
             frame->a0 = 0;
 #else
             frame->a0 = (uint32_t)-1;    // a framebuffer keeps up by existing

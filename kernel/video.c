@@ -242,6 +242,10 @@ static uint32_t rendered_to;    // the next line to build, on the same scale
 
 uint32_t myrtos_video_buffers(void) { return LINE_BUFS; }
 
+// Everything the one measurement needs, in the order vidstat prints it. beam
+// and rendered say whether the display is moving at all and whether anything is
+// being built for it; alarm and irq say the pump was wired to something.
+
 static inline uint32_t beam_line(void)
 {
     uint32_t idx = (uint32_t)(((uintptr_t)dma_hw->ch[ch_addr].read_addr
@@ -250,6 +254,27 @@ static inline uint32_t beam_line(void)
         return 0;                       // still in the vertical blanking
     idx = (idx - BLANK_LINES) / 2;
     return idx < V_ACTIVE ? idx : V_ACTIVE - 1;
+}
+
+// What the display is actually playing for one line. The buffer is live: this
+// is the bytes the DMA hands to HSTX, not a re-rendering of them.
+void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
+{
+    const uint8_t *p = linebuf[line % LINE_BUFS];
+    for (uint32_t i = 0; i < n; i++)
+        out[i] = p[i];
+}
+
+void myrtos_video_stats_fill(uint32_t *eight)
+{
+    eight[0] = myrtos_video_underruns;
+    eight[1] = myrtos_video_pumps;
+    eight[2] = myrtos_video_lines;
+    eight[3] = LINE_BUFS;
+    eight[4] = beam_line();
+    eight[5] = rendered_to;
+    eight[6] = (uint32_t)pump_alarm;
+    eight[7] = pump_alarm < 0 ? 0 : hardware_alarm_get_irq_num((uint)pump_alarm);
 }
 
 static void video_pump(void)
@@ -396,7 +421,7 @@ void myrtos_video_init(void) {
     dma_channel_start(ch_count);
 
 #if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_init(0x07);      // light grey on black, before anything prints
+    myrtos_chargen_init(0xf0);      // white on black, before anything prints
     pump_start();
 #endif
 

@@ -1449,6 +1449,7 @@ add_custom_target(modules ALL
 # board when run, see the note in modules/wasm/wasm.c. Take it out before
 # leaving the machine in a state anyone else will type at.
 set(MYRTOS_RESIDENT
+    vidstat
     cxxdemo
     vtdemo
     wasm
