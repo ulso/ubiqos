@@ -248,7 +248,15 @@ static void build_frame_list(void) {
 // RISC-V were tried once and reverted, and a trap stack is the prerequisite --
 // so on RISC-V the honest answer today is MYRTOS_VIDEO=framebuffer.
 
-#define PUMP_US 500
+// 700, not 500, and the reason is the glyph row. A pump renders whatever the
+// beam has advanced since the last one, so at 500 microseconds that is about
+// fifteen scanlines -- one short of the sixteen a glyph row needs, and the band
+// path was taken 3 times against 113337 single lines. At 700 it is about
+// twenty-two, so most lines go through the band.
+//
+// The ring is 48 buffers, 1.5 milliseconds, so this still leaves about 0.8 of
+// slack. The underrun counter is what says whether that was enough.
+#define PUMP_US 700
 
 uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
 static uint32_t first_underrun_pump;
@@ -258,6 +266,7 @@ static uint32_t first_underrun_pump;
 // interrupt is taking, and max is the one number that says whether a single
 // call can sit on top of something that cannot wait.
 uint32_t myrtos_video_us_total, myrtos_video_us_max;
+static uint32_t bands_done, singles_done;
 
 static int      pump_alarm = -1;
 static uint32_t beam_epoch;     // active lines completed in whole frames
@@ -289,21 +298,24 @@ void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
         out[i] = p[i];
 }
 
-void myrtos_video_stats_fill(uint32_t *thirteen)
+void myrtos_video_stats_fill(uint32_t *sixteen)
 {
-    thirteen[0] = myrtos_video_underruns;
-    thirteen[1] = myrtos_video_pumps;
-    thirteen[2] = myrtos_video_lines;
-    thirteen[3] = LINE_BUFS;
-    thirteen[4] = beam_line();
-    thirteen[5] = rendered_to;
-    thirteen[6] = myrtos_chargen_view_back();
-    thirteen[7] = myrtos_chargen_history();
-    thirteen[8] = myrtos_chargen_deep();
-    thirteen[9]  = first_underrun_pump;
-    thirteen[10] = myrtos_video_us_total;
-    thirteen[11] = myrtos_video_us_max;
-    thirteen[12] = myrtos_vector_dropped;
+    sixteen[0] = myrtos_video_underruns;
+    sixteen[1] = myrtos_video_pumps;
+    sixteen[2] = myrtos_video_lines;
+    sixteen[3] = LINE_BUFS;
+    sixteen[4] = beam_line();
+    sixteen[5] = rendered_to;
+    sixteen[6] = myrtos_chargen_view_back();
+    sixteen[7] = myrtos_chargen_history();
+    sixteen[8] = myrtos_chargen_deep();
+    sixteen[9]  = first_underrun_pump;
+    sixteen[10] = myrtos_video_us_total;
+    sixteen[11] = myrtos_video_us_max;
+    sixteen[12] = myrtos_vector_dropped;
+    sixteen[13] = bands_done;
+    sixteen[14] = singles_done;
+    sixteen[15] = PUMP_US;   // reported, not assumed: it has been changed once
 }
 
 static void video_pump(void)
@@ -332,9 +344,33 @@ static void video_pump(void)
     while (rendered_to < target) {
         uint32_t y = rendered_to % V_ACTIVE;
         uint8_t *buf = linebuf[rendered_to % LINE_BUFS];
+
+        // Whole glyph rows, and STOPPING at the boundary rather than filling
+        // the last few lines singly. Filling them lost the alignment, so the
+        // next pump had to spend ten lines getting it back and the band ran on
+        // every other pump: 28 per cent of lines instead of nearly all.
+        //
+        // Stopping short is free. target is how far ahead this would LIKE to
+        // be, not a debt -- the next pump carries on, and the ring is what
+        // absorbs the unevenness. 48 buffers is three sixteens and 480 lines is
+        // thirty of them, so a 16-aligned line is a 16-aligned buffer and the
+        // block never wraps.
+        if ((rendered_to % MYRTOS_CELL_H) == 0) {
+            if (rendered_to + MYRTOS_CELL_H > target)
+                break;
+            myrtos_chargen_band(y, buf);
+            for (uint32_t i = 0; i < MYRTOS_CELL_H; i++)
+                myrtos_vector_line(y + i, buf + i * H_ACTIVE);
+            rendered_to += MYRTOS_CELL_H;
+            myrtos_video_lines += MYRTOS_CELL_H;
+            bands_done++;
+            continue;
+        }
+
         myrtos_chargen_line(y, buf);
         myrtos_vector_line(y, buf);      // over the text, not instead of it
         rendered_to++;
+        singles_done++;
         myrtos_video_lines++;
     }
     myrtos_video_pumps++;

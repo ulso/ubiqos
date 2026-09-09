@@ -331,6 +331,67 @@ void myrtos_chargen_text(bool on, uint8_t attr)
 
 bool myrtos_chargen_text_on(void) { return text_on; }
 
+// A whole glyph row at once: sixteen scanlines, cells in the outer loop.
+//
+// The per-cell work -- loading the cell, comparing the attribute, rebuilding
+// the colour words -- was being redone for each of the sixteen scanlines the
+// glyph occupies. Here it happens once. What is left inside is the part that
+// cannot be avoided, because it writes 640 by 16 bytes.
+//
+// The sixteen buffers are contiguous and this relies on it: LINE_BUFS is 48,
+// which is three sixteens, and V_ACTIVE is 480, which is thirty of them, so a
+// glyph row's scanlines always land in one aligned block that does not wrap.
+// video.c checks the alignment before calling.
+void myrtos_chargen_band(uint32_t y0, uint8_t *base)
+{
+    uint32_t crow = y0 / MYRTOS_CELL_H;
+
+    if (!text_on) {
+        uint32_t w = (uint32_t)pal_ram[blank_attr & 0x0fu] * 0x01010101u;
+        uint32_t *o = (uint32_t *)base;
+        for (uint32_t i = 0; i < MYRTOS_CELL_H * (MYRTOS_H_ACTIVE / 4); i++)
+            o[i] = w;
+        return;
+    }
+
+    const myrtos_cell_t *c = view_at(crow);
+    bool on_cursor_row = cur_on && view_back == 0 && crow == cur_row;
+    uint32_t last = 0x100, fgw = 0, bgw = 0;
+
+    for (uint32_t col = 0; col < MYRTOS_CELL_COLS; col++, c++) {
+        uint32_t attr = c->attr;
+        if (on_cursor_row && col == cur_col)
+            attr = ((attr & 0x0fu) << 4) | (attr >> 4);
+        if (attr != last) {
+            last = attr;
+            fgw = (uint32_t)pal_ram[attr >> 4]    * 0x01010101u;
+            bgw = (uint32_t)pal_ram[attr & 0x0fu] * 0x01010101u;
+        }
+
+        uint32_t *out = (uint32_t *)(base + col * MYRTOS_CELL_W);
+        uint32_t ch = c->ch;
+
+        if (ch == MYRTOS_CELL_BLANK) {
+            for (uint32_t gy = 0; gy < MYRTOS_CELL_H; gy++) {
+                out[0] = bgw;
+                out[1] = bgw;
+                out += MYRTOS_H_ACTIVE / 4;
+            }
+            continue;
+        }
+
+        const uint8_t *g = font_ram[ch];
+        for (uint32_t gy = 0; gy < MYRTOS_CELL_H; gy++) {
+            uint32_t bits = g[gy];
+            uint32_t m = expand_ram[bits >> 4];
+            out[0] = (fgw & m) | (bgw & ~m);
+            m = expand_ram[bits & 0x0fu];
+            out[1] = (fgw & m) | (bgw & ~m);
+            out += MYRTOS_H_ACTIVE / 4;
+        }
+    }
+}
+
 void myrtos_chargen_line(uint32_t y, uint8_t *dst)
 {
     if (!text_on) {

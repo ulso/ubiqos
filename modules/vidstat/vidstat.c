@@ -92,7 +92,7 @@ static void trace_dump(void)
 }
 
 void module_main(int argc, char **argv) {
-    uint32_t s[13];
+    uint32_t s[16];
 
     // -s dumps the console's cells as text. It is not printed by default
     // because thirty lines of screen every time hides the four numbers that
@@ -146,8 +146,11 @@ void module_main(int argc, char **argv) {
     // when it saved a fifth. For that, read these two numbers twice and divide
     // the differences.
     row("Time in the pump:  ", s[10] / 1000, " ms");
-    row("  worst one call:  ", s[11], " us of 500");
-    if (s[1]) row("  share of the CPU:", (s[10] / 8) * 100 / (s[1] * 500 / 8), " %");
+    row("  pump period:     ", s[15], " us");
+    row("  worst one call:  ", s[11], " us");
+    if (s[1] && s[15]) row("  share of the CPU:", (s[10] / 8) * 100 / (s[1] * s[15] / 8), " %");
+    row("Glyph rows built:  ", s[13], "");
+    row("Single lines built:", s[14], "");
     row("Underruns:         ", s[0], "");
     if (s[12]) row("Segments refused:  ", s[12], " (raise MYRTOS_VEC_ACTIVE)");
     if (s[0]) row("  first at pump:   ", s[9], "");
