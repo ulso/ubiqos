@@ -6,6 +6,7 @@
 #include "../common/modules.h"
 #include "video.h"
 #include "chargen.h"
+#include "vector.h"
 
 int32_t myrtos_console_trace_at(uint32_t offset);
 #include "trap.h"
@@ -597,6 +598,24 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             busy_wait_us(us);
             myrtos_critical_exit(st);
             frame->a0 = 0;
+            break;
+        }
+        case SYS_VECTOR: {
+#if MYRTOS_VIDEO_CHARGEN
+            switch (frame->a0) {
+            case MYRTOS_VEC_CLEAR: myrtos_vector_clear(); frame->a0 = 0; break;
+            case MYRTOS_VEC_COUNT: frame->a0 = myrtos_vector_count();    break;
+            case MYRTOS_VEC_ADD: {
+                const myrtos_vecline_t *v = (const myrtos_vecline_t *)(uintptr_t)frame->a1;
+                frame->a0 = (uint32_t)myrtos_vector_add(v->x0, v->y0, v->x1, v->y1,
+                                                        (uint8_t)v->colour);
+                break;
+            }
+            default: frame->a0 = (uint32_t)-1; break;
+            }
+#else
+            frame->a0 = (uint32_t)-1;   // a bitmap has no scanline renderer
+#endif
             break;
         }
         case SYS_VIDSTAT: {

@@ -92,7 +92,7 @@ static void trace_dump(void)
 }
 
 void module_main(int argc, char **argv) {
-    uint32_t s[10];
+    uint32_t s[12];
 
     // -s dumps the console's cells as text. It is not printed by default
     // because thirty lines of screen every time hides the four numbers that
@@ -135,6 +135,12 @@ void module_main(int argc, char **argv) {
     row("Built up to line:  ", s[5], "");
     row("Pumps:             ", s[1], "");
     row("Scanlines built:   ", s[2], "");
+    // What it costs. PUMP_US is 500, so pumps*500 is the elapsed time the
+    // display has been asked about, and the share of it spent inside the
+    // interrupt is the number that decides whether anything else can run.
+    row("Time in the pump:  ", s[10] / 1000, " ms");
+    row("  worst one call:  ", s[11], " us of 500");
+    if (s[1]) row("  share of the CPU:", (s[10] / 8) * 100 / (s[1] * 500 / 8), " %");
     row("Underruns:         ", s[0], "");
     if (s[0]) row("  first at pump:   ", s[9], "");
 

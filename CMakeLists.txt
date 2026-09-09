@@ -206,6 +206,7 @@ add_executable(os_kernel
     kernel/video.c
     kernel/console.c
     kernel/chargen.c
+    kernel/vector.c
     kernel/fsserver.c
     kernel/wifilink.c
     kernel/font8x16.c
@@ -304,14 +305,16 @@ set(MYRTOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow MYR
 if(MYRTOS_HEAP_KB STREQUAL "auto")
     if(NOT MYRTOS_VIDEO STREQUAL "chargen")
         set(myrtosHeapKB 40)
-    elseif(MYRTOS_ARCH STREQUAL "riscv")
-        # RISC-V code is larger, so the same pool leaves 12 kB of C heap where
-        # Arm has 79. This project has already had a boot crash from a C heap
-        # that reached zero and made the SDK panic before init, so auto takes
-        # the architecture into account too.
-        set(myrtosHeapKB 192)
     else()
-        set(myrtosHeapKB 256)
+        # 192 on both. It started at 256 on Arm, but every static the kernel
+        # gains comes out of the C heap between end and the stack rather than
+        # out of this pool, and the scanline buffers, the scrollback ring, the
+        # console trace and the vector lists took it from 79 kB to 11. This
+        # project has already had a boot crash from a C heap that reached zero
+        # and made the SDK panic before init. The pool is still nearly five
+        # times what it was before the framebuffer went, and `free` has never
+        # shown it under strain.
+        set(myrtosHeapKB 192)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
@@ -1183,6 +1186,7 @@ myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
 myrtos_add_module(vidstat modules/vidstat/vidstat.c)
+myrtos_add_module(vec modules/vec/vec.c)
 myrtos_add_module(pecho modules/pecho/pecho.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
@@ -1498,6 +1502,7 @@ add_custom_target(modules ALL
 # leaving the machine in a state anyone else will type at.
 set(MYRTOS_RESIDENT
     vidstat
+    vec
     cxxdemo
     vtdemo
     wasm

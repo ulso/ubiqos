@@ -726,6 +726,10 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 // experiment has to make its own.
 #define SYS_CRITHOLD  63u
 #define SYS_WIFISTATS 64u   // a0 = &uint32_t[4]: commands, resyncs, retries, failures
+#define SYS_VECTOR    66u   // a0 = op, a1 = &myrtos_vecline_t for VEC_ADD
+#define MYRTOS_VEC_CLEAR 0u
+#define MYRTOS_VEC_ADD   1u
+#define MYRTOS_VEC_COUNT 2u
 #define SYS_VIDSTAT   65u   // a0 = &uint32_t[10]: underruns, pumps, lines, buffers,
                             //   beam, rendered, view back, history, of which deep
 
@@ -1475,9 +1479,34 @@ static inline int32_t myrtos_wifi_stats(uint32_t *eight)
 // built, so a picture that looks right and a picture that IS right are the same
 // thing only while this stays at zero. -1 means this build has a framebuffer
 // and there is nothing to keep up with.
-static inline int32_t myrtos_video_stats(uint32_t *ten)
+// Vector graphics, drawn over the console rather than instead of it. Colours
+// are RGB332 bytes, the same as the test card and the console palette: three
+// bits of red, three of green, two of blue.
+typedef struct { int32_t x0, y0, x1, y1; uint32_t colour; } myrtos_vecline_t;
+
+static inline int32_t myrtos_vec_clear(void)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)ten, 0, 0);
+    return myrtos_syscall(SYS_VECTOR, MYRTOS_VEC_CLEAR, 0, 0);
+}
+
+// Returns the segment's index, or -1 if the list is full or it lies entirely
+// off the top or bottom -- there is no scanline to draw that on. Off the sides
+// is clamped instead, so a plot running past the edge stays useful.
+static inline int32_t myrtos_vec_line(int32_t x0, int32_t y0,
+                                      int32_t x1, int32_t y1, uint32_t colour)
+{
+    myrtos_vecline_t v = { x0, y0, x1, y1, colour };
+    return myrtos_syscall(SYS_VECTOR, MYRTOS_VEC_ADD, (uint32_t)(uintptr_t)&v, 0);
+}
+
+static inline int32_t myrtos_vec_count(void)
+{
+    return myrtos_syscall(SYS_VECTOR, MYRTOS_VEC_COUNT, 0, 0);
+}
+
+static inline int32_t myrtos_video_stats(uint32_t *twelve)
+{
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)twelve, 0, 0);
 }
 
 // The first 64 bytes the display plays for one scanline, live out of the buffer

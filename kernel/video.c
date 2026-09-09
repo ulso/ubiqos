@@ -11,6 +11,7 @@
 #include "hardware/clocks.h"
 #include "hardware/timer.h"
 #include "chargen.h"
+#include "vector.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -216,13 +217,29 @@ static void build_frame_list(void) {
 // pointer walks frame_addrs, so subtracting the table's own address says which
 // entry is playing. Two entries per active line, after BLANK_LINES of them.
 //
-// The pump runs from a timer alarm at priority 0x40, which is above
-// MYRTOS_CRITICAL_BASEPRI. That is the whole design: a kernel critical section
-// cannot delay it, and the measurement behind the 0x40 choice says the worst
-// case it does see is 127 microseconds against 1.5 milliseconds of slack.
+// THE PRIORITY IS BELOW THE KERNEL, AND THAT IS DELIBERATE.
 //
-// THE RULE FOR A HANDLER ABOVE THE KERNEL APPLIES HERE. This one reads two DMA
-// registers, reads cells and font bytes, and writes pixels. It calls nothing.
+// It was 0x40, above MYRTOS_CRITICAL_BASEPRI, on the theory that the display
+// must never be delayed. That was wrong, and `vec demo` proved it: PIO-USB
+// drives its SOF from a repeating timer at the SDK's default 0x80
+// (alarm_pool_add_repeating_timer_us, -1000 us, in pio_usb_host.c), so a pump
+// at 0x40 preempts the one interrupt on this board that genuinely cannot be
+// late. A USB frame is due every millisecond and the bus falls apart without
+// it -- the keyboard died while the picture carried on, which is exactly what
+// a display monopolising the processor looks like.
+//
+// The ordering follows from who has slack. The display has 48 buffers, which
+// is 1.5 milliseconds of it; a USB frame has none. So the pump sits at 0xC0,
+// below both PIO-USB and the kernel's own threshold, and the ring absorbs
+// whatever delay that costs. The underrun counter is what says whether it did.
+//
+// This also explains the intermittent CDC drops before any of this: the pump
+// was already taking about a third of the processor at 0x40 and landing on the
+// SOF timer from time to time.
+//
+// It still calls nothing -- two DMA registers, cells, font bytes, pixels -- and
+// that stays true whatever its priority, because it is the honest description
+// of what a scanline builder needs.
 
 // ON RISC-V THIS IS EXPECTED TO TEAR, and the counter is there to say so.
 // kernel/critical.h only takes the BASEPRI path on Arm; Hazard3 gets the hammer
@@ -235,6 +252,12 @@ static void build_frame_list(void) {
 
 uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
 static uint32_t first_underrun_pump;
+
+// What the display actually costs, in microseconds, because guessing it has now
+// been wrong twice. total against elapsed gives the share of the processor this
+// interrupt is taking, and max is the one number that says whether a single
+// call can sit on top of something that cannot wait.
+uint32_t myrtos_video_us_total, myrtos_video_us_max;
 
 static int      pump_alarm = -1;
 static uint32_t beam_epoch;     // active lines completed in whole frames
@@ -266,22 +289,25 @@ void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
         out[i] = p[i];
 }
 
-void myrtos_video_stats_fill(uint32_t *ten)
+void myrtos_video_stats_fill(uint32_t *twelve)
 {
-    ten[0] = myrtos_video_underruns;
-    ten[1] = myrtos_video_pumps;
-    ten[2] = myrtos_video_lines;
-    ten[3] = LINE_BUFS;
-    ten[4] = beam_line();
-    ten[5] = rendered_to;
-    ten[6] = myrtos_chargen_view_back();
-    ten[7] = myrtos_chargen_history();
-    ten[8] = myrtos_chargen_deep();
-    ten[9] = first_underrun_pump;
+    twelve[0] = myrtos_video_underruns;
+    twelve[1] = myrtos_video_pumps;
+    twelve[2] = myrtos_video_lines;
+    twelve[3] = LINE_BUFS;
+    twelve[4] = beam_line();
+    twelve[5] = rendered_to;
+    twelve[6] = myrtos_chargen_view_back();
+    twelve[7] = myrtos_chargen_history();
+    twelve[8] = myrtos_chargen_deep();
+    twelve[9]  = first_underrun_pump;
+    twelve[10] = myrtos_video_us_total;
+    twelve[11] = myrtos_video_us_max;
 }
 
 static void video_pump(void)
 {
+    uint32_t t0 = timer_hw->timerawl;
     uint32_t cur = beam_line();
     if (cur < beam_last)
         beam_epoch += V_ACTIVE;         // a frame went by
@@ -303,11 +329,18 @@ static void video_pump(void)
     // DMA may have already latched the address of.
     uint32_t target = now + LINE_BUFS - 2;
     while (rendered_to < target) {
-        myrtos_chargen_line(rendered_to % V_ACTIVE, linebuf[rendered_to % LINE_BUFS]);
+        uint32_t y = rendered_to % V_ACTIVE;
+        uint8_t *buf = linebuf[rendered_to % LINE_BUFS];
+        myrtos_chargen_line(y, buf);
+        myrtos_vector_line(y, buf);      // over the text, not instead of it
         rendered_to++;
         myrtos_video_lines++;
     }
     myrtos_video_pumps++;
+
+    uint32_t dt = timer_hw->timerawl - t0;
+    myrtos_video_us_total += dt;
+    if (dt > myrtos_video_us_max) myrtos_video_us_max = dt;
 }
 
 static void pump_isr(void)
@@ -322,8 +355,10 @@ static void pump_start(void)
     // Fill every buffer once so the first frame is not a screenful of whatever
     // SRAM held at reset. The cells are blank at this point, so which line
     // index each buffer was built for does not matter.
-    for (uint32_t i = 0; i < LINE_BUFS; i++)
+    for (uint32_t i = 0; i < LINE_BUFS; i++) {
         myrtos_chargen_line(i, linebuf[i]);
+        myrtos_vector_line(i, linebuf[i]);
+    }
 
     // THEN start the bookkeeping from where the beam actually is. The DMA chain
     // has been running since dma_channel_start, so claiming that forty-eight
@@ -339,7 +374,7 @@ static void pump_start(void)
     pump_alarm = (int)hardware_alarm_claim_unused(true);
     uint irq = hardware_alarm_get_irq_num(pump_alarm);
     irq_set_exclusive_handler(irq, pump_isr);
-    irq_set_priority(irq, 0x40);
+    irq_set_priority(irq, 0xc0);
     irq_set_enabled(irq, true);
     hw_set_bits(&timer_hw->inte, 1u << pump_alarm);
     timer_hw->alarm[pump_alarm] = timer_hw->timerawl + PUMP_US;

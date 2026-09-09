@@ -61,6 +61,20 @@ static bool     cur_on;
 // Four pixels to a word, one byte each, and pixel 0 in the LOW byte: that is
 // the order the DMA hands a word to HSTX. Bit 7 of a font byte is the leftmost
 // pixel, which is what draw_glyph meant by `bits & (0x80 >> x)`.
+// The three tables the inner loop reads, copied into SRAM at init.
+//
+// They were const, which puts them in flash, and flash on this chip is read
+// through XIP: a cache miss on a font byte costs more than the arithmetic
+// around it. The generator reads one font byte and two expansion words per
+// cell, eighty cells a line, thirty-one thousand lines a second -- the old
+// console read a glyph once when it drew the character and never again.
+//
+// Measured before this: 56 per cent of the processor for text alone, and a
+// worst single pump of 962 microseconds against a 500 microsecond period.
+static uint8_t  font_ram[224][MYRTOS_CELL_H];
+static uint8_t  pal_ram[16];
+static uint32_t expand_ram[16];
+
 static const uint32_t expand4[16] = {
     0x00000000, 0xff000000, 0x00ff0000, 0xffff0000,
     0x0000ff00, 0xff00ff00, 0x00ffff00, 0xffffff00,
@@ -252,6 +266,14 @@ void myrtos_chargen_init(uint8_t attr)
     // 640 kB of SRAM is not a fallback, it is a failure to boot -- so the
     // address is checked rather than trusted, the way myrtos_pool_of_address
     // learned to.
+    for (uint32_t g = 0; g < 224; g++)
+        for (uint32_t r = 0; r < MYRTOS_CELL_H; r++)
+            font_ram[g][r] = myrtos_font8x16[g][r];
+    for (uint32_t i = 0; i < 16; i++) {
+        pal_ram[i] = myrtos_ansi_colour[i];
+        expand_ram[i] = expand4[i];
+    }
+
     if (!deep && myrtos_bulk_pool) {
         // Straight out of the pool, the way k_driver_alloc does it for drivers
         // and for the same reason: this is never given back, so there is
@@ -313,14 +335,25 @@ void myrtos_chargen_line(uint32_t y, uint8_t *dst)
             attr = ((attr & 0x0fu) << 4) | (attr >> 4);
         if (attr != last) {
             last = attr;
-            fgw = (uint32_t)myrtos_ansi_colour[attr >> 4]   * 0x01010101u;
-            bgw = (uint32_t)myrtos_ansi_colour[attr & 0x0fu] * 0x01010101u;
+            fgw = (uint32_t)pal_ram[attr >> 4]   * 0x01010101u;
+            bgw = (uint32_t)pal_ram[attr & 0x0fu] * 0x01010101u;
         }
 
-        uint32_t bits = myrtos_font8x16[c->ch][gy];
-        uint32_t m = expand4[bits >> 4];
+        // A blank cell is all background: the font byte would be zero, both
+        // masks would be zero, and both words would come out as bgw. Saying so
+        // directly skips the font load and four table lookups, and most of a
+        // console screen is blank.
+        uint32_t ch = c->ch;
+        if (ch == MYRTOS_CELL_BLANK) {
+            *out++ = bgw;
+            *out++ = bgw;
+            continue;
+        }
+
+        uint32_t bits = font_ram[ch][gy];
+        uint32_t m = expand_ram[bits >> 4];
         *out++ = (fgw & m) | (bgw & ~m);
-        m = expand4[bits & 0x0fu];
+        m = expand_ram[bits & 0x0fu];
         *out++ = (fgw & m) | (bgw & ~m);
     }
 }
