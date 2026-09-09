@@ -291,6 +291,28 @@ elseif(NOT MYRTOS_VIDEO STREQUAL "framebuffer")
     message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer or chargen")
 endif()
 
+# The module pool: a fixed array in SRAM, which is where modules are loaded and
+# where a driver's DMA-reachable buffers come from. Freeing space at link time
+# does not enlarge it -- 9 Sep 2026 the character generator handed back 300 kB
+# and `free` went on reporting 10260 bytes until this number moved.
+#
+# It has to follow MYRTOS_VIDEO, because a framebuffer build has 28 kB of SRAM
+# to spare and a chargen build has 300, so "auto" resolves against the mode
+# rather than being cached as a number that stops being right when the mode
+# changes. Give it a number in kB to override.
+set(MYRTOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow MYRTOS_VIDEO")
+if(MYRTOS_HEAP_KB STREQUAL "auto")
+    if(MYRTOS_VIDEO STREQUAL "chargen")
+        set(myrtosHeapKB 256)
+    else()
+        set(myrtosHeapKB 40)
+    endif()
+else()
+    set(myrtosHeapKB ${MYRTOS_HEAP_KB})
+endif()
+target_compile_definitions(os_kernel PRIVATE MYRTOS_HEAP_SIZE=${myrtosHeapKB}*1024)
+message(STATUS "Module pool: ${myrtosHeapKB} kB (MYRTOS_VIDEO=${MYRTOS_VIDEO})")
+
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card

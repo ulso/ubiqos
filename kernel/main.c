@@ -313,7 +313,13 @@ static void myrtos_bulk_pool_init(void) {
 // The two that are not moved pay for the driver's own buffers, which are now
 // allocated instead of declared: DMA cannot reach PSRAM, so sdlib asks the
 // kernel for 1168 bytes of control blocks and a 512-byte bounce buffer at init.
+//
+// The size itself now comes from CMake, because it has to follow MYRTOS_VIDEO:
+// a framebuffer build has some 28 kB of SRAM left over and a chargen build has
+// 300, and one number cannot be right for both. See MYRTOS_HEAP_KB.
+#ifndef MYRTOS_HEAP_SIZE
 #define MYRTOS_HEAP_SIZE (40 * 1024)
+#endif
 uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
 tlsf_pool_t myrtos_mem_pool;
 
