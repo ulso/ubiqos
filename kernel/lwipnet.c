@@ -141,11 +141,13 @@ static err_t if_init(struct netif *n)
 // What a browser or `dns-sd -B _http._tcp` sees beside the name. It is a
 // callback rather than a table because the responder asks again on every
 // announcement, so a value that changes does not need re-registering.
+#if LWIP_MDNS_RESPONDER
 static void http_txt(struct mdns_service *service, void *arg)
 {
     (void)arg;
     mdns_resp_add_service_txtitem(service, "path=/", 6);
 }
+#endif
 
 static void on_status(struct netif *n)
 {
@@ -154,7 +156,9 @@ static void on_status(struct netif *n)
         // Say it again with an address, because that is when a name becomes
         // useful to anybody -- and mdns_resp_announce is how the responder is
         // told the settings changed.
+#if LWIP_MDNS_RESPONDER
         mdns_resp_announce(n);
+#endif
         myrtos_print("net: address ");
         for (int i = 0; i < 4; i++) {
             myrtos_print_u32(a[i]);
@@ -179,6 +183,7 @@ void myrtos_lwip_start(void)
     // The responder goes up with the interface rather than when an address
     // arrives: it announces again by itself once AutoIP settles, and a name
     // that exists before the address does is one less thing to sequence.
+#if LWIP_MDNS_RESPONDER
     mdns_resp_init();
     if (mdns_resp_add_netif(&nif, "myrtos") == ERR_OK) {
         mdns_resp_add_service(&nif, "myrtos", "_http", DNSSD_PROTO_TCP, 80, http_txt, NULL);
@@ -187,6 +192,7 @@ void myrtos_lwip_start(void)
     } else {
         myrtos_print("net: the mDNS responder would not start\n");
     }
+#endif
 
     started = true;
     myrtos_print("net: lwIP up, asking AutoIP for an address\n");
