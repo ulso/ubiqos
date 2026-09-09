@@ -36,7 +36,7 @@ void module_main(void) {
     // The USB network device, which is a different thing from the host side
     // above: this is what the Mac sees when it enumerates this board.
     {
-        uint32_t n[28];
+        uint32_t n[32];
         if (myrtos_netdev_stats(n) == 0) {
             // What was observed, not a state that cannot be asked for: NCM
             // gives no link callback, so a frame arriving is the evidence.
@@ -112,6 +112,13 @@ void module_main(void) {
             myrtos_line_str(&l, ", last refusal ");
             myrtos_line_u32(&l, n[26]);
             myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, "      lwip gave us ");
+            myrtos_line_u32(&l, n[29]);
+            myrtos_line_str(&l, " pbufs, ");
+            myrtos_line_u32(&l, n[30]);
+            myrtos_line_str(&l, " bytes\n");
         }
     }
     myrtos_line_str(&l, "repeating:      ");

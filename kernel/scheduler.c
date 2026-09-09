@@ -1451,6 +1451,9 @@ static void reap(uint32_t pid) {
     // And on the coprocessor, where a listening socket keeps its port. Marks
     // only -- see the note in wifilink.c for why it cannot close them here.
     { extern void myrtos_wifi_forget_pid(int32_t pid); myrtos_wifi_forget_pid((int32_t)pid); }
+#if MYRTOS_LWIP
+    { extern void myrtos_lwip_forget_pid(int32_t pid); myrtos_lwip_forget_pid((int32_t)pid); }
+#endif
     if (process_table[pid].module) {            // a kernel thread has none
         myrtos_moddir_unlink(process_table[pid].module);
     }

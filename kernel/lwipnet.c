@@ -200,6 +200,12 @@ void myrtos_lwip_stats(uint32_t *out)
         out[19] = myrtos_lwipsock_sent;
         extern uint32_t myrtos_lwipsock_why;
         out[20] = myrtos_lwipsock_why;
+        extern uint32_t myrtos_lwipsock_lastop, myrtos_lwipsock_lastreply;
+        out[21] = myrtos_lwipsock_lastop;
+        out[22] = myrtos_lwipsock_lastreply;
+        extern uint32_t myrtos_lwipsock_oncalls, myrtos_lwipsock_onbytes;
+        out[23] = myrtos_lwipsock_oncalls;
+        out[24] = myrtos_lwipsock_onbytes;
     }
 }
 

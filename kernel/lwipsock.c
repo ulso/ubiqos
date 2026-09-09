@@ -44,6 +44,12 @@ static sock_t sk[NSOCK];
 uint32_t myrtos_lwipsock_served, myrtos_lwipsock_queued, myrtos_lwipsock_taken;
 uint32_t myrtos_lwipsock_recv, myrtos_lwipsock_sent;
 
+uint32_t myrtos_lwipsock_why;
+uint32_t myrtos_lwipsock_lastop, myrtos_lwipsock_lastreply;
+
+// Callbacks lwIP actually made, which is the one thing not yet measured.
+uint32_t myrtos_lwipsock_oncalls, myrtos_lwipsock_onbytes;
+
 static int alloc_sock(void)
 {
     for (int i = 0; i < NSOCK; i++)
@@ -72,6 +78,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
     // Kept, not copied: a chain costs nothing to hold and the reader takes it
     // apart at its own pace. Acknowledging happens as it is read, so the window
     // closes when this end falls behind, which is what a window is for.
+    myrtos_lwipsock_oncalls++;
+    myrtos_lwipsock_onbytes += p->tot_len;
     if (sk[i].rx) pbuf_cat(sk[i].rx, p);
     else          sk[i].rx = p;
     (void)pcb;
@@ -109,15 +117,22 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 
 static int32_t do_listen(uint16_t port, int32_t owner)
 {
+    // Each refusal says which one it was: 10 the table, 11 no pcb, 12 the bind,
+    // 13 the listen. "It would not listen" is not a diagnosis.
     int i = alloc_sock();
-    if (i < 0) return -1;
+    if (i < 0) { myrtos_lwipsock_why = 10; return -1; }
 
     struct tcp_pcb *p = tcp_new();
-    if (!p) { free_sock(i); return -1; }
-    if (tcp_bind(p, IP_ANY_TYPE, port) != ERR_OK) { tcp_abort(p); free_sock(i); return -1; }
+    if (!p) { myrtos_lwipsock_why = 11; free_sock(i); return -1; }
+
+    err_t e = tcp_bind(p, IP_ANY_TYPE, port);
+    if (e != ERR_OK) {
+        myrtos_lwipsock_why = 20u + (uint32_t)(-e);   // lwIP's own error, made visible
+        tcp_abort(p); free_sock(i); return -1;
+    }
 
     struct tcp_pcb *l = tcp_listen(p);   // frees p and returns a smaller pcb
-    if (!l) { tcp_abort(p); free_sock(i); return -1; }
+    if (!l) { myrtos_lwipsock_why = 13; tcp_abort(p); free_sock(i); return -1; }
 
     sk[i].pcb = l;
     sk[i].port = port;
@@ -139,8 +154,6 @@ static int32_t do_accept(int i)
 
 // Why a receive said -1, because "it failed" is not a diagnosis: 1 is a bad
 // index, 2 is a socket nobody owns, 3 is the peer having closed.
-uint32_t myrtos_lwipsock_why;
-
 static int32_t do_recv(int i, uint8_t *buf, uint32_t len)
 {
     if (i < 0 || i >= NSOCK)  { myrtos_lwipsock_why = 1; return -1; }
@@ -213,23 +226,58 @@ int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
     case MYRTOS_SOCK_CLOSE:  return do_close(i);
     case MYRTOS_SOCK_STATE:  return do_state(i);
     case MYRTOS_SOCK_OWNER:
-        return (i >= 0 && i < NSOCK && sk[i].used) ? sk[i].owner : -1;
+        return (i >= 0 && i < NSOCK && sk[i].used) ? sk[i].owner : -1;   // -2 is reaped
     case MYRTOS_SOCK_PORT:
         return (i >= 0 && i < NSOCK && sk[i].used) ? sk[i].port : 0;
     default: return -1;
     }
 }
 
+#define OWNER_DEAD (-2)
+
+// Called from the kernel when a process is reaped. MARKS ONLY, and that is the
+// whole point: the reaper runs in kernel context with interrupts off, and
+// closing a socket means calling into lwIP, which may only be touched from the
+// task below. wifilib says the same thing about SPI, for the same reason.
+void myrtos_lwip_forget_pid(int32_t pid)
+{
+    for (int i = 0; i < NSOCK; i++)
+        if (sk[i].used && sk[i].owner == pid) sk[i].owner = OWNER_DEAD;
+}
+
+// Sockets whose owner is gone, closed here because this is the first place
+// that may. Without it they simply accumulate: httpd exits without closing,
+// and the table filled up until a listen failed -- which read as "no such
+// network stack", two attempts out of three.
+static void reap(void)
+{
+    for (int i = 0; i < NSOCK; i++)
+        if (sk[i].used && sk[i].owner == OWNER_DEAD) do_close(i);
+}
+
 // Called from the USB device task's loop, once per turn. Zero milliseconds, so
 // a turn with nothing waiting costs one look.
 void myrtos_lwip_serve(void)
 {
+    reap();
+
     myrtos_msg_t m;
     int32_t from = myrtos_msg_receive_tmo(&m, 0);
     if (from < 0) return;
     myrtos_lwipsock_served++;
-    if (m.type != MYRTOS_MSG_WIFI_SOCK) { myrtos_msg_reply(-1); return; }
-    myrtos_msg_reply(myrtos_lwip_sock_handle((const myrtos_wifi_sock_t *)m.data, from));
+    if (m.type != MYRTOS_MSG_WIFI_SOCK) {
+        myrtos_lwipsock_why = 99;              // not a socket call at all
+        myrtos_msg_reply(-1);
+        return;
+    }
+    // What was answered, and to which operation, because "httpd saw a refusal"
+    // and "the server refused" are different claims and only one of them was
+    // ever measured.
+    const myrtos_wifi_sock_t *r = (const myrtos_wifi_sock_t *)m.data;
+    int32_t rc = myrtos_lwip_sock_handle(r, from);
+    myrtos_lwipsock_lastop = r->op;
+    myrtos_lwipsock_lastreply = (uint32_t)rc;
+    myrtos_msg_reply(rc);
 }
 
 void myrtos_lwip_sock_init(void)
