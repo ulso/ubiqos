@@ -61,17 +61,17 @@ static bool     cur_on;
 // Four pixels to a word, one byte each, and pixel 0 in the LOW byte: that is
 // the order the DMA hands a word to HSTX. Bit 7 of a font byte is the leftmost
 // pixel, which is what draw_glyph meant by `bits & (0x80 >> x)`.
-// The three tables the inner loop reads, copied into SRAM at init.
+// The palette and the expansion table live in SRAM; the FONT DOES NOT, and
+// that is a measurement rather than an oversight.
 //
-// They were const, which puts them in flash, and flash on this chip is read
-// through XIP: a cache miss on a font byte costs more than the arithmetic
-// around it. The generator reads one font byte and two expansion words per
-// cell, eighty cells a line, thirty-one thousand lines a second -- the old
-// console read a glyph once when it drew the character and never again.
+// It was copied here once, on the theory that XIP cache misses on font bytes
+// dominated -- the generator reads one per cell, eighty a line, thirty-one
+// thousand lines a second, where the old console read a glyph once when it
+// drew the character. The A/B said the copy changed NOTHING, and it was kept
+// anyway until the 3584 bytes were counted against what they bought.
 //
-// Measured before this: 56 per cent of the processor for text alone, and a
-// worst single pump of 962 microseconds against a 500 microsecond period.
-static uint8_t  font_ram[224][MYRTOS_CELL_H];
+// The two small tables stay because they cost 80 bytes between them and are
+// read four times per cell.
 static uint8_t  pal_ram[16];
 static uint32_t expand_ram[16];
 
@@ -266,9 +266,6 @@ void myrtos_chargen_init(uint8_t attr)
     // 640 kB of SRAM is not a fallback, it is a failure to boot -- so the
     // address is checked rather than trusted, the way myrtos_pool_of_address
     // learned to.
-    for (uint32_t g = 0; g < 224; g++)
-        for (uint32_t r = 0; r < MYRTOS_CELL_H; r++)
-            font_ram[g][r] = myrtos_font8x16[g][r];
     for (uint32_t i = 0; i < 16; i++) {
         pal_ram[i] = myrtos_ansi_colour[i];
         expand_ram[i] = expand4[i];
@@ -357,7 +354,7 @@ void myrtos_chargen_band(uint32_t y0, uint8_t *base)
             continue;
         }
 
-        const uint8_t *g = font_ram[ch];
+        const uint8_t *g = myrtos_font8x16[ch];
         for (uint32_t gy = 0; gy < MYRTOS_CELL_H; gy++) {
             uint32_t bits = g[gy];
             uint32_t m = expand_ram[bits >> 4];
@@ -404,7 +401,7 @@ void myrtos_chargen_line(uint32_t y, uint8_t *dst)
             continue;
         }
 
-        uint32_t bits = font_ram[ch][gy];
+        uint32_t bits = myrtos_font8x16[ch][gy];
         uint32_t m = expand_ram[bits >> 4];
         *out++ = (fgw & m) | (bgw & ~m);
         m = expand_ram[bits & 0x0fu];
