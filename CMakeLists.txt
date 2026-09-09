@@ -206,7 +206,6 @@ add_executable(os_kernel
     kernel/video.c
     kernel/console.c
     kernel/chargen.c
-    kernel/vector.c
     kernel/net.c
     kernel/fsserver.c
     kernel/wifilink.c
@@ -310,18 +309,18 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
         # out of this pool, and the scanline buffers, the scrollback ring, the
-        # console trace and the vector lists took it from 79 kB to 11. This
+        # console trace took it from 79 kB to 11. This
         # project has already had a boot crash from a C heap that reached zero
         # and made the SDK panic before init. The pool is still nearly five
         # times what it was before the framebuffer went, and `free` has never
         # shown it under strain.
         # 160, down from 256 over the day, because every kernel static comes
         # out of the C heap and not out of this pool: the scanline buffers, the
-        # scrollback, the vector lists and now lwIP. At 184 the C heap was 6644
+        # scrollback and now lwIP. At 184 the C heap was 6644
         # bytes, and a C heap that reaches zero has already crashed this board
         # once. The pool is still four times what it was this morning.
         # 128. It has come down all day as the kernel's own statics grew --
-        # scanline buffers, scrollback, vector lists, lwIP, and mDNS last of
+        # scanline buffers, scrollback, lwIP, and mDNS last of
         # all, which cost 22 kB and took the Arm C heap to 8912 bytes while
         # RISC-V simply would not link. Every one of those comes out of the C
         # heap and not out of this pool, and a C heap that reaches zero has
@@ -377,31 +376,6 @@ if(myrtosLwip)
     target_link_libraries(os_kernel pico_lwip pico_lwip_nosys pico_lwip_mdns)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
 endif()
-
-# How many line segments may cross one scanline. The display has to build a
-# line every 32 microseconds whatever is on it, so this is the bound that keeps
-# a picture from starving the machine drawing it -- see kernel/vector.h.
-# Two different limits, and they are confused easily. This one bounds memory:
-# a trace across the screen is 640 short segments and costs 12 kB to hold.
-set(MYRTOS_VEC_SEGMENTS "1024" CACHE STRING "line segments the picture may hold")
-target_compile_definitions(os_kernel PRIVATE MYRTOS_VEC_MAX=${MYRTOS_VEC_SEGMENTS})
-
-# And this one bounds time: only the segments crossing a given scanline are
-# drawn on it, so a full-width trace is cheap and a fan of long diagonals is not.
-# 256, not 64. Sixty-four looked prudent and was measured to be wrong: a scope
-# trace of a wobbling input drew to the middle of the screen and stopped, which
-# is indistinguishable from a signal that does that. The refusals are counted
-# and vidstat reports them now, so a truncated picture says so.
-#
-# The cap cannot tell the two dangerous shapes apart, and it is worth knowing
-# why. A HORIZONTAL segment lives on exactly one scanline, so five hundred of
-# them make one expensive line and the ring's 1.5 ms absorbs it. A full-height
-# diagonal is active on every line, and a hundred of those took the processor
-# the keyboard needed. One number cannot express that difference; what says
-# which one you have is vidstat's share of the CPU.
-set(MYRTOS_VEC_ACTIVE "256" CACHE STRING "line segments allowed to cross one scanline")
-target_compile_definitions(os_kernel PRIVATE MYRTOS_VEC_ACTIVE_MAX=${MYRTOS_VEC_ACTIVE})
-message(STATUS "Vector segments: ${MYRTOS_VEC_SEGMENTS} held, ${MYRTOS_VEC_ACTIVE} per scanline")
 
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
@@ -1247,8 +1221,6 @@ myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
 myrtos_add_module(vidstat modules/vidstat/vidstat.c)
-myrtos_add_module(vec modules/vec/vec.c)
-myrtos_add_module(scope modules/scope/scope.c)
 myrtos_add_module(pecho modules/pecho/pecho.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
@@ -1564,8 +1536,6 @@ add_custom_target(modules ALL
 # leaving the machine in a state anyone else will type at.
 set(MYRTOS_RESIDENT
     vidstat
-    vec
-    scope
     cxxdemo
     vtdemo
     wasm

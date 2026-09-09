@@ -55,9 +55,6 @@ uint32_t myrtos_chargen_deep(void);
 // One scanline of MYRTOS_H_ACTIVE bytes. Called from an interrupt above the
 // kernel's threshold, so it must touch nothing but its own memory.
 void myrtos_chargen_peek_row(uint32_t row, uint8_t *out, uint32_t n);
-void myrtos_chargen_text(bool on, uint8_t attr);
-bool myrtos_chargen_text_on(void);
-
 void myrtos_chargen_band(uint32_t y0, uint8_t *base);
 void myrtos_chargen_line(uint32_t y, uint8_t *dst);
 

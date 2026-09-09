@@ -152,7 +152,6 @@ void module_main(int argc, char **argv) {
     row("Glyph rows built:  ", s[13], "");
     row("Single lines built:", s[14], "");
     row("Underruns:         ", s[0], "");
-    if (s[12]) row("Segments refused:  ", s[12], " (raise MYRTOS_VEC_ACTIVE)");
     if (s[0]) row("  first at pump:   ", s[9], "");
 
     // Three questions, in the order that makes the next one worth asking.

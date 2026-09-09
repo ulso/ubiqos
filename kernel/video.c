@@ -11,7 +11,6 @@
 #include "hardware/clocks.h"
 #include "hardware/timer.h"
 #include "chargen.h"
-#include "vector.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -312,7 +311,7 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
     sixteen[9]  = first_underrun_pump;
     sixteen[10] = myrtos_video_us_total;
     sixteen[11] = myrtos_video_us_max;
-    sixteen[12] = myrtos_vector_dropped;
+    sixteen[12] = 0;
     sixteen[13] = bands_done;
     sixteen[14] = singles_done;
     sixteen[15] = PUMP_US;   // reported, not assumed: it has been changed once
@@ -359,8 +358,6 @@ static void video_pump(void)
             if (rendered_to + MYRTOS_CELL_H > target)
                 break;
             myrtos_chargen_band(y, buf);
-            for (uint32_t i = 0; i < MYRTOS_CELL_H; i++)
-                myrtos_vector_line(y + i, buf + i * H_ACTIVE);
             rendered_to += MYRTOS_CELL_H;
             myrtos_video_lines += MYRTOS_CELL_H;
             bands_done++;
@@ -368,7 +365,6 @@ static void video_pump(void)
         }
 
         myrtos_chargen_line(y, buf);
-        myrtos_vector_line(y, buf);      // over the text, not instead of it
         rendered_to++;
         singles_done++;
         myrtos_video_lines++;
@@ -392,10 +388,8 @@ static void pump_start(void)
     // Fill every buffer once so the first frame is not a screenful of whatever
     // SRAM held at reset. The cells are blank at this point, so which line
     // index each buffer was built for does not matter.
-    for (uint32_t i = 0; i < LINE_BUFS; i++) {
+    for (uint32_t i = 0; i < LINE_BUFS; i++)
         myrtos_chargen_line(i, linebuf[i]);
-        myrtos_vector_line(i, linebuf[i]);
-    }
 
     // THEN start the bookkeeping from where the beam actually is. The DMA chain
     // has been running since dma_channel_start, so claiming that forty-eight

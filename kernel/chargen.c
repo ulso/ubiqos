@@ -316,21 +316,6 @@ void myrtos_chargen_peek_row(uint32_t row, uint8_t *out, uint32_t n)
         out[i] = (uint8_t)(c[i].ch + 32);      // back to the character it came from
 }
 
-// Whether the cells are drawn at all. With them off the line is a background
-// fill and nothing else, which is 160 word stores instead of eighty cell
-// decodings -- the console's share of the processor goes with it, and what it
-// leaves belongs to whatever else draws.
-static bool text_on = true;
-static uint8_t blank_attr = 0xf0;
-
-void myrtos_chargen_text(bool on, uint8_t attr)
-{
-    text_on = on;
-    blank_attr = attr;
-}
-
-bool myrtos_chargen_text_on(void) { return text_on; }
-
 // A whole glyph row at once: sixteen scanlines, cells in the outer loop.
 //
 // The per-cell work -- loading the cell, comparing the attribute, rebuilding
@@ -345,14 +330,6 @@ bool myrtos_chargen_text_on(void) { return text_on; }
 void myrtos_chargen_band(uint32_t y0, uint8_t *base)
 {
     uint32_t crow = y0 / MYRTOS_CELL_H;
-
-    if (!text_on) {
-        uint32_t w = (uint32_t)pal_ram[blank_attr & 0x0fu] * 0x01010101u;
-        uint32_t *o = (uint32_t *)base;
-        for (uint32_t i = 0; i < MYRTOS_CELL_H * (MYRTOS_H_ACTIVE / 4); i++)
-            o[i] = w;
-        return;
-    }
 
     const myrtos_cell_t *c = view_at(crow);
     bool on_cursor_row = cur_on && view_back == 0 && crow == cur_row;
@@ -394,13 +371,6 @@ void myrtos_chargen_band(uint32_t y0, uint8_t *base)
 
 void myrtos_chargen_line(uint32_t y, uint8_t *dst)
 {
-    if (!text_on) {
-        uint32_t w = (uint32_t)pal_ram[blank_attr & 0x0fu] * 0x01010101u;
-        uint32_t *o = (uint32_t *)dst;
-        for (uint32_t i = 0; i < MYRTOS_H_ACTIVE / 4; i++)
-            o[i] = w;
-        return;
-    }
 
     uint32_t crow = y / MYRTOS_CELL_H;
     uint32_t gy   = y % MYRTOS_CELL_H;
