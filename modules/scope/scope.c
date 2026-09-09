@@ -41,15 +41,17 @@ int main(int argc, char **argv);
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
         "scope -- the ADC drawn as a trace\n"
-        "  scope [channel] [sweeps] [samples/s per channel]\n"
+        "  scope [A1-A5] [sweeps] [samples/s per channel]\n"
         "Needs the ADC converting: run 'adc 4' first.\n"
         "Leaves the picture behind; 'vec clear' takes it away.\n"))
         return;
 
-    uint32_t ch = argc > 1 ? to_u32(argv[1]) : 0;
+    // The board's labels, A1 to A5, which are the channel numbers -- see the
+    // note in modules/adc. A1 is the default because A0 is not a pin.
+    uint32_t ch = argc > 1 ? to_u32(argv[1]) : 1;
     uint32_t sweeps = argc > 2 ? to_u32(argv[2]) : 20;
     uint32_t rate   = argc > 3 ? to_u32(argv[3]) : 0;    // per channel
-    if (ch > 3) ch = 3;
+    if (ch < 1 || ch > 5) ch = 1;
 
     int32_t fd = myrtos_open("/dev/adc");
     if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "scope: no /dev/adc\n"); return; }

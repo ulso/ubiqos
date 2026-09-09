@@ -32,7 +32,20 @@ static const myrtos_kernel_api_t *K;
 
 // A0 to A3 on this board, which are ADC channels 0 to 3 on GP40 to GP43.
 #define ADC_FIRST_PIN  40u
-#define ADC_CHANNELS   4u
+// The board's inputs are labelled A1 to A5, and the mapping falls straight out
+// of that once you stop counting from zero: board An is ADC channel n on
+// GP(40+n). Measured on 9 Sep 2026 by touching A1 and watching which channel
+// moved -- it was channel 1, on GP41.
+//
+// Channel 0 on GP40 is a ghost. It is not on the header, it reads raw zero
+// always, and the driver used to cover it while missing A4 and A5 entirely.
+//
+// A4 is GP44, which is also the kernel's debug UART. The claim for it is
+// refused, and the driver carries on with the rest rather than failing whole:
+// four of the five inputs are better than none, and which four is reported.
+#define ADC_CH_FIRST   1u
+#define ADC_CH_LAST    5u
+#define ADC_CHANNELS   8u          // the hardware's, for the arrays
 #define SAMPLE_HZ      8000u
 
 // 0x40 against kernel/critical.h's 0x80: more urgent, so never masked. The
@@ -76,6 +89,17 @@ static volatile uint32_t cap_first_us, cap_last_us;
 // lie about the signal it is measuring.
 static uint32_t rate_hz = SAMPLE_HZ;
 
+// Which channels the round robin is actually visiting. Sparse, because A4 is
+// the UART's pin, so the handler walks the mask rather than counting.
+static uint32_t ch_mask;
+
+static uint32_t ch_count(void)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < ADC_CHANNELS; i++) if (ch_mask & (1u << i)) n++;
+    return n ? n : 1u;
+}
+
 static void adc_handler(void)
 {
     if (scope_mask) sio_hw->gpio_togl = scope_mask;
@@ -110,7 +134,11 @@ static void adc_handler(void)
             if (cap_have >= cap_want) cap_want = 0;
         }
 
-        next_channel = (ch + 1u) % ADC_CHANNELS;
+        // Ascending through the enabled set and round again, which is the
+        // order the hardware's round robin uses.
+        uint32_t n = ch;
+        do { n = (n + 1u) % ADC_CHANNELS; } while (!(ch_mask & (1u << n)));
+        next_channel = n;
         taken++;
         n++;
     }
@@ -159,17 +187,21 @@ static bool adc_pads(void)
     // links no SDK library code. Hi-Z output, no pulls, and the digital
     // receiver off, which is what puts an analogue voltage on the pin instead
     // of a logic level.
-    for (uint32_t i = 0; i < ADC_CHANNELS; i++) {
-        uint32_t pin = ADC_FIRST_PIN + i;
-        if (K->pin_claim(pin, "adc") < 0) return false;
+    ch_mask = 0;
+    for (uint32_t ch = ADC_CH_FIRST; ch <= ADC_CH_LAST; ch++) {
+        uint32_t pin = ADC_FIRST_PIN + ch;
+        if (K->pin_claim(pin, "adc") < 0) continue;    // somebody else's; skip it
+        ch_mask |= 1u << ch;
         hw_write_masked(&padsbank0_hw->io[pin],
                         PADS_BANK0_GPIO0_OD_BITS,
                         PADS_BANK0_GPIO0_OD_BITS | PADS_BANK0_GPIO0_IE_BITS |
                         PADS_BANK0_GPIO0_PUE_BITS | PADS_BANK0_GPIO0_PDE_BITS);
         iobank0_hw->io[pin].ctrl = GPIO_FUNC_NULL << IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB;
     }
-    return true;
+    return ch_mask != 0;
 }
+
+uint32_t myrtos_adc_channels(void) { return ch_mask; }
 
 static void adc_block(void)
 {
@@ -178,8 +210,11 @@ static void adc_block(void)
     hw_set_bits(&adc_hw->cs, ADC_CS_EN_BITS);
     while (!(adc_hw->cs & ADC_CS_READY_BITS)) { }
 
-    adc_set_round_robin((1u << ADC_CHANNELS) - 1u);
-    adc_select_input(0);
+    adc_set_round_robin(ch_mask);
+    uint32_t first = 0;
+    while (first < ADC_CHANNELS && !(ch_mask & (1u << first))) first++;
+    adc_select_input(first);
+    next_channel = first;
     // Threshold one: an interrupt per conversion, which is the point -- a
     // deeper threshold would hide exactly the latency being measured.
     adc_fifo_setup(true, false, 1, true, false);
@@ -227,23 +262,28 @@ static int32_t adc_open(void) { return ready ? 0 : -1; }
 static int32_t adcdev_read(uint8_t *buf, uint32_t len)
 {
     if (!ready) return -1;
+    // The ENABLED channels, in ascending order, so what comes out matches what
+    // adc_readable promised and what the board's labels say. A0 is not among
+    // them: it is not on the header.
     uint32_t want = len / 2u;
-    if (want > ADC_CHANNELS) want = ADC_CHANNELS;
+    if (want > ch_count()) want = ch_count();
+    uint32_t ch = 0;
     for (uint32_t i = 0; i < want; i++) {
-        uint16_t v = latest[i];
+        while (ch < ADC_CHANNELS && !(ch_mask & (1u << ch))) ch++;
+        uint16_t v = latest[ch++];
         buf[i * 2] = (uint8_t)(v & 0xffu);
         buf[i * 2 + 1] = (uint8_t)(v >> 8);
     }
     return (int32_t)(want * 2u);
 }
 
-static int32_t adc_readable(void) { return ready ? (int32_t)(ADC_CHANNELS * 2u) : 0; }
+static int32_t adc_readable(void) { return ready ? (int32_t)(ch_count() * 2u) : 0; }
 
 static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
 {
     if (!data) return -1;
     if (code == MYRTOS_SS_RATE && len == 4) {
-        *(uint32_t *)data = rate_hz / ADC_CHANNELS;    // per channel
+        *(uint32_t *)data = rate_hz / ch_count();      // per channel actually visited
         return 0;
     }
     if (code == MYRTOS_SS_CAPTURE && len == sizeof(myrtos_adccap_t)) {
@@ -253,6 +293,10 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
         o->count   = cap_want ? cap_want : have;
         o->taken   = have;
         o->span_us = have > 1u ? (cap_last_us - cap_first_us) : 0u;
+        return 0;
+    }
+    if (code == MYRTOS_SS_ADCCHANS && len == 4) {
+        *(uint32_t *)data = ch_mask;
         return 0;
     }
     if (code == MYRTOS_SS_CAPDATA) {
@@ -289,7 +333,7 @@ static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
     if (code == MYRTOS_SS_CAPTURE && len == sizeof(myrtos_adccap_t)) {
         const myrtos_adccap_t *a = (const myrtos_adccap_t *)data;
         if (stage < 4u) return -1;            // nothing is converting
-        if (a->channel >= ADC_CHANNELS) return -1;
+        if (a->channel >= ADC_CHANNELS || !(ch_mask & (1u << a->channel))) return -1;
         uint32_t n = a->count;
         if (!n || n > CAP_MAX) return -1;
         // Order matters: everything the handler reads is set before the flag
@@ -301,7 +345,7 @@ static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
         return 0;
     }
     if (code == MYRTOS_SS_RATE && len == 4) {
-        uint32_t hz = *(const uint32_t *)data * ADC_CHANNELS;   // per channel in
+        uint32_t hz = *(const uint32_t *)data * ch_count();     // per channel in
         if (hz < 1000u || hz > 500000u) return -1;
         adc_hw->div = ((48000000u / hz) - 1u) << ADC_DIV_INT_LSB;
         rate_hz = hz;

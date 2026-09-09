@@ -792,6 +792,10 @@ typedef struct {
 // what was asked for.
 #define MYRTOS_SS_CAPTURE  0x0203u  // myrtos_adccap_t
 #define MYRTOS_SS_CAPDATA  0x0204u  // uint16_t[], the samples themselves
+// Which ADC channels the driver actually got, as a bit per channel. The board
+// labels its inputs A1 to A5 and channel n is GP(40+n), so the bit number IS
+// the label -- and a missing bit is a pin that belongs to something else.
+#define MYRTOS_SS_ADCCHANS 0x0205u  // uint32_t bitmask
 typedef struct {
     uint32_t channel;
     uint32_t count;      // asked for

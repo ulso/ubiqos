@@ -96,15 +96,26 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    uint8_t buf[8];
+    // Five inputs on the header, not four, and the first of them is A1.
+    uint8_t buf[16];
     int32_t n = myrtos_read(fd, buf, sizeof buf);
     if (n < 2) { myrtos_write_str(MYRTOS_STDERR, "adc: nothing to read\n"); myrtos_close(fd); return; }
+    // Which channels came back, ascending, skipping any the driver could not
+    // claim. Asked for rather than assumed.
+    uint32_t mask = 0;
+    if (myrtos_getstat(fd, MYRTOS_SS_ADCCHANS, &mask, sizeof mask) < 0) mask = 0x3e;
+    uint32_t label[8], nl = 0;
+    for (uint32_t c = 0; c < 8; c++) if (mask & (1u << c)) label[nl++] = c;
+
     for (int32_t i = 0; i + 1 < n; i += 2) {
         uint32_t raw = (uint32_t)buf[i] | ((uint32_t)buf[i + 1] << 8);
         // 12 bits over a 3.3 V reference. Integers throughout: 3300 * raw
         // reaches 13.5 million, which is nowhere near overflowing.
+        // The board's own label. A4 is missing when the kernel has GP44 for
+        // its UART, so the numbering comes from the channel and not from the
+        // position in the buffer -- see the note in modules/adc.
         myrtos_line_str(&l, "A");
-        myrtos_line_u32(&l, (uint32_t)(i / 2));
+        myrtos_line_u32(&l, label[i / 2]);
         myrtos_line_str(&l, " ");
         myrtos_line_u32(&l, raw * 3300u / 4095u);
         myrtos_line_str(&l, " mV  (");

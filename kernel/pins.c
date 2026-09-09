@@ -44,6 +44,11 @@ static const struct { uint8_t pin; const char *who; } board_fixed[] = {
     { 16, "video" }, { 17, "video" }, { 18, "video" }, { 19, "video" },
     { 33, "sd card" }, { 34, "sd card" }, { 35, "sd card" }, { 36, "sd card" },
     { 37, "sd card" }, { 38, "sd card" }, { 39, "sd card" },
+    // The kernel's own debug UART, which had never been written down. It is
+    // also the board's A4, so the ADC asks for it and is refused -- which is
+    // the whole point of the table: the collision is reported instead of the
+    // console quietly going dead.
+    { 44, "uart" },
 };
 
 void myrtos_pins_init(void)
