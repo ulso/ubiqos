@@ -629,21 +629,26 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             break;
         }
         case SYS_NETDEV: {
-            extern uint32_t myrtos_net_rx_frames, myrtos_net_rx_bytes;
-            extern uint32_t myrtos_net_tx_frames, myrtos_net_dropped;
-            extern bool myrtos_net_link_up;
+#if MYRTOS_LWIP
+            extern uint32_t myrtos_lwip_in, myrtos_lwip_out, myrtos_lwip_dropped;
+            extern uint32_t myrtos_lwip_addr(void);
+            extern bool myrtos_lwip_started(void);
             extern uint8_t tud_network_mac_address[6];
             uint32_t *o = (uint32_t *)(uintptr_t)frame->a0;
-            o[0] = myrtos_net_link_up ? 1u : 0u;
-            o[1] = myrtos_net_rx_frames;
-            o[2] = myrtos_net_rx_bytes;
-            o[3] = myrtos_net_tx_frames;
-            o[4] = myrtos_net_dropped;
+            o[0] = myrtos_lwip_started() ? 1u : 0u;
+            o[1] = myrtos_lwip_in;
+            o[2] = myrtos_lwip_addr();
+            o[3] = myrtos_lwip_out;
+            o[4] = myrtos_lwip_dropped;
+            { extern void myrtos_lwip_stats(uint32_t *); myrtos_lwip_stats(o + 6); }
             o[5] = ((uint32_t)tud_network_mac_address[2] << 24) |
                    ((uint32_t)tud_network_mac_address[3] << 16) |
                    ((uint32_t)tud_network_mac_address[4] << 8) |
                     (uint32_t)tud_network_mac_address[5];
             frame->a0 = 0;
+#else
+            frame->a0 = (uint32_t)-1;   // this build has no network stack
+#endif
             break;
         }
         case SYS_VECTOR: {

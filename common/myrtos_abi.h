@@ -726,8 +726,8 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 // experiment has to make its own.
 #define SYS_CRITHOLD  63u
 #define SYS_WIFISTATS 64u   // a0 = &uint32_t[4]: commands, resyncs, retries, failures
-#define SYS_NETDEV    67u   // a0 = &uint32_t[6]: up, rx frames, rx bytes,
-                            //   tx frames, dropped, and the MAC's low word
+#define SYS_NETDEV    67u   // a0 = &uint32_t[6]: lwIP up, frames in, address,
+                            //   frames out, dropped, and the MAC's low word
 #define SYS_VECTOR    66u   // a0 = op, a1 = &myrtos_vecline_t for VEC_ADD
 #define MYRTOS_VEC_CLEAR 0u
 #define MYRTOS_VEC_ADD   1u

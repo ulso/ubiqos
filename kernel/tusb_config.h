@@ -79,8 +79,13 @@
 // NCM rather than ECM or RNDIS: it is what macOS, Linux and Windows 10 onward
 // all speak without a driver, and it is what the Rust bridges on this bench
 // already use, so the host side is known ground.
+// It follows MYRTOS_LWIP, because a network interface with no stack behind it
+// is worse than none: the host enumerates it, tries to use it and gets nothing.
+#ifndef MYRTOS_LWIP
+#define MYRTOS_LWIP             0
+#endif
 #define CFG_TUD_ECM_RNDIS       0
-#define CFG_TUD_NCM             1
+#define CFG_TUD_NCM             MYRTOS_LWIP
 #define CFG_TUD_NET_MTU         1514
 #define CFG_TUD_VENDOR          0
 

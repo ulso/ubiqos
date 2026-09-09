@@ -36,23 +36,67 @@ void module_main(void) {
     // The USB network device, which is a different thing from the host side
     // above: this is what the Mac sees when it enumerates this board.
     {
-        uint32_t n[6];
+        uint32_t n[24];
         if (myrtos_netdev_stats(n) == 0) {
             // What was observed, not a state that cannot be asked for: NCM
             // gives no link callback, so a frame arriving is the evidence.
-            myrtos_line_str(&l, "net: ");
-            myrtos_line_str(&l, n[0] ? "the host has sent frames" : "nothing has crossed it yet");
-            myrtos_line_str(&l, ", mac 02:xx:");
-            myrtos_line_hex(&l, n[5]);
-            myrtos_line_str(&l, "\nnet frames in:  ");
+            myrtos_line_str(&l, "net: lwIP ");
+            myrtos_line_str(&l, n[0] ? "up" : "not started");
+            myrtos_line_str(&l, ", address ");
+            if (n[2]) {
+                for (int b = 3; b >= 0; b--) {
+                    myrtos_line_u32(&l, (n[2] >> (b * 8)) & 0xffu);
+                    if (b) myrtos_line_str(&l, ".");
+                }
+            } else {
+                myrtos_line_str(&l, "none yet");
+            }
+            myrtos_line_str(&l, "\nnet frames:     in ");
             myrtos_line_u32(&l, n[1]);
-            myrtos_line_str(&l, " (");
-            myrtos_line_u32(&l, n[2]);
-            myrtos_line_str(&l, " bytes), out ");
+            myrtos_line_str(&l, ", out ");
             myrtos_line_u32(&l, n[3]);
             myrtos_line_str(&l, ", dropped ");
             myrtos_line_u32(&l, n[4]);
-            myrtos_line_str(&l, " -- no stack behind it yet\n");
+            myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+
+            // Two lines, because myrtos_line_t holds 96 bytes and one long
+            // enough to say all of this is silently cut in half -- which read
+            // as "lwip: link 0 drop" and looked like a finding.
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, "lwip: arp in ");
+            myrtos_line_u32(&l, n[9]);
+            myrtos_line_str(&l, " out ");
+            myrtos_line_u32(&l, n[10]);
+            myrtos_line_str(&l, ", ip in ");
+            myrtos_line_u32(&l, n[11]);
+            myrtos_line_str(&l, " drop ");
+            myrtos_line_u32(&l, n[12]);
+            myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, "      icmp in ");
+            myrtos_line_u32(&l, n[13]);
+            myrtos_line_str(&l, " out ");
+            myrtos_line_u32(&l, n[14]);
+            myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, "      on the wire: arp ");
+            myrtos_line_u32(&l, n[16]);
+            myrtos_line_str(&l, ", ipv4 ");
+            myrtos_line_u32(&l, n[17]);
+            myrtos_line_str(&l, ", other ");
+            myrtos_line_u32(&l, n[18]);
+            myrtos_line_str(&l, "\n");
+            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            myrtos_line_reset(&l);
+            myrtos_line_str(&l, "      addressed to us ");
+            myrtos_line_u32(&l, n[19]);
+            myrtos_line_str(&l, ", of which icmp ");
+            myrtos_line_u32(&l, n[20]);
+            myrtos_line_str(&l, "\n");
         }
     }
     myrtos_line_str(&l, "repeating:      ");

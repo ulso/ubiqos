@@ -40,8 +40,16 @@ const uint8_t *tud_descriptor_device_cb(void) {
     return (const uint8_t *)&desc_device;
 }
 
+#ifndef MYRTOS_LWIP
+#define MYRTOS_LWIP 0
+#endif
+
+#if MYRTOS_LWIP
 enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC,
        ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
+#else
+enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
+#endif
 
 #define EPNUM_CDC_NOTIF   0x81
 #define EPNUM_CDC_OUT     0x02
@@ -75,15 +83,21 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC,
   7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0,\
   7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0
 
+#if MYRTOS_LWIP
 #define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN \
                            + TUD_CDC_NCM_DESC_LEN)
+#else
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
+#endif
 
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+#if MYRTOS_LWIP
     MYRTOS_NCM_DESCRIPTOR(ITF_NUM_NCM, 6, 7, EPNUM_NCM_NOTIF, 64,
                           EPNUM_NCM_OUT, EPNUM_NCM_IN, 64, CFG_TUD_NET_MTU),
+#endif
 };
 
 const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
@@ -108,7 +122,11 @@ static const char *string_desc_arr[] = {
 // The MAC. Locally administered (bit 1 of the first byte) and not multicast
 // (bit 0 clear), which is what the 0x02 is for: 02:xx:xx:xx:xx:xx belongs to
 // whoever made the device and is guaranteed not to clash with a real vendor.
+#if MYRTOS_LWIP
 uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
+#else
+static uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
+#endif
 
 static char mac_string[13];
 

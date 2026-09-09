@@ -208,7 +208,6 @@ add_executable(os_kernel
     kernel/chargen.c
     kernel/vector.c
     kernel/net.c
-    kernel/netdev.c
     kernel/fsserver.c
     kernel/wifilink.c
     kernel/font8x16.c
@@ -316,7 +315,12 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # and made the SDK panic before init. The pool is still nearly five
         # times what it was before the framebuffer went, and `free` has never
         # shown it under strain.
-        set(myrtosHeapKB 192)
+        # 160, down from 256 over the day, because every kernel static comes
+        # out of the C heap and not out of this pool: the scanline buffers, the
+        # scrollback, the vector lists and now lwIP. At 184 the C heap was 6644
+        # bytes, and a C heap that reaches zero has already crashed this board
+        # once. The pool is still four times what it was this morning.
+        set(myrtosHeapKB 160)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
@@ -343,6 +347,28 @@ endif()
 math(EXPR myrtosDmesgBytes "${myrtosDmesgKB} * 1024")
 target_compile_definitions(os_kernel PRIVATE DMESG_SIZE=${myrtosDmesgBytes})
 message(STATUS "Kernel log: ${myrtosDmesgKB} kB")
+
+# lwIP, and it does not fit beside a framebuffer. That is not a limitation of
+# the build system, it is 307200 bytes: with the bitmap in SRAM the link
+# overflows RAM by about 40 kB however the pools are trimmed. So "auto" follows
+# MYRTOS_VIDEO the way the other sizes do, and the machine that wants a network
+# is the one that gave up its framebuffer for it.
+set(MYRTOS_LWIP "auto" CACHE STRING "on, off, or auto to follow MYRTOS_VIDEO")
+if(MYRTOS_LWIP STREQUAL "auto")
+    if(MYRTOS_VIDEO STREQUAL "chargen")
+        set(myrtosLwip ON)
+    else()
+        set(myrtosLwip OFF)
+    endif()
+else()
+    set(myrtosLwip ${MYRTOS_LWIP})
+endif()
+message(STATUS "lwIP: ${myrtosLwip}")
+if(myrtosLwip)
+    target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c)
+    target_link_libraries(os_kernel pico_lwip pico_lwip_nosys)
+    target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
+endif()
 
 # How many line segments may cross one scanline. The display has to build a
 # line every 32 microseconds whatever is on it, so this is the bound that keeps

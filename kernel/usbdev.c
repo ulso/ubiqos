@@ -85,6 +85,21 @@ static void usb_thread(void) {
     for (;;) {
         myrtos_usb_task();          // the console, on the hardware controller
 
+        // lwIP lives HERE and nowhere else. NO_SYS is 1, so it has no locking
+        // of its own: the frames arrive in tud_network_recv_cb, which is called
+        // from tud_task just above, and the timers are driven from the same
+        // loop. Any other context calling into lwIP would be a race with no
+        // symptom until it had one.
+#if MYRTOS_LWIP
+        {
+            extern void myrtos_lwip_start(void);
+            extern void myrtos_lwip_poll(void);
+            static bool up;
+            if (!up && tud_ready()) { myrtos_lwip_start(); up = true; }
+            if (up) myrtos_lwip_poll();
+        }
+#endif
+
         // The keyboard is not here any more. tuh_task, the repeat clock and the
         // rearm sweep all run on core 1; what is left on this side is taking
         // delivery of what they could not do themselves -- an interrupt for a
