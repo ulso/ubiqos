@@ -119,6 +119,16 @@ static void rebuild(uint32_t y)
 
 static inline void span(uint8_t *dst, int32_t a, int32_t b, uint8_t c)
 {
+    // One pixel is the common case and it used to cost five comparisons, a
+    // loop setup and a loop test to store one byte. Anything steeper than 45
+    // degrees moves less than a pixel sideways per scanline, and a vertical
+    // segment moves none. The cast makes a negative a large unsigned, so the
+    // one test covers both ends.
+    if (a == b) {
+        if ((uint32_t)a < (uint32_t)MYRTOS_H_ACTIVE) dst[a] = c;
+        return;
+    }
+
     if (a > b) { int32_t t = a; a = b; b = t; }
     if (b < 0 || a >= (int32_t)MYRTOS_H_ACTIVE) return;
     if (a < 0) a = 0;

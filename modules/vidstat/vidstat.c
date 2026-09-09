@@ -138,6 +138,13 @@ void module_main(int argc, char **argv) {
     // What it costs. PUMP_US is 500, so pumps*500 is the elapsed time the
     // display has been asked about, and the share of it spent inside the
     // interrupt is the number that decides whether anything else can run.
+    //
+    // BOTH ARE CUMULATIVE SINCE BOOT, so this share is an average over the
+    // whole run and moves very slowly once the machine has been up a while.
+    // It is honest for "what does this build cost" and useless for comparing
+    // two things in one session -- it made a change look like it saved a third
+    // when it saved a fifth. For that, read these two numbers twice and divide
+    // the differences.
     row("Time in the pump:  ", s[10] / 1000, " ms");
     row("  worst one call:  ", s[11], " us of 500");
     if (s[1]) row("  share of the CPU:", (s[10] / 8) * 100 / (s[1] * 500 / 8), " %");
