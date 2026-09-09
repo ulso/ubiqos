@@ -270,6 +270,26 @@ if(MYRTOS_BASEPRI)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_CRITICAL_BASEPRI=${MYRTOS_BASEPRI})
 endif()
 
+# How the picture is stored, which is the largest memory decision in the system.
+#
+# `framebuffer` keeps 640x480 bytes of RGB332 in SRAM -- 307200 of a 512 kB
+# machine -- and lets anything draw anywhere. `chargen` keeps 80x30 character
+# cells instead, 4800 bytes, and builds each scanline as the display asks for
+# it, the way a 6845 or a TMS9918 did before RAM was cheap enough to hold a
+# picture. It costs the ability to draw pixels and buys back a quarter of a
+# megabyte.
+#
+# The console works either way. Nothing else does: a framebuffer is a bitmap
+# and character cells are not, so whatever wants to draw must wait for the
+# scanline renderer that will sit beside the character generator.
+set(MYRTOS_VIDEO "framebuffer" CACHE STRING "framebuffer (bitmap in SRAM) or chargen (character cells)")
+set_property(CACHE MYRTOS_VIDEO PROPERTY STRINGS framebuffer chargen)
+if(MYRTOS_VIDEO STREQUAL "chargen")
+    target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1)
+elseif(NOT MYRTOS_VIDEO STREQUAL "framebuffer")
+    message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer or chargen")
+endif()
+
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card
