@@ -302,10 +302,16 @@ endif()
 # changes. Give it a number in kB to override.
 set(MYRTOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow MYRTOS_VIDEO")
 if(MYRTOS_HEAP_KB STREQUAL "auto")
-    if(MYRTOS_VIDEO STREQUAL "chargen")
-        set(myrtosHeapKB 256)
-    else()
+    if(NOT MYRTOS_VIDEO STREQUAL "chargen")
         set(myrtosHeapKB 40)
+    elseif(MYRTOS_ARCH STREQUAL "riscv")
+        # RISC-V code is larger, so the same pool leaves 12 kB of C heap where
+        # Arm has 79. This project has already had a boot crash from a C heap
+        # that reached zero and made the SDK panic before init, so auto takes
+        # the architecture into account too.
+        set(myrtosHeapKB 192)
+    else()
+        set(myrtosHeapKB 256)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
