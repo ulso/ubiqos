@@ -310,8 +310,28 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
 endif()
-target_compile_definitions(os_kernel PRIVATE MYRTOS_HEAP_SIZE=${myrtosHeapKB}*1024)
+# A plain number, not "N*1024": a bare product substituted into an expression
+# binds wrong, and `(x) % DMESG_SIZE` quietly became `(x) % 16 * 1024`.
+math(EXPR myrtosHeapBytes "${myrtosHeapKB} * 1024")
+target_compile_definitions(os_kernel PRIVATE MYRTOS_HEAP_SIZE=${myrtosHeapBytes})
 message(STATUS "Module pool: ${myrtosHeapKB} kB (MYRTOS_VIDEO=${MYRTOS_VIDEO})")
+
+# The kernel log ring, on the same terms and for the same reason: 2 kB wrapped
+# before the shell came up, so the boot banner was gone before anyone could read
+# it. Whole boot plus room for what happens afterwards.
+set(MYRTOS_DMESG_KB "auto" CACHE STRING "kernel log ring in kB, or auto to follow MYRTOS_VIDEO")
+if(MYRTOS_DMESG_KB STREQUAL "auto")
+    if(MYRTOS_VIDEO STREQUAL "chargen")
+        set(myrtosDmesgKB 16)
+    else()
+        set(myrtosDmesgKB 2)
+    endif()
+else()
+    set(myrtosDmesgKB ${MYRTOS_DMESG_KB})
+endif()
+math(EXPR myrtosDmesgBytes "${myrtosDmesgKB} * 1024")
+target_compile_definitions(os_kernel PRIVATE DMESG_SIZE=${myrtosDmesgBytes})
+message(STATUS "Kernel log: ${myrtosDmesgKB} kB")
 
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src

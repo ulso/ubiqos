@@ -59,7 +59,14 @@ void myrtos_putc(char c) {
 // A ring, so a long boot loses its beginning rather than its end. That is the
 // wrong way round for a boot log and the right way round for a running system,
 // and the running system is what has messages nobody was watching for.
+// The boot log does not fit in two kilobytes: it wrapped before the shell was
+// up, so `more /var/dmesg` never showed the "System: ARM 32-bit" banner that is
+// printed first of all. Like MYRTOS_HEAP_SIZE this comes from CMake and follows
+// MYRTOS_VIDEO, because a framebuffer build has no room to spare and a chargen
+// build has 300 kB.
+#ifndef DMESG_SIZE
 #define DMESG_SIZE 2048
+#endif
 static char dmesg_buf[DMESG_SIZE];
 static uint32_t dmesg_head;      // where the next byte goes
 static bool dmesg_wrapped;
@@ -526,6 +533,27 @@ void myrtos_kernel_main(void) {
     // quiet at once and it looked like the clock change had broken everything.
     myrtos_video_init();
     myrtos_console_init();
+
+    // Everything printed before this point went to the UART and to dmesg, and
+    // to nothing else: the screen did not exist yet. That is a hundred and
+    // fifty lines of boot, the "System: ARM 32-bit" banner among them, and
+    // scrolling back could never reach it because it was never on the screen.
+    //
+    // So replay the log into the console now that there is one. It goes through
+    // myrtos_console_write rather than myrtos_print, which is what keeps it out
+    // of dmesg and stops the ring being copied into itself.
+    {
+        uint32_t n = myrtos_dmesg_size();
+        char line[128];
+        uint32_t k = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            int32_t c = myrtos_dmesg_at(i);
+            if (c < 0) break;
+            line[k++] = (char)c;
+            if (k == sizeof(line) || c == '\n') { myrtos_console_write(line, k); k = 0; }
+        }
+        if (k) myrtos_console_write(line, k);
+    }
     myrtos_console_start_server();
     extern void myrtos_fs_start_server(void);
     myrtos_fs_start_server();
