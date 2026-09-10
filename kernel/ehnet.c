@@ -30,6 +30,7 @@
 #include "lwip/netif.h"
 #include "lwip/etharp.h"
 #include "lwip/dhcp.h"
+#include "lwip/apps/mdns.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
 #include "io.h"
@@ -156,13 +157,36 @@ bool myrtos_eh_netif_start(void)
     if (!netif_add(&wnif, NULL, NULL, NULL, NULL, wifi_if_init, ethernet_input))
         return false;
 
+    // The name goes out WITH the DHCP request, in option 12, and it is the
+    // only thing that tells a router what it has just given an address to.
+    // Without it the board appears on the network and appears nowhere in the
+    // router's list of devices -- which is exactly how it looked: pingable,
+    // leased, and anonymous.
+    const char *host = myrtos_config_hostname();
+    netif_set_hostname(&wnif, host);
+
     netif_set_status_callback(&wnif, on_status);
     netif_set_up(&wnif);
     netif_set_link_up(&wnif);
     dhcp_start(&wnif);
 
+    // And the responder on this interface too. mDNS was registered on the USB
+    // netif alone, so the board answered to its name over the cable and only
+    // by address over the air -- the same name, and half a machine could find
+    // it.
+#if LWIP_MDNS_RESPONDER
+    if (mdns_resp_add_netif(&wnif, host) == ERR_OK) {
+        mdns_resp_add_service(&wnif, host, "_http", DNSSD_PROTO_TCP, 80, NULL, NULL);
+        mdns_resp_announce(&wnif);
+    } else {
+        myrtos_print("wifi: the mDNS responder would not take this interface\n");
+    }
+#endif
+
     up = true;
-    myrtos_print("wifi: interface up, asking DHCP for an address\n");
+    myrtos_print("wifi: interface up as ");
+    myrtos_print(host);
+    myrtos_print(", asking DHCP for an address\n");
     return true;
 }
 

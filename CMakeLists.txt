@@ -1256,7 +1256,22 @@ myrtos_add_module(mv modules/mv/mv.c)
 myrtos_add_module(leds modules/leds/leds.c)
 myrtos_add_module(sockstat modules/sockstat/sockstat.c)
 myrtos_add_rust_module(rhello modules/rhello/rhello.rs)
-myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
+# --- THE NINA RADIO, RETIRED 10 SEPTEMBER 2026 ------------------------------
+#
+# The ESP32-C6 ran NINA firmware until that day and carried its own TCP/IP
+# stack: the host asked it to open sockets rather than running a stack of its
+# own. It runs ESP-Hosted now -- it is a radio and myrtos does the networking,
+# through modules/ehspi and kernel/ehnet.c -- and the WiFiNINA protocol is not
+# something that chip can answer any more. `wifi` reported "handshake never
+# moved" from the moment the new firmware went in, which is the honest answer
+# and not a useful one.
+#
+# Left here commented rather than deleted, because the sources are still in the
+# tree and this is what it takes to have them back: uncomment these two lines
+# and the two names in MYRTOS_RESIDENT below, and flash NINA to the C6 with
+# Adafruit's SerialESPPassthrough UF2. docs/esp-hosted/README.md has that
+# route; it does not involve myrtos at all.
+#myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
 myrtos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
 
 # The SD card driver, kernel/sdcard.c until 7 Sep 2026, with the vendored SDIO
@@ -1480,7 +1495,8 @@ target_include_directories(lwipd_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/include)
 #
 
-myrtos_add_module(wifi modules/wifi/wifi.c)
+# Retired with the NINA firmware -- see the note beside wifilib above.
+#myrtos_add_module(wifi modules/wifi/wifi.c)
 myrtos_add_module(pwd modules/pwd/pwd.c)
 myrtos_add_module(rmdir modules/rmdir/rmdir.c)
 myrtos_add_module(mount modules/mount/mount.c)
@@ -1575,7 +1591,7 @@ set(MYRTOS_RESIDENT
     more
     libctest
     newlibtest
-    wifilib
+#    wifilib
     fat32lib
     sdlib
     uart
@@ -1630,7 +1646,7 @@ set(MYRTOS_RESIDENT
     rmdir
     pwd
     mount
-    wifi
+#    wifi
     font
     color
     kill
