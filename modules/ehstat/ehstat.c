@@ -144,8 +144,12 @@ void module_main(int argc, char **argv) {
     num("frames out     ", s.sent);
     num("bad checksum   ", s.bad_checksum);
     num("bad header     ", s.bad_header);
-    num("last us        ", s.last_us);
-    num("worst us       ", s.worst_us);
+    num("dma timeouts   ", s.dma_timeouts);
+    say("\r\none exchange, microseconds\r\n");
+    num("  on the wire  ", s.wall_us);
+    num("  worst        ", s.worst_wall_us);
+    num("  on the CPU   ", s.cpu_us);
+    num("  worst        ", s.worst_cpu_us);
 
     say("\r\nby interface\r\n");
     for (int i = 0; i < 9; i++) {

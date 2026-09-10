@@ -297,13 +297,42 @@ with the announcement decoding and no checksum errors at either. The clock is
 now 32 MHz. Espressif allow up to 40 for this chip and take their own
 reference numbers there.
 
-But 534 us is still CPU **held at priority 21, above the shell**, because the
-SDK's `spi_write_read` polls a byte at a time. At any real frame rate that is
-what will make the machine feel broken -- as it already did twice today for a
-cruder reason. The transport wants DMA: `K->dma_claim_channel` is in the
-kernel API, the thread would start a transfer and sleep, and the tick that
-wakes it is the same tick it already waits for. That is the next improvement,
-and this time the number says so.
+534 us of that was CPU **held at priority 21, above the shell**, because the
+SDK's `spi_write_read` polls a byte at a time. It is on DMA now:
+
+    one exchange, microseconds
+      on the wire   999
+      on the CPU      1   (worst 13)
+
+Two numbers rather than one, because they stopped being the same thing. The
+wire figure includes the tick the thread sleeps through while the transfer
+runs; it is latency and a millisecond of it costs nothing. The CPU figure is
+what the processor spends above the shell, and that is what went from 534
+microseconds to one.
+
+The transfer size is what makes this possible: an exchange is ALWAYS 1600
+bytes, whatever the payload, because the length lives in the header and not in
+the stream. Nothing is escaped and nothing is framed, so how many bytes are
+coming is known before the first one moves. The SLIP the ROM loader speaks
+over UART is the opposite -- a byte can become two and the end is only known
+when it arrives -- and no DMA could be pointed at it.
+
+Two details that are not optional:
+
+* The buffers come from `K->driver_alloc`, not from the driver's own statics.
+  A module's memory is in the module pool, which is PSRAM, and DMA to PSRAM is
+  not reliably visible to the CPU afterwards. `K->dma_safe` is then ASKED
+  rather than assumed, because the code doing the DMA is not the code that
+  knows the memory map.
+* Both channels start in one `dma_start_channel_mask` write, so the receive
+  side is armed before a byte can arrive. Started one after the other, the
+  first bytes clocked in have nowhere to go and every frame afterwards is one
+  short.
+
+The wire figure is a whole tick because the thread starts the transfer and
+sleeps: the exchange takes two ticks and the processor is in none of it. One
+frame per two milliseconds is 800 kB/s, which this link will not reach for
+other reasons long before it matters.
 
 ## Why not UART
 

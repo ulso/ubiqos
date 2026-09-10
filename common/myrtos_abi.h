@@ -582,10 +582,20 @@ typedef struct {
     // between a fix and a guess about one.
     uint32_t bad_seen;
     uint8_t  first_bad[12];
-    // What a 1600-byte exchange actually costs, rather than what the clock
-    // rate says it should. This is CPU held at priority 21, above the shell,
-    // so it is the number that decides whether this transport needs DMA.
-    uint32_t last_us, worst_us;
+    // Two different questions about one 1600-byte exchange, and keeping them
+    // apart is the whole point of having measured anything.
+    //
+    // WALL is how long it took the wire: chip select down to chip select up,
+    // including the tick the thread spent asleep waiting for the DMA. It is
+    // latency, and it is allowed to be a millisecond.
+    //
+    // CPU is how much of that the processor spent, at priority 21 and above
+    // the shell. Before the DMA the two were the same number and it was 534
+    // microseconds. That is what this was moved off the processor for, and a
+    // single figure would have hidden whether it worked.
+    uint32_t wall_us, worst_wall_us;
+    uint32_t cpu_us, worst_cpu_us;
+    uint32_t dma_timeouts;    // transfers abandoned rather than left hanging
 } myrtos_eh_stats_t;
 
 #define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t

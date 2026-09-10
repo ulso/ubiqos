@@ -49,6 +49,8 @@
 #include "hardware/spi.h"
 #include "hardware/structs/spi.h"
 #include "hardware/gpio.h"
+#include "hardware/dma.h"
+#include "hardware/structs/dma.h"
 
 static const myrtos_kernel_api_t *K;
 
@@ -68,9 +70,35 @@ static const myrtos_kernel_api_t *K;
 
 static uint32_t pin_sck, pin_mosi, pin_miso, pin_cs, pin_hs, pin_dr;
 
-static uint8_t  txbuf[EH_BUF];
-static uint8_t  rxbuf[EH_BUF];
+// --- WHY THESE ARE NOT STATICS ----------------------------------------------
+//
+// A driver module's own memory is in the module pool, which is PSRAM, and DMA
+// to PSRAM is not reliably visible to the CPU on this machine -- the SD driver
+// bounces through SRAM for exactly this reason. K->driver_alloc gives SRAM
+// that belongs to the driver rather than to whichever process happened to
+// start it, and K->dma_safe is asked rather than assumed, because the library
+// that does the DMA is not the one that knows the memory map.
+static uint8_t *txbuf;
+static uint8_t *rxbuf;
 static volatile bool tx_pending;   // txbuf holds something worth sending
+
+// --- WHY DMA -----------------------------------------------------------------
+//
+// The exchange is always exactly 1600 bytes. There is no escaping and no
+// framing on this wire -- the length lives in the header, not in the stream --
+// so the transfer size is known before it starts, which is what makes a DMA
+// possible at all. That is the difference between this and the SLIP the ROM
+// loader speaks over UART, where a byte can become two and nobody can say how
+// many are coming.
+//
+// It matters because the alternative is measured: spi_write_read polls a byte
+// at a time and held 534 microseconds of CPU at priority 21, ABOVE THE SHELL,
+// for every frame. The thread now starts the transfer and sleeps, and the tick
+// that wakes it is the one it was going to wait for anyway.
+static int32_t dma_tx = -1, dma_rx = -1;
+static bool in_flight;
+static uint32_t started_us;
+static uint32_t cpu_us;   // what transact_start spent, added to in finish
 
 static myrtos_eh_stats_t stats;
 static volatile bool running;
@@ -105,17 +133,68 @@ static void build_dummy(void)
     put16(txbuf + 6, frame_checksum(txbuf, HDR_V1, 6));
 }
 
-static void transact(void)
+// Select, arm both channels, and go. Returns at once: the wire takes 400
+// microseconds at 32 MHz and the CPU spends none of them here.
+static void transact_start(void)
+{
+    spi_inst_t *spi = (spi_inst_t*)K->spi;
+    volatile void *dr = &spi_get_hw(spi)->dr;
+
+    dma_channel_config tc = dma_channel_get_default_config((uint)dma_tx);
+    channel_config_set_transfer_data_size(&tc, DMA_SIZE_8);
+    channel_config_set_dreq(&tc, spi_get_dreq(spi, true));
+    channel_config_set_read_increment(&tc, true);
+    channel_config_set_write_increment(&tc, false);
+    dma_channel_configure((uint)dma_tx, &tc, dr, txbuf, EH_BUF, false);
+
+    dma_channel_config rc = dma_channel_get_default_config((uint)dma_rx);
+    channel_config_set_transfer_data_size(&rc, DMA_SIZE_8);
+    channel_config_set_dreq(&rc, spi_get_dreq(spi, false));
+    channel_config_set_read_increment(&rc, false);
+    channel_config_set_write_increment(&rc, true);
+    dma_channel_configure((uint)dma_rx, &rc, rxbuf, dr, EH_BUF, false);
+
+    uint32_t t0 = (uint32_t)K->time_us();
+    started_us = t0;
+    K->gpio_put(pin_cs, 0);
+    // Both in one write, so the receive side is armed before a byte can
+    // arrive. Started separately, the first bytes clocked in have nowhere to
+    // go and the whole frame is one short for ever after.
+    dma_start_channel_mask((1u << dma_tx) | (1u << dma_rx));
+    in_flight = true;
+    cpu_us = (uint32_t)K->time_us() - t0;
+}
+
+// True when the wire is finished with, either way.
+static bool transact_finish(void)
 {
     uint32_t t0 = (uint32_t)K->time_us();
-    K->gpio_put(pin_cs, 0);
-    K->spi_write_read(K->spi, txbuf, rxbuf, EH_BUF);
+    bool busy = dma_channel_is_busy((uint)dma_tx) || dma_channel_is_busy((uint)dma_rx);
+    uint32_t took = t0 - started_us;
+
+    if (busy) {
+        // Ten milliseconds is twenty times what this can honestly take. A
+        // transfer still running then is not slow, it is stuck, and leaving
+        // chip select low for ever would take the link with it.
+        if (took < 10000u) return false;
+        hw_clear_bits(&dma_hw->ch[dma_tx].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+        hw_clear_bits(&dma_hw->ch[dma_rx].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+        stats.dma_timeouts++;
+    }
+
     K->gpio_put(pin_cs, 1);
-    uint32_t took = (uint32_t)K->time_us() - t0;
+    in_flight = false;
 
     stats.transactions++;
-    stats.last_us = took;
-    if (took > stats.worst_us) stats.worst_us = took;
+    stats.wall_us = took;
+    if (took > stats.worst_wall_us) stats.worst_wall_us = took;
+
+    // The two stretches the processor was actually in this code: arming the
+    // channels, and noticing they were done. Everything between was the DMA's.
+    uint32_t cpu = cpu_us + ((uint32_t)K->time_us() - t0);
+    stats.cpu_us = cpu;
+    if (cpu > stats.worst_cpu_us) stats.worst_cpu_us = cpu;
+    return true;
 }
 
 static void take_frame(void)
@@ -204,15 +283,24 @@ static void eh_thread(void)
         // nothing to buy by going faster and a working machine to lose.
         myrtos_sleep(1);
 
+        // A transfer already going is finished before another is thought
+        // about. It costs a tick to notice, which is the same tick this loop
+        // was going to spend asleep, so the exchange is two ticks and no CPU
+        // rather than one tick and half a millisecond of it.
+        if (in_flight) {
+            if (!transact_finish()) continue;
+            if (tx_pending) { stats.sent++; tx_pending = false; build_dummy(); }
+            take_frame();
+            continue;
+        }
+
         // The co-processor decides when. Clocking a slave that has not armed
         // itself reads nothing and, worse, leaves it out of step with the host
         // for every transaction after.
         if (!K->gpio_get(pin_hs)) continue;
         if (!K->gpio_get(pin_dr) && !tx_pending) continue;
 
-        transact();
-        if (tx_pending) { stats.sent++; tx_pending = false; build_dummy(); }
-        take_frame();
+        transact_start();
     }
 }
 
@@ -255,7 +343,32 @@ static int32_t eh_configure(const void *config, uint32_t size)
     K->gpio_init(pin_dr);
     K->gpio_set_dir(pin_dr, false);
 
+    // The SSP has to be told to raise its DMA requests; nothing else does it.
+    hw->dmacr = SPI_SSPDMACR_TXDMAE_BITS | SPI_SSPDMACR_RXDMAE_BITS;
+
     if (running) return 0;
+
+    txbuf = (uint8_t*)K->driver_alloc(EH_BUF);
+    rxbuf = (uint8_t*)K->driver_alloc(EH_BUF);
+    if (!txbuf || !rxbuf) {
+        K->print("eh: no SRAM for the transfer buffers\n");
+        return -1;
+    }
+    if (!K->dma_safe(txbuf) || !K->dma_safe(rxbuf)) {
+        // Asked rather than assumed. driver_alloc gives SRAM today; the day it
+        // gives something else, this says so instead of transferring into
+        // memory the CPU cannot see afterwards.
+        K->print("eh: the transfer buffers are not memory DMA may touch\n");
+        return -1;
+    }
+
+    dma_tx = K->dma_claim_channel();
+    dma_rx = K->dma_claim_channel();
+    if (dma_tx < 0 || dma_rx < 0) {
+        K->print("eh: no DMA channel to be had\n");
+        return -1;
+    }
+
     if (K->kernel_thread(eh_thread, 2048, MYRTOS_PRIO_EH) < 0) {
         K->print("eh: could not start the transport thread\n");
         return -1;
