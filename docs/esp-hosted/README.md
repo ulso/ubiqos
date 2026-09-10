@@ -176,12 +176,29 @@ about. It goes onto the card with `usbdisk`.
   the reason. Reading them from the END is what makes the same code work on a
   chip that answers with two and one that answers with four.
 
-### And what the log does not show
+### The log, whole
 
-`espflash` reads the chip's output through a 32-byte FIFO, and at 115200 that
-fills in under three milliseconds. The boot log above arrived in pieces with
-holes in it. It was enough to identify the firmware and it is not enough to
-debug one, so the next thing this driver needs is a receive interrupt.
+The first version of the driver read the UART's FIFO when somebody asked, and
+that FIFO is thirty-two bytes -- two and a half milliseconds at 115200. The
+boot log arrived in pieces. It now has a handler at priority 0x40 and an eight
+kilobyte ring, and `espflash log` prints all 5792 bytes with nothing dropped.
+
+Which matters for more than tidiness, because the chip reads the wiring back:
+
+    SPI_DRIVER: transport[cp]: SPI ctrl=1 mode=3 MOSI=21 MISO=6 CLK=22 CS=7
+                HANDSHAKE=18 DATA_READY=9
+
+Every number there was read out of the schematic and is now confirmed by the
+chip that has to live with it. Two more facts for the host end: **SPI mode 3**,
+and `Freq:ConfigAtHost` -- the co-processor takes whatever clock the host
+gives it rather than naming one.
+
+The handler follows the same rule as modules/adc's: above the kernel's
+threshold, so a trap with interrupts off cannot cost bytes, and touching
+nothing but its own ring. There is no lock because there is nothing to lock --
+the handler writes the head, the reader writes the tail, and each reads the
+other's word. `MYRTOS_SS_ESP_STATS` reports what was dropped, so a log with
+holes says so rather than looking merely short.
 
 ## Why not UART
 

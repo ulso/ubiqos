@@ -851,6 +851,10 @@ typedef struct {
                                        //   resets the audio DAC as well; they
                                        //   share the pin on this board.
 
+#define MYRTOS_SS_ESP_STATS  0x0402u   // uint32_t[3]: bytes taken by the
+                                       //   handler, bytes dropped for want of
+                                       //   room, bytes waiting to be read
+
 #define MYRTOS_SS_GPIO_DEBUG 0x0305u   // uint32_t[6]: inte, intr, ints, calls, pending, dropped
 
 #define MYRTOS_GPIO_FALL 1u

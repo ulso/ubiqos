@@ -123,15 +123,20 @@ static void into_application(int32_t dev) {
 // build date and "waiting for download" -- so this alone says whether the
 // wire, the strap and the reset all work.
 static uint32_t listen_or_discard(int32_t dev, uint32_t ms, bool quiet) {
-    uint8_t buf[64];
+    uint8_t buf[256];
     uint32_t total = 0;
-    for (uint32_t waited = 0; waited < ms; waited += 5) {
+    for (uint32_t waited = 0; waited < ms; ) {
         // Asked before it is read, because a read of a device with nothing in
         // it waits, and a chip that says nothing is exactly the case this is
         // here to report.
-        if (myrtos_readable(dev) <= 0) { myrtos_sleep(5); continue; }
+        if (myrtos_readable(dev) <= 0) { myrtos_sleep(5); waited += 5; continue; }
+
+        // Taken as fast as it comes, without a sleep in between. A sleep here
+        // caps the reader at its buffer per tick, and this wire delivers 11.5
+        // kilobytes a second: the driver's ring would fill behind a reader that
+        // paused politely between mouthfuls.
         int32_t n = myrtos_read(dev, buf, sizeof(buf));
-        if (n <= 0) { myrtos_sleep(5); continue; }
+        if (n <= 0) { myrtos_sleep(5); waited += 5; continue; }
         total += (uint32_t)n;
         if (quiet) continue;
         for (int32_t i = 0; i < n; i++) {
@@ -360,6 +365,18 @@ static bool prepare(int32_t dev, uint32_t size) {
     return true;
 }
 
+// Whether what was just printed is the whole of what the chip said. The driver
+// counts what its handler took and what it had to throw away; a ring that never
+// filled is the difference between a log and a sample of one.
+static void report_losses(int32_t dev) {
+    uint32_t st[3];
+    if (myrtos_getstat(dev, MYRTOS_SS_ESP_STATS, st, sizeof(st)) < 0) return;
+    if (!st[1]) return;
+    say("(");
+    say_u32(st[1]);
+    say(" bytes were dropped -- the ring filled, so this log has holes)\r\n");
+}
+
 static void do_write(int32_t dev, const char *path) {
     int32_t f = myrtos_open_flags(path, MYRTOS_O_RDONLY);
     if (f < 0) {
@@ -461,6 +478,22 @@ static void do_write(int32_t dev, const char *path) {
     uint32_t heard = listen_or_discard(dev, 1500, false);
     say("\r\n--------------------------------------------------------------\r\n");
     if (!heard) say("nothing. It did not start, or it does not talk on this pin.\r\n");
+    else        report_losses(dev);
+}
+
+// Start the chip and listen to it. The one thing that was impossible before the
+// driver had an interrupt, and the reason it now has one.
+static void do_log(int32_t dev, uint32_t ms) {
+    say("resetting the C6 into its application and listening\r\n\r\n");
+    drain(dev);
+    into_application(dev);
+
+    say("--------------------------------------------------------------\r\n");
+    uint32_t heard = listen_or_discard(dev, ms, false);
+    say("\r\n--------------------------------------------------------------\r\n");
+    say_u32(heard);
+    say(" bytes\r\n");
+    report_losses(dev);
 }
 
 static void do_sync(int32_t dev) {
@@ -481,10 +514,11 @@ static void do_sync(int32_t dev) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: espflash sync | espflash write FILE\n\n"
-            "Talks to the ESP32-C6's ROM loader over /dev/esp.\n\n"
+            "usage: espflash sync | log | write FILE\n\n"
+            "Talks to the ESP32-C6 over /dev/esp.\n\n"
             "  sync         reset the chip into its serial bootloader and prove\n"
             "               the wire. Reads only; the chip comes back as it was.\n"
+            "  log          reset it into its application and print what it says.\n"
             "  write FILE   write FILE to the chip's flash from offset 0. This\n"
             "               REPLACES what is in it -- NINA, and with it every\n"
             "               'wifi' command -- and takes minutes at 115200 baud.\n\n"
@@ -492,9 +526,10 @@ void module_main(int argc, char **argv) {
             "since it shares the reset pin on this board.\n")) return;
 
     bool sync  = argc == 2 && is(argv[1], "sync");
+    bool log   = argc == 2 && is(argv[1], "log");
     bool write = argc == 3 && is(argv[1], "write");
-    if (!sync && !write) {
-        say("usage: espflash sync | espflash write FILE\r\n");
+    if (!sync && !log && !write) {
+        say("usage: espflash sync | log | write FILE\r\n");
         return;
     }
 
@@ -504,7 +539,8 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    if (sync) do_sync(dev);
-    else      do_write(dev, argv[2]);
+    if (sync)      do_sync(dev);
+    else if (log)  do_log(dev, 3000);
+    else           do_write(dev, argv[2]);
     myrtos_close(dev);
 }

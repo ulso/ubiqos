@@ -30,11 +30,70 @@
 #include "../../common/myrtos_abi.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
+#include "hardware/irq.h"
+#include "hardware/structs/uart.h"
+
+// Above the kernel's own threshold, like modules/adc. The handler earns that
+// by touching nothing else: a trap runs with interrupts off, and at 0x80 a
+// three-millisecond syscall would cost bytes at 115200.
+#define ESP_IRQ_PRIORITY 0x40u
 
 static const myrtos_kernel_api_t *K;
 static uart_inst_t *esp_uart;
 static uint32_t strap_pin = 0xffffffffu;
 static uint32_t reset_pin = 0xffffffffu;
+
+// --- THE RECEIVE SIDE -------------------------------------------------------
+//
+// The first version of this read the UART's own FIFO when somebody asked, and
+// that FIFO is thirty-two bytes. At 115200 baud thirty-two bytes is two and a
+// half milliseconds, so the chip's boot log arrived with holes in it: enough to
+// recognise the firmware, not remotely enough to debug one. Anything worth
+// reading off that chip arrives in a burst -- a boot log, a stack trace, an
+// answer -- and a burst is exactly what polling loses.
+//
+// So a handler takes every byte the moment it lands, and a reader takes them
+// from here whenever it gets round to it.
+//
+// THE HANDLER RUNS ABOVE THE KERNEL, at 0x40 against a threshold of 0x80, for
+// the same reason modules/adc does: a trap runs with interrupts off, and a
+// syscall that takes three milliseconds would otherwise cost bytes. It follows
+// the same rule as that one -- it touches nothing but its own memory, calls
+// nothing, and reaches no kernel structure.
+//
+// There is no lock, and none is needed. rx_head is written only by the handler
+// and rx_tail only by the reader, both are aligned 32-bit stores, and each side
+// reads the other's word to know how much room or how much data there is. That
+// is the whole of it: a reader sees a byte or does not see it yet, and never
+// sees half a ring.
+#define RX_RING 8192u                   // 8 kB, which is 700 ms of full stream
+
+static volatile uint8_t  rx_ring[RX_RING];
+static volatile uint32_t rx_head, rx_tail;
+static volatile uint32_t rx_taken, rx_dropped;
+
+static void esp_rx_handler(void)
+{
+    uart_hw_t *hw = uart_get_hw(esp_uart);
+
+    while (!(hw->fr & UART_UARTFR_RXFE_BITS)) {
+        uint8_t c = (uint8_t)hw->dr;
+        uint32_t next = (rx_head + 1u) & (RX_RING - 1u);
+        if (next == rx_tail) { rx_dropped++; continue; }   // full: keep the old
+        rx_ring[rx_head] = c;
+        rx_head = next;
+        rx_taken++;
+    }
+    // The read above clears the receive interrupt by itself; this is for the
+    // timeout one, which is what fires when a burst ends short of the trigger
+    // level and is the reason the last few bytes of a line ever arrive.
+    hw->icr = UART_UARTICR_RXIC_BITS | UART_UARTICR_RTIC_BITS;
+}
+
+static uint32_t rx_waiting(void)
+{
+    return (rx_head - rx_tail) & (RX_RING - 1u);
+}
 
 static int32_t esp_configure(const void *config, uint32_t size)
 {
@@ -54,6 +113,24 @@ static int32_t esp_configure(const void *config, uint32_t size)
     }
     K->gpio_set_function(c->tx_pin, UART_FUNCSEL_NUM(esp_uart, c->tx_pin));
     K->gpio_set_function(c->rx_pin, UART_FUNCSEL_NUM(esp_uart, c->rx_pin));
+
+    // The FIFO interrupts at a quarter full rather than half, and the receive
+    // timeout is on as well: without that one, the tail of a burst sits in the
+    // FIFO until the next burst pushes it over the level, which for a chip that
+    // says one line and stops is for ever.
+    uart_hw_t *hw = uart_get_hw(esp_uart);
+    hw->ifls = (hw->ifls & ~UART_UARTIFLS_RXIFLSEL_BITS)
+             | (0u << UART_UARTIFLS_RXIFLSEL_LSB);        // an eighth: 4 bytes
+    while (!(hw->fr & UART_UARTFR_RXFE_BITS)) (void)hw->dr;   // whatever was there
+    rx_head = rx_tail = 0;
+
+    uint32_t irq = (esp_uart == uart0) ? UART0_IRQ : UART1_IRQ;
+    if (K->irq_install(irq, esp_rx_handler, ESP_IRQ_PRIORITY) < 0) {
+        K->print("esp: that UART's interrupt is already taken\n");
+        return -1;
+    }
+    hw->icr  = UART_UARTICR_RXIC_BITS | UART_UARTICR_RTIC_BITS;
+    hw->imsc = UART_UARTIMSC_RXIM_BITS | UART_UARTIMSC_RTIM_BITS;
 
     strap_pin = c->strap_pin;
     reset_pin = c->reset_pin;
@@ -93,11 +170,14 @@ static int32_t esp_write(const uint8_t *buf, uint32_t len)
 static int32_t esp_read(uint8_t *buf, uint32_t len)
 {
     uint32_t n = 0;
-    while (n < len && uart_is_readable(esp_uart)) buf[n++] = (uint8_t)uart_getc(esp_uart);
+    while (n < len && rx_tail != rx_head) {
+        buf[n++] = rx_ring[rx_tail];
+        rx_tail = (rx_tail + 1u) & (RX_RING - 1u);   // written last, and only here
+    }
     return (int32_t)n;
 }
 
-static int32_t esp_readable(void) { return uart_is_readable(esp_uart) ? 1 : 0; }
+static int32_t esp_readable(void) { return rx_waiting() ? 1 : 0; }
 
 // A pin is held low by driving it, and released by letting go of it. Released
 // is an INPUT, not a one: both nets have a pull-up on the board, and the audio
@@ -134,6 +214,14 @@ static int32_t esp_getstat(uint32_t code, void *data, uint32_t len)
     switch (code) {
     case MYRTOS_SS_ESP_STRAP: *out = K->gpio_get(strap_pin) ? 1u : 0u; return 0;
     case MYRTOS_SS_ESP_RESET: *out = K->gpio_get(reset_pin) ? 1u : 0u; return 0;
+    case MYRTOS_SS_ESP_STATS:
+        if (len < 3 * sizeof(uint32_t)) return -1;
+        // Dropped is the number that matters. A ring that never fills says the
+        // log is whole; one that does says which part of it to distrust.
+        out[0] = rx_taken;
+        out[1] = rx_dropped;
+        out[2] = rx_waiting();
+        return 0;
     default: return -1;
     }
 }
