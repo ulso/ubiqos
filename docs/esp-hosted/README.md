@@ -655,6 +655,32 @@ and the reason is in the last line: the handshake was low on 178 turns out of
 offers one. That is the tail, and it is what makes a page take 0.74 seconds
 over the air and 0.05 over the cable.
 
+## The router's device list, settled
+
+The board did not appear in the TP-Link Deco app although it was pingable and
+had an address, and there were three possible reasons: the lease was not real,
+the name was not being sent, or the app was not showing it.
+
+The first two are answered. The lease brings a netmask of 255.255.252.0 and a
+router of 192.168.68.1, and a stack cannot invent those -- they come from the
+server. And a capture on the host settles the second:
+
+    DHCP-Message (53): Discover
+    Hostname (12), length 6: "myrtos"
+    ...
+    DHCP-Message (53): Request
+    Requested-IP (50): 192.168.68.54
+    Server-ID (54):    192.168.68.1
+    Hostname (12), length 6: "myrtos"
+
+The name goes out in both, from the right MAC, and the address asked for is the
+address given. That is a correct exchange from a client that says what it is
+called, so what remains is the app's own choice about what to list, and there
+is nothing on this side left to fix.
+
+Worth having proved rather than assumed: two of the three explanations were
+about myrtos, and both were wrong.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design
