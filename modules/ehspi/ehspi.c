@@ -65,8 +65,38 @@ static const myrtos_kernel_api_t *K;
 #define HDR_V2 20u
 #define V2_MAGIC 0xe9u
 
+#define IF_SERIAL   3u             // the RPC control plane
 #define IF_PRIV     5u
 #define IF_MAX      8u             // the dummy's interface type
+
+// --- THE HANDSHAKE ----------------------------------------------------------
+//
+// The co-processor announces itself and then WAITS. Espressif's own note is
+// blunt about it -- "getting this right is the whole game; if it does not
+// complete, feature debugging is premature" -- and it is exactly the mistake
+// that was made here first: an RPC request went out before the host had
+// answered the announcement, the chip took the frame and said nothing, and
+// there was nothing wrong with the frame at all.
+//
+// The answer is a private event of the same type, carrying type/length/value
+// triplets. Only four are sent, and what is LEFT OUT matters more:
+//
+//   0x1A, the RPC version, is a strict match on the far side and a mismatch
+//   calls abort() -- the chip reboots. Not sending it leaves the version the
+//   chip already advertised, which is the one we want.
+//
+//   0x23, the RPC version ack, reads anything that is not V3 as V1 and would
+//   talk us down a protocol.
+//
+// Neither is needed: the chip configures its RPC endpoints when it has had any
+// init event at all from the host.
+#define PRIV_EVENT_INIT   0x22u
+#define PRIV_PKT_EVENT    0x33u    // header byte 11; 0x01 would mean a command
+
+#define TLV_HOST_CAPS     0x44u
+#define TLV_RCVD_CHIP_ID  0x45u
+#define TLV_THROTTLE_HIGH 0x47u
+#define TLV_THROTTLE_LOW  0x48u
 
 static uint32_t pin_sck, pin_mosi, pin_miso, pin_cs, pin_hs, pin_dr;
 
@@ -95,6 +125,23 @@ static volatile bool tx_pending;   // txbuf holds something worth sending
 // at a time and held 534 microseconds of CPU at priority 21, ABOVE THE SHELL,
 // for every frame. The thread now starts the transfer and sleeps, and the tick
 // that wakes it is the one it was going to wait for anyway.
+// A frame on its way out, built by a write and picked up by the thread. It is
+// staged rather than written into txbuf directly because txbuf may be under a
+// DMA at the moment somebody writes, and a trap does not wait for anything.
+static uint8_t *stage;
+static volatile uint32_t stage_len;
+
+// The link's own reply to the announcement, owed as soon as one arrives.
+static volatile bool want_hello;
+static uint8_t chip_id;
+
+// The last control-plane frame in, and whether it has been read. One deep: a
+// request gets one answer, and a second arriving before the first is read is
+// something to notice rather than to buffer.
+static uint8_t *inbox;
+static volatile uint32_t inbox_len;
+static volatile uint32_t inbox_lost;
+
 static int32_t dma_tx = -1, dma_rx = -1;
 static bool in_flight;
 static uint32_t started_us;
@@ -124,6 +171,34 @@ static uint16_t frame_checksum(const uint8_t *buf, uint16_t len, uint16_t at)
 // What the host sends when it has nothing: a well-formed frame that says so.
 // Zeroes would read as interface type 0, which is ESP_INVALID_IF and means
 // something different -- "this is broken" rather than "this is empty".
+// The host's half of the handshake, built where the transfer buffer is safe to
+// touch -- which is the thread and nowhere else.
+static void build_hello(void)
+{
+    uint8_t *p = txbuf + HDR_V1;
+    uint32_t n = 0;
+
+    p[n++] = PRIV_EVENT_INIT;
+    p[n++] = 0;                                  // length, filled in below
+
+    p[n++] = TLV_HOST_CAPS;     p[n++] = 1; p[n++] = 0;
+    p[n++] = TLV_RCVD_CHIP_ID;  p[n++] = 1; p[n++] = chip_id;
+    // Flow control off. The chip only throttles when the host asks it to, and
+    // a host that has not measured its own buffers has no business naming a
+    // percentage.
+    p[n++] = TLV_THROTTLE_HIGH; p[n++] = 1; p[n++] = 0;
+    p[n++] = TLV_THROTTLE_LOW;  p[n++] = 1; p[n++] = 0;
+
+    p[1] = (uint8_t)(n - 2);
+
+    for (uint32_t i = 0; i < HDR_V1; i++) txbuf[i] = 0;
+    txbuf[0] = IF_PRIV;
+    txbuf[11] = PRIV_PKT_EVENT;                  // not a command: an event
+    put16(txbuf + 2, (uint16_t)n);
+    put16(txbuf + 4, HDR_V1);
+    put16(txbuf + 6, frame_checksum(txbuf, (uint16_t)(HDR_V1 + n), 6));
+}
+
 static void build_dummy(void)
 {
     for (uint32_t i = 0; i < HDR_V1; i++) txbuf[i] = 0;
@@ -246,6 +321,26 @@ static void take_frame(void)
     stats.frames++;
     if (iftype < 9) stats.by_if[iftype]++;
 
+    if (iftype == IF_SERIAL) {
+        if (inbox_len) inbox_lost++;          // nobody took the last one
+        uint16_t n = len > EH_BUF ? EH_BUF : len;
+        for (uint16_t i = 0; i < n; i++) inbox[i] = rxbuf[hdr + i];
+        inbox_len = n;
+    }
+
+    // The announcement is answered, and the answer is what opens the link.
+    if (iftype == IF_PRIV && len >= 2 && rxbuf[hdr] == PRIV_EVENT_INIT) {
+        // The chip id it just told us, handed straight back: the far side
+        // compares it with its own and complains if they differ, which is a
+        // cheap check that the two ends are talking about the same chip.
+        chip_id = 0;
+        for (uint16_t i = 2; i + 2u <= len; ) {
+            if (rxbuf[hdr + i] == 0x12u) { chip_id = rxbuf[hdr + i + 2]; break; }
+            i += 2u + rxbuf[hdr + i + 1];
+        }
+        want_hello = true;
+    }
+
     // The one frame kept whole, because it is the one that says the link came
     // up: the co-processor announces itself on the private interface with its
     // capabilities, and that announcement is the whole point of this step.
@@ -289,7 +384,8 @@ static void eh_thread(void)
         // rather than one tick and half a millisecond of it.
         if (in_flight) {
             if (!transact_finish()) continue;
-            if (tx_pending) { stats.sent++; tx_pending = false; build_dummy(); }
+            if (want_hello)      { stats.sent++; want_hello = false; build_dummy(); }
+            else if (tx_pending) { stats.sent++; tx_pending = false; build_dummy(); }
             take_frame();
             continue;
         }
@@ -298,8 +394,14 @@ static void eh_thread(void)
         // itself reads nothing and, worse, leaves it out of step with the host
         // for every transaction after.
         if (!K->gpio_get(pin_hs)) continue;
-        if (!K->gpio_get(pin_dr) && !tx_pending) continue;
+        if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello) continue;
 
+        // What goes out with it, and the handshake goes first: nothing the
+        // host has to say is heard until the announcement has been answered.
+        // Either way txbuf is complete before the DMA can look at it, because
+        // all three of these happen here and nowhere else.
+        if (want_hello)        build_hello();
+        else if (tx_pending)   { for (uint32_t i = 0; i < stage_len; i++) txbuf[i] = stage[i]; }
         transact_start();
     }
 }
@@ -350,7 +452,9 @@ static int32_t eh_configure(const void *config, uint32_t size)
 
     txbuf = (uint8_t*)K->driver_alloc(EH_BUF);
     rxbuf = (uint8_t*)K->driver_alloc(EH_BUF);
-    if (!txbuf || !rxbuf) {
+    stage = (uint8_t*)K->driver_alloc(EH_BUF);
+    inbox = (uint8_t*)K->driver_alloc(EH_BUF);
+    if (!txbuf || !rxbuf || !stage || !inbox) {
         K->print("eh: no SRAM for the transfer buffers\n");
         return -1;
     }
@@ -388,12 +492,44 @@ static int32_t eh_configure(const void *config, uint32_t size)
 static int32_t eh_open(void)  { return running ? 0 : -1; }
 static int32_t eh_close(void) { return 0; }
 
-// Nothing streams through this device yet. A frame has an interface number and
-// a length, and neither survives being poured into a byte stream -- so the
-// bytes will move as frames when there is something to move them for, and the
-// device answers questions in the meantime.
-static int32_t eh_write(const uint8_t *buf, uint32_t len) { (void)buf; (void)len; return -1; }
-static int32_t eh_read(uint8_t *buf, uint32_t len) { (void)buf; (void)len; return 0; }
+// A write is one RPC message, and the driver puts the frame round it.
+//
+// The interface number is not in the bytes and does not need to be: this
+// device carries the control plane and nothing else. Network frames will not
+// come through here at all -- they belong to lwIP, which lives in the USB task
+// and may not be touched from a process.
+//
+// One frame at a time. A second write while the first is still on its way is
+// refused rather than queued, because the caller is a process that can wait
+// and a queue here would be a queue nobody asked for.
+static int32_t eh_write(const uint8_t *buf, uint32_t len)
+{
+    if (!running || tx_pending) return -1;
+    if (len + HDR_V1 > EH_BUF) return -1;
+
+    for (uint32_t i = 0; i < HDR_V1; i++) stage[i] = 0;
+    stage[0] = IF_SERIAL;                     // if_num 0, which is all there is
+    put16(stage + 2, (uint16_t)len);
+    put16(stage + 4, HDR_V1);
+    for (uint32_t i = 0; i < len; i++) stage[HDR_V1 + i] = buf[i];
+    put16(stage + 6, frame_checksum(stage, (uint16_t)(HDR_V1 + len), 6));
+
+    stage_len = HDR_V1 + len;
+    tx_pending = true;
+    return (int32_t)len;
+}
+
+static int32_t eh_read(uint8_t *buf, uint32_t len)
+{
+    uint32_t have = inbox_len;
+    if (!have) return 0;
+    uint32_t n = have > len ? len : have;
+    for (uint32_t i = 0; i < n; i++) buf[i] = inbox[i];
+    inbox_len = 0;                            // last, so a reader never sees half
+    return (int32_t)n;
+}
+
+static int32_t eh_readable(void) { return inbox_len ? 1 : 0; }
 
 static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
 {
@@ -422,6 +558,7 @@ const myrtos_driver_module_t myrtos_driver = {
         .module_name = "ehspi",
         .configure = eh_configure,
         .open = eh_open, .write = eh_write, .read = eh_read,
+        .readable = eh_readable,
         .close = eh_close,
         .getstat = eh_getstat,
     },

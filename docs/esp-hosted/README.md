@@ -334,6 +334,69 @@ sleeps: the exchange takes two ticks and the processor is in none of it. One
 frame per two milliseconds is 800 kB/s, which this link will not reach for
 other reasons long before it matters.
 
+## The control plane answers
+
+    myrtos:/> ehrpc mode
+    mode 0  (off),  the chip answered 12289 -- the radio is not initialised
+
+12289 is 0x3001, the first of the WiFi driver's own error codes, and it is the
+right answer: nothing has called WifiInit yet. Which means the whole round trip
+worked -- request framed, carried, unwrapped, dispatched, `esp_wifi_get_mode`
+actually run on the co-processor, and its real return value carried back.
+
+### What it took, and what nearly did not
+
+**The handshake is not optional.** The first request went out, the chip took it
+and said nothing at all, and there was nothing wrong with the frame. The
+co-processor announces itself and then WAITS for the host to answer on
+`ESP_PRIV_IF` before it will do anything else. Espressif say so plainly --
+"getting this right is the whole game; if it does not complete, feature
+debugging is premature" -- and it is now done by the driver, unasked, the
+moment the announcement arrives.
+
+Two TLVs are deliberately NOT sent in that answer. `0x1A`, the RPC version, is
+a strict match on the far side and a mismatch calls `abort()`: the chip
+reboots. `0x23`, the RPC version ack, reads anything that is not V3 as V1 and
+would talk the link down a protocol. Neither is needed -- the chip opens its
+RPC endpoints on receiving any init event from the host.
+
+**The protobuf is not what goes on the wire.** It is wrapped:
+
+    [0x01][ep_len:2 LE]["RPCRsp"][0x02][data_len:2 LE][protobuf]
+
+No document said so. The chip did. After the handshake it sent an event nobody
+had asked for, and reading its twenty bytes -- rather than arguing about the
+encoder -- showed `01 06 00 R P C E v t 02 08 00` and eight bytes of protobuf.
+Espressif's own host carries the same shape in a comment in
+`eh_host_mcu_vserial.c`, which was worth finding afterwards and would have been
+no use before: the question was not answered anywhere the search had been
+looking. The endpoint a REQUEST goes to is called `RPCRsp`, which reads
+backwards and is not a mistake.
+
+### The encoder is forty lines
+
+ESP-Hosted's RPC is one protobuf message with a number in it:
+
+    Rpc { msg_type=1  msg_id=2  uid=3  <msg_id> = the request itself }
+
+The payload sits at the field number that IS its message id, so finding it
+needs no table, and a response is the request's id plus 256. Unknown fields
+are skipped by their wire type, which is what lets forty lines read a message
+they were never compiled against -- and `Rpc` has a hundred and forty possible
+payloads, of which this knows one.
+
+That is why the control plane did not need Espressif's host stack. Their
+porting guide expects `esp_event`, `esp_netif`, their lwIP glue and an OS port
+layer, and none of it would fit in sixty kilobytes.
+
+### Blocking reads froze the board
+
+`/dev/eh` answers `readable`, and a read of a device with nothing in it WAITS.
+`ehrpc` read blind in a loop, and a process parked for ever on an answer that
+was not coming took the console with it. It asks `myrtos_readable` first now,
+as `espflash` does of `/dev/esp` -- and that was found by bisecting rather than
+by guessing, which is why the guess about the send path never had to be made.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

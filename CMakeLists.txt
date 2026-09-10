@@ -1362,6 +1362,7 @@ target_compile_definitions(ehspi_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 myrtos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
 myrtos_add_module(ehstat modules/ehstat/ehstat.c)
+myrtos_add_module(ehrpc modules/ehrpc/ehrpc.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
     PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
@@ -1581,6 +1582,7 @@ set(MYRTOS_RESIDENT
     espflash
     ehspi
     ehstat
+    ehrpc
     neopixel
     leddesc
     i2cbus
