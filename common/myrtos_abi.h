@@ -596,6 +596,7 @@ typedef struct {
     uint32_t wall_us, worst_wall_us;
     uint32_t cpu_us, worst_cpu_us;
     uint32_t dma_timeouts;    // transfers abandoned rather than left hanging
+    uint32_t inbox_lost;      // control frames dropped for want of a slot
 } myrtos_eh_stats_t;
 
 #define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t

@@ -135,11 +135,19 @@ static volatile uint32_t stage_len;
 static volatile bool want_hello;
 static uint8_t chip_id;
 
-// The last control-plane frame in, and whether it has been read. One deep: a
-// request gets one answer, and a second arriving before the first is read is
-// something to notice rather than to buffer.
-static uint8_t *inbox;
-static volatile uint32_t inbox_len;
+// Control-plane frames in, four deep.
+//
+// It was one deep, on the reasoning that a request gets one answer. That was
+// wrong, and wrong in a way that looked like a timeout: the chip pushes EVENTS
+// on the same interface -- the radio started, a station connected -- and one
+// arriving between a response and the reader taking it overwrote the response.
+// WifiStart appeared to go unanswered for ten seconds while its reply had been
+// sitting there and been replaced by the event it caused.
+#define INBOX_SLOTS 4u
+
+static uint8_t *inbox;                          // INBOX_SLOTS frames, EH_BUF each
+static volatile uint16_t inbox_used[INBOX_SLOTS];
+static volatile uint32_t inbox_head, inbox_tail;
 static volatile uint32_t inbox_lost;
 
 static int32_t dma_tx = -1, dma_rx = -1;
@@ -322,10 +330,13 @@ static void take_frame(void)
     if (iftype < 9) stats.by_if[iftype]++;
 
     if (iftype == IF_SERIAL) {
-        if (inbox_len) inbox_lost++;          // nobody took the last one
+        uint32_t next = (inbox_head + 1u) % INBOX_SLOTS;
+        if (next == inbox_tail) { inbox_lost++; return; }   // full: keep the old
         uint16_t n = len > EH_BUF ? EH_BUF : len;
-        for (uint16_t i = 0; i < n; i++) inbox[i] = rxbuf[hdr + i];
-        inbox_len = n;
+        uint8_t *slot = inbox + inbox_head * EH_BUF;
+        for (uint16_t i = 0; i < n; i++) slot[i] = rxbuf[hdr + i];
+        inbox_used[inbox_head] = n;
+        inbox_head = next;
     }
 
     // The announcement is answered, and the answer is what opens the link.
@@ -453,7 +464,7 @@ static int32_t eh_configure(const void *config, uint32_t size)
     txbuf = (uint8_t*)K->driver_alloc(EH_BUF);
     rxbuf = (uint8_t*)K->driver_alloc(EH_BUF);
     stage = (uint8_t*)K->driver_alloc(EH_BUF);
-    inbox = (uint8_t*)K->driver_alloc(EH_BUF);
+    inbox = (uint8_t*)K->driver_alloc(EH_BUF * INBOX_SLOTS);
     if (!txbuf || !rxbuf || !stage || !inbox) {
         K->print("eh: no SRAM for the transfer buffers\n");
         return -1;
@@ -519,17 +530,20 @@ static int32_t eh_write(const uint8_t *buf, uint32_t len)
     return (int32_t)len;
 }
 
+// One frame per read, because a frame is the unit here and two of them run
+// together are not a longer frame.
 static int32_t eh_read(uint8_t *buf, uint32_t len)
 {
-    uint32_t have = inbox_len;
-    if (!have) return 0;
+    if (inbox_tail == inbox_head) return 0;
+    const uint8_t *slot = inbox + inbox_tail * EH_BUF;
+    uint32_t have = inbox_used[inbox_tail];
     uint32_t n = have > len ? len : have;
-    for (uint32_t i = 0; i < n; i++) buf[i] = inbox[i];
-    inbox_len = 0;                            // last, so a reader never sees half
+    for (uint32_t i = 0; i < n; i++) buf[i] = slot[i];
+    inbox_tail = (inbox_tail + 1u) % INBOX_SLOTS;   // last, and only here
     return (int32_t)n;
 }
 
-static int32_t eh_readable(void) { return inbox_len ? 1 : 0; }
+static int32_t eh_readable(void) { return inbox_tail != inbox_head ? 1 : 0; }
 
 static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
 {

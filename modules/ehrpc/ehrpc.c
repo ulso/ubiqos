@@ -1,6 +1,6 @@
 #include "../../common/myrtos_abi.h"
 
-MYRTOS_MEM_SIZE(8192);
+MYRTOS_MEM_SIZE(16384);
 
 // ehrpc -- ask the ESP32-C6 a question on the control plane.
 //
@@ -55,7 +55,21 @@ MYRTOS_MEM_SIZE(8192);
 #define RPC_RESP 2u
 
 #define REQ_GET_MODE  259u
+#define REQ_SET_MODE  260u
+#define REQ_WIFI_INIT 278u
+#define REQ_WIFI_START 280u
+#define REQ_WIFI_CONNECT 282u
+#define REQ_WIFI_SET_CONFIG 284u
 #define RESP_OFFSET   256u
+
+// esp_wifi_init refuses a configuration that does not carry this. The
+// co-processor starts from its own WIFI_INIT_CONFIG_DEFAULT and then
+// overwrites EVERY field with what the host sent -- including this one -- so a
+// request that leaves the fields out does not get defaults, it gets zeroes.
+#define WIFI_INIT_MAGIC 0x1f2f3f4fu
+
+#define WIFI_MODE_STA 1u
+#define WIFI_IF_STA   0u
 
 // --- PROTOBUF, THE THREE PIECES OF IT WE NEED -------------------------------
 //
@@ -74,6 +88,14 @@ static uint32_t put_varint(uint8_t *p, uint32_t v) {
 static uint32_t put_field(uint8_t *p, uint32_t field, uint32_t wire, uint32_t v) {
     uint32_t n = put_varint(p, (field << 3) | wire);
     return n + put_varint(p + n, v);
+}
+
+// A length-delimited field: the tag, the length, and the bytes.
+static uint32_t put_bytes(uint8_t *p, uint32_t field, const uint8_t *b, uint32_t len) {
+    uint32_t n = put_varint(p, (field << 3) | 2u);
+    n += put_varint(p + n, len);
+    for (uint32_t i = 0; i < len; i++) p[n + i] = b[i];
+    return n + len;
 }
 
 // The value of a varint, and how far to step past it. A malformed one runs off
@@ -196,62 +218,158 @@ static const uint8_t *unwrap(const uint8_t *in, uint32_t len, uint32_t *out_len)
     return in + p;
 }
 
-static void do_mode(int32_t dev) {
-    uint8_t body[32];
+// One request out, one response in, and the response's own "resp" field back.
+// Every one of these RPCs answers with an int32 at field 1 of its payload,
+// which is the esp_err_t the real call returned on the far side -- so a step
+// that fails says why in the chip's own numbering rather than ours.
+typedef struct { uint32_t resp, seen; } result_t;
+
+static void on_result(uint32_t field, uint32_t wire, uint32_t v,
+                      const uint8_t *b, uint32_t n, void *arg) {
+    (void)b; (void)n;
+    result_t *r = (result_t*)arg;
+    if (wire == 0 && field == 1) { r->resp = v; r->seen = 1; }
+}
+
+static const char *err_name(uint32_t e) {
+    switch (e) {
+    case 0:      return "ok";
+    case 0x3001: return "the radio is not initialised";
+    case 0x3002: return "the radio is not started";
+    case 0x3003: return "the radio is not stopped";
+    case 0x3004: return "interface error";
+    case 0x300a: return "no memory";
+    case 0x300b: return "not connected";
+    case 0x102:  return "invalid argument";
+    default:     return 0;
+    }
+}
+
+static uint32_t next_uid = 1;
+
+// Send one request and wait for its answer. Returns the chip's esp_err_t, or
+// 0xffffffff when nothing came back at all -- which is a different failure and
+// worth telling apart from one the chip reported.
+static uint32_t events_seen;
+
+static uint32_t call(int32_t dev, uint32_t msg_id,
+                     const uint8_t *body, uint32_t body_len, uint32_t ms,
+                     uint8_t *out_payload, uint32_t out_cap, uint32_t *out_len) {
+    // Anything already waiting is not the answer to a question not yet asked.
+    // Left there, a late reply to the LAST request is what the next one reads,
+    // and every answer after that is one behind -- which is exactly what
+    // happened the first time: WifiInit answered after its two seconds were
+    // up, and the next command reported the mode as "type 2, id 534".
+    uint8_t drop[512];
+    while (myrtos_readable(dev) > 0) {
+        if (myrtos_read(dev, drop, sizeof(drop)) <= 0) break;
+    }
+
+    uint8_t inner[256];
     uint32_t n = 0;
-    n += put_field(body + n, 1, 0, RPC_REQ);
-    n += put_field(body + n, 2, 0, REQ_GET_MODE);
-    n += put_field(body + n, 3, 0, 1);                 // uid, echoed back
-    n += put_field(body + n, REQ_GET_MODE, 2, 0);      // an empty request body
+    n += put_field(inner + n, 1, 0, RPC_REQ);
+    n += put_field(inner + n, 2, 0, msg_id);
+    n += put_field(inner + n, 3, 0, next_uid++);
+    n += put_bytes(inner + n, msg_id, body, body_len);
 
-    uint8_t req[64];
-    n = wrap(req, body, n);
+    uint8_t req[320];
+    uint32_t wn = wrap(req, inner, n);
 
-    if (myrtos_write(dev, req, n) < 0) {
-        say("ehrpc: the transport would not take it\r\n");
-        return;
+    if (myrtos_write(dev, req, wn) < 0) return 0xfffffffeu;
+
+    // Keep reading until the answer to THIS question arrives.
+    //
+    // The chip pushes events on the same interface -- the radio started, a
+    // station connected, a scan finished -- and they arrive whenever they
+    // happen, which is in the middle of a request as often as not. Taking one
+    // frame and judging it was enough while the link was silent, and stopped
+    // being enough the moment the radio was doing something.
+    uint8_t rsp[512];
+    for (uint32_t waited = 0; waited < ms; waited += 5) {
+        if (myrtos_readable(dev) <= 0) { myrtos_sleep(5); continue; }
+
+        int32_t got = myrtos_read(dev, rsp, sizeof(rsp));
+        if (got <= 0) continue;
+
+        uint32_t blen = 0;
+        const uint8_t *b = unwrap(rsp, (uint32_t)got, &blen);
+        if (!b) continue;
+
+        envelope_t e = { 0, 0, 0, 0, 0 };
+        walk(b, blen, on_outer, &e);
+        if (e.msg_type != RPC_RESP || e.msg_id != msg_id + RESP_OFFSET) {
+            events_seen++;                      // an event, or somebody else's
+            continue;
+        }
+
+        if (out_payload && e.payload) {
+            uint32_t n = e.payload_len > out_cap ? out_cap : e.payload_len;
+            for (uint32_t i = 0; i < n; i++) out_payload[i] = e.payload[i];
+            *out_len = n;
+        }
+
+        result_t r = { 0, 0 };
+        if (e.payload) walk(e.payload, e.payload_len, on_result, &r);
+        return r.resp;
     }
+    return 0xffffffffu;
+}
 
-    // The answer comes back on the next exchange or the one after: the
-    // co-processor has to be asked before it can answer, and asking is a
-    // transaction of its own.
-    // Asked before it is read, and never read blind. A read of a device with
-    // nothing in it WAITS -- the driver answers readable now, so the scheduler
-    // parks the caller until it does -- and waiting for an answer that is not
-    // coming is a process nobody can get back. espflash reads /dev/esp the
-    // same way and for the same reason.
-    uint8_t rsp[256];
-    int32_t got = 0;
-    for (int wait = 0; wait < 200 && got <= 0; wait++) {
-        if (myrtos_readable(dev) > 0) got = myrtos_read(dev, rsp, sizeof(rsp));
-        else myrtos_sleep(5);
-    }
-    if (got <= 0) {
-        say("ehrpc: no answer in a second\r\n");
-        return;
-    }
+static bool step(int32_t dev, const char *what, uint32_t msg_id,
+                 const uint8_t *body, uint32_t body_len, uint32_t ms) {
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, what);
+    myrtos_line_str(&l, " ... ");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
 
-    uint32_t blen = 0;
-    const uint8_t *b = unwrap(rsp, (uint32_t)got, &blen);
-    if (!b) { say("ehrpc: that was not a control-plane message\r\n"); return; }
+    uint32_t r = call(dev, msg_id, body, body_len, ms, 0, 0, 0);
 
-    envelope_t e = { 0, 0, 0, 0, 0 };
-    walk(b, blen, on_outer, &e);
-
-    if (e.msg_type != RPC_RESP || e.msg_id != REQ_GET_MODE + RESP_OFFSET) {
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "ehrpc: that was not the answer -- type ");
-        myrtos_line_u32(&l, e.msg_type);
-        myrtos_line_str(&l, ", id ");
-        myrtos_line_u32(&l, e.msg_id);
+    myrtos_line_reset(&l);
+    if (r == 0xffffffffu) {
+        myrtos_line_str(&l, "no answer\r\n");
+    } else if (r == 0xfffffffeu) {
+        myrtos_line_str(&l, "the transport would not take it\r\n");
+    } else {
+        const char *name = err_name(r);
+        if (name) myrtos_line_str(&l, name);
+        else { myrtos_line_str(&l, "error "); myrtos_line_u32(&l, r); }
         myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
-        return;
     }
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    return r == 0;
+}
+
+// esp_wifi_init's configuration, every field of it, because the far side
+// overwrites its own defaults with all of them.
+static uint32_t build_init_cfg(uint8_t *p) {
+    uint8_t c[128];
+    uint32_t n = 0;
+    n += put_field(c + n,  1, 0, 20);    // static rx buffers
+    n += put_field(c + n,  2, 0, 64);    // dynamic rx
+    n += put_field(c + n,  3, 0, 1);     // tx buffers are dynamic
+    n += put_field(c + n,  5, 0, 64);    // dynamic tx
+    n += put_field(c + n,  8, 0, 1);     // AMPDU rx
+    n += put_field(c + n,  9, 0, 1);     // AMPDU tx
+    n += put_field(c + n, 11, 0, 1);     // NVS, so the radio can keep calibration
+    n += put_field(c + n, 13, 0, 32);    // block-ack window
+    n += put_field(c + n, 15, 0, 752);   // beacon length
+    n += put_field(c + n, 16, 0, 32);    // management buffers
+    n += put_field(c + n, 19, 0, 7);     // espnow peers
+    n += put_field(c + n, 20, 0, WIFI_INIT_MAGIC);
+    return put_bytes(p, 1, c, n);        // the whole thing as field 1
+}
+
+static void do_mode(int32_t dev) {
+    uint8_t payload[64];
+    uint32_t plen = 0;
+    uint32_t resp = call(dev, REQ_GET_MODE, 0, 0, 3000, payload, sizeof(payload), &plen);
+
+    if (resp == 0xffffffffu) { say("ehrpc: no answer\r\n"); return; }
+    if (resp == 0xfffffffeu) { say("ehrpc: the transport would not take it\r\n"); return; }
 
     mode_t_ m = { 0, 0, 0 };
-    if (e.payload) walk(e.payload, e.payload_len, on_mode, &m);
+    walk(payload, plen, on_mode, &m);
 
     myrtos_line_t l;
     myrtos_line_reset(&l);
@@ -261,14 +379,15 @@ static void do_mode(int32_t dev) {
     myrtos_line_str(&l, m.mode == 0 ? "off" : m.mode == 1 ? "station"
                       : m.mode == 2 ? "access point" : m.mode == 3 ? "both"
                       : "something else");
+    // m.resp, not the value call() returned. call() reads field 1 as the
+    // result because that is where every ACTION puts it -- WifiInit, SetMode,
+    // Start, Connect all answer int32 resp = 1 -- but a getter puts the value
+    // it was asked for there and its result at field 2. Printing call()'s
+    // answer here said "the chip answered 1" when 1 was the mode.
     myrtos_line_str(&l, "),  the chip answered ");
     myrtos_line_u32(&l, m.resp);
-    // 0x3000 is where the WiFi driver's errors start, and 0x3001 is the first
-    // of them. Worth naming: it is the answer a radio gives when nothing has
-    // called WifiInit yet, which means the round trip worked perfectly and the
-    // question was simply early.
-    if (m.resp == 0x3001u) myrtos_line_str(&l, " -- the radio is not initialised");
-    else if (m.resp == 0)  myrtos_line_str(&l, " -- no error");
+    const char *name = err_name(m.resp);
+    if (name) { myrtos_line_str(&l, " -- "); myrtos_line_str(&l, name); }
     myrtos_line_str(&l, "\r\n");
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 }
@@ -317,21 +436,116 @@ static void do_peek(int32_t dev) {
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 }
 
+// Bring the radio up and join a network.
+//
+// THE PASSWORD IS TYPED HERE AND NOWHERE ELSE. Not an argument -- argv lives in
+// this process's memory and the shell keeps sixteen lines of history -- not
+// echoed, and wiped before this returns. It is the same rule `wifi connect` has
+// always had, and it survives the change of radio.
+//
+// What does NOT work yet is taking it from /sd/config.txt. The kernel holds
+// those bytes and will not hand them to a process, which is the whole point of
+// how that file is treated: the NINA path got round it by having the kernel do
+// the joining. The same will have to happen here -- the message built where the
+// password already is -- and that is a change to the driver rather than to this.
+// Everything that needs no secret: the radio initialised, put in station mode
+// and started. Separate because it is the half that can be tested from a
+// serial session, and because a scan will want exactly this and no password.
+static bool do_up(int32_t dev) {
+    uint8_t body[320];
+    uint32_t n;
+
+    // Ten seconds, not two. esp_wifi_init calibrates the radio and reads
+    // NVS, and the first attempt reported "no answer" to a call that had
+    // simply not finished.
+    if (!step(dev, "starting the radio", REQ_WIFI_INIT, body, build_init_cfg(body), 10000))
+        return false;
+
+    n = 0;
+    n += put_field(body + n, 1, 0, WIFI_MODE_STA);
+    if (!step(dev, "station mode      ", REQ_SET_MODE, body, n, 3000)) return false;
+
+    if (!step(dev, "start             ", REQ_WIFI_START, body, 0, 10000)) return false;
+    return true;
+}
+
+static void do_connect(int32_t dev, const char *ssid) {
+    uint8_t body[320];
+    uint32_t n;
+
+    if (!do_up(dev)) return;
+
+    // The name and the secret, in one buffer that is wiped before this returns.
+    char pass[68];
+    uint32_t plen = 0;
+    myrtos_write_str(MYRTOS_STDOUT, "password: ");
+    for (;;) {
+        uint8_t ch;
+        if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;
+        if (ch == '\r' || ch == '\n') break;
+        if (ch == 3) { plen = 0; break; }                 // ctrl-C: forget it
+        if (ch == 8 || ch == 127) { if (plen) plen--; continue; }
+        // Not echoed, and not drawn. What is typed here should not survive on
+        // the screen, in a scrollback, or in anybody's terminal capture.
+        if (ch >= ' ' && plen < sizeof(pass) - 1) pass[plen++] = (char)ch;
+    }
+    pass[plen] = 0;
+    myrtos_write_str(MYRTOS_STDOUT, "\r\n");
+    if (!plen) { say("nothing typed\r\n"); return; }
+
+    // wifi_config is a choice of two, and the station half is field 2 of it.
+    uint8_t sta[160];
+    uint32_t sn = 0;
+    uint32_t slen = 0;
+    while (ssid[slen] && slen < 32) slen++;
+    sn += put_bytes(sta + sn, 1, (const uint8_t*)ssid, slen);
+    sn += put_bytes(sta + sn, 2, (const uint8_t*)pass, plen);
+
+    uint8_t cfg[200];
+    uint32_t cn = put_bytes(cfg, 2, sta, sn);
+
+    n = 0;
+    n += put_field(body + n, 1, 0, WIFI_IF_STA);
+    n += put_bytes(body + n, 2, cfg, cn);
+    bool ok = step(dev, "the network       ", REQ_WIFI_SET_CONFIG, body, n, 5000);
+
+    // Gone from memory before this process is, rather than left lying in the
+    // block until something else is given it.
+    for (uint32_t i = 0; i < sizeof(pass); i++) pass[i] = 0;
+    for (uint32_t i = 0; i < sizeof(sta); i++) sta[i] = 0;
+    for (uint32_t i = 0; i < sizeof(cfg); i++) cfg[i] = 0;
+    for (uint32_t i = 0; i < sizeof(body); i++) body[i] = 0;
+    if (!ok) return;
+
+    if (!step(dev, "connect           ", REQ_WIFI_CONNECT, body, 0, 10000)) return;
+
+    say("\r\nThe radio has been told to join. Whether it did is an event, and\r\n"
+        "nothing reads events yet -- 'ehrpc peek' is the nearest thing.\r\n");
+}
+
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: ehrpc mode | peek\n\nAsks the ESP32-C6 a question on ESP-Hosted's "
             "control plane.\n\n  mode    which WiFi mode the radio is in\n"
-            "  peek    whatever the chip has said that nobody has taken\n")) return;
+            "  peek    whatever the chip has said that nobody has taken\n"
+            "  up      initialise the radio, station mode, start it\n"
+            "  connect <ssid>  the same and then join. The password is\n"
+            "                  typed here, never echoed and never an argument\n")) return;
 
     bool mode = argc == 2 && is(argv[1], "mode");
     bool peek = argc == 2 && is(argv[1], "peek");
-    if (!mode && !peek) {
-        say("usage: ehrpc mode | peek\r\n");
+    bool conn = argc == 3 && is(argv[1], "connect");
+    bool up   = argc == 2 && is(argv[1], "up");
+    if (!mode && !peek && !conn && !up) {
+        say("usage: ehrpc mode | peek | up | connect <ssid>\r\n");
         return;
     }
 
     int32_t dev = myrtos_open("/dev/eh");
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
-    if (mode) do_mode(dev); else do_peek(dev);
+    if (mode)      do_mode(dev);
+    else if (peek) do_peek(dev);
+    else if (up)   do_up(dev);
+    else           do_connect(dev, argv[2]);
     myrtos_close(dev);
 }

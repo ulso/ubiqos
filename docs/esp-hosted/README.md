@@ -397,6 +397,55 @@ was not coming took the console with it. It asks `myrtos_readable` first now,
 as `espflash` does of `/dev/esp` -- and that was found by bisecting rather than
 by guessing, which is why the guess about the send path never had to be made.
 
+## The radio comes up
+
+    myrtos:/> ehrpc up
+    starting the radio ... ok
+    station mode       ... ok
+    start              ... ok
+    myrtos:/> ehrpc mode
+    mode 1  (station),  the chip answered 0 -- ok
+
+`WifiInit`, `SetMode` and `WifiStart`, each an `esp_wifi_*` call running on the
+co-processor, and the mode read back afterwards to prove it stuck. `ehrpc
+connect <ssid>` adds `WifiSetConfig` and `WifiConnect` on top; the password is
+typed there, never echoed, never an argument, and wiped before the process
+ends -- the same rule `wifi connect` has always had, unchanged by the change of
+radio.
+
+Four things went wrong on the way, and each one looked like something else.
+
+**`esp_wifi_init` takes longer than two seconds.** It reported "no answer", and
+the next command then read the LATE reply and reported the mode as "type 2, id
+534" -- which is 278 + 256, WifiInit's own response, arriving a command too
+late. Each step now says how long it may honestly take, and every call drains
+whatever is waiting before it asks, because a stale answer is worse than none.
+
+**Events interleave with responses.** The chip pushes them on the same
+interface whenever they happen, which is in the middle of a request as often as
+not. Reading one frame and judging it was enough while the link was silent and
+stopped being enough the moment the radio was doing something. A call now reads
+until the answer to ITS question arrives.
+
+**The inbox was one frame deep**, on the reasoning that a request gets one
+answer. `WifiStart` appeared to go unanswered for ten seconds while its reply
+had been sitting there and been overwritten by the very event it caused. It is
+four deep now, and what it drops is counted.
+
+**A getter's result is not at field 1.** Every action -- `WifiInit`, `SetMode`,
+`WifiStart`, `WifiConnect` -- answers `int32 resp = 1`, so that is where the
+generic call looks. A getter puts the value it was asked for there and its
+result at field 2, and printing the generic answer said "the chip answered 1"
+when 1 was the mode.
+
+### What the config file cannot do yet
+
+`/sd/config.txt` holds an SSID and a password, and the kernel will not hand
+those bytes to a process -- which is the whole point of how that file is
+treated. The NINA path got round it by having the KERNEL do the joining, and
+the same has to happen here: the RPC built where the password already is, in
+the driver, rather than in `ehrpc`. Until then `ehrpc connect` asks.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design
