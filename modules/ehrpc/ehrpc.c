@@ -55,6 +55,7 @@ MYRTOS_MEM_SIZE(16384);
 #define RPC_RESP 2u
 
 #define REQ_GET_MAC   257u
+#define REQ_SET_PS    270u
 #define REQ_GET_MODE  259u
 #define REQ_SET_MODE  260u
 #define REQ_WIFI_INIT 278u
@@ -523,6 +524,23 @@ static bool do_up(int32_t dev) {
 
     if (!step(dev, "start             ", REQ_WIFI_START, body, 0, 10000)) return false;
 
+    // Power save OFF, and this is the difference between a link that works and
+    // one that works but feels broken.
+    //
+    // esp_wifi_init leaves the station in WIFI_PS_MIN_MODEM -- ESP-IDF's own
+    // header says so -- which means the radio sleeps between DTIM beacons and
+    // a packet for us waits for the next one. Measured on this board before
+    // the change: a ping took 189 to 272 ms, averaging 232, and fell to an
+    // average of 170 when pinged ten times a second. That shape -- hundreds of
+    // milliseconds, and better under load -- is beacon intervals and nothing
+    // else. It looks like a slow bus and it is a sleeping radio.
+    //
+    // The cost is power, which a board on a mains adapter with a display and
+    // USB host does not notice.
+    n = 0;
+    n += put_field(body + n, 1, 0, 0);              // WIFI_PS_NONE
+    if (!step(dev, "power save off    ", REQ_SET_PS, body, n, 5000)) return false;
+
     myrtos_write_str(MYRTOS_STDOUT, "its address        ... ");
     if (!fetch_mac(dev)) return false;
     return true;
@@ -588,6 +606,7 @@ void module_main(int argc, char **argv) {
             "control plane.\n\n  mode    which WiFi mode the radio is in\n"
             "  peek    whatever the chip has said that nobody has taken\n"
             "  up      initialise the radio, station mode, start it\n"
+            "  mac     just fetch its address, if the radio is already up\n"
             "  connect <ssid>  the same and then join. The password is\n"
             "                  typed here, never echoed and never an argument\n")) return;
 
@@ -595,8 +614,19 @@ void module_main(int argc, char **argv) {
     bool peek = argc == 2 && is(argv[1], "peek");
     bool conn = argc == 3 && is(argv[1], "connect");
     bool up   = argc == 2 && is(argv[1], "up");
-    if (!mode && !peek && !conn && !up) {
-        say("usage: ehrpc mode | peek | up | connect <ssid>\r\n");
+    // Fetches the address and nothing else.
+    //
+    // It was written to save retyping a password after a reboot, on the
+    // reasoning that nothing here touches the chip's EN pin so its association
+    // should outlive a myrtos reset. It does not, and that was worth finding
+    // out: the co-processor watches the host and tears the radio down when it
+    // restarts. After a reboot it re-announces itself and answers "the radio
+    // is not initialised" -- so a full connect is needed every time, and this
+    // is only good for re-reading an address inside a session where the radio
+    // is still up.
+    bool mac  = argc == 2 && is(argv[1], "mac");
+    if (!mode && !peek && !conn && !up && !mac) {
+        say("usage: ehrpc mode | peek | up | mac | connect <ssid>\r\n");
         return;
     }
 
@@ -604,6 +634,7 @@ void module_main(int argc, char **argv) {
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
     if (mode)      do_mode(dev);
     else if (peek) do_peek(dev);
+    else if (mac)  fetch_mac(dev);
     else if (up)   do_up(dev);
     else           do_connect(dev, argv[2]);
     myrtos_close(dev);

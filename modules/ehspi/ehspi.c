@@ -169,6 +169,7 @@ static volatile uint32_t netbox_lost;
 static uint8_t *netstage;
 static volatile uint32_t netstage_len;
 static volatile bool nettx_pending;
+static volatile uint32_t nettx_queued_us;
 
 // The station's own address, which this driver does not ask for and only
 // keeps: it takes a control-plane RPC to fetch, and that lives in ehrpc.
@@ -433,7 +434,14 @@ static void eh_thread(void)
             if (!transact_finish()) continue;
             if (want_hello)         { stats.sent++; want_hello = false; build_dummy(); }
             else if (tx_pending)    { stats.sent++; tx_pending = false; build_dummy(); }
-            else if (nettx_pending) { stats.sent++; nettx_pending = false; build_dummy(); }
+            else if (nettx_pending) {
+                stats.sent++;
+                uint32_t waited = (uint32_t)K->time_us() - nettx_queued_us;
+                stats.txwait_us = waited;
+                if (waited > stats.worst_txwait_us) stats.worst_txwait_us = waited;
+                nettx_pending = false;
+                build_dummy();
+            }
             take_frame();
             continue;
         }
@@ -441,7 +449,11 @@ static void eh_thread(void)
         // The co-processor decides when. Clocking a slave that has not armed
         // itself reads nothing and, worse, leaves it out of step with the host
         // for every transaction after.
-        if (!K->gpio_get(pin_hs)) continue;
+        if (!K->gpio_get(pin_hs)) {
+            if (nettx_pending || tx_pending || want_hello) stats.turns_blocked++;
+            continue;
+        }
+        if (nettx_pending || tx_pending || want_hello) stats.turns_ready++;
         if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello && !nettx_pending) continue;
 
         // What goes out with it, and the handshake goes first: nothing the
@@ -642,6 +654,7 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         put16(netstage + 6, frame_checksum(netstage, (uint16_t)(HDR_V1 + len), 6));
 
         netstage_len = HDR_V1 + len;
+        nettx_queued_us = (uint32_t)K->time_us();
         nettx_pending = true;
         return (int32_t)len;
     }

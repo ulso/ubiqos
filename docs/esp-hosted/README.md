@@ -494,6 +494,49 @@ working.
     ...
     wifi: interface up, asking DHCP for an address
 
+## It answers ping over the air
+
+    64 bytes from 192.168.68.54: icmp_seq=0 ttl=255 time=68.090 ms
+    6 packets transmitted, 6 packets received, 0.0% packet loss
+
+DHCP took an address from the house router and the board answers on it, over
+esp-hosted, into myrtos's own lwIP. The rebuild is usable.
+
+### Power save was most of the latency, and not all of it
+
+The first measurement was 189 to 272 ms, averaging 232, and it got BETTER when
+pinged ten times a second. Hundreds of milliseconds, improving under load, is
+beacon intervals -- and ESP-IDF's own header says why: "Default power save type
+is WIFI_PS_MIN_MODEM". `esp_wifi_init` leaves the station asleep between DTIM
+beacons and a packet for us waits for the next one. It looks like a slow bus
+and it is a sleeping radio.
+
+`SetPs(WIFI_PS_NONE)` in `ehrpc up`, and the idle case went **232 ms to 74**,
+min 68, with the variance gone. Confirmed rather than argued.
+
+But 68 ms is still a floor, and under load it is worse -- three runs at ten
+pings a second gave averages of 233, 151 and 158 against 74 at idle. A
+transport whose exchange is two ticks should not produce either number. So the
+driver now counts what an outbound frame waits for: microseconds from being
+handed over to going out, and how many turns found the handshake low while
+something was queued. That is the direct question -- is the wire slow, or is
+nobody offering us a turn -- and it is not going to be guessed at a third time.
+
+### A host reset takes the radio with it
+
+`ehrpc mac` was written to save retyping a password after a reboot: nothing in
+myrtos touches the chip's EN pin, so its association ought to outlive a host
+reset. **It does not.** The co-processor watches the host, tears the radio down
+when it restarts, and re-announces itself; after a myrtos reboot it answers
+"the radio is not initialised".
+
+Which makes the `/sd/config.txt` path matter far more than it looked. It is not
+a convenience: it is the difference between a board that joins its network on
+boot and one that needs somebody at the keyboard every single time it restarts.
+And it cannot be done from a process, because the kernel will not hand a
+password to one -- so the join has to move into the driver, where the password
+already is.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

@@ -598,6 +598,13 @@ typedef struct {
     uint32_t dma_timeouts;    // transfers abandoned rather than left hanging
     uint32_t inbox_lost;      // control frames dropped for want of a slot
     uint32_t netbox_lost;     // network frames dropped the same way
+    // How long an outbound network frame waits between being handed to the
+    // driver and actually going out. The host may only clock a transaction
+    // when the co-processor says it is ready, so this is the answer to "is
+    // the wire slow, or is nobody offering us a turn".
+    uint32_t txwait_us, worst_txwait_us;
+    uint32_t turns_ready, turns_blocked;   // handshake high vs low when we had
+                                           // something waiting to go
 } myrtos_eh_stats_t;
 
 #define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t
