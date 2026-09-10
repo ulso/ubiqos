@@ -258,17 +258,15 @@ static bool line_is(const char *line, const char *word) {
     return *line == 0;
 }
 
-static bool line_starts(const char *line, const char *word) {
-    while (*word) { if (*line != *word) return false; line++; word++; }
-    return true;
-}
+// What start_one returns for a built in: it has already run, in this process,
+// so there is no pid to wait for and nothing failed. Every caller that reads a
+// negative return has to know this one, which is why it is not just -4.
+#define SH_BUILTIN (-4)
 
 // cd is built in and has to be. A module changing its own current directory
 // changes nothing for the shell that started it -- the child gets a copy at
 // exec and takes it to the grave.
-static void change_dir(int32_t c, const char *line) {
-    const char *arg = line;
-    while (*arg && *arg != ' ') arg++;
+static void change_dir(int32_t c, const char *arg) {
     while (*arg == ' ') arg++;
     if (!*arg) arg = "/";
 
@@ -423,10 +421,28 @@ static int32_t start_one(char *cmd) {
         opened++;
     }
 
+    // The built ins belong here rather than in the reader loop, because here
+    // they are behind the same redirections as everything else. Dispatching
+    // them on the whole line meant `help | more` never reached this function
+    // at all: the pipe split the line first, and `help` was then looked for
+    // among the modules and not found. They write to MYRTOS_STDOUT, which is
+    // the pipe's file, or the > file, whenever one of those is in place.
+    //
     // -3 rather than -1: the redirection said what was wrong, and the caller
     // adding "no such module" to it sends the reader looking for the wrong
     // thing entirely.
-    int32_t pid = opened == nrd ? myrtos_exec(cmd, args) : -3;
+    int32_t pid;
+    if (opened != nrd) {
+        pid = -3;
+    } else if (line_is(cmd, "help")) {
+        help(MYRTOS_STDOUT);
+        pid = SH_BUILTIN;
+    } else if (line_is(cmd, "cd")) {
+        change_dir(MYRTOS_STDOUT, args);
+        pid = SH_BUILTIN;
+    } else {
+        pid = myrtos_exec(cmd, args);
+    }
 
     // Back to the terminal. The child took its copy when it was made, so this
     // cannot reach it.
@@ -484,13 +500,15 @@ static int32_t run_pipeline(char *left, char *right) {
     int32_t p1 = run_between(left, MYRTOS_STDOUT, between,
                              MYRTOS_O_WRONLY | MYRTOS_O_CREAT | MYRTOS_O_TRUNC);
     if (p1 == -3) return -3;
-    if (p1 < 0) { myrtos_fs_remove(between); failed_name = left; return p1; }
+    if (p1 < 0 && p1 != SH_BUILTIN) {
+        myrtos_fs_remove(between); failed_name = left; return p1;
+    }
 
     int32_t p2 = run_between(right, MYRTOS_STDIN, between, MYRTOS_O_RDONLY);
     myrtos_fs_remove(between);
     // The half that failed is the half to name. start_one has NUL-terminated
     // each of these at its first space, so both are bare command names by now.
-    if (p2 < 0) failed_name = right;
+    if (p2 < 0 && p2 != SH_BUILTIN) failed_name = right;
     return p2;
 }
 
@@ -798,29 +816,23 @@ void module_main(int argc, char **argv) {
             bool ran = e->len != 0;
             if (ran) {
                 remember(e);
-                if (line_is(e->line, "help")) {
-                    help(e->out);
-                } else if (line_is(e->line, "cd") || line_starts(e->line, "cd ")) {
-                    change_dir(e->out, e->line);
-                } else {
-                    int32_t r = exec_line(e->line);
-                    if (r < 0 && r != -3) {
-                        myrtos_line_t l;
-                        myrtos_line_reset(&l);
-                        // -2 means the module is there but is not re-entrant and
-                        // is already running. Saying "no such module" for that
-                        // sends the reader looking for the wrong problem.
-                        myrtos_line_str(&l, r == -2 ? "already running: "
-                                                    : "no such module: ");
-                        // The command that failed, which for a pipeline is not
-                        // the head of the line. This read e->line, and start_one
-                        // NUL-terminates the LEFT half at its first space -- so
-                        // `echo x | nosuch` reported "no such module: echo",
-                        // naming the command that had just run successfully.
-                        myrtos_line_str(&l, failed_name);
-                        myrtos_line_str(&l, "\r\n");
-                        myrtos_line_flush(e->out, &l);
-                    }
+                int32_t r = exec_line(e->line);
+                if (r < 0 && r != -3 && r != SH_BUILTIN) {
+                    myrtos_line_t l;
+                    myrtos_line_reset(&l);
+                    // -2 means the module is there but is not re-entrant and
+                    // is already running. Saying "no such module" for that
+                    // sends the reader looking for the wrong problem.
+                    myrtos_line_str(&l, r == -2 ? "already running: "
+                                                : "no such module: ");
+                    // The command that failed, which for a pipeline is not
+                    // the head of the line. This read e->line, and start_one
+                    // NUL-terminates the LEFT half at its first space -- so
+                    // `echo x | nosuch` reported "no such module: echo",
+                    // naming the command that had just run successfully.
+                    myrtos_line_str(&l, failed_name);
+                    myrtos_line_str(&l, "\r\n");
+                    myrtos_line_flush(e->out, &l);
                 }
             }
             e->len = e->pos = e->browse = 0;
