@@ -1351,6 +1351,17 @@ target_compile_definitions(esplink_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 myrtos_add_data_module(espdesc modules/esplink/esp_desc.c)
 myrtos_add_module(espflash modules/espflash/espflash.c)
+
+# ESP-Hosted's SPI transport. The four pins WiFiNINA used, plus the two the
+# co-processor drives to say when it may be clocked and whether it has
+# anything to say.
+myrtos_add_module(ehspi modules/ehspi/ehspi.c DRIVER)
+target_include_directories(ehspi_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(ehspi_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+myrtos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
+myrtos_add_module(ehstat modules/ehstat/ehstat.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
     PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
@@ -1533,7 +1544,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/acmdesc.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/espdesc.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/espdesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/ehdesc.mod)
 
 # What lives in flash rather than on the card.
 #
@@ -1567,6 +1579,8 @@ set(MYRTOS_RESIDENT
     uart
     esplink
     espflash
+    ehspi
+    ehstat
     neopixel
     leddesc
     i2cbus
@@ -1600,6 +1614,7 @@ set(MYRTOS_RESIDENT
     condesc
     acmdesc
     espdesc
+    ehdesc
 
     sh
     ls

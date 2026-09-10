@@ -200,6 +200,79 @@ the handler writes the head, the reader writes the tail, and each reads the
 other's word. `MYRTOS_SS_ESP_STATS` reports what was dropped, so a log with
 holes says so rather than looking merely short.
 
+## The transport is up
+
+`ehstat`, 10 September 2026:
+
+    transactions   2
+    frames in      1
+    dummies in     1
+    bad checksum   0
+    bad header     0
+
+    the co-processor announced itself
+      chip                   0x0d          ESP32-C6
+      capabilities           0xa0          WLAN over SPI, checksum on
+      its receive queue      0x0a
+      its send queue         0x0a
+      firmware               3.0.7
+      extended capabilities  0x00000010    WLAN supported
+      RPC version            0x02
+
+Which is the whole of Espressif's bring-up step 1: the transport comes up and
+the host receives the co-processor's init event. Every term of the link is
+what the firmware we built said it would be.
+
+### Why it has a thread
+
+Every exchange is a FIXED 1600 bytes whatever the payload, because the
+co-processor arms its slave for that much and a shorter clocking leaves it
+half fed. At 8 MHz that is 1.6 milliseconds, and a driver's read and write run
+in the trap handler with interrupts off. So the transaction lives in a kernel
+thread of the driver's own -- the shape modules/wifilib already uses -- and
+the device's read and write only move bytes to and from rings.
+
+### Two ways to freeze the board, in one afternoon
+
+The thread is at priority 21, above the shell at 16, and it wedged the machine
+twice. Both times the answer was already written in modules/wifilib, which I
+had read that morning for the pin numbers.
+
+The first time the sleep was at the bottom of the loop and a `continue`
+skipped it, so a burst could be taken as a burst. With handshake and data
+ready both high that is back-to-back 1.6 ms transactions and the shell never
+runs again.
+
+The second time the sleep was unconditional and it still wedged, because
+`K->sleep_ms` is the SDK's and BUSY-WAITS. A kernel thread that spins never
+reaches the scheduler; it is only preempted where it makes a system call.
+`wifilib.c:98`: *"seconds of spinning is exactly what froze the machine when
+sleep_ms was used instead of myrtos_sleep"*.
+
+Both times the way back was the BOOTSEL button. Both times lwIP over USB kept
+answering ping, because the USB task sits above 21 -- which is worth knowing:
+a board that pings is not a board that is alive.
+
+### The dummy comes before the header check
+
+The first run counted `bad header 1` and `dummies 0`. A dummy frame says only
+"nothing this time" -- interface type `ESP_MAX_IF`, length zero -- and nothing
+promises its offset field says twelve. Checking the offset first counted every
+dummy as a broken header, and the first exchange of the link was reported as a
+fault. Recognising the dummy first turned it into `dummies 1, bad header 0` --
+which is how it was confirmed rather than argued. The driver now also keeps the
+first twelve bytes it could not read, so the next one is a fact and not a
+guess.
+
+### What is deliberately slow
+
+One transaction per tick. That is 1600 bytes a millisecond, 1.6 megabytes a
+second, and far more than this link will carry -- but it is a poll, not an
+interrupt on handshake, and the interrupt is the next improvement. 8 MHz is
+what the NINA driver ran these same pins at for months; the co-processor takes
+whatever the host gives it (`Freq:ConfigAtHost`) so that number is ours to
+raise.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

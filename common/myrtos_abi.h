@@ -555,6 +555,37 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t config_size;     // size of the tail, zero if none
 } myrtos_descriptor_t;
 
+// The tail for the ESP-Hosted SPI transport. Six pins: four of them are the
+// SPI the WiFiNINA driver used, and the two after them are what ESP-Hosted
+// needs on top -- the co-processor says "you may clock me" on one and "and I
+// have something to say" on the other.
+typedef struct __attribute__((packed, aligned(4))) {
+    uint32_t sck_pin, mosi_pin, miso_pin, cs_pin;
+    uint32_t handshake_pin;   // GP3  <- the C6's IO18
+    uint32_t data_ready_pin;  // GP23 <- the C6's IO9, which is also its strap
+    uint32_t baud_rate;
+} myrtos_ehspi_config_t;
+
+// What the transport counts, for ehstat to print.
+typedef struct {
+    uint32_t transactions;    // 1600-byte exchanges clocked
+    uint32_t frames;          // frames received with a length
+    uint32_t dummies;         // the co-processor had nothing to say
+    uint32_t bad_checksum;
+    uint32_t bad_header;
+    uint32_t sent;
+    uint32_t by_if[9];        // one per interface type, ESP_MAX_IF included
+    uint32_t last_priv_len;   // the init event is a private frame
+    uint8_t  last_priv[64];
+    // The first header this could make no sense of, kept whole. A counter says
+    // something went wrong; twelve bytes say what, and the difference is
+    // between a fix and a guess about one.
+    uint32_t bad_seen;
+    uint8_t  first_bad[12];
+} myrtos_eh_stats_t;
+
+#define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t
+
 // The tail for the ESP32-C6 link. The UART part is the same shape as the one
 // below, and the two pins after it are the ones the chip's ROM cares about at
 // reset. Read out of the board's schematic -- see docs/esp-hosted.
