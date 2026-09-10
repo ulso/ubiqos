@@ -582,6 +582,10 @@ typedef struct {
     // between a fix and a guess about one.
     uint32_t bad_seen;
     uint8_t  first_bad[12];
+    // What a 1600-byte exchange actually costs, rather than what the clock
+    // rate says it should. This is CPU held at priority 21, above the shell,
+    // so it is the number that decides whether this transport needs DMA.
+    uint32_t last_us, worst_us;
 } myrtos_eh_stats_t;
 
 #define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t

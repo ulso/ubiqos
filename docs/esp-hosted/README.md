@@ -264,14 +264,46 @@ which is how it was confirmed rather than argued. The driver now also keeps the
 first twelve bytes it could not read, so the next one is a fact and not a
 guess.
 
-### What is deliberately slow
+### An interrupt on handshake would buy nothing
 
-One transaction per tick. That is 1600 bytes a millisecond, 1.6 megabytes a
-second, and far more than this link will carry -- but it is a poll, not an
-interrupt on handshake, and the interrupt is the next improvement. 8 MHz is
-what the NINA driver ran these same pins at for months; the co-processor takes
-whatever the host gives it (`Freq:ConfigAtHost`) so that number is ours to
-raise.
+That was written here as "the next improvement", and it was wrong about this
+kernel. There is no way to wake a thread from an interrupt in myrtos, and that
+is a design decision rather than a gap. `myrtos_wake_readers`
+(kernel/scheduler.c:932) runs from the TIMER TICK and polls every blocked
+process's device:
+
+> Called from the timer tick. A device driver knows whether it has anything
+> waiting; asking it once per millisecond costs the kernel a few comparisons
+> and costs the blocked process nothing at all.
+
+modules/gpio says the same from the other side (gpio.c:31): its handler "may
+not wake anybody -- see the rule beside irq_install -- and it does not need
+to: the scheduler already polls readable". The tick is the wake mechanism for
+everything in this system, so an edge interrupt on handshake could set a flag
+a millisecond earlier and the thread would still not run until the tick. And
+handshake is held high until the host services it, so no edge is ever missed
+by sampling the level.
+
+### What actually costs something
+
+A 1600-byte exchange, measured on the board:
+
+| clock | typical | worst |
+| ----- | ------- | ----- |
+| 8 MHz | 1720 us | 2070 us |
+| 32 MHz | 534 us | 912 us |
+
+with the announcement decoding and no checksum errors at either. The clock is
+now 32 MHz. Espressif allow up to 40 for this chip and take their own
+reference numbers there.
+
+But 534 us is still CPU **held at priority 21, above the shell**, because the
+SDK's `spi_write_read` polls a byte at a time. At any real frame rate that is
+what will make the machine feel broken -- as it already did twice today for a
+cruder reason. The transport wants DMA: `K->dma_claim_channel` is in the
+kernel API, the thread would start a transfer and sleep, and the tick that
+wakes it is the same tick it already waits for. That is the next improvement,
+and this time the number says so.
 
 ## Why not UART
 

@@ -107,10 +107,15 @@ static void build_dummy(void)
 
 static void transact(void)
 {
+    uint32_t t0 = (uint32_t)K->time_us();
     K->gpio_put(pin_cs, 0);
     K->spi_write_read(K->spi, txbuf, rxbuf, EH_BUF);
     K->gpio_put(pin_cs, 1);
+    uint32_t took = (uint32_t)K->time_us() - t0;
+
     stats.transactions++;
+    stats.last_us = took;
+    if (took > stats.worst_us) stats.worst_us = took;
 }
 
 static void take_frame(void)

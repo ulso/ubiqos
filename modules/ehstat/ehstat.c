@@ -144,6 +144,8 @@ void module_main(int argc, char **argv) {
     num("frames out     ", s.sent);
     num("bad checksum   ", s.bad_checksum);
     num("bad header     ", s.bad_header);
+    num("last us        ", s.last_us);
+    num("worst us       ", s.worst_us);
 
     say("\r\nby interface\r\n");
     for (int i = 0; i < 9; i++) {
