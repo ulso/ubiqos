@@ -106,6 +106,31 @@ So the control path has to be written here, against the wire format rather than
 against their API. There is an `eh_tlv` serializer beside the protobuf one which
 looks like the cheaper way in; that is the next thing to read.
 
+## The route is proved
+
+`espflash sync`, 10 September 2026, on the board:
+
+    --- what the ROM says ---------------------------------------
+    ESP-ROM:esp32c6-20220919
+    Build
+    -------------------------------------------------------------
+
+    SYNC..
+    synchronised: 12 bytes back, 01 08 04 00 07 07 12 20 00 00 00 00
+
+    The ROM loader is listening. The wire, the strap and the reset all work.
+
+The frame reads back as the protocol says it should: `01` a response, `08`
+SYNC, size `0004`, value `20120707`, and four zero status bytes. Afterwards
+`wifi` answered "ESP32-C6 firmware 3.3.0" again -- the strap is only read as
+the chip leaves reset, so a reset puts NINA back and nothing was written.
+
+The first run of this printed 32 bytes of `W (318) spi_flash: Detected size`
+under "what the ROM says". That is NINA's own log in ESP-IDF's format, which a
+ROM never prints, and it was exactly 32 bytes because that is the depth of the
+RX FIFO -- stale, from before the reset. `espflash` drains the FIFO first now.
+A proof that prints leftovers as evidence is worse than no proof.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

@@ -1340,6 +1340,17 @@ target_include_directories(uart_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(uart_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+
+# The wire to the ESP32-C6, which is UART1 on GP8/GP9 plus its reset and its
+# download strap. Not the uart driver with other pins: that one is send-only
+# and turns \n into \r\n, and a flash image is not text.
+myrtos_add_module(esplink modules/esplink/esplink.c DRIVER)
+target_include_directories(esplink_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(esplink_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+myrtos_add_data_module(espdesc modules/esplink/esp_desc.c)
+myrtos_add_module(espflash modules/espflash/espflash.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
     PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
@@ -1521,7 +1532,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/usbdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kbddesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/acmdesc.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/acmdesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/espdesc.mod)
 
 # What lives in flash rather than on the card.
 #
@@ -1553,6 +1565,8 @@ set(MYRTOS_RESIDENT
     fat32lib
     sdlib
     uart
+    esplink
+    espflash
     neopixel
     leddesc
     i2cbus
@@ -1585,6 +1599,7 @@ set(MYRTOS_RESIDENT
     kbddesc
     condesc
     acmdesc
+    espdesc
 
     sh
     ls

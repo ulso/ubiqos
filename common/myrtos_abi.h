@@ -555,6 +555,18 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t config_size;     // size of the tail, zero if none
 } myrtos_descriptor_t;
 
+// The tail for the ESP32-C6 link. The UART part is the same shape as the one
+// below, and the two pins after it are the ones the chip's ROM cares about at
+// reset. Read out of the board's schematic -- see docs/esp-hosted.
+typedef struct __attribute__((packed, aligned(4))) {
+    uint32_t uart_base;    // 0x40078000 for UART1 on the RP2350
+    uint32_t tx_pin;       // GP8  -> the C6's RXD0
+    uint32_t rx_pin;       // GP9  <- the C6's TXD0
+    uint32_t baud_rate;
+    uint32_t strap_pin;    // GP23 -> the C6's IO9, its download strap
+    uint32_t reset_pin;    // GP22 -> the C6's EN, and the audio DAC's
+} myrtos_esp_config_t;
+
 // The tail for the UART driver. Its layout is the driver's business alone; the
 // I/O manager passes it on without interpreting it.
 typedef struct __attribute__((packed, aligned(4))) {
@@ -828,6 +840,17 @@ typedef struct {
 
 // What the hardware and the handler actually think, for when a watch produces
 // nothing and the question is which half is wrong.
+// --- THE ESP32-C6 LINK ------------------------------------------------------
+// Two pins, and a code each, because the chip's ROM wants them moved in a
+// sequence with waiting in between and a trap is the wrong place to wait. The
+// driver owns the pins; the program owns the timing. See modules/espflash.
+#define MYRTOS_SS_ESP_STRAP  0x0400u   // uint32_t 0/1: 0 holds IO9 low, which
+                                       //   is what the ROM samples at reset to
+                                       //   choose the serial bootloader
+#define MYRTOS_SS_ESP_RESET  0x0401u   // uint32_t 0/1: 0 holds EN low. This
+                                       //   resets the audio DAC as well; they
+                                       //   share the pin on this board.
+
 #define MYRTOS_SS_GPIO_DEBUG 0x0305u   // uint32_t[6]: inte, intr, ints, calls, pending, dropped
 
 #define MYRTOS_GPIO_FALL 1u
