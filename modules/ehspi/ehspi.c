@@ -165,16 +165,32 @@ static volatile uint16_t netbox_used[NET_SLOTS];
 static volatile uint32_t netbox_head, netbox_tail;
 static volatile uint32_t netbox_lost;
 
-// One frame out, the same one-at-a-time arrangement the control plane has.
-static uint8_t *netstage;
-static volatile uint32_t netstage_len;
-static volatile bool nettx_pending;
-static volatile uint32_t nettx_queued_us;
+// Frames out, four deep.
+//
+// It was one, on the same reasoning as the control plane's: one request, one
+// answer, and lwIP will retry what is refused. That reasoning is wrong for
+// data. TCP sends a window at a time -- a four kilobyte page is three
+// segments back to back -- and a refusal is not a pause, it is a LOST segment
+// that waits for a retransmission timeout measured in seconds. httpd sent its
+// headers over the air and then nothing at all, while the same page over USB
+// took sixty-one milliseconds, and this was the difference.
+#define NET_TX_SLOTS 4u
+
+static uint8_t *netstage;                       // NET_TX_SLOTS frames, EH_BUF each
+static volatile uint16_t nettx_used[NET_TX_SLOTS];
+static volatile uint32_t nettx_queued_us_slot[NET_TX_SLOTS];
+static volatile uint32_t nettx_head, nettx_tail;
+static volatile uint32_t nettx_refused;
 
 // The station's own address, which this driver does not ask for and only
 // keeps: it takes a control-plane RPC to fetch, and that lives in ehrpc.
 static uint8_t sta_mac[6];
 static volatile bool sta_mac_known;
+
+// What the transfer now on the wire is carrying. Decided when it starts and
+// read when it finishes, because those are a tick apart.
+enum { SENT_DUMMY, SENT_HELLO, SENT_CONTROL, SENT_NET };
+static uint32_t sent_kind;
 
 static int32_t dma_tx = -1, dma_rx = -1;
 static bool in_flight;
@@ -432,16 +448,26 @@ static void eh_thread(void)
         // rather than one tick and half a millisecond of it.
         if (in_flight) {
             if (!transact_finish()) continue;
-            if (want_hello)         { stats.sent++; want_hello = false; build_dummy(); }
-            else if (tx_pending)    { stats.sent++; tx_pending = false; build_dummy(); }
-            else if (nettx_pending) {
+            switch (sent_kind) {
+            case SENT_HELLO:
+                stats.sent++; want_hello = false; build_dummy();
+                break;
+            case SENT_CONTROL:
+                stats.sent++; tx_pending = false; build_dummy();
+                break;
+            case SENT_NET: {
                 stats.sent++;
-                uint32_t waited = (uint32_t)K->time_us() - nettx_queued_us;
+                uint32_t waited = (uint32_t)K->time_us() - nettx_queued_us_slot[nettx_tail];
                 stats.txwait_us = waited;
                 if (waited > stats.worst_txwait_us) stats.worst_txwait_us = waited;
-                nettx_pending = false;
+                nettx_tail = (nettx_tail + 1u) % NET_TX_SLOTS;
                 build_dummy();
+                break;
             }
+            default:
+                break;                        // a dummy: nothing to tick off
+            }
+            sent_kind = SENT_DUMMY;
             take_frame();
             continue;
         }
@@ -450,11 +476,12 @@ static void eh_thread(void)
         // itself reads nothing and, worse, leaves it out of step with the host
         // for every transaction after.
         if (!K->gpio_get(pin_hs)) {
-            if (nettx_pending || tx_pending || want_hello) stats.turns_blocked++;
+            if (nettx_tail != nettx_head || tx_pending || want_hello) stats.turns_blocked++;
             continue;
         }
-        if (nettx_pending || tx_pending || want_hello) stats.turns_ready++;
-        if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello && !nettx_pending) continue;
+        if (nettx_tail != nettx_head || tx_pending || want_hello) stats.turns_ready++;
+        bool net_waiting = nettx_tail != nettx_head;
+        if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello && !net_waiting) continue;
 
         // What goes out with it, and the handshake goes first: nothing the
         // host has to say is heard until the announcement has been answered.
@@ -464,9 +491,28 @@ static void eh_thread(void)
         // one of the three that can wait: nothing else moves until the link is
         // configured, and a late packet is a slow network rather than a broken
         // one.
-        if (want_hello)          build_hello();
-        else if (tx_pending)     { for (uint32_t i = 0; i < stage_len; i++) txbuf[i] = stage[i]; }
-        else if (nettx_pending)  { for (uint32_t i = 0; i < netstage_len; i++) txbuf[i] = netstage[i]; }
+        // WHICH of the three went out is decided here and remembered, because
+        // the bookkeeping happens a tick later and the world moves in between.
+        //
+        // It used to decide again at the end, by asking the same questions in
+        // the same order -- and a control frame queued while a network frame
+        // was on the wire got marked as sent without ever having been sent.
+        // The symptom was "connect got no answer": the request had been ticked
+        // off and never left. The busier the data plane, the likelier it was.
+        if (want_hello) {
+            build_hello();
+            sent_kind = SENT_HELLO;
+        } else if (tx_pending) {
+            for (uint32_t i = 0; i < stage_len; i++) txbuf[i] = stage[i];
+            sent_kind = SENT_CONTROL;
+        } else if (net_waiting) {
+            const uint8_t *slot = netstage + nettx_tail * EH_BUF;
+            uint32_t k = nettx_used[nettx_tail];
+            for (uint32_t i = 0; i < k; i++) txbuf[i] = slot[i];
+            sent_kind = SENT_NET;
+        } else {
+            sent_kind = SENT_DUMMY;
+        }
         transact_start();
     }
 }
@@ -655,7 +701,6 @@ static void join_thread(void)
     for (;;) {
         while (!join_wanted) myrtos_sleep(50);
         join_wanted = false;
-        join_state = 1;
 
         static uint8_t body[400];
         uint32_t n;
@@ -811,7 +856,7 @@ static int32_t eh_configure(const void *config, uint32_t size)
     stage = (uint8_t*)K->driver_alloc(EH_BUF);
     inbox = (uint8_t*)K->driver_alloc(EH_BUF * INBOX_SLOTS);
     netbox = (uint8_t*)K->driver_alloc(EH_BUF * NET_SLOTS);
-    netstage = (uint8_t*)K->driver_alloc(EH_BUF);
+    netstage = (uint8_t*)K->driver_alloc(EH_BUF * NET_TX_SLOTS);
     if (!txbuf || !rxbuf || !stage || !inbox || !netbox || !netstage) {
         K->print("eh: no SRAM for the transfer buffers\n");
         return -1;
@@ -954,25 +999,35 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
             }
             join_running = true;
         }
+        // Trying, from THIS moment -- not from whenever the thread next looks.
+        //
+        // The thread wakes on a fifty millisecond poll and set the state there,
+        // so a second attempt after a failure left the old answer standing for
+        // those fifty milliseconds, and the caller read it and reported the new
+        // attempt as failed before it had begun. Ulf's word for it was
+        // "direkt", which is what said it was this and not the join.
+        join_state = 1;
         join_wanted = true;
         return 0;
     }
 
     if (code == MYRTOS_SS_EH_TX) {
-        if (nettx_pending) return -1;                      // one at a time
+        uint32_t next = (nettx_head + 1u) % NET_TX_SLOTS;
+        if (next == nettx_tail) { nettx_refused++; return -1; }   // genuinely full
         if (len + HDR_V1 > EH_BUF) return -1;
         const uint8_t *in = (const uint8_t*)data;
 
-        for (uint32_t i = 0; i < HDR_V1; i++) netstage[i] = 0;
-        netstage[0] = IF_STA;
-        put16(netstage + 2, (uint16_t)len);
-        put16(netstage + 4, HDR_V1);
-        for (uint32_t i = 0; i < len; i++) netstage[HDR_V1 + i] = in[i];
-        put16(netstage + 6, frame_checksum(netstage, (uint16_t)(HDR_V1 + len), 6));
+        uint8_t *slot = netstage + nettx_head * EH_BUF;
+        for (uint32_t i = 0; i < HDR_V1; i++) slot[i] = 0;
+        slot[0] = IF_STA;
+        put16(slot + 2, (uint16_t)len);
+        put16(slot + 4, HDR_V1);
+        for (uint32_t i = 0; i < len; i++) slot[HDR_V1 + i] = in[i];
+        put16(slot + 6, frame_checksum(slot, (uint16_t)(HDR_V1 + len), 6));
 
-        netstage_len = HDR_V1 + len;
-        nettx_queued_us = (uint32_t)K->time_us();
-        nettx_pending = true;
+        nettx_used[nettx_head] = (uint16_t)(HDR_V1 + len);
+        nettx_queued_us_slot[nettx_head] = (uint32_t)K->time_us();
+        nettx_head = next;
         return (int32_t)len;
     }
     return -1;

@@ -598,6 +598,7 @@ typedef struct {
     uint32_t dma_timeouts;    // transfers abandoned rather than left hanging
     uint32_t inbox_lost;      // control frames dropped for want of a slot
     uint32_t netbox_lost;     // network frames dropped the same way
+    uint32_t nettx_refused;   // outbound frames refused: the queue was full
     // How long an outbound network frame waits between being handed to the
     // driver and actually going out. The host may only clock a transaction
     // when the co-processor says it is ready, so this is the answer to "is

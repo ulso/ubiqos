@@ -41,6 +41,20 @@ void myrtos_print_u32(uint32_t v);
 
 #define EH_MTU 1500
 
+// The MTU is what IP may put in a frame. The FRAME is that plus the ethernet
+// header, and link_output sees the frame -- so a buffer sized at the MTU is
+// fourteen bytes too small for every full-length segment there is.
+//
+// That is not an overflow, because the length was checked against the same
+// wrong number: it is a silent refusal of exactly the packets that matter.
+// Small ones went out and large ones did not, so httpd's headers arrived, its
+// 4003-byte body never did, and the connection sat open. Ping worked
+// throughout, which is what made it look like a working link.
+//
+// Eighteen rather than fourteen, for a VLAN tag this board will probably never
+// see. Four bytes is not worth being exact about twice.
+#define EH_FRAME_MAX (EH_MTU + 18u)
+
 static struct netif wnif;
 static int32_t eh_path = -1;
 static bool up;
@@ -55,12 +69,12 @@ uint32_t myrtos_eh_in, myrtos_eh_out, myrtos_eh_dropped;
 static err_t wifi_link_output(struct netif *n, struct pbuf *p)
 {
     (void)n;
-    if (p->tot_len > EH_MTU) return ERR_IF;
+    if (p->tot_len > EH_FRAME_MAX) return ERR_IF;
 
     // Copied out of the pbuf chain into one flat frame, because the driver
     // takes a frame and not a list of pieces, and because setstat hands the
     // bytes on immediately -- there is nothing to keep alive afterwards.
-    static uint8_t flat[EH_MTU];
+    static uint8_t flat[EH_FRAME_MAX];
     uint16_t n_copied = pbuf_copy_partial(p, flat, p->tot_len, 0);
     if (!n_copied) return ERR_IF;
 
@@ -96,15 +110,30 @@ static err_t wifi_if_init(struct netif *n)
     return ERR_OK;
 }
 
+static void print_ip(const void *addr)
+{
+    const uint8_t *a = (const uint8_t *)addr;
+    for (int i = 0; i < 4; i++) {
+        myrtos_print_u32(a[i]);
+        if (i < 3) myrtos_print(".");
+    }
+}
+
 static void on_status(struct netif *n)
 {
     if (!netif_is_up(n) || ip4_addr_isany_val(*netif_ip4_addr(n))) return;
-    const uint8_t *a = (const uint8_t *)netif_ip4_addr(n);
+
+    // The mask and the router as well as the address, because those three
+    // together are what says the address came from a DHCP server rather than
+    // from somewhere else. An address on its own proves only that the stack
+    // put something in the field.
     myrtos_print("wifi: address ");
-    for (int i = 0; i < 4; i++) {
-        myrtos_print_u32(a[i]);
-        myrtos_print(i < 3 ? "." : "\n");
-    }
+    print_ip(netif_ip4_addr(n));
+    myrtos_print(" mask ");
+    print_ip(netif_ip4_netmask(n));
+    myrtos_print(" router ");
+    print_ip(netif_ip4_gw(n));
+    myrtos_print("\n");
 }
 
 // Brought up when the radio is, which is when somebody has run the control
@@ -203,7 +232,7 @@ void myrtos_eh_netif_poll(void)
     if (!up) return;
 
     for (int budget = 0; budget < 8; budget++) {
-        static uint8_t frame[EH_MTU + 64];
+        static uint8_t frame[EH_FRAME_MAX];
         int32_t n = myrtos_io_getstat(eh_path, MYRTOS_SS_EH_RX,
                                       frame, sizeof(frame), KERNEL_PID);
         if (n <= 0) return;

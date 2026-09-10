@@ -592,6 +592,69 @@ in the transport, the queue or the netif. What is left is the co-processor and
 the air, and neither can be decomposed further from this end without a capture.
 Power save is off; that was the 232 ms.
 
+## A page over the air
+
+    over the air   200, 4003 bytes in 0.74 s
+    over USB       200, 4003 bytes in 0.05 s
+    by name        200, 4003 bytes
+
+Four faults stood between the netif working and this, and three of them looked
+like something else.
+
+### An MTU is not a frame
+
+`link_output` sees the FRAME -- the ethernet header on top of what IP was
+allowed to put in it -- so a 1500-byte buffer is fourteen bytes short of every
+full-length segment. The length was checked against the same wrong number, so
+nothing overflowed: it was a silent refusal of exactly the packets that matter.
+Small ones went out and large ones did not, which is why httpd's headers
+arrived, its 4003-byte body never did, and the connection sat open. Ping worked
+throughout, and that is what made the link look whole.
+
+### One frame out is not a queue
+
+The outbound side held one frame and refused the rest, on the control plane's
+reasoning: one request, one answer, and lwIP will retry. TCP does not work that
+way -- it sends a window at a time, and a refusal is not a pause but a lost
+segment waiting on a retransmission timeout measured in seconds. Four deep now.
+
+### Deciding twice is a race
+
+The thread chose what to send when a transfer STARTED and ticked it off when it
+FINISHED, a tick later, by asking the same questions again. A control frame
+queued in between was marked as sent without ever leaving -- "connect got no
+answer" for a request that had been struck off the list. It remembers what it
+sent now.
+
+### A status that has not been reset is the previous answer
+
+`join_state` was set to "trying" by the thread, which wakes on a fifty
+millisecond poll. A second attempt after a failure left the old answer standing
+for those milliseconds, and the caller read it and reported the new attempt as
+failed before it had begun. Ulf's word for it was *"direkt"*, and that one word
+is what said it was the status line and not the join.
+
+### And lwIP's heap was too small
+
+`MEM_SIZE` was 4000, tuned for one interface with no DHCP client. There are two
+now, each with an mDNS registration, and a DHCP client on one. A stack that
+cannot allocate a segment does not report anything: it stops, and the client
+waits. 8000.
+
+## What the link costs
+
+    transactions 595   frames in 343   out 38
+    lost 0   refused 0
+    a frame waiting to go out: last 1007 us, worst 99095
+    turns ready 38, turns blocked 178
+
+Nothing is dropped and nothing is refused, so the queues are the right size.
+The median outbound frame waits a millisecond. The WORST waits ninety-nine,
+and the reason is in the last line: the handshake was low on 178 turns out of
+216, because the host may only clock a transaction when the co-processor
+offers one. That is the tail, and it is what makes a page take 0.74 seconds
+over the air and 0.05 over the cable.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

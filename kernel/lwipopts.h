@@ -61,9 +61,15 @@
 
 #define MEM_LIBC_MALLOC             0
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    4000
+// Eight thousand, not four. The four was tuned for ONE interface with no DHCP
+// client on it. There are two now, each with an mDNS registration, and a DHCP
+// client on one of them -- and the symptom of running out is not an error
+// anywhere: httpd sent its headers, promised 4003 bytes in Content-Length, and
+// then sent nothing at all while the connection stayed open. A stack that
+// cannot allocate a segment simply stops, and the client waits.
+#define MEM_SIZE                    8000
 #define MEMP_NUM_PBUF               8
-#define MEMP_NUM_UDP_PCB            5    // one of them is the responder
+#define MEMP_NUM_UDP_PCB            6    // a responder on each interface now
 #define MEMP_NUM_TCP_PCB            4
 #define MEMP_NUM_TCP_PCB_LISTEN     2
 #define MEMP_NUM_TCP_SEG            8

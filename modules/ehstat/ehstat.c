@@ -147,6 +147,7 @@ void module_main(int argc, char **argv) {
     num("dma timeouts   ", s.dma_timeouts);
     num("control lost   ", s.inbox_lost);
     num("network lost   ", s.netbox_lost);
+    num("tx refused     ", s.nettx_refused);
 
     say("\r\na frame waiting to go out, microseconds\r\n");
     num("  last         ", s.txwait_us);
