@@ -537,6 +537,61 @@ And it cannot be done from a process, because the kernel will not hand a
 password to one -- so the join has to move into the driver, where the password
 already is.
 
+## The join is the kernel's, so the card can hold the password
+
+The whole sequence -- initialise, station mode, power save off, the network,
+start, connect, and its address afterwards -- lives in the driver now, in a
+thread of its own. It moved for one reason: `/sd/config.txt` holds a password
+and the kernel will not hand those bytes to a process, so the message that
+carries it has to be built where the password already is. That is the same
+arrangement `modules/wifilib` has had since the NINA days, and it is why the
+board can now come up on its own network instead of waiting for somebody at
+the keyboard -- which matters, because the co-processor tears its radio down
+every time the host restarts.
+
+`ehrpc connect` kept the typing and gave up the sequence: there is one
+implementation of a join and both routes go through it.
+
+### "joined" was a lie, and a fake network found it
+
+The first version reported joined the moment `WifiConnect` returned zero, and
+said it just as cheerfully for a network called `nosuchnetwork` with a made-up
+password. `esp_wifi_connect` returns as soon as it has started TRYING; whether
+it worked arrives later as an event.
+
+So the driver asks now -- `WifiStaGetApInfo`, which is the direct question and
+answers with an error until there is an access point to name:
+
+    myrtos:/> ehrpc connect nosuchnetwork
+    password:
+    joining...........
+    it did not join -- the console log says why
+
+A status line that says joined when it is not is worse than no status line.
+
+### The remaining latency is not the transport's
+
+The driver now counts what an outbound frame waits between being handed over
+and going out:
+
+    last 975 us, worst 2917
+    turns ready 70, turns blocked 192
+
+So the handshake is low nearly three turns in four when we have something to
+send -- and it does not matter, because the co-processor offers a turn within
+a millisecond anyway. Inbound costs a tick more, since the USB task drains the
+queue on its own turn. Call it three milliseconds of myrtos, measured.
+
+Against the same router, from the same Mac:
+
+    the router  8.4 ms
+    the board  79.0 ms
+
+Seventy milliseconds are spent somewhere between the two, and none of them are
+in the transport, the queue or the netif. What is left is the co-processor and
+the air, and neither can be decomposed further from this end without a capture.
+Power save is off; that was the 232 ms.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

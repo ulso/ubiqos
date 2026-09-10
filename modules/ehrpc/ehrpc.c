@@ -546,58 +546,54 @@ static bool do_up(int32_t dev) {
     return true;
 }
 
+// Join a network, by asking the driver to do it.
+//
+// The sequence itself is not here any more. It moved into the driver so that
+// /sd/config.txt could supply the password -- the kernel reads that file and
+// hands the bytes to the driver and to nothing else -- and once it had moved
+// there was no reason to keep a second copy for the typed case. What is left
+// here is the typing.
+//
+// THE PASSWORD IS TYPED AND NOWHERE ELSE. Not an argument -- argv lives in this
+// process's memory and the shell keeps sixteen lines of history -- not echoed,
+// and wiped before this returns.
 static void do_connect(int32_t dev, const char *ssid) {
-    uint8_t body[320];
-    uint32_t n;
+    char creds[100];
+    uint32_t n = 0;
+    while (ssid[n] && n < 32) { creds[n] = ssid[n]; n++; }
+    creds[n++] = 0;
+    uint32_t pass_at = n;
 
-    if (!do_up(dev)) return;
-
-    // The name and the secret, in one buffer that is wiped before this returns.
-    char pass[68];
-    uint32_t plen = 0;
     myrtos_write_str(MYRTOS_STDOUT, "password: ");
     for (;;) {
         uint8_t ch;
         if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;
         if (ch == '\r' || ch == '\n') break;
-        if (ch == 3) { plen = 0; break; }                 // ctrl-C: forget it
-        if (ch == 8 || ch == 127) { if (plen) plen--; continue; }
+        if (ch == 3) { n = pass_at; break; }              // ctrl-C: forget it
+        if (ch == 8 || ch == 127) { if (n > pass_at) n--; continue; }
         // Not echoed, and not drawn. What is typed here should not survive on
         // the screen, in a scrollback, or in anybody's terminal capture.
-        if (ch >= ' ' && plen < sizeof(pass) - 1) pass[plen++] = (char)ch;
+        if (ch >= ' ' && n < sizeof(creds) - 2) creds[n++] = (char)ch;
     }
-    pass[plen] = 0;
+    creds[n++] = 0;
     myrtos_write_str(MYRTOS_STDOUT, "\r\n");
-    if (!plen) { say("nothing typed\r\n"); return; }
 
-    // wifi_config is a choice of two, and the station half is field 2 of it.
-    uint8_t sta[160];
-    uint32_t sn = 0;
-    uint32_t slen = 0;
-    while (ssid[slen] && slen < 32) slen++;
-    sn += put_bytes(sta + sn, 1, (const uint8_t*)ssid, slen);
-    sn += put_bytes(sta + sn, 2, (const uint8_t*)pass, plen);
+    if (n == pass_at + 1) { say("nothing typed\r\n"); return; }
 
-    uint8_t cfg[200];
-    uint32_t cn = put_bytes(cfg, 2, sta, sn);
+    int32_t r = myrtos_setstat(dev, MYRTOS_SS_EH_JOIN, creds, n);
+    for (uint32_t i = 0; i < sizeof(creds); i++) creds[i] = 0;
+    if (r < 0) { say("the driver would not take it\r\n"); return; }
 
-    n = 0;
-    n += put_field(body + n, 1, 0, WIFI_IF_STA);
-    n += put_bytes(body + n, 2, cfg, cn);
-    bool ok = step(dev, "the network       ", REQ_WIFI_SET_CONFIG, body, n, 5000);
-
-    // Gone from memory before this process is, rather than left lying in the
-    // block until something else is given it.
-    for (uint32_t i = 0; i < sizeof(pass); i++) pass[i] = 0;
-    for (uint32_t i = 0; i < sizeof(sta); i++) sta[i] = 0;
-    for (uint32_t i = 0; i < sizeof(cfg); i++) cfg[i] = 0;
-    for (uint32_t i = 0; i < sizeof(body); i++) body[i] = 0;
-    if (!ok) return;
-
-    if (!step(dev, "connect           ", REQ_WIFI_CONNECT, body, 0, 10000)) return;
-
-    say("\r\nThe radio has been told to join. Whether it did is an event, and\r\n"
-        "nothing reads events yet -- 'ehrpc peek' is the nearest thing.\r\n");
+    say("joining");
+    for (int waited = 0; waited < 400; waited++) {
+        uint32_t state = 0;
+        myrtos_getstat(dev, MYRTOS_SS_EH_JOINED, &state, sizeof(state));
+        if (state == 2) { say("\r\njoined\r\n"); return; }
+        if (state == 3) { say("\r\nit did not join -- the console log says why\r\n"); return; }
+        if ((waited % 20) == 0) say(".");
+        myrtos_sleep(100);
+    }
+    say("\r\nstill trying after forty seconds\r\n");
 }
 
 void module_main(int argc, char **argv) {

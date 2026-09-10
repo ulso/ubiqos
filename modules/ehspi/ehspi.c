@@ -471,6 +471,297 @@ static void eh_thread(void)
     }
 }
 
+// --- JOINING A NETWORK ------------------------------------------------------
+//
+// The whole sequence lives here rather than in a program, and the reason is
+// the password. /sd/config.txt holds one, the kernel reads that file itself
+// and will not hand the bytes to a process -- so a program cannot build the
+// message that carries it, and the message has to be built where the password
+// already is. modules/wifilib has had exactly this arrangement since the NINA
+// days: the caller asks to join, not to be told the password.
+//
+// It also makes the difference between a board that joins its network at boot
+// and one that needs somebody at the keyboard. That turned out to matter more
+// than it looked: the co-processor watches the host and tears its radio down
+// when the host restarts, so a myrtos reboot leaves the radio uninitialised
+// however long it had been connected.
+//
+// This runs in a thread of its own. esp_wifi_init alone takes several seconds
+// and the transport thread must keep turning while it does.
+
+#define RPC_REQ      1u
+#define RPC_RESP     2u
+#define RESP_OFFSET  256u
+
+#define REQ_GET_MAC     257u
+#define REQ_SET_MODE    260u
+#define REQ_SET_PS      270u
+#define REQ_WIFI_INIT   278u
+#define REQ_WIFI_START  280u
+#define REQ_WIFI_CONNECT 282u
+#define REQ_WIFI_SET_CONFIG 284u
+#define REQ_STA_GET_AP_INFO 294u
+
+#define WIFI_INIT_MAGIC 0x1f2f3f4fu
+#define WIFI_MODE_STA   1u
+#define WIFI_IF_STA     0u          // an INTERFACE, where station is 0
+
+// protocomm's serial framing, which wraps every RPC:
+//   [0x01][ep_len:2 LE]["RPCRsp"][0x02][data_len:2 LE][protobuf]
+#define TLV_EPNAME 0x01u
+#define TLV_DATA   0x02u
+
+static int32_t eh_write(const uint8_t *buf, uint32_t len);
+static int32_t eh_read(uint8_t *buf, uint32_t len);
+
+static volatile uint32_t join_state;            // MYRTOS_SS_EH_JOINED's answer
+static char join_creds[100];
+static volatile bool join_wanted;
+static bool join_running;
+
+static uint32_t put_varint(uint8_t *p, uint32_t v) {
+    uint32_t n = 0;
+    while (v >= 0x80u) { p[n++] = (uint8_t)(v | 0x80u); v >>= 7; }
+    p[n++] = (uint8_t)v;
+    return n;
+}
+
+static uint32_t put_field(uint8_t *p, uint32_t field, uint32_t v) {
+    uint32_t n = put_varint(p, field << 3);     // wire type 0, a varint
+    return n + put_varint(p + n, v);
+}
+
+static uint32_t put_bytes(uint8_t *p, uint32_t field, const uint8_t *b, uint32_t len) {
+    uint32_t n = put_varint(p, (field << 3) | 2u);
+    n += put_varint(p + n, len);
+    for (uint32_t i = 0; i < len; i++) p[n + i] = b[i];
+    return n + len;
+}
+
+static uint32_t get_varint(const uint8_t *p, uint32_t len, uint32_t *at) {
+    uint32_t v = 0, shift = 0;
+    while (*at < len) {
+        uint8_t b = p[(*at)++];
+        v |= (uint32_t)(b & 0x7fu) << shift;
+        if (!(b & 0x80u)) break;
+        shift += 7;
+        if (shift > 28) break;
+    }
+    return v;
+}
+
+// One RPC out and its answer back. Returns the chip's esp_err_t, or -1 for no
+// answer at all -- a different failure, and worth telling apart.
+static int32_t rpc(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
+                   uint32_t ms, uint8_t *mac_out) {
+    // Anything already waiting is not the answer to a question not yet asked.
+    while (inbox_tail != inbox_head) inbox_tail = (inbox_tail + 1u) % INBOX_SLOTS;
+
+    static uint8_t inner[320];
+    uint32_t n = 0;
+    n += put_field(inner + n, 1, RPC_REQ);
+    n += put_field(inner + n, 2, msg_id);
+    n += put_field(inner + n, 3, 1);            // uid, echoed back
+    n += put_bytes(inner + n, msg_id, body, body_len);
+
+    static const char ep[] = "RPCRsp";
+    static uint8_t out[400];
+    uint32_t w = 0;
+    out[w++] = TLV_EPNAME; out[w++] = 6; out[w++] = 0;
+    for (int i = 0; i < 6; i++) out[w++] = (uint8_t)ep[i];
+    out[w++] = TLV_DATA; out[w++] = (uint8_t)n; out[w++] = (uint8_t)(n >> 8);
+    for (uint32_t i = 0; i < n; i++) out[w++] = inner[i];
+
+    while (tx_pending) myrtos_sleep(2);         // one control frame at a time
+    if (eh_write(out, w) < 0) return -1;
+
+    // Read until the answer to THIS question arrives. The chip pushes events
+    // on the same interface whenever they happen, and one of them is as likely
+    // to land in the middle of a request as not.
+    for (uint32_t waited = 0; waited < ms; waited += 5) {
+        if (inbox_tail == inbox_head) { myrtos_sleep(5); continue; }
+
+        static uint8_t rsp[512];
+        int32_t got = eh_read(rsp, sizeof(rsp));
+        if (got < 10) continue;
+
+        uint32_t p = 0;
+        if (rsp[p++] != TLV_EPNAME) continue;
+        uint32_t eplen = (uint32_t)rsp[p] | ((uint32_t)rsp[p + 1] << 8);
+        p += 2 + eplen;
+        if (p + 3 > (uint32_t)got || rsp[p++] != TLV_DATA) continue;
+        uint32_t dlen = (uint32_t)rsp[p] | ((uint32_t)rsp[p + 1] << 8);
+        p += 2;
+        if (p + dlen > (uint32_t)got) continue;
+
+        const uint8_t *b = rsp + p;
+        uint32_t at = 0, type = 0, id = 0, result = 0;
+        const uint8_t *payload = 0; uint32_t payload_len = 0;
+        while (at < dlen) {
+            uint32_t tag = get_varint(b, dlen, &at);
+            uint32_t field = tag >> 3, wire = tag & 7u;
+            if (!field) break;
+            if (wire == 0) {
+                uint32_t v = get_varint(b, dlen, &at);
+                if (field == 1) type = v;
+                else if (field == 2) id = v;
+            } else if (wire == 2) {
+                uint32_t k = get_varint(b, dlen, &at);
+                if (at + k > dlen) break;
+                if (field >= 256u) { payload = b + at; payload_len = k; }
+                at += k;
+            } else break;
+        }
+        if (type != RPC_RESP || id != msg_id + RESP_OFFSET) continue;
+
+        // An ACTION answers int32 resp = 1. A GETTER puts what it was asked
+        // for there and its result at field 2, which is the opposite way round
+        // and has to be read that way.
+        uint32_t q = 0;
+        while (payload && q < payload_len) {
+            uint32_t tag = get_varint(payload, payload_len, &q);
+            uint32_t field = tag >> 3, wire = tag & 7u;
+            if (!field) break;
+            if (wire == 0) {
+                uint32_t v = get_varint(payload, payload_len, &q);
+                if (field == 1 && !mac_out) result = v;
+                if (field == 2 && mac_out)  result = v;
+            } else if (wire == 2) {
+                uint32_t k = get_varint(payload, payload_len, &q);
+                if (q + k > payload_len) break;
+                if (field == 1 && mac_out && k == 6)
+                    for (int i = 0; i < 6; i++) mac_out[i] = payload[q + i];
+                q += k;
+            } else break;
+        }
+        return (int32_t)result;
+    }
+    return -1;
+}
+
+static bool rpc_ok(const char *what, uint32_t msg_id, const uint8_t *body,
+                   uint32_t len, uint32_t ms) {
+    int32_t r = rpc(msg_id, body, len, ms, 0);
+    if (r == 0) return true;
+    K->print("wifi: ");
+    K->print(what);
+    if (r < 0) K->print(" got no answer\n");
+    else { K->print(" failed, "); K->print_u32((uint32_t)r); K->print("\n"); }
+    return false;
+}
+
+static void join_thread(void)
+{
+    for (;;) {
+        while (!join_wanted) myrtos_sleep(50);
+        join_wanted = false;
+        join_state = 1;
+
+        static uint8_t body[400];
+        uint32_t n;
+
+        // esp_wifi_init's configuration, every field of it: the far side
+        // starts from its own defaults and then overwrites all of them with
+        // what arrives, so a field left out is a zero rather than a default.
+        {
+            uint8_t c[128];
+            uint32_t k = 0;
+            k += put_field(c + k,  1, 20);      // static rx buffers
+            k += put_field(c + k,  2, 64);      // dynamic rx
+            k += put_field(c + k,  3, 1);       // tx buffers are dynamic
+            k += put_field(c + k,  5, 64);      // dynamic tx
+            k += put_field(c + k,  8, 1);       // AMPDU rx
+            k += put_field(c + k,  9, 1);       // AMPDU tx
+            k += put_field(c + k, 11, 1);       // NVS, so calibration is kept
+            k += put_field(c + k, 13, 32);      // block-ack window
+            k += put_field(c + k, 15, 752);     // beacon length
+            k += put_field(c + k, 16, 32);      // management buffers
+            k += put_field(c + k, 19, 7);       // espnow peers
+            k += put_field(c + k, 20, WIFI_INIT_MAGIC);
+            n = put_bytes(body, 1, c, k);
+        }
+        if (!rpc_ok("starting the radio", REQ_WIFI_INIT, body, n, 15000)) { join_state = 3; continue; }
+
+        n = put_field(body, 1, WIFI_MODE_STA);
+        if (!rpc_ok("station mode", REQ_SET_MODE, body, n, 5000)) { join_state = 3; continue; }
+
+        // Power save off. esp_wifi_init leaves the station asleep between DTIM
+        // beacons, which put 232 milliseconds on a ping that takes 74 without.
+        n = put_field(body, 1, 0);              // WIFI_PS_NONE
+        if (!rpc_ok("power save off", REQ_SET_PS, body, n, 5000)) { join_state = 3; continue; }
+
+        {
+            const char *ssid = join_creds;
+            uint32_t slen = 0;
+            while (ssid[slen] && slen < 32) slen++;
+            const char *pass = join_creds + slen + 1;
+            uint32_t plen = 0;
+            while (pass[plen] && plen < 64) plen++;
+
+            uint8_t sta[160];
+            uint32_t sn = 0;
+            sn += put_bytes(sta + sn, 1, (const uint8_t*)ssid, slen);
+            sn += put_bytes(sta + sn, 2, (const uint8_t*)pass, plen);
+
+            uint8_t cfg[200];
+            uint32_t cn = put_bytes(cfg, 2, sta, sn);   // wifi_config's station half
+
+            n = 0;
+            n += put_field(body + n, 1, WIFI_IF_STA);
+            n += put_bytes(body + n, 2, cfg, cn);
+
+            bool ok = rpc_ok("the network", REQ_WIFI_SET_CONFIG, body, n, 8000);
+            for (uint32_t i = 0; i < sizeof(sta); i++) sta[i] = 0;
+            for (uint32_t i = 0; i < sizeof(cfg); i++) cfg[i] = 0;
+            for (uint32_t i = 0; i < sizeof(body); i++) body[i] = 0;
+            if (!ok) { join_state = 3; continue; }
+        }
+
+        if (!rpc_ok("start", REQ_WIFI_START, body, 0, 15000)) { join_state = 3; continue; }
+        if (!rpc_ok("connect", REQ_WIFI_CONNECT, body, 0, 15000)) { join_state = 3; continue; }
+
+        // And then ASK, because connect does not answer the question.
+        //
+        // esp_wifi_connect returns as soon as it has started trying; whether
+        // it worked arrives later as an event. The first version reported
+        // "joined" the moment that call returned zero, and said it just as
+        // cheerfully for a network called nosuchnetwork with a made-up
+        // password. A status line that says joined when it is not is worse
+        // than no status line.
+        //
+        // WifiStaGetApInfo is the direct question -- which access point am I
+        // on -- and it answers with an error until there is one.
+        {
+            bool associated = false;
+            for (int tries = 0; tries < 40 && !associated; tries++) {
+                myrtos_sleep(500);
+                if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) associated = true;
+            }
+            if (!associated) {
+                K->print("wifi: it did not join that network\n");
+                join_state = 3;
+                continue;
+            }
+        }
+
+        // Its own address last, because the network interface cannot be built
+        // without it: the co-processor turns 802.11 into 802.3 using the
+        // address the access point knows, and a netif with any other discards
+        // everything meant for the machine it is part of.
+        n = put_field(body, 1, WIFI_IF_STA);
+        uint8_t mac[6];
+        if (rpc(REQ_GET_MAC, body, n, 8000, mac) < 0 || !mac[0]) {
+            K->print("wifi: the chip would not give its address\n");
+            join_state = 3;
+            continue;
+        }
+        for (int i = 0; i < 6; i++) sta_mac[i] = mac[i];
+        sta_mac_known = true;
+        join_state = 2;
+        K->print("wifi: joined\n");
+    }
+}
+
 // --- THE DEVICE -------------------------------------------------------------
 
 static int32_t eh_configure(const void *config, uint32_t size)
@@ -614,6 +905,12 @@ static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
         return (int32_t)have;
     }
 
+    if (code == MYRTOS_SS_EH_JOINED) {
+        if (len < sizeof(uint32_t)) return -1;
+        *(uint32_t*)data = join_state;
+        return 0;
+    }
+
     if (code == MYRTOS_SS_EH_MAC) {
         if (len < 6 || !sta_mac_known) return -1;
         uint8_t *out = (uint8_t*)data;
@@ -638,6 +935,26 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         const uint8_t *in = (const uint8_t*)data;
         for (int i = 0; i < 6; i++) sta_mac[i] = in[i];
         sta_mac_known = true;
+        return 0;
+    }
+
+    if (code == MYRTOS_SS_EH_JOIN) {
+        if (len < 3 || len > sizeof(join_creds)) return -1;
+        if (join_state == 1) return -1;                    // already trying
+        const char *in = (const char*)data;
+        for (uint32_t i = 0; i < len; i++) join_creds[i] = in[i];
+        join_creds[sizeof(join_creds) - 1] = 0;
+
+        // The thread is made the first time somebody asks, not at boot: a
+        // machine that never joins a network should not carry a stack for it.
+        if (!join_running) {
+            if (K->kernel_thread(join_thread, 3072, MYRTOS_PRIO_EH) < 0) {
+                K->print("wifi: could not start the join thread\n");
+                return -1;
+            }
+            join_running = true;
+        }
+        join_wanted = true;
         return 0;
     }
 

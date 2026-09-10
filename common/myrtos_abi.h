@@ -625,6 +625,19 @@ typedef struct {
 #define MYRTOS_SS_EH_RX      0x0412u   // uint8_t[], -> the length taken
 #define MYRTOS_SS_EH_TX      0x0413u   // uint8_t[], one Ethernet frame
 
+// Join a network: "ssid\0password". The whole sequence -- initialise the
+// radio, station mode, power save off, the network, start, connect, and its
+// address afterwards -- runs inside the driver, in a thread of its own,
+// because it waits seconds and nothing that waits seconds may run in a trap.
+//
+// The password comes from /sd/config.txt by way of the kernel, which reads
+// that file itself and hands the bytes to this driver and to nothing else.
+// That is the same arrangement modules/wifilib has had since the NINA days:
+// the caller asks to join, not to be told the password.
+#define MYRTOS_SS_EH_JOIN    0x0414u   // char[], "ssid\0password"
+#define MYRTOS_SS_EH_JOINED  0x0415u   // getstat -> uint32_t: 0 idle, 1 trying,
+                                       //   2 joined, 3 the last attempt failed
+
 // The tail for the ESP32-C6 link. The UART part is the same shape as the one
 // below, and the two pins after it are the ones the chip's ROM cares about at
 // reset. Read out of the board's schematic -- see docs/esp-hosted.

@@ -33,6 +33,7 @@
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
 #include "io.h"
+#include "config.h"
 
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
@@ -109,6 +110,34 @@ static void on_status(struct netif *n)
 // plane far enough for the chip to know its own address. Before that there is
 // no netif to make: an interface with no hardware address is one that cannot
 // be talked to and cannot say why.
+// Ask the driver to join the network named on the card, once.
+//
+// The credentials go from the file the kernel read to the driver that speaks
+// to the radio, and through nothing in between. No process sees them, which is
+// the whole reason the join is not in a program -- and it is also what makes
+// the difference between a board that comes up on its network and one that
+// waits for somebody at the keyboard, because the co-processor tears its radio
+// down every time the host restarts.
+static void ask_to_join(void)
+{
+    static bool asked;
+    if (asked) return;
+    if (!myrtos_config_done()) return;          // the card has not been read
+
+    const char *creds = myrtos_config_credentials();
+    asked = true;                               // once either way
+    if (!creds) return;                         // no network named, or no password
+
+    uint32_t n = 0;
+    while (creds[n] || creds[n + 1]) n++;        // over the NUL between the two
+    n += 2;                                     // and the pair of terminators
+
+    if (myrtos_io_setstat(eh_path, MYRTOS_SS_EH_JOIN, creds, n, KERNEL_PID) < 0)
+        myrtos_print("wifi: the driver would not take the card's network\n");
+    else
+        myrtos_print("wifi: joining the network named on the card\n");
+}
+
 bool myrtos_eh_netif_start(void)
 {
     if (up) return true;
@@ -118,9 +147,11 @@ bool myrtos_eh_netif_start(void)
         if (eh_path < 0) return false;
     }
 
+    ask_to_join();
+
     uint8_t mac[6];
     if (myrtos_io_getstat(eh_path, MYRTOS_SS_EH_MAC, mac, 6, KERNEL_PID) < 0)
-        return false;                     // the radio has not said yet
+        return false;                     // the radio has not joined yet
 
     if (!netif_add(&wnif, NULL, NULL, NULL, NULL, wifi_if_init, ethernet_input))
         return false;
