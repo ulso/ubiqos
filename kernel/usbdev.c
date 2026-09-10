@@ -1,4 +1,5 @@
 #include "usbdev.h"
+#include "config.h"
 #include "tusb.h"
 #include "../common/modules.h"   // myrtos_sleep, through the shared ABI
 
@@ -95,7 +96,12 @@ static void usb_thread(void) {
             extern void myrtos_lwip_start(void);
             extern void myrtos_lwip_poll(void);
             static bool up;
-            if (!up && tud_ready()) {
+            // And not before the card has been read: the hostname is in
+            // /sd/config.txt, mDNS announces it once, and a responder that has
+            // already said "myrtos" cannot unsay it. myrtos_config_done goes
+            // true whether or not there was a card, so a board with no card
+            // waits only as long as the driver takes to find that out.
+            if (!up && tud_ready() && myrtos_config_done()) {
                 extern void myrtos_lwip_sock_init(void);
                 myrtos_lwip_start();
                 myrtos_lwip_sock_init();   // this thread is stack 1's server

@@ -29,6 +29,7 @@ __thread int errno;
 // perfectly.
 static void complain(const char *name) {
     const char *why = errno == EISDIR ? ": is a directory\n"
+                    : errno == EACCES ? ": this one is not readable\n"
                     : errno == EMFILE ? ": too many open files\n"
                     :                   ": no such file\n";
     myrtos_line_t l;

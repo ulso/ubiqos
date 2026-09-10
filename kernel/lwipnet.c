@@ -20,6 +20,7 @@
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
 #include "lwip/apps/mdns.h"
+#include "config.h"
 #include "class/net/net_device.h"
 
 void myrtos_print(const char *s);
@@ -173,7 +174,10 @@ void myrtos_lwip_start(void)
 
     lwip_init();
     netif_add(&nif, NULL, NULL, NULL, NULL, if_init, ethernet_input);
-    netif_set_hostname(&nif, "myrtos");
+    // The name the card gave, or "myrtos" when it gave none. The filesystem
+    // server has already read it: usbdev waits for that before starting this.
+    const char *host = myrtos_config_hostname();
+    netif_set_hostname(&nif, host);
     netif_set_default(&nif);
     netif_set_status_callback(&nif, on_status);
     netif_set_up(&nif);
@@ -185,10 +189,12 @@ void myrtos_lwip_start(void)
     // that exists before the address does is one less thing to sequence.
 #if LWIP_MDNS_RESPONDER
     mdns_resp_init();
-    if (mdns_resp_add_netif(&nif, "myrtos") == ERR_OK) {
-        mdns_resp_add_service(&nif, "myrtos", "_http", DNSSD_PROTO_TCP, 80, http_txt, NULL);
+    if (mdns_resp_add_netif(&nif, host) == ERR_OK) {
+        mdns_resp_add_service(&nif, host, "_http", DNSSD_PROTO_TCP, 80, http_txt, NULL);
         mdns_resp_announce(&nif);
-        myrtos_print("net: answering to myrtos.local\n");
+        myrtos_print("net: answering to ");
+        myrtos_print(host);
+        myrtos_print(".local\n");
     } else {
         myrtos_print("net: the mDNS responder would not start\n");
     }

@@ -19,6 +19,7 @@ int32_t myrtos_console_trace_at(uint32_t offset);
 #include "hardware/structs/rosc.h"
 #include "pico/time.h"
 #include "critical.h"
+#include "config.h"
 
 void myrtos_print(const char *s);
 void myrtos_putc(char c);
@@ -430,8 +431,13 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             // this stack, which is safe because send blocks until the answer.
             myrtos_wifi_req_t req;
             req.index = 0;
-            req.buf   = (char*)(uintptr_t)frame->a0;
+            // No argument means the network in /sd/config.txt. The bytes are
+            // the kernel's and stay the kernel's: the caller asked to join,
+            // not to be told the password.
+            req.buf   = frame->a0 ? (char*)(uintptr_t)frame->a0
+                                  : (char*)myrtos_config_credentials();
             req.len   = 0;
+            if (!req.buf) { frame->a0 = (uint32_t)-1; break; }
             if (!server_request(myrtos_wifi_server_pid(), MYRTOS_MSG_WIFI_JOIN, &req)) {
                 frame->a0 = (uint32_t)-1;
                 break;
@@ -634,6 +640,28 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             busy_wait_us(us);
             myrtos_critical_exit(st);
             frame->a0 = 0;
+            break;
+        }
+        case SYS_CONFIG: {
+            // The password is the one setting with no read. Asking for it
+            // answers whether there is one, which is all a caller needs to know
+            // to decide whether to prompt -- and is the difference between a
+            // secret kept in the kernel and a secret with a system call in
+            // front of it.
+            if (frame->a0 == MYRTOS_CFG_PASSWORD) {
+                frame->a0 = myrtos_config_has_password() ? 1u : 0u;
+                break;
+            }
+            const char *v = frame->a0 == MYRTOS_CFG_HOSTNAME
+                          ? myrtos_config_hostname()
+                          : frame->a0 == MYRTOS_CFG_SSID ? myrtos_config_ssid() : 0;
+            if (!v) { frame->a0 = (uint32_t)-1; break; }
+            char *out = (char *)(uintptr_t)frame->a1;
+            uint32_t cap = frame->a2, n = 0;
+            if (!out || !cap) { frame->a0 = (uint32_t)-1; break; }
+            while (v[n] && n < cap - 1) { out[n] = v[n]; n++; }
+            out[n] = 0;
+            frame->a0 = n;
             break;
         }
         case SYS_NETDEV: {

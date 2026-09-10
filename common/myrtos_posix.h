@@ -53,6 +53,7 @@
 #define ENOENT  2
 #define EBADF   9
 #define EISDIR 21
+#define EACCES 13
 #define EINVAL 22
 #define EMFILE 24
 // 38 is Linux's, and newlib's is 88. The two libraries here cannot be included
@@ -109,6 +110,8 @@ static inline int myrtos_open_errno(const char *path)
 static inline int open(const char *path, int flags, ...)
 {
     int32_t fd = myrtos_open_flags(path, (uint32_t)flags);
+    // A refusal says so itself, and does not need guessing at.
+    if (fd == MYRTOS_FS_REFUSED) { errno = EACCES; return -1; }
     if (fd < 0) { errno = myrtos_open_errno(path); return -1; }
     return (int)fd;
 }

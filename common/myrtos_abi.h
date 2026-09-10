@@ -731,6 +731,16 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_VIDSTAT   65u   // a0 = &uint32_t[10]: underruns, pumps, lines, buffers,
                             //   beam, rendered, view back, history, of which deep
 
+// What /sd/config.txt said. a0 says which setting, a1 and a2 are where to put
+// it -- except for the password, which is never handed out: asking for it says
+// only whether there is one. See kernel/config.c for why that is the shape.
+#define SYS_CONFIG    68u   // a0 = MYRTOS_CFG_*, a1 = buffer, a2 = length
+                            //   -> a0 = the length written, or for the password
+                            //      1 when one is set and 0 when it is not
+#define MYRTOS_CFG_HOSTNAME 0u
+#define MYRTOS_CFG_SSID     1u
+#define MYRTOS_CFG_PASSWORD 2u
+
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
 //
@@ -930,6 +940,13 @@ typedef struct {
 // TRUNC, and puts the descriptor at the end for APPEND -- all before the caller
 // sees the descriptor, which is what makes them worth having in the kernel
 // rather than arranged afterwards by whoever opened it.
+// The file server's answer to a request it will not carry out, as opposed to
+// one it cannot: the file is there, and this caller may not read it. Only
+// /sd/config.txt is refused today -- see is_secret in kernel/fsserver.c -- and
+// the point of a code of its own is that "no such file" would send somebody
+// looking for a file that is sitting right there in ls.
+#define MYRTOS_FS_REFUSED (-2)
+
 #define MYRTOS_O_RDONLY 0u
 #define MYRTOS_O_WRONLY 1u
 #define MYRTOS_O_RDWR   2u
@@ -1562,9 +1579,19 @@ static inline int32_t myrtos_wifi_reset(void)
     return myrtos_syscall(SYS_WIFIRESET, 0, 0, 0);
 }
 
+// Null joins the network named in /sd/config.txt with the password kept there,
+// which is how a caller uses a password it is not allowed to read.
 static inline int32_t myrtos_wifi_join(const char *ssid_then_pass)
 {
     return myrtos_syscall(SYS_WIFIJOIN, (uint32_t)(uintptr_t)ssid_then_pass, 0, 0);
+}
+
+// The hostname or the SSID into buf; the length, or -1. For the password the
+// buffer is not touched and the answer is 1 or 0 -- there is one, or there is
+// not.
+static inline int32_t myrtos_config_get(uint32_t what, char *buf, uint32_t len)
+{
+    return myrtos_syscall(SYS_CONFIG, what, (uint32_t)(uintptr_t)buf, len);
 }
 
 static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t len)

@@ -28,6 +28,7 @@
 #include "sdcard.h"
 #include "moddir.h"
 #include "tlsf.h"
+#include "config.h"
 
 void myrtos_print(const char *s);
 // No header declares this one; main.c reaches for it the same way.
@@ -123,6 +124,24 @@ static void drop_card_if_dead(void) {
     myrtos_print("SD: the card stopped answering; /sd is unmounted\n");
 }
 
+// The one file a process may not read. The kernel reads it at boot -- see
+// kernel/config.c -- and what is in it is a password, so `cat /sd/config.txt`
+// must not be the way round the rule that a password is typed and never shown.
+//
+// Writing is still allowed, so an editor can replace it, and so is removing it.
+// This is not a permission system: myrtos has no users to have permissions. It
+// is one path with one rule, which is what the one secret on the card needs.
+static bool is_secret(const char *abs) {
+    static const char *secret = "/sd/config.txt";
+    uint32_t i = 0;
+    for (; secret[i]; i++) {
+        char c = abs[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);   // FAT gives it back in caps
+        if (c != secret[i]) return false;
+    }
+    return abs[i] == 0;
+}
+
 static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     char abs[128];
 
@@ -132,6 +151,7 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     case MYRTOS_MSG_FS_READ: {
         const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)m->data;
         make_abs(from, r->name, abs, sizeof(abs));
+        if (is_secret(abs)) return MYRTOS_FS_REFUSED;
         VOLUME_OR_FAIL(read_at);
         return ops->read_at(rest, r->offset, r->buf, r->len);
     }
@@ -176,6 +196,8 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     case MYRTOS_MSG_FS_OPEN: {
         const myrtos_fs_open_t *o = (const myrtos_fs_open_t*)m->data;
         make_abs(from, o->name, abs, sizeof(abs));
+        // Write-only is allowed on the secret; anything that could read is not.
+        if (is_secret(abs) && (o->flags & 3u) != MYRTOS_O_WRONLY) return MYRTOS_FS_REFUSED;
         const char *rest;
         const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);
         if (!ops) return -1;
@@ -620,6 +642,12 @@ static void fs_thread(void) {
     // bits. A failed SDIO attempt never speaks SPI and leaves the card able to
     // answer either way, so falling back costs nothing.
     if (!card_bring_up(true)) card_bring_up(false);
+
+    // Before the script, and before anything else can be told a hostname:
+    // mDNS announces once, and a name corrected afterwards is worse than a
+    // name that arrives a moment later.
+    myrtos_config_read();
+
     run_startup_script();
 
     for (;;) {
@@ -634,5 +662,9 @@ void myrtos_fs_start_server(void) {
     // Below the USB task and the console, above a shell. It holds the card's
     // only buffers, so there is exactly one of it and no locking to get wrong.
     server_pid = myrtos_kernel_thread(fs_thread, 4096, MYRTOS_PRIO_FS);
-    if (server_pid < 0) myrtos_print("FS: could not start its service process\n");
+    if (server_pid < 0) {
+        myrtos_print("FS: could not start its service process\n");
+        // Nothing will ever read the card, so nothing should wait for it.
+        myrtos_config_give_up();
+    }
 }

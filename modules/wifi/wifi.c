@@ -10,9 +10,17 @@ static bool is(const char *a, const char *b) {
     return !*a && !*b;
 }
 
+// What came of it, in the caller's words rather than the chip's number.
+static void report(int32_t r) {
+    if (r == 0)       myrtos_write_str(MYRTOS_STDOUT, "connected\r\n");
+    else if (r == 4)  myrtos_write_str(MYRTOS_STDOUT, "wifi: wrong password, or the network refused\r\n");
+    else if (r == -2) myrtos_write_str(MYRTOS_STDOUT, "wifi: still trying after twenty seconds\r\n");
+    else              myrtos_write_str(MYRTOS_STDOUT, "wifi: could not join\r\n");
+}
+
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: wifi [scan | connect | ip | stats | reset]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one; the password is typed on this machine's own\n            keyboard and never appears as an argument\n  ip        the address it was given\n  stats     how the command channel to the chip has been behaving\n  reset     hold the chip in reset and let it come back. The way out\n            when the link is wrong in a way talking cannot fix; it\n            comes back knowing no network.\n")) return;
+            "usage: wifi [scan | connect | ip | stats | reset]\n\n  (none)    the coprocessor's firmware version\n  scan      list the networks it can hear\n  connect   join one: 'connect <ssid>' asks for the password, and bare\n            'connect' uses /sd/config.txt and asks for whatever it\n            did not say. The password is typed here and is never an\n            argument\n  ip        the address it was given\n  stats     how the command channel to the chip has been behaving\n  reset     hold the chip in reset and let it come back. The way out\n            when the link is wrong in a way talking cannot fix; it\n            comes back knowing no network.\n")) return;
 
     myrtos_line_t line;
     char version[16];
@@ -71,13 +79,60 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    if (argc > 2 && is(argv[1], "connect")) {
+    if (argc > 1 && is(argv[1], "connect")) {
+        // Bare `wifi connect` is the card's network. When /sd/config.txt gave
+        // both a name and a password the kernel joins with them and this
+        // process never sees either -- it cannot, the file is unreadable to it.
+        if (argc == 2 && myrtos_config_get(MYRTOS_CFG_PASSWORD, 0, 0) == 1) {
+            char named[34];
+            int32_t have = myrtos_config_get(MYRTOS_CFG_SSID, named, sizeof(named));
+            if (have > 0) {
+                myrtos_write_str(MYRTOS_STDOUT, "joining ");
+                myrtos_write_str(MYRTOS_STDOUT, named);
+                myrtos_write_str(MYRTOS_STDOUT, "\r\n");
+                report(myrtos_wifi_join(0));
+                return;
+            }
+        }
+
         // The name and the secret, back to back, in one buffer that gets wiped
         // before this returns. The secret is never an argument: argv lives in
         // the process's memory and the shell keeps sixteen lines of history.
         char creds[100];
         uint32_t n = 0;
-        for (const char *p = argv[2]; *p && n < 33; p++) creds[n++] = *p;
+
+        // The name can come from the card, from the command line, or from
+        // whoever is at the keyboard -- in that order, because each is more
+        // trouble than the one before it.
+        char named[34];
+        const char *want = 0;
+        if (argc > 2) want = argv[2];
+        else if (myrtos_config_get(MYRTOS_CFG_SSID, named, sizeof(named)) > 0) want = named;
+
+        if (want) {
+            for (const char *p = want; *p && n < 33; p++) creds[n++] = *p;
+        } else {
+            myrtos_write_str(MYRTOS_STDOUT, "network: ");
+            for (;;) {
+                uint8_t ch;
+                if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;
+                if (ch == '\r' || ch == '\n') break;
+                if (ch == 3) { n = 0; break; }
+                if (ch == 8 || ch == 127) {
+                    if (n) { n--; myrtos_write_str(MYRTOS_STDOUT, "\b \b"); }
+                    continue;
+                }
+                // Echoed, unlike the password. A network name is on the air for
+                // anybody to hear and there is nothing to hide about it -- and
+                // a name typed blind is a name typed wrong.
+                if (ch >= ' ' && n < 33) {
+                    creds[n++] = (char)ch;
+                    myrtos_write(MYRTOS_STDOUT, &ch, 1);
+                }
+            }
+            myrtos_write_str(MYRTOS_STDOUT, "\r\n");
+            if (!n) { myrtos_write_str(MYRTOS_STDOUT, "wifi: no network named\r\n"); return; }
+        }
         creds[n++] = 0;
         uint32_t pass_at = n;
 
@@ -101,10 +156,7 @@ void module_main(int argc, char **argv) {
         // the block until something else is given it.
         for (uint32_t i = 0; i < sizeof(creds); i++) creds[i] = 0;
 
-        if (r == 0)      myrtos_write_str(MYRTOS_STDOUT, "connected\r\n");
-        else if (r == 4) myrtos_write_str(MYRTOS_STDOUT, "wifi: wrong password, or the network refused\r\n");
-        else if (r == -2) myrtos_write_str(MYRTOS_STDOUT, "wifi: still trying after twenty seconds\r\n");
-        else             myrtos_write_str(MYRTOS_STDOUT, "wifi: could not join\r\n");
+        report(r);
         return;
     }
 

@@ -125,6 +125,8 @@ int _open(const char *path, int flags, int mode)
     if (flags & O_TRUNC)  f |= MYRTOS_O_TRUNC;
     if (flags & O_APPEND) f |= MYRTOS_O_APPEND;
     int32_t fd = myrtos_open_flags(path, f);
+    // A refusal says so itself, and does not need guessing at.
+    if (fd == MYRTOS_FS_REFUSED) { errno = EACCES; return -1; }
     if (fd < 0) { errno = open_errno(path); return -1; }
     return fd;
 }
