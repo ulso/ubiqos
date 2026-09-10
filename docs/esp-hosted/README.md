@@ -131,6 +131,58 @@ ROM never prints, and it was exactly 32 bytes because that is the depth of the
 RX FIFO -- stale, from before the reset. `espflash` drains the FIFO first now.
 A proof that prints leftovers as evidence is worse than no proof.
 
+## The C6 runs ESP-Hosted
+
+Written 10 September 2026 with `espflash write /sd/ehcp.bin` -- one merged
+image, 1 197 472 bytes, at offset 0. The chip came up talking:
+
+    ehcp_core: auto_feat_init ... 'feat_wifi' (priority 200)
+    ehcp_rpc_reg: ++ RPC registered: req [0x0101,0x018c]
+    ehcp_core: ESP-Hosted coprocessor ...
+    wifi_mcu_example Starting...
+
+and `wifi` now answers "handshake never moved, GP3 ack=1" -- NINA is gone, and
+the WiFiNINA driver is talking to a chip that no longer speaks its protocol.
+That is the expected state, not a fault. Adafruit's SerialESPPassthrough UF2
+plus their NINA .bin is what puts it back.
+
+The image is built by `esp/fruitjam-c6/build.sh` and merged with
+
+    esptool --chip esp32c6 merge_bin -o ehcp.bin \
+        --flash_mode dio --flash_freq 80m --flash_size 4MB \
+        0x0 bootloader/bootloader.bin \
+        0x8000 partition_table/partition-table.bin \
+        0xd000 ota_data_initial.bin \
+        0x10000 eh_cp_wifi_sta.bin
+
+so that the board has one file to read instead of four offsets to be told
+about. It goes onto the card with `usbdisk`.
+
+### What is worth knowing about the writing
+
+* The flash size is written down, not asked for. `SPI_SET_PARAMS` has to be
+  told 4 MB because nothing on this wire can ask the chip how big its flash is
+  without the stub loader, and the module on this board is an
+  ESP32-C6-MINI-1 with four.
+* `FLASH_BEGIN` takes TWENTY bytes here, not sixteen. The ESP32-S2 and
+  everything after it want a fifth word saying the write is not encrypted --
+  but only when there is no stub loader. Sixteen gets "the packet was the
+  wrong size" and nothing else to go on.
+* Every block is a full kilobyte, the last one padded with 0xff. The ROM was
+  told how many to expect and will not take a short one.
+* 115200 baud, which is what the ROM listens at. `CHANGE_BAUDRATE` would make
+  this eight times quicker and is the obvious next improvement.
+* The reply's payload IS its status, and the last two bytes are the code and
+  the reason. Reading them from the END is what makes the same code work on a
+  chip that answers with two and one that answers with four.
+
+### And what the log does not show
+
+`espflash` reads the chip's output through a 32-byte FIFO, and at 115200 that
+fills in under three milliseconds. The boot log above arrived in pieces with
+holes in it. It was enough to identify the firmware and it is not enough to
+debug one, so the next thing this driver needs is a receive interrupt.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design
