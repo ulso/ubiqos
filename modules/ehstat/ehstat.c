@@ -146,6 +146,7 @@ void module_main(int argc, char **argv) {
     num("bad header     ", s.bad_header);
     num("dma timeouts   ", s.dma_timeouts);
     num("control lost   ", s.inbox_lost);
+    num("network lost   ", s.netbox_lost);
     say("\r\none exchange, microseconds\r\n");
     num("  on the wire  ", s.wall_us);
     num("  worst        ", s.worst_wall_us);

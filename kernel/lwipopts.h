@@ -21,7 +21,18 @@
 #define LWIP_RAW                    1
 #define LWIP_UDP                    1
 #define LWIP_TCP                    1
-#define LWIP_DHCP                   0   // AutoIP instead; see below
+// Both, because there are two networks now and they want different answers.
+//
+// The USB link has one host on the other end and nothing offering addresses,
+// so AutoIP is right there and a DHCP client would wait out its timeout before
+// giving up. The WiFi network has a real router, and asking it is the only way
+// to get an address anybody else can route to.
+//
+// DHCP costs 6.7 kB of SRAM on arm and 8.4 on riscv, measured, and 68 bytes of
+// that is its variables -- the rest is dhcp.c's code, which this kernel keeps
+// in SRAM because it is linked copy_to_ram. The heap figure moves by ±4 kB
+// either side of that on alignment alone, so it is the wrong number to read.
+#define LWIP_DHCP                   1
 #define LWIP_AUTOIP                 1
 #define LWIP_DNS                    1
 #define LWIP_NETIF_HOSTNAME         1

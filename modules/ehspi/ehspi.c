@@ -65,6 +65,7 @@ static const myrtos_kernel_api_t *K;
 #define HDR_V2 20u
 #define V2_MAGIC 0xe9u
 
+#define IF_STA      1u             // network frames, plain Ethernet
 #define IF_SERIAL   3u             // the RPC control plane
 #define IF_PRIV     5u
 #define IF_MAX      8u             // the dummy's interface type
@@ -149,6 +150,30 @@ static uint8_t *inbox;                          // INBOX_SLOTS frames, EH_BUF ea
 static volatile uint16_t inbox_used[INBOX_SLOTS];
 static volatile uint32_t inbox_head, inbox_tail;
 static volatile uint32_t inbox_lost;
+
+// --- THE DATA PLANE ---------------------------------------------------------
+//
+// Station frames are ordinary Ethernet and go to lwIP, which lives in the USB
+// task and may be touched from nowhere else. So they are queued here and the
+// kernel takes them from there on its own terms -- see kernel/lwipnet.c. Eight
+// deep, because these arrive in bursts of whatever the air was carrying and a
+// tick is a long time on a network.
+#define NET_SLOTS 8u
+
+static uint8_t *netbox;                         // NET_SLOTS frames, EH_BUF each
+static volatile uint16_t netbox_used[NET_SLOTS];
+static volatile uint32_t netbox_head, netbox_tail;
+static volatile uint32_t netbox_lost;
+
+// One frame out, the same one-at-a-time arrangement the control plane has.
+static uint8_t *netstage;
+static volatile uint32_t netstage_len;
+static volatile bool nettx_pending;
+
+// The station's own address, which this driver does not ask for and only
+// keeps: it takes a control-plane RPC to fetch, and that lives in ehrpc.
+static uint8_t sta_mac[6];
+static volatile bool sta_mac_known;
 
 static int32_t dma_tx = -1, dma_rx = -1;
 static bool in_flight;
@@ -329,6 +354,17 @@ static void take_frame(void)
     stats.frames++;
     if (iftype < 9) stats.by_if[iftype]++;
 
+    if (iftype == IF_STA) {
+        uint32_t next = (netbox_head + 1u) % NET_SLOTS;
+        if (next == netbox_tail) { netbox_lost++; return; }
+        uint16_t n = len > EH_BUF ? EH_BUF : len;
+        uint8_t *slot = netbox + netbox_head * EH_BUF;
+        for (uint16_t i = 0; i < n; i++) slot[i] = rxbuf[hdr + i];
+        netbox_used[netbox_head] = n;
+        netbox_head = next;
+        return;
+    }
+
     if (iftype == IF_SERIAL) {
         uint32_t next = (inbox_head + 1u) % INBOX_SLOTS;
         if (next == inbox_tail) { inbox_lost++; return; }   // full: keep the old
@@ -395,8 +431,9 @@ static void eh_thread(void)
         // rather than one tick and half a millisecond of it.
         if (in_flight) {
             if (!transact_finish()) continue;
-            if (want_hello)      { stats.sent++; want_hello = false; build_dummy(); }
-            else if (tx_pending) { stats.sent++; tx_pending = false; build_dummy(); }
+            if (want_hello)         { stats.sent++; want_hello = false; build_dummy(); }
+            else if (tx_pending)    { stats.sent++; tx_pending = false; build_dummy(); }
+            else if (nettx_pending) { stats.sent++; nettx_pending = false; build_dummy(); }
             take_frame();
             continue;
         }
@@ -405,14 +442,19 @@ static void eh_thread(void)
         // itself reads nothing and, worse, leaves it out of step with the host
         // for every transaction after.
         if (!K->gpio_get(pin_hs)) continue;
-        if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello) continue;
+        if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello && !nettx_pending) continue;
 
         // What goes out with it, and the handshake goes first: nothing the
         // host has to say is heard until the announcement has been answered.
         // Either way txbuf is complete before the DMA can look at it, because
         // all three of these happen here and nowhere else.
-        if (want_hello)        build_hello();
-        else if (tx_pending)   { for (uint32_t i = 0; i < stage_len; i++) txbuf[i] = stage[i]; }
+        // The handshake first, then control, then data. A network frame is the
+        // one of the three that can wait: nothing else moves until the link is
+        // configured, and a late packet is a slow network rather than a broken
+        // one.
+        if (want_hello)          build_hello();
+        else if (tx_pending)     { for (uint32_t i = 0; i < stage_len; i++) txbuf[i] = stage[i]; }
+        else if (nettx_pending)  { for (uint32_t i = 0; i < netstage_len; i++) txbuf[i] = netstage[i]; }
         transact_start();
     }
 }
@@ -465,7 +507,9 @@ static int32_t eh_configure(const void *config, uint32_t size)
     rxbuf = (uint8_t*)K->driver_alloc(EH_BUF);
     stage = (uint8_t*)K->driver_alloc(EH_BUF);
     inbox = (uint8_t*)K->driver_alloc(EH_BUF * INBOX_SLOTS);
-    if (!txbuf || !rxbuf || !stage || !inbox) {
+    netbox = (uint8_t*)K->driver_alloc(EH_BUF * NET_SLOTS);
+    netstage = (uint8_t*)K->driver_alloc(EH_BUF);
+    if (!txbuf || !rxbuf || !stage || !inbox || !netbox || !netstage) {
         K->print("eh: no SRAM for the transfer buffers\n");
         return -1;
     }
@@ -547,6 +591,24 @@ static int32_t eh_readable(void) { return inbox_tail != inbox_head ? 1 : 0; }
 
 static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
 {
+    if (code == MYRTOS_SS_EH_RX) {
+        if (netbox_tail == netbox_head) return 0;          // nothing waiting
+        const uint8_t *slot = netbox + netbox_tail * EH_BUF;
+        uint32_t have = netbox_used[netbox_tail];
+        if (have > len) have = len;
+        uint8_t *out = (uint8_t*)data;
+        for (uint32_t i = 0; i < have; i++) out[i] = slot[i];
+        netbox_tail = (netbox_tail + 1u) % NET_SLOTS;      // last, and only here
+        return (int32_t)have;
+    }
+
+    if (code == MYRTOS_SS_EH_MAC) {
+        if (len < 6 || !sta_mac_known) return -1;
+        uint8_t *out = (uint8_t*)data;
+        for (int i = 0; i < 6; i++) out[i] = sta_mac[i];
+        return 0;
+    }
+
     if (code != MYRTOS_SS_EH_STATS || len < sizeof(myrtos_eh_stats_t)) return -1;
     // Byte by byte, and not a struct assignment. The compiler turns that into
     // a call to memcpy, and a module links no C library -- the failure is a
@@ -555,6 +617,35 @@ static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
     uint8_t *to = (uint8_t*)data;
     for (uint32_t i = 0; i < sizeof(stats); i++) to[i] = from[i];
     return 0;
+}
+
+static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
+{
+    if (code == MYRTOS_SS_EH_MAC) {
+        if (len < 6) return -1;
+        const uint8_t *in = (const uint8_t*)data;
+        for (int i = 0; i < 6; i++) sta_mac[i] = in[i];
+        sta_mac_known = true;
+        return 0;
+    }
+
+    if (code == MYRTOS_SS_EH_TX) {
+        if (nettx_pending) return -1;                      // one at a time
+        if (len + HDR_V1 > EH_BUF) return -1;
+        const uint8_t *in = (const uint8_t*)data;
+
+        for (uint32_t i = 0; i < HDR_V1; i++) netstage[i] = 0;
+        netstage[0] = IF_STA;
+        put16(netstage + 2, (uint16_t)len);
+        put16(netstage + 4, HDR_V1);
+        for (uint32_t i = 0; i < len; i++) netstage[HDR_V1 + i] = in[i];
+        put16(netstage + 6, frame_checksum(netstage, (uint16_t)(HDR_V1 + len), 6));
+
+        netstage_len = HDR_V1 + len;
+        nettx_pending = true;
+        return (int32_t)len;
+    }
+    return -1;
 }
 
 static bool eh_init_module(const myrtos_kernel_api_t *api)
@@ -574,6 +665,6 @@ const myrtos_driver_module_t myrtos_driver = {
         .open = eh_open, .write = eh_write, .read = eh_read,
         .readable = eh_readable,
         .close = eh_close,
-        .getstat = eh_getstat,
+        .getstat = eh_getstat, .setstat = eh_setstat,
     },
 };

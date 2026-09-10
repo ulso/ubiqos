@@ -54,6 +54,7 @@ MYRTOS_MEM_SIZE(16384);
 #define RPC_REQ  1u
 #define RPC_RESP 2u
 
+#define REQ_GET_MAC   257u
 #define REQ_GET_MODE  259u
 #define REQ_SET_MODE  260u
 #define REQ_WIFI_INIT 278u
@@ -451,6 +452,61 @@ static void do_peek(int32_t dev) {
 // Everything that needs no secret: the radio initialised, put in station mode
 // and started. Separate because it is the half that can be tested from a
 // serial session, and because a scan will want exactly this and no password.
+typedef struct { uint8_t mac[6]; uint32_t len, resp, seen; } mac_t;
+
+static void on_mac(uint32_t field, uint32_t wire, uint32_t v,
+                   const uint8_t *b, uint32_t n, void *arg) {
+    mac_t *m = (mac_t*)arg;
+    if (wire == 2 && field == 1) {
+        uint32_t k = n > 6 ? 6 : n;
+        for (uint32_t i = 0; i < k; i++) m->mac[i] = b[i];
+        m->len = k;
+        m->seen |= 1u;
+    }
+    // Field 2, not field 1. A getter puts what it was asked for first and its
+    // result second, which is the opposite of every action RPC here.
+    if (wire == 0 && field == 2) { m->resp = v; m->seen |= 2u; }
+}
+
+// The station's own hardware address, handed to the driver so the network
+// interface can be built from it. The protobuf stays here; the driver keeps
+// six bytes and knows nothing about how they were asked for.
+static bool fetch_mac(int32_t dev) {
+    // WIFI_IF_STA, not WIFI_MODE_STA. The field is called "mode" and the
+    // co-processor hands it straight to esp_wifi_get_mac, which takes an
+    // INTERFACE -- where station is 0 and 1 is the access point. Sending 1
+    // asked for the address of an interface that was never started, and the
+    // answer to that was silence rather than an error.
+    uint8_t body[16];
+    uint32_t n = put_field(body, 1, 0, WIFI_IF_STA);
+
+    uint8_t payload[64];
+    uint32_t plen = 0;
+    uint32_t r = call(dev, REQ_GET_MAC, body, n, 5000, payload, sizeof(payload), &plen);
+    if (r == 0xffffffffu || r == 0xfffffffeu) { say("no answer\r\n"); return false; }
+
+    mac_t m = { {0,0,0,0,0,0}, 0, 0, 0 };
+    walk(payload, plen, on_mac, &m);
+    if (m.len != 6) { say("the chip did not give one\r\n"); return false; }
+
+    if (myrtos_setstat(dev, MYRTOS_SS_EH_MAC, m.mac, 6) < 0) {
+        say("the driver would not take it\r\n");
+        return false;
+    }
+
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 6; i++) {
+        if (i) myrtos_line_str(&l, ":");
+        char two[2] = { hex[m.mac[i] >> 4], hex[m.mac[i] & 15] };
+        myrtos_line_chars(&l, two, 2);
+    }
+    myrtos_line_str(&l, "\r\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    return true;
+}
+
 static bool do_up(int32_t dev) {
     uint8_t body[320];
     uint32_t n;
@@ -466,6 +522,9 @@ static bool do_up(int32_t dev) {
     if (!step(dev, "station mode      ", REQ_SET_MODE, body, n, 3000)) return false;
 
     if (!step(dev, "start             ", REQ_WIFI_START, body, 0, 10000)) return false;
+
+    myrtos_write_str(MYRTOS_STDOUT, "its address        ... ");
+    if (!fetch_mac(dev)) return false;
     return true;
 }
 

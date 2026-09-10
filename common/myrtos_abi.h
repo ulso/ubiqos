@@ -597,9 +597,26 @@ typedef struct {
     uint32_t cpu_us, worst_cpu_us;
     uint32_t dma_timeouts;    // transfers abandoned rather than left hanging
     uint32_t inbox_lost;      // control frames dropped for want of a slot
+    uint32_t netbox_lost;     // network frames dropped the same way
 } myrtos_eh_stats_t;
 
 #define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t
+
+// The station's own hardware address, which only the control plane can ask
+// for -- RPC 257 -- and only the network interface needs. It is set by
+// whoever ran the RPC and read by whoever builds the netif, so that the
+// protobuf stays in one place and the driver holds six bytes.
+#define MYRTOS_SS_EH_MAC     0x0411u   // uint8_t[6]
+
+// The data plane, which does not go through read and write because those
+// already carry the control plane and a device driver module serves exactly
+// one device. getstat takes the next station frame and answers its length, or
+// zero when there is none; setstat queues one to send.
+//
+// It is the kernel that calls these, from the USB task, because that is where
+// lwIP lives and lwIP may be touched nowhere else.
+#define MYRTOS_SS_EH_RX      0x0412u   // uint8_t[], -> the length taken
+#define MYRTOS_SS_EH_TX      0x0413u   // uint8_t[], one Ethernet frame
 
 // The tail for the ESP32-C6 link. The UART part is the same shape as the one
 // below, and the two pins after it are the ones the chip's ROM cares about at

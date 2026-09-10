@@ -446,6 +446,54 @@ treated. The NINA path got round it by having the KERNEL do the joining, and
 the same has to happen here: the RPC built where the password already is, in
 the driver, rather than in `ehrpc`. Until then `ehrpc connect` asks.
 
+## The data plane
+
+Station frames are ordinary Ethernet and go to lwIP -- the same lwIP that has
+been answering ping over USB since the 9th. `kernel/ehnet.c` is the second
+netif, and the arrangement is decided by one constraint:
+
+**lwIP may be touched from the USB task and nowhere else.** `NO_SYS` is 1, so
+the stack has no locking of its own, and the transport is a kernel thread at
+priority 21. Two contexts must never both be inside it. So the driver QUEUES
+what arrives, eight frames deep, and the USB task drains that queue on its own
+turn. The queue is the boundary between the two, and it is the only one.
+
+The frames do not travel through `read` and `write`: those already carry the
+control plane, and a driver module serves exactly one device. So the data plane
+is `getstat`/`setstat` -- `MYRTOS_SS_EH_RX` takes the next frame and answers
+its length, `MYRTOS_SS_EH_TX` queues one to send.
+
+The draining is bounded at eight frames a turn. A burst of broadcast traffic is
+not a reason to stop answering USB for as long as it lasts, and what is left
+waits a millisecond.
+
+### The address, and the one that took two tries
+
+DHCP on the WiFi interface, AutoIP on the USB one. There is a real router on
+one and one host with no server on the other, and each gets the answer that
+suits it. Both are compiled in now; the measurement is above.
+
+The netif needs the station's OWN hardware address -- the co-processor turns
+802.11 into 802.3 using the address the access point knows, and a netif with
+any other discards everything meant for the machine it is part of. That takes
+RPC 257, so `ehrpc up` fetches it and hands it to the driver with a setstat:
+the protobuf stays in one place and the driver keeps six bytes.
+
+`Rpc_Req_GetMacAddress` has a field called `mode`, and the co-processor hands
+it straight to `esp_wifi_get_mac`, which takes an INTERFACE. Station is 0
+there; 1 is the access point. Sending `WIFI_MODE_STA` asked for the address of
+an interface that had never been started, and the answer to that was silence
+rather than an error -- which reads exactly like a link that has stopped
+working.
+
+    myrtos:/> ehrpc up
+    starting the radio ... ok
+    station mode       ... ok
+    start              ... ok
+    its address        ... 58:e6:c5:f5:7a:ac
+    ...
+    wifi: interface up, asking DHCP for an address
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

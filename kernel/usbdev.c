@@ -95,6 +95,9 @@ static void usb_thread(void) {
         {
             extern void myrtos_lwip_start(void);
             extern void myrtos_lwip_poll(void);
+            extern bool myrtos_eh_netif_start(void);
+            extern bool myrtos_eh_netif_up(void);
+            extern void myrtos_eh_netif_poll(void);
             static bool up;
             // And not before the card has been read: the hostname is in
             // /sd/config.txt, mDNS announces it once, and a responder that has
@@ -109,6 +112,15 @@ static void usb_thread(void) {
             }
             if (up) {
                 myrtos_lwip_poll();
+
+                // The WiFi interface, in the same turn and the same context.
+                // lwIP may not be touched from anywhere else, and the ESP
+                // transport is a thread of its own -- so the frames it queues
+                // are taken here or not at all. Started rather than polled
+                // into existence: it needs the radio's own hardware address,
+                // which only exists once the control plane has asked for it.
+                if (!myrtos_eh_netif_up()) myrtos_eh_netif_start();
+                else                       myrtos_eh_netif_poll();
 
                 // And the socket server, in the same turn and the same
                 // context: lwIP may not be touched from anywhere else, so the

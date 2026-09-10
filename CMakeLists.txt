@@ -373,6 +373,7 @@ endif()
 message(STATUS "lwIP: ${myrtosLwip}")
 if(myrtosLwip)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsock.c)
     target_link_libraries(os_kernel pico_lwip pico_lwip_nosys pico_lwip_mdns)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
