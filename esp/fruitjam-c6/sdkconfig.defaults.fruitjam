@@ -1,0 +1,26 @@
+# Adafruit Fruit Jam: the ESP32-C6-MINI-1 as seen from its own side.
+#
+# Read out of "Adafruit Fruit Jam.sch" (adafruit/Adafruit-Fruit-Jam-PCB), not
+# out of the pinout page, which has the strap pin wrong. The RP2350 side of
+# each net is in myrtos docs/esp-hosted/README.md.
+
+# SPI full duplex, not SDIO. The C6 supports SDIO and would default to it, but
+# this board has no SDIO wiring to the C6 -- it has four SPI lines and two
+# spare GPIOs, which is exactly what full-duplex SPI asks for.
+CONFIG_EH_TRANSPORT_CP_SPI=y
+CONFIG_EH_TRANSPORT_CP_SPI_CONTROLLER_HSPI=y
+
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_MOSI=21
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_MISO=6
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_CLK=22
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_CS=7
+
+# ESP_BUSY, which NINA used as its ACK line -> RP2350 GP3
+CONFIG_EH_TRANSPORT_CP_SPI_GPIO_HANDSHAKE=18
+
+# IO9 -> RP2350 GP23. This is also the chip's download strap, which is why it
+# is pulled up by R27 and why nothing may hold it low across a reset. As an
+# output after boot it is an ordinary pin. It is shared with the audio DAC's
+# GPIO1; myrtos never writes that DAC's register 51, so the DAC leaves the net
+# alone.
+CONFIG_EH_TRANSPORT_CP_SPI_GPIO_DATA_READY=9

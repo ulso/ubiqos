@@ -73,8 +73,56 @@ flashing. Slower, and the obvious first step: it proves the framing and the
 netif with none of the pin contention, and SPI becomes a transport swap rather
 than a bring-up.
 
-## What is not here yet
+## The co-processor firmware
 
-ESP-IDF v4.4.3 is installed on the development machine, which predates the
-ESP32-C6. The slave firmware needs v5.x, so building it is a download before it
-is a build.
+`esp/fruitjam-c6/` builds it: Espressif's own `examples/wifi/sta/cp` with this
+board's wiring in `sdkconfig.defaults.fruitjam`. Verified to reach the image
+rather than assumed --
+
+    CONFIG_EH_TRANSPORT_CP_SPI=y
+    CONFIG_EH_TRANSPORT_CP_SPI_GPIO_MOSI=21
+    CONFIG_EH_TRANSPORT_CP_SPI_GPIO_MISO=6
+    CONFIG_EH_TRANSPORT_CP_SPI_GPIO_CLK=22
+    CONFIG_EH_TRANSPORT_CP_SPI_GPIO_CS=7
+    CONFIG_EH_TRANSPORT_CP_SPI_GPIO_HANDSHAKE=18
+    CONFIG_EH_TRANSPORT_CP_SPI_GPIO_DATA_READY=9
+
+-- and SPI had to be asked for: the C6 has an SDIO slave, so ESP-Hosted picks
+SDIO by default, and this board has no SDIO wiring to that chip at all.
+
+It builds to 1 131 936 bytes at 0x10000, with a bootloader, a partition table
+and an OTA data block below it, and needs ESP-IDF v5.5 or later.
+
+## The control path is not free
+
+ESP-Hosted carries two things over the bus. The DATA path is Ethernet frames,
+which is what this project wanted and is nearly free -- lwIP already has a
+netif over NCM and a second one costs almost nothing. The CONTROL path is not:
+scan, connect, "what is my address" are RPC, and Espressif's porting guide
+expects a host to take their whole stack -- `esp_event`, `esp_netif`, their
+lwIP glue and an OS port layer. That does not fit in sixty kilobytes.
+
+So the control path has to be written here, against the wire format rather than
+against their API. There is an `eh_tlv` serializer beside the protobuf one which
+looks like the cheaper way in; that is the next thing to read.
+
+## Why not UART
+
+UART needs no extra pins and GP8/GP9 are already there. Espressif's own design
+note is why not:
+
+> The framing has no delimiter, escaping, or magic-byte resync -- a single
+> dropped byte desynchronizes the stream with no marker to recover from.
+
+This project has already paid for that once, when a BLE scan and the web server
+killed the WiFi link and the cause turned out to be a protocol with no way back
+in sync. SPI puts a CS edge around every transaction, and the board has exactly
+the two spare lines full-duplex SPI asks for.
+
+## The way back
+
+Adafruit's `SerialESPPassthrough.ino.uf2`, from the AirLift page linked above.
+It goes on over BOOTSEL and does not involve myrtos at all, so it is still the
+way back when it is myrtos's own passthrough that is broken. It is deliberately
+NOT committed here -- it is 185 kB of somebody else's binary and .gitignore
+says so -- and lives in tools/ on the development machine.

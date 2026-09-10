@@ -6,3 +6,8 @@ build
 # Sparade webbsidor som referensmaterial -- flera megabyte binärt per fil,
 # och de går inte att ta bort ur historiken i efterhand.
 docs/*.webarchive
+
+# Adafruit's own recovery route for the ESP32-C6, downloaded rather than
+# built here. 185 kB of somebody else's binary does not belong in this
+# history -- see docs/esp-hosted/README.md for where to get it and why.
+tools/SerialESPPassthrough.ino.uf2
