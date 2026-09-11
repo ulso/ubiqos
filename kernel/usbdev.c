@@ -4,6 +4,12 @@
 #include "../common/modules.h"   // myrtos_sleep, through the shared ABI
 #include "pico/time.h"                 // time_us_64, for the event log
 
+// How long the bus must stay quiet before the CDC-NCM link is called down.
+// Four times the longest idle suspend seen on this bench, and short enough
+// that a cable actually pulled out is noticed while the user is still
+// looking at the screen.
+#define MYRTOS_USB_QUIET_US (15ull * 1000000ull)
+
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
@@ -213,7 +219,32 @@ static void usb_thread(void) {
                 up = true;
             }
             if (up) {
-                myrtos_lwip_set_link(tud_ready());
+                // The link follows the host, but not instantly downwards.
+                //
+                // This host suspends and resumes the bus about once a minute,
+                // three or four seconds at a time, with nothing wrong and
+                // nobody touching the cable. Taking the link down for that
+                // would stop and restart AutoIP every minute, taking the
+                // address away for as long as it takes to probe again and
+                // re-announcing over mDNS each time. (The address itself does
+                // come back: lwIP seeds its candidate from the hardware
+                // address, so it is the same one unless somebody objects.)
+                // A pause is not an unplug.
+                //
+                // So the link falls only once the bus has stayed quiet for
+                // longer than any of those pauses, and rises the moment the
+                // host is back. Ulf saw the pattern in the suspend log and
+                // asked the question before this was written the naive way.
+                static uint64_t quiet_since;
+                if (tud_ready()) {
+                    quiet_since = 0;
+                    myrtos_lwip_set_link(true);
+                } else if (!quiet_since) {
+                    quiet_since = time_us_64();
+                } else if (time_us_64() - quiet_since > MYRTOS_USB_QUIET_US) {
+                    myrtos_lwip_set_link(false);
+                }
+
                 myrtos_lwip_poll();
 
                 // The WiFi interface, in the same turn and the same context.
