@@ -181,11 +181,11 @@ void myrtos_lwip_start(void)
     netif_set_default(&nif);
     netif_set_status_callback(&nif, on_status);
     netif_set_up(&nif);
-    // The LINK is left down. This interface is a cable to a host, and there is
-    // not always a host: the board runs just as well on a charger, and the Mac
-    // it is normally on goes to sleep. myrtos_lwip_set_link follows tud_ready
-    // from the USB task, so the link says what is actually true.
-    autoip_start(&nif);
+    // The LINK is left down, and so is AutoIP. This interface is a cable to a
+    // host, and there is not always a host: the board runs just as well on a
+    // charger, and the Mac it is normally on goes to sleep. myrtos_lwip_set_link
+    // follows tud_ready from the USB task, so the link says what is actually
+    // true, and AutoIP goes with it.
 
     // The responder goes up with the interface rather than when an address
     // arrives: it announces again by itself once AutoIP settles, and a name
@@ -220,8 +220,19 @@ void myrtos_lwip_set_link(bool up)
 {
     if (!started) return;
     if (up == (bool)netif_is_link_up(&nif)) return;
-    if (up) netif_set_link_up(&nif);
-    else    netif_set_link_down(&nif);
+
+    // AutoIP is started and stopped with the link rather than at boot. Left
+    // running on a cable with nobody on it, it probes, hears no objection --
+    // there is no one to object -- and settles on a 169.254 address for an
+    // interface that cannot carry a packet. The board then announced an address
+    // it could not be reached at, which is worse than having none.
+    if (up) {
+        netif_set_link_up(&nif);
+        autoip_start(&nif);
+    } else {
+        autoip_stop(&nif);
+        netif_set_link_down(&nif);
+    }
 }
 
 // Called from the USB device task's loop, which is the one context lwIP has.
