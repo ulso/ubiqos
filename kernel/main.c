@@ -592,14 +592,21 @@ void myrtos_kernel_main(void) {
     // this function: the SDIO driver's waits are unbounded, this runs before the
     // scheduler, and a hang here takes the console and USB with it.
     //
-    // So nothing brings the card up automatically -- not here and not in the
-    // filesystem server either, whose thread deliberately touches nothing until
-    // someone sends it MYRTOS_MSG_FS_MOUNT. `mount` is a command the user types.
-    // See card_bring_up in fsserver.c.
+    // The filesystem server does it instead, as the first thing its thread does
+    // -- see fs_thread in fsserver.c, which calls card_bring_up and then reads
+    // /sd/config.txt. It has a scheduler, so it can wait; this function has not.
     //
-    // The cost is that modules on the card are not registered at boot at all;
-    // they appear when the card is mounted. Nothing the machine needs to boot
-    // lives there: the shell and every descriptor are resident in flash.
+    // That is a change from how this worked at first, when nothing touched the
+    // card until the user typed `mount`. The comment here still said so long
+    // after it stopped being true, which is the sort of thing one believes at
+    // three in the morning: the credentials and the hostname live on the card,
+    // so waiting for a typed command would have meant a board that never joined
+    // a network by itself. `mount` still exists and still works; it is no
+    // longer what wakes the card.
+    //
+    // Modules on the card are registered when it comes up rather than here, and
+    // nothing the machine needs to boot lives there anyway: the shell and every
+    // descriptor are resident in flash.
 
     // Descriptors first: the devices must exist before any process tries to
     // open them. A data module has no entry point and is not started.
