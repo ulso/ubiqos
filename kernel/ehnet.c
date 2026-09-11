@@ -119,9 +119,30 @@ static void print_ip(const void *addr)
     }
 }
 
+// Which interface everything that is not on a directly connected network goes
+// out of.
+//
+// It was the USB link, because that one came up first and set itself. But that
+// link has an AutoIP address and NO ROUTER: anything not on the wire itself --
+// a DNS server, dn.se, the rest of the internet -- was routed into a cable
+// with nowhere to go. `ping dn.se` failed as "nobody answers to that name",
+// which was true and was not the reason.
+//
+// So the WiFi takes the default the moment it has a DHCP address, because an
+// address from a server comes with a router to use it, and the USB link keeps
+// it otherwise. Neither having one is the case worth complaining about, and
+// the complaint belongs where somebody asked for something, not here.
+static void take_the_default(struct netif *n)
+{
+    netif_set_default(n);
+    myrtos_print("wifi: routing through the air now, not the cable\n");
+}
+
 static void on_status(struct netif *n)
 {
     if (!netif_is_up(n) || ip4_addr_isany_val(*netif_ip4_addr(n))) return;
+
+    if (netif_default != n && !ip4_addr_isany_val(*netif_ip4_gw(n))) take_the_default(n);
 
     // The mask and the router as well as the address, because those three
     // together are what says the address came from a DHCP server rather than

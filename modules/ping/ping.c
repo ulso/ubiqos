@@ -40,9 +40,13 @@ static void ms_str(myrtos_line_t *l, uint32_t us) {
 
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
-            "usage: ping HOST [count]\n\nHOST is an address or a name. A name "
-            "ending in .local is asked\nfor by multicast, so no DNS server is "
-            "needed.\n\nCtrl-C stops it.\n")) return;
+            "usage: ping HOST [count]\n\n"
+            "HOST is an address or a name.\n\n"
+            "  a name ending in .local, or with no dot at all, is asked for by\n"
+            "  multicast on every interface, so no server is needed\n"
+            "  anything else is asked of the DNS servers the router gave us\n\n"
+            "Traffic goes out over the WiFi when it has an address and a router,\n"
+            "and over the USB link otherwise. Ctrl-C stops it.\n")) return;
 
     if (argc < 2) { say("usage: ping HOST [count]\r\n"); return; }
 
@@ -90,7 +94,12 @@ void module_main(int argc, char **argv) {
             myrtos_line_flush(MYRTOS_STDOUT, &l);
             return;                                   // no point asking again
         case MYRTOS_PING_UNREACHABLE:
-            myrtos_line_str(&l, "ping: the stack could not send it\r\n");
+            // There is no route, which on this machine means neither network
+            // has an address: the WiFi has not joined and the USB link has no
+            // host on the other end. Saying "could not send" invites a look at
+            // the sending; this says what to look at instead.
+            myrtos_line_str(&l, "ping: no route -- has the WiFi joined, and is "
+                                "the USB cable in?\r\n");
             myrtos_line_flush(MYRTOS_STDOUT, &l);
             return;
         default:

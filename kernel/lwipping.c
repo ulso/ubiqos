@@ -46,6 +46,7 @@ static struct {
     uint32_t sent_us;
     uint32_t took_us;
     uint32_t want_seq;
+    bool     by_dns;                    // a DNS server is answering, not mDNS
 } cur;
 
 uint64_t time_us_64(void);
@@ -109,6 +110,17 @@ static bool send_echo(void)
     return true;
 }
 
+// A DNS server answered. Called by lwIP from its own context, which is this
+// task, so there is nothing to hand over.
+static void on_resolved(const char *name, const ip_addr_t *addr, void *arg)
+{
+    (void)name; (void)arg;
+    if (cur.state != MYRTOS_PING_RESOLVING) return;
+    if (!addr) { cur.state = MYRTOS_PING_NONAME; return; }
+    cur.addr = *addr;
+    send_echo();
+}
+
 // --- WHAT THE SERVER CALLS --------------------------------------------------
 
 int32_t myrtos_ping_start(const char *host)
@@ -127,6 +139,37 @@ int32_t myrtos_ping_start(const char *host)
     // A literal is not a question for anybody.
     if (ipaddr_aton(host, &cur.addr)) return send_echo() ? 0 : -1;
 
+    // Which kind of name it is decides who is asked, and the two are different
+    // services entirely: .local is answered by whoever holds the name, on the
+    // spot; everything else is answered by a DNS server the router told us
+    // about. Asking the wrong one gets a perfectly confident "nobody answers
+    // to that name", which is what `ping dn.se` used to say.
+    bool dotted = false, dot_local = false;
+    {
+        uint32_t n = 0;
+        while (host[n]) n++;
+        for (uint32_t i = 0; i < n; i++) if (host[i] == '.') dotted = true;
+        if (n > 6) {
+            const char *t = host + n - 6;
+            dot_local = t[0] == '.' && (t[1] == 'l' || t[1] == 'L')
+                                    && (t[2] == 'o' || t[2] == 'O')
+                                    && (t[3] == 'c' || t[3] == 'C')
+                                    && (t[4] == 'a' || t[4] == 'A')
+                                    && (t[5] == 'l' || t[5] == 'L');
+        }
+    }
+
+    if (dotted && !dot_local) {
+        // The ordinary internet. lwIP's DNS client, with the servers DHCP
+        // handed over -- which only works at all now that the interface with a
+        // router on it is the default one.
+        err_t rc = dns_gethostbyname(host, &cur.addr, on_resolved, NULL);
+        if (rc == ERR_OK) return send_echo() ? 0 : -1;      // already known
+        if (rc == ERR_INPROGRESS) { cur.by_dns = true; return 0; }
+        cur.state = MYRTOS_PING_NONAME;
+        return -1;
+    }
+
     // And a name goes to our own querier rather than to lwIP's DNS client.
     //
     // That client does resolve .local names -- it is one #define -- but it
@@ -134,7 +177,21 @@ int32_t myrtos_ping_start(const char *host)
     // USB link, so `ping rpi50.local` asked the Mac about a Raspberry Pi that
     // is on the air, and was told nothing by everybody. Ours asks on every
     // interface that is up.
-    if (myrtos_mdns_resolve(host) < 0) { cur.state = MYRTOS_PING_NONAME; return -1; }
+    // A name with no dot in it at all is the one people type for the machine in
+    // the next room, and .local is what they mean.
+    static char with_local[80];
+    const char *ask = host;
+    if (!dotted) {
+        uint32_t n = 0;
+        while (host[n] && n < sizeof(with_local) - 7) { with_local[n] = host[n]; n++; }
+        const char *t = ".local";
+        for (int i = 0; i < 6; i++) with_local[n++] = t[i];
+        with_local[n] = 0;
+        ask = with_local;
+    }
+
+    cur.by_dns = false;
+    if (myrtos_mdns_resolve(ask) < 0) { cur.state = MYRTOS_PING_NONAME; return -1; }
     return 0;                                           // the poll picks it up
 }
 
@@ -147,7 +204,7 @@ void myrtos_ping_poll(uint32_t out[3])
     // callback that can outlive the thing it was timing.
     // Still waiting on a name. The querier answers or gives up on its own, and
     // the echo goes out the moment it answers.
-    if (cur.state == MYRTOS_PING_RESOLVING) {
+    if (cur.state == MYRTOS_PING_RESOLVING && !cur.by_dns) {
         uint32_t a = 0;
         int32_t r = myrtos_mdns_state(&a);
         if (r < 0) cur.state = MYRTOS_PING_NONAME;
