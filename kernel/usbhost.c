@@ -53,7 +53,7 @@ static spin_lock_t *keylock;
 enum { EV_LOG = 1, EV_INTR, EV_VIEW };
 enum { LOG_MOUNT = 1, LOG_UMOUNT, LOG_HID_KBD, LOG_HID_OTHER, LOG_ARMED,
        LOG_HID_GONE, LOG_CDC_UP, LOG_CDC_GONE, LOG_STARTED, LOG_INIT_FAIL,
-       LOG_NO_SLOT, LOG_HUB_REARM };
+       LOG_NO_SLOT };
 enum { VIEW_MOVE = 1, VIEW_HOME, VIEW_END };
 
 typedef struct { uint8_t kind, id; uint32_t a, b; } usb_event_t;
@@ -198,7 +198,6 @@ void myrtos_usbhost_drain(void)
             case LOG_HID_KBD:   myrtos_print("USB host: keyboard ready\n"); break;
             case LOG_HID_OTHER: myrtos_print("USB host: HID device, not a keyboard\n"); break;
             case LOG_NO_SLOT:   myrtos_print("USB host: no free HID slot; this device will not be polled\n"); break;
-            case LOG_HUB_REARM: myrtos_print("USB host: restarted hub polling; port changes were being missed\n"); break;
             case LOG_ARMED:     myrtos_print("USB host:   armed\n"); break;
             case LOG_HID_GONE:  myrtos_print("USB host: HID gone\n"); break;
             case LOG_CDC_GONE:  myrtos_print("USB host: CDC-ACM device gone\n"); break;
@@ -517,68 +516,11 @@ static void cdc_rearm(void) {
     myrtos_cdc_rearms++;
 }
 
-// --- THE HUB'S STATUS ENDPOINT ---------------------------------------------
-//
-// A hub reports "something changed on one of my ports" on one interrupt IN
-// endpoint, and that endpoint is the only way the host ever learns that a
-// device was unplugged from it. TinyUSB's hub_xfer_cb opens with
-//
-//     TU_VERIFY(result == XFER_RESULT_SUCCESS);
-//
-// and returns. Nothing queues the next poll on that path, so ONE failed
-// transfer ends hub polling for the life of the boot -- silently, and with no
-// counter anywhere. After that no disconnect and no connect on any hub port is
-// ever seen again.
-//
-// That is what a keyboard dying on 11 Sep 2026 turned out to be. Pulled out, it
-// stayed in TinyUSB's table as connected|addressed|configured; our three HID
-// slots went on pointing at it with transfers PIO happily kept queuing; and
-// plugging it back in produced nothing at all, because the hub never said the
-// port had changed. The same shape as the HID re-arm above, one layer up, and
-// the file already carried the sentence for it: a single refused re-arm ends
-// input for good because nothing ever asks again.
-//
-// Which addresses are hubs is not a guess. TinyUSB's own get_itf is
-//
-//     return &hub_data[dev_addr - 1 - CFG_TUH_DEVICE_MAX];
-//
-// so hub addresses ARE CFG_TUH_DEVICE_MAX+1 upward, by construction, and there
-// are CFG_TUH_HUB of them. Sweeping exactly that range asks nothing of luck.
-bool hub_edpt_status_xfer(uint8_t dev_addr);   // TinyUSB's host/hub.h
-
-#define HUB_ADDR_FIRST  (CFG_TUH_DEVICE_MAX + 1)
-#define HUB_DEAD_SWEEPS 16       // as for HID: milliseconds, not microseconds
-
-uint32_t myrtos_hub_rearms;      // how many times hub polling had to be restarted
-
-static void hub_rearm(void) {
-    static uint8_t dead[CFG_TUH_HUB];
-
-    for (uint8_t h = 0; h < CFG_TUH_HUB; h++) {
-        const uint8_t addr = (uint8_t)(HUB_ADDR_FIRST + h);
-        if (!tuh_mounted(addr)) { dead[h] = 0; continue; }
-
-        // Instance 0 is the hub's only interrupt IN endpoint.
-        const endpoint_t *ep = hid_in_endpoint(addr, 0);
-        if (!ep) { dead[h] = 0; continue; }
-        if (ep->has_transfer) { dead[h] = 0; continue; }
-
-        if (++dead[h] < HUB_DEAD_SWEEPS) continue;
-        dead[h] = 0;
-        if (hub_edpt_status_xfer(addr)) {
-            myrtos_hub_rearms++;
-            ev_push(EV_LOG, LOG_HUB_REARM, addr, 0);
-        }
-    }
-}
-
 void myrtos_usbhost_rearm(void) {
     // Not every pass. A healthy endpoint is busy and the claim simply fails, so
     // this costs little either way, but sixty times a second is enough.
     static uint8_t cdc_countdown;
     if (!cdc_countdown--) { cdc_countdown = 63; cdc_rearm(); }
-
-    hub_rearm();
 
     for (int i = 0; i < HID_SLOTS; i++) {
         if (!hid_poll[i].wanted) continue;
