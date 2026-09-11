@@ -20,6 +20,31 @@ void myrtos_usb_init(void) {
     // mtvec: the SDK's external dispatch is what looks up in that table.
     tud_init(0);
 
+    // And stay OFF the bus until something can answer it. tud_connect is in
+    // usb_thread, below.
+    //
+    // This is the fix for the morning's fix. Telling the host we are here is
+    // one thing; being able to reply is another, and between this line and the
+    // start of the USB task the kernel still has flash to scan, descriptors to
+    // register and a shell to create. A host that enumerates in that window
+    // gets no answer: every SETUP packet becomes an event queued by the
+    // interrupt handler for a tud_task that is not running yet. The queue holds
+    // sixteen. When it is full TU_ASSERT drops the event -- and drops it
+    // WITHOUT clearing the hardware status bit that caused it, so the interrupt
+    // fires again immediately, for ever. The board then never finishes booting:
+    // myrtos_ticks stays at 0 because pre-emption is enabled on the last line
+    // of main, and the video pump stops after about eighty passes.
+    //
+    // The window was always there. What changed on 11 Sep 2026 is that the
+    // pulse below made the host enumerate promptly EVERY time, where before it
+    // frequently did not -- which was the bug the pulse was written to fix. So
+    // the pulse did not create the hazard, it just stopped hiding it.
+    //
+    // Leaving the pull-up down until the task is running closes both: the host
+    // still sees a clean disconnect after a warm reset, and the gap from here
+    // to the task is far longer than the 120 ms busy wait this replaces.
+    tud_disconnect();
+
     // Then tell the host, in a way it cannot miss, that whatever used to be on
     // this port is gone.
     //
@@ -39,13 +64,10 @@ void myrtos_usb_init(void) {
     // hand for a moment brought the whole machine back. This is that, done at
     // boot so nobody has to do it by hand again.
     //
-    // 120 ms is comfortably past a hub's debounce and is paid once, before the
-    // scheduler starts, so a busy wait is the honest way to spend it.
-    tud_disconnect();
-    busy_wait_ms(120);
-    tud_connect();
-
-    myrtos_print("USB device started, CDC console on the USB port\n");
+    // A hub debounces a disconnect over tens of milliseconds and never reports
+    // one shorter, which is why the reset's own microseconds are not enough.
+    // The rest of the boot is the wait, and it costs nothing.
+    myrtos_print("USB device started; the bus is joined once the task can answer it\n");
 }
 
 // TinyUSB does its work here, not in the interrupt. The kernel's idle loop
@@ -252,6 +274,11 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
 // gives a device to answer a standard request with no data stage. Fifty times
 // the margin, for a sleep that costs nothing.
 static void usb_thread(void) {
+    // NOW join the bus. myrtos_usb_init left the pull-up down on purpose: from
+    // here on there is a thread calling tud_task, so an enumerating host gets
+    // answered instead of filling a queue nobody drains. See the note there.
+    tud_connect();
+
     for (;;) {
         myrtos_usb_task();          // the console, on the hardware controller
 
