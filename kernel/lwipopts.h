@@ -35,6 +35,12 @@
 #define LWIP_DHCP                   1
 #define LWIP_AUTOIP                 1
 #define LWIP_DNS                    1
+
+// A name ending in .local is asked for by MULTICAST rather than of a DNS
+// server, which is what makes `ping fruit-jam.local` work from the board the
+// same way it works from the Mac. lwIP's own responder answers such questions;
+// this is the other half, asking them.
+#define LWIP_DNS_SUPPORT_MDNS_QUERIES 1
 #define LWIP_NETIF_HOSTNAME         1
 
 // --- mDNS AND DNS-SD -------------------------------------------------------

@@ -224,6 +224,22 @@ int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
     case MYRTOS_SOCK_RECV:   return do_recv(i, r->buf, r->len);
     case MYRTOS_SOCK_SEND:   return do_send(i, r->buf, r->len);
     case MYRTOS_SOCK_CLOSE:  return do_close(i);
+    // Not a socket, and here for the reason everything else here is: this is
+    // the one context lwIP may be touched from.
+    case MYRTOS_SOCK_PING: {
+        extern int32_t myrtos_ping_start(const char *host);
+        char name[64];
+        uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;
+        for (uint32_t k = 0; k < n; k++) name[k] = (char)r->buf[k];
+        name[n] = 0;
+        return myrtos_ping_start(name);
+    }
+    case MYRTOS_SOCK_PINGST: {
+        extern void myrtos_ping_poll(uint32_t out[3]);
+        if (r->len < 3 * sizeof(uint32_t)) return -1;
+        myrtos_ping_poll((uint32_t *)r->buf);
+        return 0;
+    }
     case MYRTOS_SOCK_STATE:  return do_state(i);
     case MYRTOS_SOCK_OWNER:
         return (i >= 0 && i < NSOCK && sk[i].used) ? sk[i].owner : -1;   // -2 is reaped

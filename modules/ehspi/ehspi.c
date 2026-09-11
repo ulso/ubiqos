@@ -717,7 +717,19 @@ static void join_thread(void)
             k += put_field(c + k,  5, 64);      // dynamic tx
             k += put_field(c + k,  8, 1);       // AMPDU rx
             k += put_field(c + k,  9, 1);       // AMPDU tx
-            k += put_field(c + k, 11, 1);       // NVS, so calibration is kept
+            // NVS OFF, and it was on.
+            //
+            // esp_wifi writes the network's configuration to the
+            // co-processor's NVS partition at every SetConfig, and after a day
+            // of joining and rejoining that partition stopped being usable:
+            // esp_wifi_init began answering 4353, which is 0x1101,
+            // ESP_ERR_NVS_NOT_INITIALIZED. The radio would not start at all.
+            //
+            // We have nothing to remember. The SSID and the password come off
+            // the card at every boot, so a copy in the chip's flash is a second
+            // source of truth that can only ever disagree -- and, as it turned
+            // out, can break the first one.
+            k += put_field(c + k, 11, 0);       // no NVS
             k += put_field(c + k, 13, 32);      // block-ack window
             k += put_field(c + k, 15, 752);     // beacon length
             k += put_field(c + k, 16, 32);      // management buffers

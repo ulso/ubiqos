@@ -608,6 +608,18 @@ typedef struct {
                                            // something waiting to go
 } myrtos_eh_stats_t;
 
+// --- PING -------------------------------------------------------------------
+// Started and then polled, because the stack lives in the USB task and that
+// task may not wait for anything. The process that typed `ping` does the
+// waiting instead, which is the one place waiting costs nothing.
+#define MYRTOS_PING_IDLE        0u
+#define MYRTOS_PING_RESOLVING   1u
+#define MYRTOS_PING_WAITING     2u
+#define MYRTOS_PING_REPLIED     3u
+#define MYRTOS_PING_TIMEDOUT    4u
+#define MYRTOS_PING_NONAME      5u   // the name is not answered by anybody
+#define MYRTOS_PING_UNREACHABLE 6u   // the stack would not even send it
+
 #define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t
 
 // The station's own hardware address, which only the control plane can ask
@@ -1134,6 +1146,11 @@ typedef struct {
 #define MYRTOS_SOCK_OWNER  6u   // arg = socket    -> pid, -1 nobody, -2 reaped
 #define MYRTOS_SOCK_PORT   7u   // arg = socket    -> the port it serves, or 0
 #define MYRTOS_SOCK_LISTEN_ON 8u // arg = (stack << 16) | port -> socket, or -1
+
+// ping, which is not a socket but goes to the same server for the same reason:
+// that server IS the one context lwIP may be touched from.
+#define MYRTOS_SOCK_PING   9u   // buf = the host, len its length -> 0 started
+#define MYRTOS_SOCK_PINGST 10u  // buf = &uint32_t[3]: state, address, us
 
 // --- WHICH STACK ------------------------------------------------------------
 //
@@ -1757,6 +1774,29 @@ static inline int32_t myrtos_sock_recv(int32_t sock, uint8_t *buf, uint32_t len)
 {
     myrtos_sockbuf_t b = { buf, len };
     return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_RECV, (uint32_t)sock,
+                          (uint32_t)(uintptr_t)&b);
+}
+
+// Start a ping and then ask how it went. Two calls because the stack cannot
+// wait and this caller can. The host may be a dotted address or a name; a name
+// ending in .local is asked for by multicast.
+static inline int32_t myrtos_ping(const char *host)
+{
+    uint32_t n = 0;
+    while (host[n]) n++;
+    myrtos_sockbuf_t b = { (uint8_t *)(uintptr_t)host, n + 1 };
+    // The stack is named in the socket number's high byte everywhere else;
+    // ping has no socket, so it is named here instead.
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_PING,
+                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0),
+                          (uint32_t)(uintptr_t)&b);
+}
+
+static inline int32_t myrtos_ping_state(uint32_t out[3])
+{
+    myrtos_sockbuf_t b = { (uint8_t *)out, 3 * sizeof(uint32_t) };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_PINGST,
+                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0),
                           (uint32_t)(uintptr_t)&b);
 }
 
