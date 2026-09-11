@@ -4,6 +4,7 @@
 //     hostname = jamboree
 //     ssid     = the-network
 //     password = ...
+//     timezone = +2
 //
 // Keys are case-insensitive, everything after '#' is a comment, and a value
 // runs to the end of the line with the spaces either side trimmed. Trailing
@@ -34,6 +35,7 @@
 #include <stdbool.h>
 #include "config.h"
 #include "fat32.h"
+#include "clock.h"
 
 void myrtos_print(const char *s);
 
@@ -94,6 +96,37 @@ static bool valid_hostname(const char *s, uint32_t n) {
     return s[0] != '-' && s[n - 1] != '-';
 }
 
+// "timezone = +2" or "-3:30" or "0". Hours east of UTC, with optional minutes.
+//
+// No daylight saving: the board would have to carry the rules for wherever it
+// is and the date they change, and it has neither. So this is the offset that
+// is true today, and it is the user's to edit twice a year. Said plainly here
+// because a clock that is quietly an hour out is worse than one that is
+// obviously unset.
+static void take_timezone(const char *v, uint32_t n) {
+    uint32_t i = 0;
+    int32_t sign = 1;
+    if (i < n && (v[i] == '+' || v[i] == '-')) { if (v[i] == '-') sign = -1; i++; }
+
+    int32_t hours = 0, mins = 0;
+    uint32_t digits = 0;
+    while (i < n && v[i] >= '0' && v[i] <= '9') { hours = hours * 10 + (v[i++] - '0'); digits++; }
+    if (!digits) { myrtos_print("config: that timezone is not a number; staying on UTC\n"); return; }
+
+    if (i < n && v[i] == ':') {
+        i++;
+        digits = 0;
+        while (i < n && v[i] >= '0' && v[i] <= '9') { mins = mins * 10 + (v[i++] - '0'); digits++; }
+        if (!digits) mins = 0;
+    }
+
+    if (i != n || hours > 14 || mins > 59) {
+        myrtos_print("config: that timezone is not an offset; staying on UTC\n");
+        return;
+    }
+    myrtos_clock_set_offset(sign * (hours * 60 + mins));
+}
+
 // One line, already stripped of its newline.
 static void take_line(char *l, uint32_t n) {
     // A comment starts at a '#' that begins the line or follows a blank, and
@@ -138,6 +171,8 @@ static void take_line(char *l, uint32_t n) {
         copy_into(ssid, sizeof(ssid), l + val, vallen);
     } else if (key_is(l + key, keylen, "password")) {
         copy_into(pass, sizeof(pass), l + val, vallen);
+    } else if (key_is(l + key, keylen, "timezone")) {
+        take_timezone(l + val, vallen);
     }
     // Anything else is somebody else's setting, or a typo. Neither is worth
     // refusing the rest of the file over.
