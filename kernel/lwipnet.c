@@ -181,7 +181,10 @@ void myrtos_lwip_start(void)
     netif_set_default(&nif);
     netif_set_status_callback(&nif, on_status);
     netif_set_up(&nif);
-    netif_set_link_up(&nif);
+    // The LINK is left down. This interface is a cable to a host, and there is
+    // not always a host: the board runs just as well on a charger, and the Mac
+    // it is normally on goes to sleep. myrtos_lwip_set_link follows tud_ready
+    // from the USB task, so the link says what is actually true.
     autoip_start(&nif);
 
     // The responder goes up with the interface rather than when an address
@@ -202,6 +205,23 @@ void myrtos_lwip_start(void)
 
     started = true;
     myrtos_print("net: lwIP up, asking AutoIP for an address\n");
+}
+
+// Whether there is a host on the other end of the USB cable. Called every turn
+// from the USB task with tud_ready(), and cheap: it only acts on a change.
+//
+// This exists because lwIP used to be started only once tud_ready() was true,
+// which quietly made the whole stack -- the WiFi interface included -- depend
+// on a host that has nothing to do with the radio. A board on a charger came up
+// with a display and a keyboard and never joined a network. The stack now
+// starts as soon as the card has been read, and only THIS interface waits for
+// a host, which is the only one that has any business doing so.
+void myrtos_lwip_set_link(bool up)
+{
+    if (!started) return;
+    if (up == (bool)netif_is_link_up(&nif)) return;
+    if (up) netif_set_link_up(&nif);
+    else    netif_set_link_down(&nif);
 }
 
 // Called from the USB device task's loop, which is the one context lwIP has.
