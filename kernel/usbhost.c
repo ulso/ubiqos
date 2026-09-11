@@ -52,7 +52,8 @@ static spin_lock_t *keylock;
 // crosses between the cores at all.
 enum { EV_LOG = 1, EV_INTR, EV_VIEW };
 enum { LOG_MOUNT = 1, LOG_UMOUNT, LOG_HID_KBD, LOG_HID_OTHER, LOG_ARMED,
-       LOG_HID_GONE, LOG_CDC_UP, LOG_CDC_GONE, LOG_STARTED, LOG_INIT_FAIL };
+       LOG_HID_GONE, LOG_CDC_UP, LOG_CDC_GONE, LOG_STARTED, LOG_INIT_FAIL,
+       LOG_NO_SLOT };
 enum { VIEW_MOVE = 1, VIEW_HOME, VIEW_END };
 
 typedef struct { uint8_t kind, id; uint32_t a, b; } usb_event_t;
@@ -196,6 +197,7 @@ void myrtos_usbhost_drain(void)
                 break;
             case LOG_HID_KBD:   myrtos_print("USB host: keyboard ready\n"); break;
             case LOG_HID_OTHER: myrtos_print("USB host: HID device, not a keyboard\n"); break;
+            case LOG_NO_SLOT:   myrtos_print("USB host: no free HID slot; this device will not be polled\n"); break;
             case LOG_ARMED:     myrtos_print("USB host:   armed\n"); break;
             case LOG_HID_GONE:  myrtos_print("USB host: HID gone\n"); break;
             case LOG_CDC_GONE:  myrtos_print("USB host: CDC-ACM device gone\n"); break;
@@ -248,7 +250,19 @@ static void push_locked(const char *sq, uint32_t n) {
     spin_unlock(keylock, save);
 }
 
+static void forget_held_keys(void);
+
+// The key the repeat clock is currently sending, 0 when none. Declared up here
+// rather than only where it lives, because the callbacks below clear it long
+// before the auto-repeat section defines what it means -- which is further
+// down, along with what bounds it.
+static uint8_t repeat_key;
+
 // --- what TinyUSB calls back ----------------------------------------------
+
+// Defined below with the poll table it clears; declared here because the
+// callbacks come first in this file.
+static void hid_forget_device(uint8_t addr);
 
 void tuh_mount_cb(uint8_t addr) {
     ev_push(EV_LOG, LOG_MOUNT, addr, 0);
@@ -256,6 +270,24 @@ void tuh_mount_cb(uint8_t addr) {
 
 void tuh_umount_cb(uint8_t addr) {
     ev_push(EV_LOG, LOG_UMOUNT, addr, 0);
+
+    // Release every HID slot this address held.
+    //
+    // Only tuh_hid_umount_cb did that, per INTERFACE, and a device can leave
+    // without one arriving for each of its interfaces -- or at all. Then the
+    // slot stays `wanted` for ever and the re-arm sweep goes on asking a device
+    // that is not there.
+    //
+    // There are eight slots. On 11 Sep 2026 pulling the keyboard out set off a
+    // burst of attach/"HID device, not a keyboard"/armed with no umount between
+    // them, each one taking a slot and none giving one back; when the keyboard
+    // was plugged in again there was no slot left for it, hid_want gave up
+    // silently, and the keyboard was simply dead. Nothing said why.
+    //
+    // The burst itself is somebody else's fault -- see the USB host notes -- but
+    // a host stack that leaks its own table over it is ours, and this is the
+    // half we can fix: a loop like that should cost log lines, not the keyboard.
+    hid_forget_device(addr);
 }
 
 // Asking for the next report is the only thing that keeps a keyboard alive, and
@@ -282,6 +314,7 @@ static struct {
 uint32_t myrtos_hid_rearms;      // how many times the ask had to be repeated
 uint32_t myrtos_hid_lost_repeats; // repeats abandoned because the keyboard went
 uint32_t myrtos_hid_recoveries;  // how many times a submitted transfer was lost
+uint32_t myrtos_hid_no_slot;     // devices turned away because the table was full
 
 static void hid_want(uint8_t addr, uint8_t instance) {
     for (int i = 0; i < HID_SLOTS; i++) {
@@ -302,6 +335,26 @@ static void hid_want(uint8_t addr, uint8_t instance) {
             return;
         }
     }
+
+    // And say so. Falling off the end used to be silent, which turned a full
+    // table into a keyboard that did nothing for no stated reason -- the worst
+    // kind of fault this system has, and one it has had before. Asking for a
+    // report is the only thing that keeps a keyboard alive; a device that never
+    // gets a slot is never asked.
+    ev_push(EV_LOG, LOG_NO_SLOT, addr, instance);
+    myrtos_hid_no_slot++;
+}
+
+// Everything this side is holding on behalf of one device address.
+static void hid_forget_device(uint8_t addr) {
+    for (int i = 0; i < HID_SLOTS; i++) {
+        if (hid_poll[i].wanted && hid_poll[i].addr == addr) {
+            hid_poll[i].wanted = false;
+            hid_poll[i].armed = false;
+        }
+    }
+    if (repeat_key) myrtos_hid_lost_repeats++;
+    forget_held_keys();
 }
 
 // Called from the USB process, once round every pass. A refused ask costs one
@@ -328,13 +381,6 @@ static void hid_want(uint8_t addr, uint8_t instance) {
 // twice. Three consecutive milliseconds with nothing in flight is not a window.
 #define HID_IDLE_SWEEPS 3
 
-static void forget_held_keys(void);
-
-// The key the repeat clock is currently sending, 0 when none. Declared here as
-// well as where it lives, because the HID mount and umount callbacks sit above
-// it and both need to know whether a repeat was in flight. See the auto-repeat
-// section further down for what bounds it.
-static uint8_t repeat_key;
 int32_t myrtos_usbhost_cdc_index(void);
 
 // The interrupt IN endpoint one HID instance's reports arrive on, or nothing.
