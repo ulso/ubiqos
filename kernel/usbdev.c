@@ -215,7 +215,19 @@ static void usb_thread(void) {
 void myrtos_usb_start_task(void) {
     extern int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes,
                                         uint32_t priority);
-    if (myrtos_kernel_thread(usb_thread, 4096, MYRTOS_PRIO_USB) < 0) {
+    // Six kilobytes, and it was four.
+    //
+    // This one thread carries TinyUSB, lwIP with two interfaces, DHCP, the
+    // mDNS responder and the querier, TCP, and the socket server -- everything
+    // that has been added to the network since the 9th went in here, because
+    // this is the only context lwIP may be touched from. Four kilobytes was
+    // measured against none of it.
+    //
+    // This is not a diagnosis. The board stopped twice with the display still
+    // running and everything in this thread dead, which is what an overflow
+    // here would look like -- and so is a fault, and so is a spin. It is the
+    // cheapest of the things it might be to rule out.
+    if (myrtos_kernel_thread(usb_thread, 6144, MYRTOS_PRIO_USB) < 0) {
         myrtos_print("USB: could not start its service process\n");
     }
 }

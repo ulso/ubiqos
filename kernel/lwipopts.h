@@ -79,7 +79,21 @@
 #define MEMP_NUM_TCP_PCB            4
 #define MEMP_NUM_TCP_PCB_LISTEN     2
 #define MEMP_NUM_TCP_SEG            8
-#define MEMP_NUM_SYS_TIMEOUT        12   // mDNS wants several of its own
+// Twenty-four, and it was twelve.
+//
+// Twelve was chosen when there was one interface. Counting what actually wants
+// one now: TCP 1, ARP 1, DHCP 2, AutoIP 1, IGMP 1, DNS 1 -- that is seven
+// before any application -- and then the mDNS responder, which takes several
+// per interface while it probes and announces, and there are two interfaces.
+//
+// Running out is not a dropped timer. lwIP asserts, and an assert here is a
+// panic: the board stopped dead with the display still running, USB gone and
+// the keyboard with it, three times before the crash record was made to
+// survive a reboot and could be read. The panic's own string named it exactly
+// -- "pool MEMP_NUM_SYS_TIMEOUT is empty" -- which is what that record is for.
+//
+// Each slot is a dozen bytes. Being generous costs nothing worth counting.
+#define MEMP_NUM_SYS_TIMEOUT        24
 #define PBUF_POOL_SIZE              6
 #define PBUF_POOL_BUFSIZE           1536
 

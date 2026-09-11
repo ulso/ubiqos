@@ -148,7 +148,19 @@ static void on_reply(void *arg, struct udp_pcb *p, struct pbuf *buf,
 
     if (!q.open || buf->tot_len < 12) { pbuf_free(buf); return; }
 
+    // All of this is static, and deliberately.
+    //
+    // It runs inside lwIP's udp_input, inside tud_task, inside the USB task --
+    // a thread with four kilobytes for everything TinyUSB, two netifs, DHCP,
+    // the mDNS responder, TCP and the socket server need between them. Two
+    // sixty-four-byte name buffers on top of that chain is not obviously fatal
+    // and is not obviously safe either, and a stack that overflows here
+    // corrupts whatever is below it and crashes somewhere else entirely.
+    //
+    // The thread is single, so static costs nothing and settles the question.
     static uint8_t msg[512];
+    static char name[64], inst[64];
+
     uint16_t len = buf->tot_len > sizeof(msg) ? (uint16_t)sizeof(msg) : buf->tot_len;
     pbuf_copy_partial(buf, msg, len, 0);
     pbuf_free(buf);
@@ -157,7 +169,6 @@ static void on_reply(void *arg, struct udp_pcb *p, struct pbuf *buf,
     uint32_t an = (uint32_t)(msg[6] << 8 | msg[7]);
     uint32_t at = 12;
 
-    char name[64];
     for (uint32_t i = 0; i < qd && at < len; i++) {
         at = read_name(msg, len, at, name, sizeof(name));
         at += 4;                        // qtype and qclass
@@ -190,7 +201,6 @@ static void on_reply(void *arg, struct udp_pcb *p, struct pbuf *buf,
         if (q.qtype == QTYPE_PTR && type == QTYPE_PTR) {
             if (!same_name(name, q.want)) continue;
             if (q.nfound >= MYRTOS_MDNS_MAX) continue;
-            char inst[64];
             read_name(msg, len, rd, inst, sizeof(inst));
             for (uint32_t k = 0; k < q.nfound; k++)
                 if (same_name(q.found[k], inst)) goto next;   // a repeat

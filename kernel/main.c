@@ -508,6 +508,10 @@ void myrtos_kernel_main(void) {
     // Before any descriptor is added, so that a driver claiming a pin in its
     // configure finds the board's own fixed functions already there.
     myrtos_pins_init();
+
+    // Before anything else has a chance to fill the log: if the last run ended
+    // badly, that is the first thing anybody wants to read.
+    { extern void myrtos_crash_report(void); myrtos_crash_report(); }
     myrtos_io_init();
     // Before any volume can be added, and before the first path is resolved.
     // /dev exists from here on, so the root is never empty.

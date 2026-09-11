@@ -28,4 +28,9 @@ extern myrtos_crash_t myrtos_crash;
 
 void myrtos_crash_note (uint32_t kind, uint32_t a, uint32_t b, uint32_t c);
 
+// Put the last crash in the log, once, and forget it. Called at boot: the
+// record lives in memory the startup code does not clear, so it survives the
+// reset that was needed to get the machine back.
+void myrtos_crash_report(void);
+
 #endif
