@@ -190,14 +190,34 @@ The options as they stood, for the record:
 * **Keep drivers out of PSRAM**, a much larger change that gives back the reason
   modules are cheap. Not taken, and not needed for this.
 
-## What is still open
+## The trigger, fixed the same afternoon
 
-The **key repeat that outlives the keyboard** is untouched. It is the trigger:
-the keyboard drops, the repeat goes on sending Enter, the shell re-runs its last
-line, and the flood is what gave the video pump enough work to sit in a font
-read. The QMI stall is what turned that flood into a stopped machine, and that
-half is now fixed -- a flood should cost frames and not the board. The repeat
-loop will still flood.
+Two faults were stacked and the other one was `tuh_hid_umount_cb`, which never
+cleared the held keys. A keyboard that vanishes is holding nothing down, but the
+repeat clock cannot learn that by itself: a held key produces no reports at all,
+so the release report is the only thing that ends a repeat and a keyboard that
+disappears never sends one.
 
-So this document's fourth fault is half closed. Two faults were stacked; one of
-them is gone.
+`REPEAT_LIMIT_MS` bounded it at five seconds -- about a hundred and forty
+phantom Returns at 35 ms each, every one of them obeyed by the shell. And
+`tuh_hid_mount_cb` did not clear them either, so a keyboard re-enumerating
+without a umount inherited the key the previous instance was believed to be
+holding and restarted the five-second clock with it each time round. That is
+what the photograph showed: `free` and "keyboard ready" alternating down the
+whole screen, with no "HID gone" between them.
+
+Both callbacks clear them now, and `myrtos_hid_lost_repeats` counts the repeats
+abandoned because the keyboard went. One number would have named this in an
+afternoon instead of over two days.
+
+## Where that leaves the two faults
+
+| | |
+|---|---|
+| the QMI stall | fixed, by reasoning and addresses; no reproduction |
+| the repeat flood | fixed, and the mechanism was plain in the code |
+
+Neither is confirmed by a failure that stopped happening, because neither could
+be provoked on demand. What can be said is that the flood now ends when the
+keyboard leaves, and that a flood which does happen should cost frames rather
+than the machine.
