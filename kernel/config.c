@@ -96,8 +96,22 @@ static bool valid_hostname(const char *s, uint32_t n) {
 
 // One line, already stripped of its newline.
 static void take_line(char *l, uint32_t n) {
-    for (uint32_t i = 0; i < n; i++) {                  // a comment ends it
-        if (l[i] == '#') { n = i; break; }
+    // A comment starts at a '#' that begins the line or follows a blank, and
+    // NOT at one in the middle of a word.
+    //
+    // It used to be any '#' at all, which is wrong in a file that carries a
+    // password: a perfectly good secret with a '#' in it was silently cut
+    // short there, and the only symptom was a network that would not join.
+    // Nothing said the password had been shortened, because nothing knew.
+    //
+    // What is left of the old behaviour is the one case a config file wants:
+    // "ssid = home # the one downstairs" still ends at the hash. So a password
+    // may hold '#' anywhere except directly after a space, and that is the
+    // whole of the remaining trade -- stated here because the alternative is
+    // finding it out at two in the morning.
+    for (uint32_t i = 0; i < n; i++) {
+        if (l[i] != '#') continue;
+        if (i == 0 || l[i - 1] == ' ' || l[i - 1] == '\t') { n = i; break; }
     }
     uint32_t k = 0;
     while (k < n && (l[k] == ' ' || l[k] == '\t')) k++;
@@ -129,10 +143,10 @@ static void take_line(char *l, uint32_t n) {
     // refusing the rest of the file over.
 }
 
-void myrtos_config_read(void)
+// The reading itself. myrtos_config_read wraps it and is the only thing that
+// says the card has been looked at -- see the note there.
+static void read_the_file(void)
 {
-    done = true;                        // tried, whatever comes of it
-
     const myrtos_fsops_t *ops = myrtos_fat_ops_ptr();
     if (!ops || !ops->read_at) return;
 
@@ -170,4 +184,23 @@ void myrtos_config_read(void)
     if (!ssid[0])       myrtos_print(", no network named\n");
     else if (!pass[0])  myrtos_print(", a network but no password\n");
     else                myrtos_print(", network and password\n");
+}
+
+void myrtos_config_read(void)
+{
+    read_the_file();
+
+    // LAST, and this is the whole point of the wrapper.
+    //
+    // It used to be the first line of the reading, so that an early return
+    // still counted as having tried -- and that is exactly wrong. Reading the
+    // card takes milliseconds and this thread blocks for them, so the USB task
+    // ran in between, saw "done", and started lwIP with the hostname nobody
+    // had read yet. mDNS announces once and cannot unsay a name: the log
+    // showed "answering to myrtos.local" three lines ABOVE "config: hostname
+    // jamboree", and jamboree.local did not exist.
+    //
+    // A race that usually wins is worse than one that never does. It was right
+    // the first time it was tested, which is why it survived.
+    done = true;
 }

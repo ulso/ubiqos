@@ -9,13 +9,36 @@ runs.
     ssid     = the-network
     password = ...
 
-Keys are case-insensitive, `#` starts a comment, and a value runs to the end of
-the line with the spaces either side trimmed. No file, or no card, and nothing
+Keys are case-insensitive and a value runs to the end of the line with the
+spaces either side trimmed.
+
+A `#` starts a comment when it begins the line or follows a blank, and not when
+it sits in the middle of a word -- so `password = se#cret` keeps its hash and
+`ssid = home # the one downstairs` still ends at it. That distinction is not
+pedantry: any `#` used to end the line, so a password containing one was
+silently cut short and the only symptom was a network that would not join.
+A password may now hold `#` anywhere except directly after a space, which is
+the whole of what is left of the trade. No file, or no card, and nothing
 is lost: the machine is called `myrtos`, as it always has been.
 
 A hostname is also an mDNS label, so it may hold letters, digits and hyphens
 and nothing else, and may not begin or end with one. Anything else is said out
 loud and ignored rather than announced and refused later by the responder.
+
+## When it is read, and why that is the whole of it
+
+The filesystem server reads it as soon as the card is up and before
+`/sd/startup` runs, and lwIP does not start until it has. That ordering is not
+tidiness: mDNS announces a name ONCE and cannot unsay it, so a stack that comes
+up before the card has been read answers to the wrong name for ever.
+
+The flag that says the card has been looked at is set AFTER the reading, not
+before. It was before -- so that an early return still counted as having
+tried -- and reading the card takes milliseconds during which the USB task ran,
+saw the flag, and started lwIP with a hostname nobody had read yet. The log
+showed `answering to myrtos.local` three lines above `config: hostname
+jamboree`. It was right the first time it was tested, which is how a race that
+usually wins survives.
 
 ## The password
 
