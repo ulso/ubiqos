@@ -329,12 +329,16 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # crashed this board before. The pool is still three times what it was
         # this morning and `free` has never been near it.
         #
-        # 124 rather than 128 since 11 Sep 2026: the wall clock and the SNTP
-        # client cost 4144 bytes of SRAM and took the RISC-V chargen C heap to
-        # 2844, below the 4096 the SDK needs to boot. Taken from here because
-        # this pool has room to spare and that heap has none -- the same trade
-        # the paragraph above describes, made once more.
-        set(myrtosHeapKB 124)
+        # 120 rather than 128 since 11 Sep 2026, in two steps of four. The wall
+        # clock and its SNTP client took the first; kernel/font8x16.c moving
+        # into SRAM took the second, which is the fix for the board stopping
+        # under its own video interrupt -- see the note in that file.
+        #
+        # Both came out of here because this pool has room to spare and the C
+        # heap has none, which is the trade the paragraph above describes. Only
+        # the chargen builds pay: a framebuffer build keeps its font in flash
+        # because nothing reads it from an interrupt there.
+        set(myrtosHeapKB 120)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
