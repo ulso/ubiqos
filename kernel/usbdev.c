@@ -142,12 +142,48 @@ static void note_link(const char *what, uint32_t count) {
     say_when(count);
 }
 
+// The longest the bus has ever been quiet, and when that started. This exists
+// because counting suspends turned out to answer the wrong question: a host
+// that suspends once a minute for three seconds and a host that suspends once
+// for three hours both raise the counter, and only one of them is a host that
+// went away. The log cannot settle it either -- it stops after twelve events on
+// purpose, so a chatty host cannot push the boot messages out of the ring, and
+// an idle Mac reaches twelve in twelve minutes.
+//
+// So measure the thing itself. One comparison per resume, two words of state,
+// and a night's worth of once-a-minute noise cannot hide a real absence in it.
+uint32_t myrtos_usb_longest_quiet_ms;   // the longest suspend seen
+uint32_t myrtos_usb_longest_at_s;       // uptime when that one began
+static uint64_t quiet_began_us;
+
 void tud_suspend_cb(bool remote_wakeup_en) {
     (void)remote_wakeup_en;
+    quiet_began_us = time_us_64();
     note_event("suspended the bus", ++myrtos_usb_suspends);
 }
 
 void tud_resume_cb(void) {
+    if (quiet_began_us) {
+        const uint64_t quiet = time_us_64() - quiet_began_us;
+        const uint32_t ms = (uint32_t)(quiet / 1000u);
+        if (ms > myrtos_usb_longest_quiet_ms) {
+            myrtos_usb_longest_quiet_ms = ms;
+            myrtos_usb_longest_at_s = (uint32_t)(quiet_began_us / 1000000u);
+
+            // Always said, however many events have gone before: a new longest
+            // is rare and is the one line a morning-after reading wants.
+            char hhmmss[12];
+            myrtos_clock_time_only(hhmmss, sizeof hhmmss);
+            myrtos_print("usb: longest quiet so far ");
+            myrtos_print_u32(ms / 1000u);
+            myrtos_print("s, which began at ");
+            myrtos_print_u32(myrtos_usb_longest_at_s);
+            myrtos_print("s");
+            if (hhmmss[0]) { myrtos_print(" ("); myrtos_print(hhmmss); myrtos_print(")"); }
+            myrtos_print("\n");
+        }
+        quiet_began_us = 0;
+    }
     note_event("resumed the bus", ++myrtos_usb_resumes);
 }
 
