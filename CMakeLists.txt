@@ -1546,7 +1546,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mkdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/wifi.mod
+            # wifi.mod: retired with the NINA firmware, see the note above. An old
+            # build tree still had the file, so only a clean one saw this.
             ${CMAKE_CURRENT_BINARY_DIR}/lwipd.mod
             ${CMAKE_CURRENT_BINARY_DIR}/rmdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mount.mod
