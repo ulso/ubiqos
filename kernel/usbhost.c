@@ -280,6 +280,7 @@ static struct {
 } hid_poll[HID_SLOTS];
 
 uint32_t myrtos_hid_rearms;      // how many times the ask had to be repeated
+uint32_t myrtos_hid_lost_repeats; // repeats abandoned because the keyboard went
 uint32_t myrtos_hid_recoveries;  // how many times a submitted transfer was lost
 
 static void hid_want(uint8_t addr, uint8_t instance) {
@@ -328,6 +329,12 @@ static void hid_want(uint8_t addr, uint8_t instance) {
 #define HID_IDLE_SWEEPS 3
 
 static void forget_held_keys(void);
+
+// The key the repeat clock is currently sending, 0 when none. Declared here as
+// well as where it lives, because the HID mount and umount callbacks sit above
+// it and both need to know whether a repeat was in flight. See the auto-repeat
+// section further down for what bounds it.
+static uint8_t repeat_key;
 int32_t myrtos_usbhost_cdc_index(void);
 
 // The interrupt IN endpoint one HID instance's reports arrive on, or nothing.
@@ -532,6 +539,14 @@ void tuh_hid_mount_cb(uint8_t addr, uint8_t instance,
     (void)desc; (void)len;
     uint8_t proto = tuh_hid_interface_protocol(addr, instance);
     ev_push(EV_LOG, proto == HID_ITF_PROTOCOL_KEYBOARD ? LOG_HID_KBD : LOG_HID_OTHER, 0, 0);
+
+    // Nothing is held on a keyboard that has just arrived. Saying so costs one
+    // call and closes the half of the runaway that a lost umount leaves open:
+    // a keyboard that re-enumerates without one would otherwise inherit the
+    // key the previous instance was believed to be holding, and restart the
+    // five-second clock with it every time round.
+    forget_held_keys();
+
     hid_want(addr, instance);
 
     // Said after the ask and not before it, because the boot has stopped
@@ -550,6 +565,28 @@ void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
             hid_poll[i].armed = false;
         }
     }
+
+    // And a keyboard that has gone is holding nothing down.
+    //
+    // This was missing, and it is the second half of "key repeat outlives the
+    // keyboard". The clock has no way of knowing a key was let go -- a held key
+    // produces no reports at all -- so the release report is normally the only
+    // thing that ends a repeat. A keyboard that vanishes never sends one.
+    //
+    // REPEAT_LIMIT_MS bounded the damage at five seconds, which at 35 ms a
+    // repeat is still about a hundred and forty phantom keystrokes, and the key
+    // in question is Return because pressing Return is how the command that
+    // lost the keyboard was started. The shell obeys every one of them. That
+    // flood is what fed the video pump enough work to stall the board against
+    // the QMI on 11 Sep 2026 -- see docs/the-board-stopped.md, where this is
+    // the trigger and the stall is the consequence.
+    //
+    // Counted as well as cleared: a repeat that was in flight when its keyboard
+    // left is the exact event nobody could see, and one number would have named
+    // this fault in an afternoon rather than over two days.
+    if (repeat_key) myrtos_hid_lost_repeats++;
+    forget_held_keys();
+
     myrtos_print("USB host: HID gone\n");
 }
 
@@ -589,7 +626,8 @@ void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k) { keymap = k; }
 // session. The trade is not close.
 #define REPEAT_LIMIT_MS 5000
 
-static uint8_t  repeat_key;      // 0 when nothing is held
+// repeat_key itself is declared near the top of this file, because the HID
+// mount and umount callbacks are above this point and both have to clear it.
 static uint8_t  repeat_mods;
 static uint32_t repeat_due;
 static uint32_t repeat_began;    // when this key started repeating
