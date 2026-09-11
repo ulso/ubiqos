@@ -499,7 +499,31 @@ static void eh_thread(void)
 
         if (nettx_tail != nettx_head || tx_pending || want_hello) stats.turns_ready++;
         bool net_waiting = nettx_tail != nettx_head;
-        if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello && !net_waiting) continue;
+
+        // DATA READY is counted and NOT obeyed, and that is the whole of the
+        // performance of this link.
+        //
+        // The protocol says to transfer when the handshake is high and either
+        // data ready is high or the host has something of its own. That is
+        // written for a host that takes an INTERRUPT on those pins, which is
+        // what Espressif's own documentation tells you to do. This one polls
+        // them on the millisecond tick, and data ready turns out to be a
+        // pulse: during a flood of four hundred pings it was high on 489 polls
+        // out of 21621, two per cent, while the handshake was high on 83.
+        //
+        // So we caught about one offer in forty and the co-processor's queue
+        // overflowed behind it. Twelve exchanges a second under load, seventy
+        // eight per cent of the pings lost, and a round trip that got WORSE
+        // the busier the link was -- which is the signature of a queue and was
+        // never the radio or the air, whatever the earlier notes here said.
+        //
+        // A transfer with nothing in it costs 1600 bytes of DMA and about a
+        // microsecond of processor. Clocking the bus whenever the chip says it
+        // is armed, and letting the empty ones be empty, is the cheaper
+        // mistake by a very long way.
+        bool theirs = K->gpio_get(pin_dr);
+        if (theirs) stats.dr_high++; else stats.dr_low++;
+        (void)net_waiting;
 
         // What goes out with it, and the handshake goes first: nothing the
         // host has to say is heard until the announcement has been answered.

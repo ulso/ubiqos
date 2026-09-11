@@ -58,6 +58,7 @@ MYRTOS_MEM_SIZE(16384);
 
 #define REQ_GET_MODE  259u
 #define REQ_GET_PS    271u
+#define REQ_GET_RSSI  341u
 #define RESP_OFFSET   256u
 
 
@@ -483,12 +484,41 @@ static void do_ps(int32_t dev) {
     myrtos_line_flush(MYRTOS_STDOUT, &l);
 }
 
+// How strong the signal is, which is the one fact about the radio that no
+// amount of measuring on this side can supply -- and the obvious explanation
+// for a slow link that had never been checked.
+static void do_rssi(int32_t dev) {
+    uint8_t payload[64];
+    uint32_t plen = 0;
+    uint32_t resp = call(dev, REQ_GET_RSSI, 0, 0, 3000, payload, sizeof(payload), &plen);
+    if (resp == 0xffffffffu) { say("ehrpc: no answer\r\n"); return; }
+
+    ps_t m = { 0, 0 };                        // the same shape: value at field 2
+    walk(payload, plen, on_ps, &m);
+
+    // A negative dBm arrives as a protobuf varint of a signed value, which for
+    // a small negative number is a very large unsigned one. Reading it as
+    // unsigned prints 4294967230 and means nothing to anybody.
+    int32_t dbm = (int32_t)m.type;
+
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, "signal -");
+    myrtos_line_u32(&l, (uint32_t)(-dbm));
+    myrtos_line_str(&l, " dBm  (");
+    myrtos_line_str(&l, dbm > -50 ? "excellent" : dbm > -60 ? "good"
+                      : dbm > -70 ? "fair" : dbm > -80 ? "weak" : "very weak");
+    myrtos_line_str(&l, ")\r\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+}
+
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: ehrpc mode | peek | connect <ssid>\n\n"
             "Asks the ESP32-C6 a question on ESP-Hosted's control plane.\n\n"
             "  mode    which WiFi mode the radio is in\n"
             "  ps      which power-saving mode it is actually in\n"
+            "  rssi    how strong the signal from the access point is\n"
             "  peek    whatever the chip has said that nobody has taken\n"
             "  connect <ssid>  bring the radio up and join. The password is\n"
             "          typed here, never echoed and never an argument -- and\n"
@@ -499,8 +529,9 @@ void module_main(int argc, char **argv) {
     bool peek = argc == 2 && is(argv[1], "peek");
     bool conn = argc == 3 && is(argv[1], "connect");
     bool ps   = argc == 2 && is(argv[1], "ps");
-    if (!mode && !peek && !conn && !ps) {
-        say("usage: ehrpc mode | ps | peek | connect <ssid>\r\n");
+    bool rssi = argc == 2 && is(argv[1], "rssi");
+    if (!mode && !peek && !conn && !ps && !rssi) {
+        say("usage: ehrpc mode | ps | rssi | peek | connect <ssid>\r\n");
         return;
     }
 
@@ -508,6 +539,7 @@ void module_main(int argc, char **argv) {
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
     if (mode)      do_mode(dev);
     else if (ps)   do_ps(dev);
+    else if (rssi) do_rssi(dev);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
     myrtos_close(dev);

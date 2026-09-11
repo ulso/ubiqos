@@ -610,6 +610,10 @@ typedef struct {
     // had something to send -- which cannot distinguish "the co-processor is
     // rarely armed" from "we rarely want to send".
     uint32_t hs_high, hs_low;
+    // And the other line. The handshake says the co-processor is armed; DATA
+    // READY says it has something real. Only the second one gates a transfer
+    // when we have nothing of our own to send, and it had never been counted.
+    uint32_t dr_high, dr_low;
     uint32_t turn_gap_us, worst_turn_gap_us;   // between one offer and the next
 } myrtos_eh_stats_t;
 

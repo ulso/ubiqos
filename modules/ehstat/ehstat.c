@@ -157,6 +157,8 @@ void module_main(int argc, char **argv) {
     say("\r\nthe co-processor offering a turn\r\n");
     num("  handshake high", s.hs_high);
     num("  handshake low ", s.hs_low);
+    num("  data ready hi ", s.dr_high);
+    num("  data ready lo ", s.dr_low);
     num("  us since last ", s.turn_gap_us);
     num("  worst gap     ", s.worst_turn_gap_us);
     say("\r\none exchange, microseconds\r\n");
