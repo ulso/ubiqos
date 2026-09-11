@@ -12,6 +12,32 @@ void myrtos_usb_init(void) {
     // irq_add_shared_handler. That only works now that we stopped taking over
     // mtvec: the SDK's external dispatch is what looks up in that table.
     tud_init(0);
+
+    // Then tell the host, in a way it cannot miss, that whatever used to be on
+    // this port is gone.
+    //
+    // tud_init resets the USB block and raises the pull-up again within
+    // microseconds. A host reading the line directly might notice that; one
+    // behind a hub will not, because a hub debounces a disconnect over tens of
+    // milliseconds before it reports one. So after a warm reset -- which is
+    // exactly what the debug probe does after `program ... verify reset` -- the
+    // Mac goes on believing the previous device is still attached, keeps its
+    // address assigned, and never enumerates us. The board then runs perfectly
+    // with nothing on the wire: no console, and no network either, because the
+    // USB task is the only thread allowed to touch lwIP.
+    //
+    // That was diagnosed the long way round, through the probe: ticks and video
+    // pumps advancing, the crash record empty, every USB counter still zero,
+    // and the controller reporting itself connected. Dropping the pull-up by
+    // hand for a moment brought the whole machine back. This is that, done at
+    // boot so nobody has to do it by hand again.
+    //
+    // 120 ms is comfortably past a hub's debounce and is paid once, before the
+    // scheduler starts, so a busy wait is the honest way to spend it.
+    tud_disconnect();
+    busy_wait_ms(120);
+    tud_connect();
+
     myrtos_print("USB device started, CDC console on the USB port\n");
 }
 
