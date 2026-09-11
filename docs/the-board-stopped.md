@@ -137,21 +137,47 @@ enough work to sit in the font read while a module was executing from PSRAM.
 Two faults, stacked. The repeat loop is the trigger and the QMI stall is what
 turns a flood into a stopped machine.
 
-## The fix, and why it is not applied
+## The fix, applied 11 September 2026
 
-Move the font into SRAM. It is 3584 bytes and it is not affordable everywhere:
-it took the riscv framebuffer build's C heap from 4972 bytes to 876, and the
-riscv chargen build below its 4096-byte floor. Both stopped linking.
+The font moved into SRAM, in the chargen builds only.
 
-The options, none of which is mine to choose:
+Two of the options below turned out to combine. Paying only where the danger is
+costs nothing in a framebuffer build -- `chargen.c` IS the interrupt, and it is
+compiled nowhere else, so a framebuffer build goes on reading the same table
+from `console.c` in thread context where flash is as safe as it ever was. That
+left riscv chargen short by rather less than the whole 3584, and the module pool
+paid the rest: 124 kB -> 120, the same lever that had already given 4 kB to the
+wall clock that morning. That pool has room and this heap has none.
 
-* **Only in the chargen builds.** The framebuffer console draws from thread
-  context, where a stall is a wait and not a deadlock, so it does not need it.
-  Still leaves riscv chargen 1188 bytes short.
-* **Find the 3584 bytes elsewhere in the riscv builds**, which have been the
-  tight ones all along.
-* **Keep drivers out of PSRAM**, which is a much larger change and gives back
-  the reason modules are cheap.
+Verified by address rather than by hope:
 
-`font6x12` stays in flash either way: kernel/console.c reads it from thread
-context, and asking who reads what is what settled that.
+| build | font8x16 | font6x12 |
+|---|---|---|
+| arm chargen | `0x2002beb8` (SRAM) | `0x100001ec` (flash) |
+| arm framebuffer | `0x10000c6c` (flash) | `0x100001ec` (flash) |
+| riscv chargen | `0x20034018` (SRAM) | `0x100000f4` (flash) |
+| riscv framebuffer | `0x10000b74` (flash) | `0x100000f4` (flash) |
+
+`font6x12` stays in flash in every build: `console.c` reads it from thread
+context and nothing else reads it at all. Asking who reads what is what settled
+both halves of this.
+
+The options as they stood, for the record:
+
+* **Only in the chargen builds** -- taken, and it was not enough on its own.
+* **Find the bytes elsewhere in the riscv builds** -- taken, from the module
+  pool.
+* **Keep drivers out of PSRAM**, a much larger change that gives back the reason
+  modules are cheap. Not taken, and not needed for this.
+
+## What is still open
+
+The **key repeat that outlives the keyboard** is untouched. It is the trigger:
+the keyboard drops, the repeat goes on sending Enter, the shell re-runs its last
+line, and the flood is what gave the video pump enough work to sit in a font
+read. The QMI stall is what turned that flood into a stopped machine, and that
+half is now fixed -- a flood should cost frames and not the board. The repeat
+loop will still flood.
+
+So this document's fourth fault is half closed. Two faults were stacked; one of
+them is gone.
