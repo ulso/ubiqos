@@ -114,6 +114,10 @@
 #define CHECKSUM_CHECK_UDP          1
 #define CHECKSUM_CHECK_TCP          1
 
+// The SNTP client is ours -- see kernel/lwipsntp.c. lwIP's own is a fine
+// client and cost 4 kB of SRAM, which is 4 kB the RISC-V chargen build has not
+// got. Nothing to configure here as a result.
+
 #define LWIP_STATS                  1
 #define LWIP_STATS_DISPLAY          0
 #define LWIP_DEBUG                  0

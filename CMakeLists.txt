@@ -208,6 +208,7 @@ add_executable(os_kernel
     kernel/chargen.c
     kernel/net.c
     kernel/config.c
+    kernel/clock.c
     kernel/fsserver.c
     kernel/wifilink.c
     kernel/font8x16.c
@@ -327,7 +328,13 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # heap and not out of this pool, and a C heap that reaches zero has
         # crashed this board before. The pool is still three times what it was
         # this morning and `free` has never been near it.
-        set(myrtosHeapKB 128)
+        #
+        # 124 rather than 128 since 11 Sep 2026: the wall clock and the SNTP
+        # client cost 4144 bytes of SRAM and took the RISC-V chargen C heap to
+        # 2844, below the 4096 the SDK needs to boot. Taken from here because
+        # this pool has room to spare and that heap has none -- the same trade
+        # the paragraph above describes, made once more.
+        set(myrtosHeapKB 124)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
@@ -376,6 +383,7 @@ if(myrtosLwip)
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipping.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipmdns.c
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsntp.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsock.c)
     target_link_libraries(os_kernel pico_lwip pico_lwip_nosys pico_lwip_mdns)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
@@ -388,6 +396,14 @@ target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
 
 # Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)
+
+# Two exceptions, for size rather than speed. Date formatting and an SNTP query
+# happen once a second at the very most and are nowhere near any deadline, while
+# SRAM is the thing this machine is actually short of -- the kernel is linked
+# copy_to_ram, so every byte of code is a byte of RAM. -O3 spent 868 bytes on
+# myrtos_clock_stamp alone.
+set_source_files_properties(kernel/clock.c kernel/lwipsntp.c
+    PROPERTIES COMPILE_OPTIONS "-Os")
 
 # Route every panic through __wrap_panic, so the reason survives the crash.
 # See kernel/crashlog.c.

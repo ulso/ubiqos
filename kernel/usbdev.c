@@ -1,5 +1,6 @@
 #include "usbdev.h"
 #include "config.h"
+#include "clock.h"
 #include "tusb.h"
 #include "../common/modules.h"   // myrtos_sleep, through the shared ABI
 #include "pico/time.h"                 // time_us_64, for the event log
@@ -96,17 +97,35 @@ uint32_t myrtos_usb_last_event_ms;
 // wants. The counters go on counting either way.
 #define USB_EVENT_LOG_LIMIT 12u
 
+// Seconds since boot, and the wall clock too once the network has told us what
+// it is. The uptime is never dropped: it is the only one of the two that is
+// certainly there, it is what the counters are in, and a log that changes
+// format halfway through the night is harder to read than one that does not.
+static void say_when(uint32_t count) {
+    myrtos_print(" at ");
+    myrtos_print_u32((uint32_t)(time_us_64() / 1000000u));
+    myrtos_print("s");
+
+    char hhmmss[12];
+    myrtos_clock_time_only(hhmmss, sizeof hhmmss);
+    if (hhmmss[0]) {
+        myrtos_print(" (");
+        myrtos_print(hhmmss);
+        myrtos_print(")");
+    }
+
+    myrtos_print(" (");
+    myrtos_print_u32(count);
+    myrtos_print(")\n");
+}
+
 static void note_event(const char *what, uint32_t count) {
     myrtos_usb_last_event_ms = (uint32_t)(time_us_64() / 1000u);
     if (count > USB_EVENT_LOG_LIMIT) return;
 
     myrtos_print("usb: host ");
     myrtos_print(what);
-    myrtos_print(" at ");
-    myrtos_print_u32(myrtos_usb_last_event_ms / 1000u);
-    myrtos_print("s (");
-    myrtos_print_u32(count);
-    myrtos_print(")\n");
+    say_when(count);
 }
 
 // The link transitions, counted and logged separately from the bus events that
@@ -120,11 +139,7 @@ static void note_link(const char *what, uint32_t count) {
     if (count > USB_EVENT_LOG_LIMIT) return;
     myrtos_print("net: cable link ");
     myrtos_print(what);
-    myrtos_print(" at ");
-    myrtos_print_u32((uint32_t)(time_us_64() / 1000000u));
-    myrtos_print("s (");
-    myrtos_print_u32(count);
-    myrtos_print(")\n");
+    say_when(count);
 }
 
 void tud_suspend_cb(bool remote_wakeup_en) {
@@ -281,6 +296,11 @@ static void usb_thread(void) {
                 // process that answers socket calls for stack 1 has to be this
                 // one. Zero milliseconds, so a turn with nothing waiting costs
                 // a single look.
+                // The clock, once there is a route out. Same context, same
+                // rule: this calls into lwIP.
+                extern void myrtos_sntp_poll(void);
+                myrtos_sntp_poll();
+
                 extern void myrtos_lwip_serve(void);
                 myrtos_lwip_serve();
             }
