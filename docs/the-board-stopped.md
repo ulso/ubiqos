@@ -162,6 +162,26 @@ Verified by address rather than by hope:
 context and nothing else reads it at all. Asking who reads what is what settled
 both halves of this.
 
+### What was NOT verified, and why it is worth saying
+
+A console flood was tried as a test and has no power to confirm anything. Two
+thousand back-to-back `free` commands left the board pumping video at its normal
+1461 a second -- and so did the SAME flood against a control build with the font
+put back in flash. A test that both versions pass tests nothing.
+
+So this fix rests on the diagnosis and not on a reproduction: the program
+counter sat on `g[gy]` four separate times, the mechanism is a documented
+property of the QMI, and the addresses above say the table moved. That is good
+evidence and it is not proof.
+
+What the flood is missing is most likely the other half of the original: the
+keyboard re-enumerating on core 1 throughout, which the trigger produced and a
+serial flood cannot. And the fault showed four times in two DAYS of use, so a
+thirty-six second run samples a race far too narrow for it either way.
+
+The verification is therefore time: the board not stopping again. Until then
+this is an applied fix with a sound reason, not a demonstrated one.
+
 The options as they stood, for the record:
 
 * **Only in the chargen builds** -- taken, and it was not enough on its own.
