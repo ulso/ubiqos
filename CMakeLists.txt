@@ -1518,6 +1518,7 @@ target_include_directories(lwipd_app PRIVATE
 # Retired with the NINA firmware -- see the note beside wifilib above.
 #myrtos_add_module(wifi modules/wifi/wifi.c)
 myrtos_add_module(pwd modules/pwd/pwd.c)
+myrtos_add_module(date modules/date/date.c)
 myrtos_add_module(rmdir modules/rmdir/rmdir.c)
 myrtos_add_module(mount modules/mount/mount.c)
 myrtos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
@@ -1562,6 +1563,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mkdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/date.mod
             # wifi.mod: retired with the NINA firmware, see the note above. An old
             # build tree still had the file, so only a clean one saw this.
             ${CMAKE_CURRENT_BINARY_DIR}/lwipd.mod
@@ -1668,6 +1670,7 @@ set(MYRTOS_RESIDENT
     mkdir
     rmdir
     pwd
+    date
     mount
 #    wifi
     font
