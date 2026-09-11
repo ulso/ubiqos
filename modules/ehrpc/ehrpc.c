@@ -57,6 +57,7 @@ MYRTOS_MEM_SIZE(16384);
 #define RPC_RESP 2u
 
 #define REQ_GET_MODE  259u
+#define REQ_GET_PS    271u
 #define RESP_OFFSET   256u
 
 
@@ -445,11 +446,49 @@ static void do_connect(int32_t dev, const char *ssid) {
     say("\r\nstill trying after forty seconds\r\n");
 }
 
+// Which power-saving mode the radio is actually in, as opposed to the one it
+// was told to be in. esp_wifi_set_ps answers ok whether or not the setting
+// survives what comes after it, so the only way to know is to ask.
+//
+// Unlike GetMode this one is the ordinary way round -- resp at field 1, the
+// value at field 2 -- which is a reminder that the layout is per message and
+// not a rule.
+typedef struct { uint32_t type, seen; } ps_t;
+
+static void on_ps(uint32_t field, uint32_t wire, uint32_t v,
+                  const uint8_t *b, uint32_t n, void *arg) {
+    (void)b; (void)n;
+    ps_t *m = (ps_t *)arg;
+    if (wire == 0 && field == 2) { m->type = v; m->seen = 1; }
+}
+
+static void do_ps(int32_t dev) {
+    uint8_t payload[64];
+    uint32_t plen = 0;
+    uint32_t resp = call(dev, REQ_GET_PS, 0, 0, 3000, payload, sizeof(payload), &plen);
+    if (resp == 0xffffffffu) { say("ehrpc: no answer\r\n"); return; }
+
+    ps_t m = { 0, 0 };
+    walk(payload, plen, on_ps, &m);
+
+    myrtos_line_t l;
+    myrtos_line_reset(&l);
+    myrtos_line_str(&l, "power save ");
+    myrtos_line_u32(&l, m.type);
+    myrtos_line_str(&l, "  (");
+    myrtos_line_str(&l, m.type == 0 ? "off -- the radio stays awake"
+                      : m.type == 1 ? "minimum modem sleep: it wakes on beacons"
+                      : m.type == 2 ? "maximum modem sleep" : "something else");
+    myrtos_line_str(&l, ")\r\n");
+    myrtos_line_flush(MYRTOS_STDOUT, &l);
+}
+
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: ehrpc mode | peek | connect <ssid>\n\n"
             "Asks the ESP32-C6 a question on ESP-Hosted's control plane.\n\n"
             "  mode    which WiFi mode the radio is in\n"
+            "  ps      which power-saving mode it is actually in\n"
             "  peek    whatever the chip has said that nobody has taken\n"
             "  connect <ssid>  bring the radio up and join. The password is\n"
             "          typed here, never echoed and never an argument -- and\n"
@@ -459,14 +498,16 @@ void module_main(int argc, char **argv) {
     bool mode = argc == 2 && is(argv[1], "mode");
     bool peek = argc == 2 && is(argv[1], "peek");
     bool conn = argc == 3 && is(argv[1], "connect");
-    if (!mode && !peek && !conn) {
-        say("usage: ehrpc mode | peek | connect <ssid>\r\n");
+    bool ps   = argc == 2 && is(argv[1], "ps");
+    if (!mode && !peek && !conn && !ps) {
+        say("usage: ehrpc mode | ps | peek | connect <ssid>\r\n");
         return;
     }
 
     int32_t dev = myrtos_open("/dev/eh");
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
     if (mode)      do_mode(dev);
+    else if (ps)   do_ps(dev);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
     myrtos_close(dev);

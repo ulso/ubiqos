@@ -154,6 +154,11 @@ void module_main(int argc, char **argv) {
     num("  worst        ", s.worst_txwait_us);
     num("  turns ready  ", s.turns_ready);
     num("  turns blocked", s.turns_blocked);
+    say("\r\nthe co-processor offering a turn\r\n");
+    num("  handshake high", s.hs_high);
+    num("  handshake low ", s.hs_low);
+    num("  us since last ", s.turn_gap_us);
+    num("  worst gap     ", s.worst_turn_gap_us);
     say("\r\none exchange, microseconds\r\n");
     num("  on the wire  ", s.wall_us);
     num("  worst        ", s.worst_wall_us);

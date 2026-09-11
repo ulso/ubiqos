@@ -681,6 +681,44 @@ is nothing on this side left to fix.
 Worth having proved rather than assumed: two of the three explanations were
 about myrtos, and both were wrong.
 
+## The hundred milliseconds are not ours
+
+A ping from the board to its own router sits on a FLOOR of 102.9 ms with very
+little jitter -- ten of them came back 102.9, 102.9, 137.9, 102.9, 106.9 --
+and a floor with low jitter is a mechanism rather than congestion. The same
+floor appears in both directions and to every peer: the Mac reaches the router
+in 15 ms and the board in 117.
+
+It is not the transport, and this is measured rather than argued:
+
+    handshake high 34633    handshake low 266      (99.2 per cent armed)
+    turns blocked      0    us since last 933 us
+    a frame waiting to go out: last 851 us
+
+The co-processor is armed and offering a turn essentially every millisecond,
+and an outbound frame leaves in under one. Inbound costs one more tick. Call it
+three milliseconds of myrtos in a 103 ms round trip.
+
+An earlier reading of these counters said "blocked on 178 turns out of 216",
+and that was a ratio of two numbers that are not comparable: both only count
+turns where there was something to send. Counting the handshake
+unconditionally is what settled it, and it said the opposite.
+
+Two explanations were tested and are dead:
+
+* **Power save.** It was real and it was worth 158 ms -- an idle ping was 232
+  before `WIFI_PS_NONE` and 74 after. But the chip now answers `power save 0`
+  when asked, and setting it a second time AFTER the association changed the
+  floor by nothing at all. The line that did it was taken out again.
+* **The co-processor polling on a timer.** Its SPI transport blocks on
+  `portMAX_DELAY` throughout; there is no 100 ms anywhere in it.
+
+So the delay is in the radio path or the air, and it cannot be decomposed
+further from this end. What would decompose it is the co-processor's own
+instrumentation: `CONFIG_ESP_PKT_STATS` and the function profiling in
+`esp/fruitjam-c6/`, which are two lines of sdkconfig and a reflash -- and
+reflashing that chip is routine now.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design

@@ -476,9 +476,27 @@ static void eh_thread(void)
         // itself reads nothing and, worse, leaves it out of step with the host
         // for every transaction after.
         if (!K->gpio_get(pin_hs)) {
+            stats.hs_low++;
             if (nettx_tail != nettx_head || tx_pending || want_hello) stats.turns_blocked++;
             continue;
         }
+        stats.hs_high++;
+
+        // How long since the co-processor last offered a turn. This is the
+        // number the round-trip time kept pointing at and nothing measured: a
+        // hundred milliseconds of latency with a sub-millisecond send queue
+        // has to be waiting for something, and this says whether it is this.
+        {
+            static uint32_t last_offer_us;
+            uint32_t now = (uint32_t)K->time_us();
+            if (last_offer_us) {
+                uint32_t gap = now - last_offer_us;
+                stats.turn_gap_us = gap;
+                if (gap > stats.worst_turn_gap_us) stats.worst_turn_gap_us = gap;
+            }
+            last_offer_us = now;
+        }
+
         if (nettx_tail != nettx_head || tx_pending || want_hello) stats.turns_ready++;
         bool net_waiting = nettx_tail != nettx_head;
         if (!K->gpio_get(pin_dr) && !tx_pending && !want_hello && !net_waiting) continue;

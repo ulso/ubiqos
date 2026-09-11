@@ -606,6 +606,11 @@ typedef struct {
     uint32_t txwait_us, worst_txwait_us;
     uint32_t turns_ready, turns_blocked;   // handshake high vs low when we had
                                            // something waiting to go
+    // And unconditionally, because the pair above only counts turns where we
+    // had something to send -- which cannot distinguish "the co-processor is
+    // rarely armed" from "we rarely want to send".
+    uint32_t hs_high, hs_low;
+    uint32_t turn_gap_us, worst_turn_gap_us;   // between one offer and the next
 } myrtos_eh_stats_t;
 
 // --- PING -------------------------------------------------------------------
