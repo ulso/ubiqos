@@ -1205,6 +1205,17 @@ typedef struct {
 #define MYRTOS_USB_CDCREARMS    5u   // times the dongle's read was queued again
 #define MYRTOS_USB_CDCGIVEUP    6u   // 1 once the dongle stopped being asked
 #define MYRTOS_USB_ROOT         4u   // init | connected<<1 | fullspeed<<2 | susp<<3 | event<<8
+
+// What the HOST has done to this device's bus. These exist because a network
+// over USB does not come back on its own when a Mac wakes from sleep, in this
+// project and in every other one here that carries CDC-NCM -- and before that
+// can be blamed on the host, this end has to be able to say whether it even
+// noticed. It could not: nothing was listening for suspend or resume at all.
+#define MYRTOS_USB_SUSPENDS     7u   // times the host suspended the bus
+#define MYRTOS_USB_RESUMES      8u
+#define MYRTOS_USB_MOUNTS       9u   // times it configured us
+#define MYRTOS_USB_UNMOUNTS    10u
+#define MYRTOS_USB_LASTEVENT   11u   // milliseconds since boot of the last one
 // addr | instance<<8 | wanted<<16 | armed<<17 | idle<<24, for eight slots
 #define MYRTOS_USB_HID          0x10u
 // dev<<0 | ep<<8 | has_transfer<<16 | started<<17 | stalled<<18 | failed<<24

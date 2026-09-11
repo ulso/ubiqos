@@ -27,6 +27,15 @@ void module_main(void) {
     kv("rearms:         ", myrtos_usbinfo(MYRTOS_USB_REARMS));
     kv("recoveries:     ", myrtos_usbinfo(MYRTOS_USB_RECOVERIES));
     kv("cdc re-arms:    ", myrtos_usbinfo(MYRTOS_USB_CDCREARMS));
+
+    // What the HOST did to this device's bus. Zeroes after a night of the Mac
+    // sleeping would say the board never saw it go -- which is an answer, and
+    // a different one from having seen it and failed to come back.
+    kv("host suspends:  ", myrtos_usbinfo(MYRTOS_USB_SUSPENDS));
+    kv("host resumes:   ", myrtos_usbinfo(MYRTOS_USB_RESUMES));
+    kv("host mounts:    ", myrtos_usbinfo(MYRTOS_USB_MOUNTS));
+    kv("host unmounts:  ", myrtos_usbinfo(MYRTOS_USB_UNMOUNTS));
+    kv("last one at ms: ", myrtos_usbinfo(MYRTOS_USB_LASTEVENT));
     if (myrtos_usbinfo(MYRTOS_USB_CDCGIVEUP))
         myrtos_write_str(MYRTOS_STDOUT, "cdc:            given up, not asking again\n");
 

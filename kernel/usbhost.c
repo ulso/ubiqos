@@ -896,6 +896,19 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
     if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
     if (what == MYRTOS_USB_KEYSIN)     return head;
 
+    // The device side's, not this file's -- but usbstat asks one question of
+    // one call, and splitting it in two for four counters would be ceremony.
+    {
+        extern uint32_t myrtos_usb_suspends, myrtos_usb_resumes;
+        extern uint32_t myrtos_usb_mounts, myrtos_usb_unmounts;
+        extern uint32_t myrtos_usb_last_event_ms;
+        if (what == MYRTOS_USB_SUSPENDS)  return myrtos_usb_suspends;
+        if (what == MYRTOS_USB_RESUMES)   return myrtos_usb_resumes;
+        if (what == MYRTOS_USB_MOUNTS)    return myrtos_usb_mounts;
+        if (what == MYRTOS_USB_UNMOUNTS)  return myrtos_usb_unmounts;
+        if (what == MYRTOS_USB_LASTEVENT) return myrtos_usb_last_event_ms;
+    }
+
     if (what == MYRTOS_USB_ROOT) {
         const root_port_t *r = PIO_USB_ROOT_PORT(0);
         return (uint32_t)r->initialized | ((uint32_t)r->connected << 1)

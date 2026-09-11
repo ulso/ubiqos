@@ -2,8 +2,10 @@
 #include "config.h"
 #include "tusb.h"
 #include "../common/modules.h"   // myrtos_sleep, through the shared ABI
+#include "pico/time.h"                 // time_us_64, for the event log
 
 void myrtos_print(const char *s);
+void myrtos_print_u32(uint32_t v);
 
 void myrtos_usb_init(void) {
     // TinyUSB's RP2040 port registers itself for USBCTRL_IRQ through the SDK's
@@ -25,6 +27,72 @@ void myrtos_usb_init(void) {
 // typed first and left unread. Draining into a buffer of our own would close
 // that gap and cost a quarter kilobyte, which this machine has not got.
 bool myrtos_io_interrupt(const char *device_name);
+
+// --- WHAT THE HOST DOES TO US -----------------------------------------------
+//
+// TinyUSB calls these from tud_task, which runs in this thread, so printing
+// from them is ordinary thread context and safe.
+//
+// They exist because of a question that could not be answered: a network over
+// USB does not come back by itself when the Mac wakes from sleep, here and in
+// every other project on this bench that carries CDC-NCM. The easy answer is
+// that macOS is at fault -- and the easy answer is suspect, because USB
+// ethernet dongles speak the same protocol and survive sleep, so the host can
+// evidently do it.
+//
+// Before the blame can be placed, this end has to be able to say whether it
+// even saw the host go away. It could not: there was no handler for suspend,
+// resume, mount or unmount anywhere in the kernel, and the netif's link was
+// set up once at boot and never taken down again. So myrtos could not notice,
+// could not recover, and could not report.
+//
+// This is the noticing. The recovering comes after, and only once the log says
+// what actually happens.
+//
+// Note for reading the log afterwards: this board is on a powered hub, so it
+// keeps running while the Mac sleeps and the events below are a real record of
+// the bus. Plugged straight into the Mac it may lose power instead, and then
+// the absence of any of these lines means something different -- Ulf's idea,
+// and the second half of the experiment.
+uint32_t myrtos_usb_suspends, myrtos_usb_resumes;
+uint32_t myrtos_usb_mounts, myrtos_usb_unmounts;
+uint32_t myrtos_usb_last_event_ms;
+
+// Enough of them to see a pattern, then silence. A host that suspends whenever
+// the bus goes idle would otherwise fill the log with the same line and push
+// out the boot messages, which are the other thing a morning-after reading
+// wants. The counters go on counting either way.
+#define USB_EVENT_LOG_LIMIT 12u
+
+static void note_event(const char *what, uint32_t count) {
+    myrtos_usb_last_event_ms = (uint32_t)(time_us_64() / 1000u);
+    if (count > USB_EVENT_LOG_LIMIT) return;
+
+    myrtos_print("usb: host ");
+    myrtos_print(what);
+    myrtos_print(" at ");
+    myrtos_print_u32(myrtos_usb_last_event_ms / 1000u);
+    myrtos_print("s (");
+    myrtos_print_u32(count);
+    myrtos_print(")\n");
+}
+
+void tud_suspend_cb(bool remote_wakeup_en) {
+    (void)remote_wakeup_en;
+    note_event("suspended the bus", ++myrtos_usb_suspends);
+}
+
+void tud_resume_cb(void) {
+    note_event("resumed the bus", ++myrtos_usb_resumes);
+}
+
+void tud_mount_cb(void) {
+    note_event("configured us", ++myrtos_usb_mounts);
+}
+
+void tud_umount_cb(void) {
+    note_event("dropped us", ++myrtos_usb_unmounts);
+}
 
 void myrtos_usb_task(void) {
     tud_task();
