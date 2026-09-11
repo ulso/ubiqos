@@ -375,6 +375,7 @@ if(myrtosLwip)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipping.c
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipmdns.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsock.c)
     target_link_libraries(os_kernel pico_lwip pico_lwip_nosys pico_lwip_mdns)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
@@ -1380,6 +1381,7 @@ target_compile_definitions(ehspi_app PRIVATE
 myrtos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
 myrtos_add_module(ehstat modules/ehstat/ehstat.c)
 myrtos_add_module(ping modules/ping/ping.c)
+myrtos_add_module(browse modules/browse/browse.c)
 myrtos_add_module(ehrpc modules/ehrpc/ehrpc.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
@@ -1603,6 +1605,7 @@ set(MYRTOS_RESIDENT
     ehstat
     ehrpc
     ping
+    browse
     neopixel
     leddesc
     i2cbus

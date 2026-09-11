@@ -94,7 +94,12 @@ void module_main(int argc, char **argv) {
             myrtos_line_flush(MYRTOS_STDOUT, &l);
             return;
         default:
-            myrtos_line_str(&l, "no reply\r\n");
+            // WITH the address, because "no reply" and "no reply from the
+            // address I picked out of three" are different failures, and only
+            // the second one names the thing to look at.
+            myrtos_line_str(&l, "no reply from ");
+            addr_str(&l, st[1]);
+            myrtos_line_str(&l, "\r\n");
             break;
         }
         myrtos_line_flush(MYRTOS_STDOUT, &l);

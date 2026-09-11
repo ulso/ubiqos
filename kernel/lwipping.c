@@ -24,6 +24,9 @@
 #include "lwip/inet_chksum.h"
 #include "lwip/ip.h"
 #include "lwip/dns.h"
+
+int32_t myrtos_mdns_resolve(const char *name);
+int32_t myrtos_mdns_state(uint32_t *addr_out);
 #include "lwip/timeouts.h"
 #include "../common/myrtos_abi.h"
 
@@ -106,16 +109,6 @@ static bool send_echo(void)
     return true;
 }
 
-// The name came back. Called by lwIP from its own context, which is this task.
-static void on_resolved(const char *name, const ip_addr_t *addr, void *arg)
-{
-    (void)name; (void)arg;
-    if (cur.state != MYRTOS_PING_RESOLVING) return;
-    if (!addr) { cur.state = MYRTOS_PING_NONAME; return; }
-    cur.addr = *addr;
-    send_echo();
-}
-
 // --- WHAT THE SERVER CALLS --------------------------------------------------
 
 int32_t myrtos_ping_start(const char *host)
@@ -131,16 +124,18 @@ int32_t myrtos_ping_start(const char *host)
     cur.took_us = 0;
     ip_addr_set_zero(&cur.addr);
 
-    // A literal is not a question for anybody. dns_gethostbyname answers one
-    // straight away too, but going through it for `ping 192.168.68.1` would
-    // put a name lookup in the path of an address that is already an address.
+    // A literal is not a question for anybody.
     if (ipaddr_aton(host, &cur.addr)) return send_echo() ? 0 : -1;
 
-    err_t rc = dns_gethostbyname(host, &cur.addr, on_resolved, NULL);
-    if (rc == ERR_OK) return send_echo() ? 0 : -1;      // already known
-    if (rc == ERR_INPROGRESS) return 0;                 // asked; on_resolved follows
-    cur.state = MYRTOS_PING_NONAME;
-    return -1;
+    // And a name goes to our own querier rather than to lwIP's DNS client.
+    //
+    // That client does resolve .local names -- it is one #define -- but it
+    // sends the question on the DEFAULT netif only. The default here is the
+    // USB link, so `ping rpi50.local` asked the Mac about a Raspberry Pi that
+    // is on the air, and was told nothing by everybody. Ours asks on every
+    // interface that is up.
+    if (myrtos_mdns_resolve(host) < 0) { cur.state = MYRTOS_PING_NONAME; return -1; }
+    return 0;                                           // the poll picks it up
 }
 
 // Three words: where it is now, the address once known, and the microseconds
@@ -150,6 +145,18 @@ void myrtos_ping_poll(uint32_t out[3])
     // The deadline is checked HERE rather than on a timer, because this is
     // asked once a turn anyway and a timeout that needs its own callback is a
     // callback that can outlive the thing it was timing.
+    // Still waiting on a name. The querier answers or gives up on its own, and
+    // the echo goes out the moment it answers.
+    if (cur.state == MYRTOS_PING_RESOLVING) {
+        uint32_t a = 0;
+        int32_t r = myrtos_mdns_state(&a);
+        if (r < 0) cur.state = MYRTOS_PING_NONAME;
+        else if (r > 0) {
+            ip_addr_set_ip4_u32(&cur.addr, a);
+            send_echo();
+        }
+    }
+
     if (cur.state == MYRTOS_PING_WAITING) {
         uint32_t waited = (uint32_t)time_us_64() - cur.sent_us;
         if (waited > 2000000u) cur.state = MYRTOS_PING_TIMEDOUT;

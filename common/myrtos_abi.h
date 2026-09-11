@@ -1149,8 +1149,19 @@ typedef struct {
 
 // ping, which is not a socket but goes to the same server for the same reason:
 // that server IS the one context lwIP may be touched from.
+// How many answers a browse keeps. A home network has a handful of services
+// and a list nobody can read is not a better list.
+#define MYRTOS_MDNS_MAX 12u
+
 #define MYRTOS_SOCK_PING   9u   // buf = the host, len its length -> 0 started
 #define MYRTOS_SOCK_PINGST 10u  // buf = &uint32_t[3]: state, address, us
+
+// Asking the network what is on it. A question goes out on EVERY interface,
+// which is the difference between this and lwIP's own .local lookup: that one
+// uses the default netif and nothing else, so a name on the other network is
+// simply never asked about.
+#define MYRTOS_SOCK_BROWSE 11u  // buf = the service, e.g. "_http._tcp.local"
+#define MYRTOS_SOCK_FOUND  12u  // arg = which, buf = a name -> its length
 
 // --- WHICH STACK ------------------------------------------------------------
 //
@@ -1780,6 +1791,37 @@ static inline int32_t myrtos_sock_recv(int32_t sock, uint8_t *buf, uint32_t len)
 // Start a ping and then ask how it went. Two calls because the stack cannot
 // wait and this caller can. The host may be a dotted address or a name; a name
 // ending in .local is asked for by multicast.
+// Ask the network what it has. The service is a full name -- "_http._tcp.local"
+// -- and "_services._dns-sd._udp.local" is the one that lists the service types
+// themselves, which is where a browse with nothing in mind starts.
+static inline int32_t myrtos_browse(const char *service)
+{
+    uint32_t n = 0;
+    while (service[n]) n++;
+    myrtos_sockbuf_t b = { (uint8_t *)(uintptr_t)service, n };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_BROWSE,
+                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0),
+                          (uint32_t)(uintptr_t)&b);
+}
+
+// -1 while the question is still out, 1 once it has run its course.
+static inline int32_t myrtos_browse_done(void)
+{
+    myrtos_sockbuf_t b = { 0, 0 };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_FOUND,
+                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0xff),
+                          (uint32_t)(uintptr_t)&b);
+}
+
+// The nth answer, or zero when there is no nth.
+static inline int32_t myrtos_browse_name(uint32_t i, char *out, uint32_t cap)
+{
+    myrtos_sockbuf_t b = { (uint8_t *)out, cap };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_FOUND,
+                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, i),
+                          (uint32_t)(uintptr_t)&b);
+}
+
 static inline int32_t myrtos_ping(const char *host)
 {
     uint32_t n = 0;

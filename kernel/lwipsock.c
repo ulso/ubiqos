@@ -234,6 +234,20 @@ int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
         name[n] = 0;
         return myrtos_ping_start(name);
     }
+    case MYRTOS_SOCK_BROWSE: {
+        extern int32_t myrtos_mdns_browse(const char *service);
+        char name[64];
+        uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;
+        for (uint32_t k = 0; k < n; k++) name[k] = (char)r->buf[k];
+        name[n] = 0;
+        return myrtos_mdns_browse(name);
+    }
+    case MYRTOS_SOCK_FOUND: {
+        extern int32_t myrtos_mdns_state(uint32_t *addr_out);
+        extern uint32_t myrtos_mdns_found(uint32_t i, char *out, uint32_t cap);
+        if ((uint32_t)i == 0xffu) return myrtos_mdns_state(0);     // still asking?
+        return (int32_t)myrtos_mdns_found((uint32_t)i, (char *)r->buf, r->len);
+    }
     case MYRTOS_SOCK_PINGST: {
         extern void myrtos_ping_poll(uint32_t out[3]);
         if (r->len < 3 * sizeof(uint32_t)) return -1;
