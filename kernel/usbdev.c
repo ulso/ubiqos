@@ -109,6 +109,24 @@ static void note_event(const char *what, uint32_t count) {
     myrtos_print(")\n");
 }
 
+// The link transitions, counted and logged separately from the bus events that
+// cause them. They are what the direct-to-the-Mac night is for: a bus that
+// suspends for hours should produce exactly one down and one up, and any more
+// than that means MYRTOS_USB_QUIET_US is too short for this host rather than
+// that the design is wrong.
+uint32_t myrtos_net_link_ups, myrtos_net_link_downs;
+
+static void note_link(const char *what, uint32_t count) {
+    if (count > USB_EVENT_LOG_LIMIT) return;
+    myrtos_print("net: cable link ");
+    myrtos_print(what);
+    myrtos_print(" at ");
+    myrtos_print_u32((uint32_t)(time_us_64() / 1000000u));
+    myrtos_print("s (");
+    myrtos_print_u32(count);
+    myrtos_print(")\n");
+}
+
 void tud_suspend_cb(bool remote_wakeup_en) {
     (void)remote_wakeup_en;
     note_event("suspended the bus", ++myrtos_usb_suspends);
@@ -198,7 +216,7 @@ static void usb_thread(void) {
             extern bool myrtos_eh_netif_start(void);
             extern bool myrtos_eh_netif_up(void);
             extern void myrtos_eh_netif_poll(void);
-            extern void myrtos_lwip_set_link(bool);
+            extern bool myrtos_lwip_set_link(bool);
             static bool up;
             // Not before the card has been read: the hostname is in
             // /sd/config.txt, mDNS announces it once, and a responder that has
@@ -238,11 +256,13 @@ static void usb_thread(void) {
                 static uint64_t quiet_since;
                 if (tud_ready()) {
                     quiet_since = 0;
-                    myrtos_lwip_set_link(true);
+                    if (myrtos_lwip_set_link(true))
+                        note_link("up", ++myrtos_net_link_ups);
                 } else if (!quiet_since) {
                     quiet_since = time_us_64();
                 } else if (time_us_64() - quiet_since > MYRTOS_USB_QUIET_US) {
-                    myrtos_lwip_set_link(false);
+                    if (myrtos_lwip_set_link(false))
+                        note_link("down", ++myrtos_net_link_downs);
                 }
 
                 myrtos_lwip_poll();

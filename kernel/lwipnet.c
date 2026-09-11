@@ -216,10 +216,13 @@ void myrtos_lwip_start(void)
 // with a display and a keyboard and never joined a network. The stack now
 // starts as soon as the card has been read, and only THIS interface waits for
 // a host, which is the only one that has any business doing so.
-void myrtos_lwip_set_link(bool up)
+// Returns whether this actually changed anything, so the caller can log the
+// transition and nothing else. It is called every turn; the answer is almost
+// always false.
+bool myrtos_lwip_set_link(bool up)
 {
-    if (!started) return;
-    if (up == (bool)netif_is_link_up(&nif)) return;
+    if (!started) return false;
+    if (up == (bool)netif_is_link_up(&nif)) return false;
 
     // AutoIP is started and stopped with the link rather than at boot. Left
     // running on a cable with nobody on it, it probes, hears no objection --
@@ -233,6 +236,7 @@ void myrtos_lwip_set_link(bool up)
         autoip_stop(&nif);
         netif_set_link_down(&nif);
     }
+    return true;
 }
 
 // Called from the USB device task's loop, which is the one context lwIP has.
