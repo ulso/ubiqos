@@ -74,13 +74,24 @@ static void panel_wake(void)
     gpio_init(MYRTOS_LCD_RST_PIN);
     gpio_set_dir(MYRTOS_LCD_RST_PIN, GPIO_OUT);
     gpio_put(MYRTOS_LCD_RST_PIN, 0);
-    sleep_ms(10);
+    sleep_ms(20);
     gpio_put(MYRTOS_LCD_RST_PIN, 1);
-    sleep_ms(120);                      // the datasheet's wait after reset
+    sleep_ms(200);                      // Waveshare's own wait, and generous
 
+    // THE BACKLIGHT IS ACTIVE LOW, and this pin driven high is what "the panel
+    // is completely black" turned out to mean -- with every signal measured
+    // correct, DE at 70% and the data pins changing.
+    //
+    // Nothing says so anywhere. It is deducible only from their brightness
+    // function, which writes PWM_WRAP/100 * (100 - percent) as the level: at a
+    // hundred per cent that is zero. Low is bright.
+    //
+    // A level rather than PWM, because full brightness needs no modulation.
+    // Dimming would want the PWM slice this pin has, and is not what this step
+    // is about.
     gpio_init(MYRTOS_LCD_BL_PIN);
     gpio_set_dir(MYRTOS_LCD_BL_PIN, GPIO_OUT);
-    gpio_put(MYRTOS_LCD_BL_PIN, 1);
+    gpio_put(MYRTOS_LCD_BL_PIN, 0);
 }
 
 // pio_sm_init refuses a configuration its block's GPIO base cannot reach, and
