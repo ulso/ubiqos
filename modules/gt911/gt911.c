@@ -24,6 +24,13 @@ static bool ready;
 #define GT911_PRODUCT_ID 0x8140u
 #define GT911_STATUS     0x814eu     // bit 7 says the buffer is fresh, bits 3-0 count
 
+// The configuration block, which is the chip's own answer to what range it
+// reports in. Little endian here, unlike the addresses, and the datasheet's
+// "output max" is a count: this panel answers 800 by 480 and a coordinate runs
+// 0 to 799.
+#define GT911_CONFIG_VER 0x8047u     // then the width, the height, and the finger count
+#define GT911_FIRMWARE   0x8144u
+
 static bool reg_read(uint16_t reg, uint8_t *dst, uint32_t n)
 {
     const uint8_t a[2] = { (uint8_t)(reg >> 8), (uint8_t)reg };
@@ -99,7 +106,9 @@ static int32_t gt911_configure(const void *config, uint32_t size)
     ready = true;
     K->print("  touch driver: GT911 on I2C");
     K->print_u32(cfg.i2c_index);
-    K->print(", 5 points\n");
+    K->print(", up to 5 points\n");     // what this driver returns, not what the
+                                        // chip's configuration claims
+
     return 0;
 }
 
@@ -143,6 +152,35 @@ static int32_t gt911_read(uint8_t *out, uint32_t len)
 // Always: a poll has an answer even when the answer is nobody is touching it.
 static int32_t gt911_readable(void) { return ready ? (int32_t)sizeof(myrtos_touch_t) : 0; }
 
+// What the chip says it is, rather than what the board header assumes. Asked
+// once by anything that has to turn a coordinate into a pixel: if these come
+// back as the panel's own size there is nothing to calibrate, and if they do
+// not, this is the pair to scale by.
+static int32_t gt911_getstat(uint32_t code, void *data, uint32_t len)
+{
+    if (code != MYRTOS_SS_TOUCH_RANGE) return -1;
+    if (!ready) return -1;
+    if (len < sizeof(myrtos_touch_range_t)) return -1;
+
+    uint8_t c[6] = { 0, 0, 0, 0, 0, 0 };     // version, width, height, points
+    uint8_t fw[2] = { 0, 0 };
+    if (!reg_read(GT911_CONFIG_VER, c, sizeof c)) return -1;
+    if (!reg_read(GT911_FIRMWARE, fw, sizeof fw)) return -1;
+
+    myrtos_touch_range_t r;
+    r.width    = (uint16_t)(c[1] | ((uint16_t)c[2] << 8));
+    r.height   = (uint16_t)(c[3] | ((uint16_t)c[4] << 8));
+    r.points   = (uint16_t)(c[5] & 0x0fu);
+    r.firmware = (uint16_t)(fw[0] | ((uint16_t)fw[1] << 8));
+    r.config   = c[0];
+    r.reserved = 0;
+
+    uint8_t *dst = (uint8_t *)data;
+    const uint8_t *src = (const uint8_t *)&r;
+    for (uint32_t i = 0; i < sizeof r; i++) dst[i] = src[i];
+    return 0;
+}
+
 static bool gt911_lib_init(const myrtos_kernel_api_t *api)
 {
     K = api;
@@ -158,5 +196,6 @@ const myrtos_driver_module_t myrtos_driver = {
         .configure = gt911_configure,
         .open = gt911_open, .write = 0, .read = gt911_read,
         .close = gt911_close, .readable = gt911_readable,
+        .getstat = gt911_getstat,
     },
 };

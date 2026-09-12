@@ -967,6 +967,15 @@ typedef struct {
 
 #define MYRTOS_SS_GPIO_DEBUG 0x0305u   // uint32_t[6]: inte, intr, ints, calls, pending, dropped
 
+// --- the touch screen ------------------------------------------------------
+//
+// getstat only. A touch controller answers in whatever coordinate range its own
+// configuration holds, and that range need not be the panel's -- the same chip
+// is sold against several. A program turning a finger into a pixel therefore
+// has to ask, and it asks the chip rather than the board header, because the
+// configuration lives in the controller and can be rewritten.
+#define MYRTOS_SS_TOUCH_RANGE 0x0500u  // myrtos_touch_range_t
+
 #define MYRTOS_GPIO_FALL 1u
 #define MYRTOS_GPIO_RISE 2u
 
@@ -1241,6 +1250,25 @@ typedef struct {
     uint32_t points;
     struct { uint16_t x, y; } p[MYRTOS_TOUCH_MAX];
 } myrtos_touch_t;
+
+// What the controller says about itself: the range it reports coordinates in,
+// how many fingers this configuration tracks, and its own version numbers. Read
+// with MYRTOS_SS_TOUCH_RANGE.
+//
+// width and height are counts and not inclusive maxima: the 4.3B's controller
+// answers 800 by 480 for a panel of exactly that, so a coordinate runs 0 to
+// width - 1. The GT911 datasheet calls them the X and Y output maximum, which
+// is where the temptation to read them as 799 and 479 comes from.
+//
+// points is what the configuration says, and a driver may well return fewer:
+// MYRTOS_TOUCH_MAX is five, and this panel's configuration claims ten.
+typedef struct {
+    uint16_t width, height;
+    uint16_t points;         // fingers this configuration tracks, not fingers down
+    uint16_t firmware;       // as the chip reports it
+    uint16_t config;         // the configuration version, which changes if rewritten
+    uint16_t reserved;
+} myrtos_touch_range_t;
 
 // What a touch descriptor carries, so the driver knows nothing about a board.
 // i2c_index is 0 or 1; the rest are pins, the controller's address and the bus

@@ -18,6 +18,29 @@ void module_main(int argc, char **argv) {
     int32_t fd = myrtos_open("/dev/touch");
     if (fd < 0) { say("touch: no /dev/touch\r\n"); return; }
 
+    // Said first, because the numbers below mean nothing without it. The chip
+    // holds its own coordinate range and it need not be the panel's, so this is
+    // what decides whether anything has to be scaled at all.
+    myrtos_touch_range_t r;
+    if (myrtos_getstat(fd, MYRTOS_SS_TOUCH_RANGE, &r, sizeof r) == 0) {
+        myrtos_line_t l;
+        myrtos_line_reset(&l);
+        myrtos_line_str(&l, "range ");
+        myrtos_line_u32(&l, r.width);
+        myrtos_line_str(&l, " by ");
+        myrtos_line_u32(&l, r.height);
+        myrtos_line_str(&l, ", ");
+        myrtos_line_u32(&l, r.points);
+        myrtos_line_str(&l, " points, firmware ");
+        myrtos_line_u32(&l, r.firmware);
+        myrtos_line_str(&l, ", config ");
+        myrtos_line_u32(&l, r.config);
+        myrtos_line_str(&l, "\r\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &l);
+    } else {
+        say("range: the driver will not say\r\n");
+    }
+
     uint32_t was = 0xffffffffu;
     for (;;) {
         myrtos_touch_t t;
