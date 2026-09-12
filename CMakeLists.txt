@@ -29,69 +29,12 @@ else()
     message(FATAL_ERROR "MYRTOS_ARCH is '${MYRTOS_ARCH}'; it must be riscv or arm")
 endif()
 
-# What a module is compiled and linked with that only one machine understands.
-#
-# -mcmodel=medany makes RISC-V address its own statics PC-relatively, which is
-# what let a module be loaded anywhere before the loader could relocate. ARM has
-# no code model to choose: Thumb-2 reaches globals through literal pools, and
-# those are the absolute words the loader now fixes.
-#
-# --no-relax is not an optimisation setting, and the note further down says why.
-# It is the RISC-V linker's, and arm-none-eabi's ld does not know the option at
-# all. -m elf32lriscv likewise: the driver picks its own emulation, so ARM is
-# given nothing and gets it right.
-#
-# Every module link goes through this variable, the D and Zig rules included.
-# They used to spell -m elf32lriscv out for themselves, which is how they came
-# to be riscv-only: the flag was the thing that could not follow. A side effect
-# of routing them here is that D now gets --no-relax as well, which it always
-# should have had -- relaxation is what turns an absolute reference into a
-# gp-relative one, and a module may not contain either.
-#
-# The clang, D and Zig rules drive their own compiler and linker rather than the
-# SDK's gcc driver, so they need the same two facts spelled without the -Wl,
-# wrapper: which triple to compile for and which emulation to link with. They
-# are set here, beside the flags they belong to, because the reason the clang
-# path was riscv-only was that these were written into it.
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(MYRTOS_MODULE_CFLAGS  -mcmodel=medany)
-    set(MYRTOS_MODULE_LDFLAGS -Wl,-m,elf32lriscv -Wl,--no-relax)
-    set(MYRTOS_MODULE_ARCH_SOURCES)
-    set(MYRTOS_LLVM_TRIPLE    riscv32-unknown-elf)
-    set(MYRTOS_LLVM_EMULATION elf32lriscv)
-    set(MYRTOS_LLVM_CFLAGS)
-else()
-    # -ffixed-r9 keeps the register the compiler may not have. r9 carries the
-    # thread pointer, which RISC-V has in tp and ARM has nowhere -- so the
-    # platform register holds it and the compiler must be told to leave it be.
-    # Without this a module reads someone else's thread-local eventually.
-    set(MYRTOS_MODULE_CFLAGS  -ffixed-r9)
-    set(MYRTOS_MODULE_LDFLAGS)
-
-    # And the function the compiler calls to read it. __thread on ARM is not an
-    # instruction but a call to __aeabi_read_tp, which the platform supplies --
-    # so every module carries the two instructions that answer it.
-    set(MYRTOS_MODULE_ARCH_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/common/arm/tp.S)
-
-    set(MYRTOS_LLVM_TRIPLE    arm-none-eabi)
-    set(MYRTOS_LLVM_EMULATION armelf)
-
-    # -mno-movt, and it is the whole reason clang could not build ARM modules.
-    #
-    # To put a 32-bit address in a register, gcc emits a literal pool entry --
-    # a word of data inside .text, which the linker fills in and which arrives
-    # as R_ARM_ABS32. The loader has always relocated those. Clang prefers a
-    # movw/movt pair instead, splitting the same address across the immediate
-    # fields of two Thumb instructions, which arrives as R_ARM_THM_MOVW_ABS_NC
-    # and R_ARM_THM_MOVT_ABS. Those are absolute too, and check_module.py
-    # refused them -- correctly, because nothing relocates them.
-    #
-    # Two ways out: teach the loader to split a value across two instruction
-    # encodings, or ask the compiler for the form the loader already handles.
-    # This is the second, it is one flag, and the cost is the literal pool gcc
-    # pays anyway. cxxdemo came out with nine addresses to fix and no refusal.
-    set(MYRTOS_LLVM_CFLAGS -mno-movt)
-endif()
+# What a module is compiled and linked with -- a code model, a reserved
+# register, a linker that must not relax -- is in sdk/myrtos-sdk.cmake, together
+# with myrtos_add_module itself. It used to be here, and a module could
+# therefore only be built inside this tree. The include is further down, after
+# pico_sdk_init, because building a module needs the toolchain; nothing between
+# here and there uses any of it.
 
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
@@ -539,161 +482,11 @@ pico_add_extra_outputs(os_kernel)
 # A trailing RT marks the module real-time: its code and its process memory
 # stay in SRAM instead of going to PSRAM. Anything whose timing matters wants
 # it -- the shell, and whatever reads a device that will not wait.
-function(myrtos_add_module name source)
-    set(rt_flag "")
-    if("RT" IN_LIST ARGN)
-        set(rt_flag "--rt")
-        list(REMOVE_ITEM ARGN "RT")
-    endif()
-    # A trailing SINGLE marks the module not re-entrant: its writable data is
-    # shared, so only one instance may run. A service that owns hardware or a
-    # protocol stack is one of these by nature.
-    set(single_flag "")
-    set(single_link "")
-    if("SINGLE" IN_LIST ARGN)
-        set(single_flag "--single")
-        # Linked AT the address it will be loaded at, which is what lets it have
-        # absolute addresses and writable data at all. -fno-zero-initialized-in-bss
-        # puts the zeroed globals in .data so they are in the image: objcopy drops
-        # .bss, and a loader that copies module_size bytes would leave them out.
-        set(single_link "")   # relocated like every other module
-        list(REMOVE_ITEM ARGN "SINGLE")
-    endif()
-
-    # A trailing NEWLIB gives the module the whole C library instead of the
-    # header-only subset in common/myrtos_stdio.h and its neighbours. That
-    # subset is smaller and links nothing; this is for ported code, where the
-    # library is what the program was written against.
-    #
-    # nano.specs is newlib-nano: the same library with the space-hungry parts
-    # left out. Measured on Atto, it costs about seven kilobytes of code over
-    # the hand-written subset and gives qsort, strtod, time, dirent and a stdio
-    # nobody has to keep adding to.
-    #
-    # myrtos_syscalls.c is its bottom end and comes along automatically -- a
-    # dozen functions, and the note at the top of it explains why the reentrancy
-    # struct needs no work here.
-    #
-    # Such a module is always copied per process, because newlib's _impure_ptr
-    # is writable data. That is what makes it correct, and it is also what it
-    # costs: the code is no longer shared between instances.
-    # A trailing LIBRARY makes a module the kernel CALLS rather than runs.
-    # exec_offset then points at a table instead of an entry point, and the
-    # table is always called myrtos_lib -- one name, so the loader never has to
-    # be told which symbol to look for. See MYRTOS_TYPE_LIBRARY in the ABI.
-    set(lib_flag "")
-    set(entry_symbol module_main)
-    if("LIBRARY" IN_LIST ARGN)
-        set(lib_flag "--library")
-        set(entry_symbol myrtos_lib)
-        list(REMOVE_ITEM ARGN "LIBRARY")
-    endif()
-
-    # A trailing DRIVER is the same idea with a fixed shape: exec_offset points
-    # at a myrtos_driver_module_t, always called myrtos_driver, which carries an
-    # init and the vtable the I/O manager calls every device through. A
-    # descriptor naming this driver finds it whether or not the kernel was built
-    # with it. See MYRTOS_TYPE_DRIVER in the ABI.
-    if("DRIVER" IN_LIST ARGN)
-        set(lib_flag "--driver")
-        set(entry_symbol myrtos_driver)
-        list(REMOVE_ITEM ARGN "DRIVER")
-    endif()
-
-    set(libc_compile -ffreestanding -nostdlib)
-    set(libc_link    -nostdlib)
-    set(libc_sources "")
-    if("NEWLIB" IN_LIST ARGN)
-        set(libc_compile --specs=nano.specs)
-        set(libc_link    --specs=nano.specs)
-        set(libc_sources ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_syscalls.c
-                         ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_dirent.c)
-        list(REMOVE_ITEM ARGN "NEWLIB")
-    endif()
-
-    add_executable(${name}_app ${source} ${ARGN}
-                   ${libc_sources} ${MYRTOS_MODULE_ARCH_SOURCES})
-    # common/newlib holds the headers newlib does not have. It goes first on the
-    # include path so that <dirent.h> finds ours rather than newlib's, whose
-    # entire content is #error "<dirent.h> not supported".
-    if(libc_sources)
-        target_include_directories(${name}_app BEFORE PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/common/newlib
-            ${CMAKE_CURRENT_SOURCE_DIR}/common)
-    endif()
-    target_compile_options(${name}_app PRIVATE
-        -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common ${libc_compile} -O2
-        # -fno-use-cxa-atexit puts the destructors of globals in .fini_array
-        # instead of registering them with __cxa_atexit, which would want that
-        # function and __dso_handle from a C library that is not here. Measured:
-        # with the flag the object has no undefined symbols at all.
-        $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti -fno-threadsafe-statics
-                                  -fno-use-cxa-atexit>)
-    # -N keeps the linker from page-aligning the writable sections. Without it
-    # .tdata landed a page beyond the code and objcopy padded the gap, which put
-    # four kilobytes of zeroes in every module that had a thread-local variable.
-    # -e,0 and --no-warn-rwx-segments say nothing about the code; they say that
-    # two warnings do not apply to a module. It has no _start, because the
-    # kernel enters it at exec_offset -- which make_module.py finds with nm, not
-    # from the ELF entry -- and its one loadable segment is read, write and
-    # execute together, because that is what a module is. Sixty-six lines of
-    # them per clean build is how a real warning goes unnoticed.
-    # --no-relax, and it is not an optimisation setting. The RISC-V linker
-    # relaxes any access within reach of __global_pointer$ into a gp-relative
-    # one, and a module's gp is not its own: the kernel starts every process
-    # with the kernel's gp, so a relaxed access reads and writes the kernel's
-    # small-data area instead of the module's. The wasm host had 752 of them
-    # and behaved exactly as that implies -- a constant read back as the wrong
-    # number, pointers that were not pointers, and a machine that fell over.
-    target_link_options(${name}_app PRIVATE ${libc_link} ${MYRTOS_MODULE_LDFLAGS} -Wl,-N
-                        -Wl,-e,0 -Wl,--no-warn-rwx-segments -Wl,--emit-relocs
-                        ${single_link})
-    if(single_flag)
-        target_compile_options(${name}_app PRIVATE -fno-zero-initialized-in-bss)
-    endif()
-
-# Position independence is checked before the module is packaged. An absolute
-# address in an allocated section -- a static function pointer, a vtable, a
-# pointer to a static variable -- means the module cannot be loaded at an
-# unknown address, and that does not show in the source.
-    add_custom_command(TARGET ${name}_app POST_BUILD
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/check_module.py
-                ${single_flag}
-                ${CMAKE_READELF}
-                $<TARGET_OBJECTS:${name}_app>
-                $<TARGET_FILE:${name}_app>
-        COMMAND_EXPAND_LISTS
-        COMMENT "Checking that ${name} is position independent")
-
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
-        COMMAND ${CMAKE_OBJCOPY} -O binary
-                $<TARGET_FILE:${name}_app>
-                ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
-        DEPENDS ${name}_app
-        COMMENT "Extracting raw position-independent machine code from ${name}")
-
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
-        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${single_flag}
-                ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
-                ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
-                "${name}"
-                $<TARGET_FILE:${name}_app>
-                ${CMAKE_NM}
-                ${entry_symbol}
-                ${rt_flag} ${lib_flag}
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
-                ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
-        COMMENT "Building module ${name}.mod")
-
-    # Built, and therefore able to be resident. A module whose toolchain is
-    # not on this machine never reaches here, and the flash image asks this
-    # list rather than assuming every name in MYRTOS_RESIDENT exists.
-    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
-endfunction()
+# myrtos_add_module, and the per-machine flags a module is built with. Extracted
+# so that a repository which is not this one can build a module against the same
+# knowledge -- and extracted rather than copied, so there is no second version
+# of it to go stale. Every module below is built by the SDK's function.
+include(${CMAKE_CURRENT_SOURCE_DIR}/sdk/myrtos-sdk.cmake)
 
 # --- The second toolchain -------------------------------------------------
 # Clang and lld, beside GCC rather than instead of it, chosen per module.
@@ -1872,22 +1665,13 @@ if(NOT myrtosFlashBase)
                         "in a form this can read")
 endif()
 
-# The family is the chip and the machine together, and loading the wrong one is
-# refused by the bootrom rather than silently wrong -- but it is better refused
-# here, so the two builds cannot produce identically named files.
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(myrtosUf2Family rp2350-riscv)
-else()
-    set(myrtosUf2Family rp2350-arm-s)
-endif()
-
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
     COMMAND $<TARGET_FILE:picotool> uf2 convert --quiet
             ${CMAKE_CURRENT_BINARY_DIR}/modules.bin -t bin
             -o ${myrtosFlashBase}
             ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
-            --family ${myrtosUf2Family}
+            --family ${MYRTOS_UF2_FAMILY}
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin
     COMMENT "Wrapping the module image for ${myrtosFlashBase}")
 

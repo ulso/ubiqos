@@ -113,6 +113,10 @@ genuinely PC-relative.
 in practice, which is less obvious than it sounds -- a switch returning string
 literals breaks it, and so does the same code written as an if-chain.
 
+A module need not be in this tree. [`docs/the-sdk.md`](docs/the-sdk.md) is how a
+separate repository builds one against the same knowledge, and
+[`sdk/example`](sdk/example) is a working application that does.
+
 The requirement is checked at build time. [`check_module.py`](check_module.py)
 reads the relocations out of the object files with `readelf -W` and rejects the
 module if any allocated section contains an absolute reference such as
@@ -161,6 +165,12 @@ picotool load build/modules.bin -t bin -o 0x10100000
 The filename comes before `-t` and `-o`; picotool rejects them the other way
 round. The image is written whole, so a module is added by adding it to
 `MYRTOS_RESIDENT` and loading the image again, never by loading one module.
+
+The build also produces `myrtos.uf2`, which is the kernel and that image in one
+file -- two addresses a megabyte apart, which one UF2 can hold because every
+block carries its own target address. There is a second module region at
+`0x10800000` for an application built elsewhere; `tools/combine_uf2.py` folds
+its image in beside this one, or ships it alone when only it has changed.
 
 **From the SD card.** Copy the `.mod` files to the root of the card. The
 filesystem is FAT32, read and write, and the 8.3 names are uppercase —
