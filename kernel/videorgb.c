@@ -191,7 +191,10 @@ void myrtos_video_init(void)
     // Each machine is told how far to count before any of them runs.
     pio_sm_put_blocking(PIO_SYNC, sm_hsync, RGB_W - 1u);
     pio_sm_put_blocking(PIO_SYNC, sm_vsync, RGB_H - 1u);
+    // Two words: the height it counts lines with, then the width it counts the
+    // data enable window with. See the note in rgb.pio about where each lives.
     pio_sm_put_blocking(PIO_DATA, sm_de,    RGB_H - 1u);
+    pio_sm_put_blocking(PIO_DATA, sm_de,    RGB_W - 1u);
     pio_sm_put_blocking(PIO_DATA, sm_data,  RGB_W - 1u);
 
     // The followers first, so they are already waiting when time starts.

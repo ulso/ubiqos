@@ -101,20 +101,35 @@ active:
 .wrap
 
 ; ----------------------------------------------------------------------------
-; DATA ENABLE, by watching rather than counting.
+; DATA ENABLE, counted rather than handed over.
 ;
 ; It waits out the vertical back porch in whole lines, then for each active line
-; waits out the horizontal back porch in pixel clocks, raises DE, and hands the
-; line to `rgb` -- which tells it through IRQ 0 when the line has gone.
+; waits out the horizontal back porch in pixel clocks, and holds DE high for
+; EXACTLY the active width -- counting the clocks itself.
+;
+; It used to end the line on an IRQ from the pixel machine instead, and that is
+; why the panel was black. DE then lasted as long as that machine took, and if
+; it finished a shade late the HSYNC pulse had already passed: the next line was
+; missed too, and the miss fed on itself. Measured, the machine sat waiting for
+; HSYNC in 43 of 60 samples and DE was high 1.25% of the time where it should
+; have been 74%. Counting makes the window deterministic and removes the
+; handshake altogether.
+;
+; Three values, two registers. The line counter is consumed by `jmp y--`, so the
+; height is kept in the ISR and copied back each frame, and the width stays in
+; the OSR for the life of the program -- neither is ever shifted, so both
+; survive.
 .program myrtos_rgb_de
 .side_set 1 opt
 .define public T1 31    ; vertical back porch, in lines
 .define public T2 31    ; horizontal back porch, in pixels
 
 pull block side 0       ; the height, minus one
+mov isr, osr side 0
+pull block side 0       ; the width, minus one -- stays in the OSR
 
 .wrap_target
-mov y, osr side 0
+mov y, isr side 0
 set x, T1 side 0
 wait 0 pin 5 side 0     ; VSYNC low
 wait 1 pin 5 side 0     ; and high again: a frame has begun
@@ -124,16 +139,18 @@ vback:
     jmp x--, vback side 0
 active:
     wait 0 pin 6 side 0
-    wait 1 pin 6 side 0 ; HSYNC: a line has begun
+    wait 1 pin 6 side 0 ; the sync pulse, then the back porch begins
     set x, T2 side 0
     hback:
         wait 0 pin 7 side 0
         wait 1 pin 7 side 0
         jmp x--, hback side 0
 
-    wait 1 pin 7 side 0
-
-    wait 1 irq 0 side 1 ; DE high while rgb sends the line
+    mov x, osr side 1   ; DE high, and the width to count it out with
+    deactive:
+        wait 0 pin 7 side 1
+        wait 1 pin 7 side 1
+        jmp x--, deactive side 1
     jmp y--, active side 0
 .wrap
 
@@ -149,13 +166,13 @@ pull block
 mov y, osr              ; the width, minus one
 .wrap_target
 
-mov x, y                ; this program has no side-set: the width, and nothing else
-wait 1 pin 4            ; DE
+mov x, y
+wait 0 pin 4            ; DE low first, then high: lock to the RISING edge
+wait 1 pin 4            ; of the window rather than to whatever DE is now
 colour:
     pull block
     wait 0 pin 7        ; PCLK low
     out pins, 16
     wait 1 pin 7        ; PCLK high
     jmp x--, colour
-irq set 0               ; the line has gone; rgb_de may drop DE
 .wrap
