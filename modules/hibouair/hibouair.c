@@ -72,10 +72,25 @@ static const char *board_type_name(uint8_t t)
 }
 
 // 0 = old, 1 = resistance, 2 = ppm, 3 = IAQ.
+// 0 is an older encoding, 1 a gas resistance, 2 parts per million, 3 an air
+// quality index -- and the same sensor sends different ones in successive
+// advertisements, so the unit belongs to the reading rather than to the sensor.
 static const char *voc_unit(uint8_t t)
 {
-    static const char units[4][4] = { "raw", "ohm", "ppm", "iaq" };
+    static const char units[4][4] = { "raw", "ohm", "ppm", "IAQ" };
     return units[t < 4 ? t : 0];
+}
+
+// Type 2 is hundredths of a ppm and every other type is a plain number. This
+// printed the raw value for years: the dxbleuio parser divides by 100 there and
+// nowhere else, and its test frame asserts 62 -> 0.62.
+static void voc_text(char *out, uint32_t cap, uint32_t v, uint8_t type)
+{
+    if (type == 2)
+        snprintf(out, cap, "%lu.%02lu %s", (unsigned long)(v / 100),
+                 (unsigned long)(v % 100), voc_unit(type));
+    else
+        snprintf(out, cap, "%lu %s", (unsigned long)v, voc_unit(type));
 }
 
 typedef struct {
@@ -84,7 +99,8 @@ typedef struct {
     uint8_t  type;
     uint8_t  voc_type;
     int32_t  temp;          // tenths
-    uint32_t hum, bar, voc, pm1, pm25, co2;
+    uint32_t hum, bar, voc, pm1, pm25, pm10, co2;
+    uint32_t als;               // ambient light, or a noise level byte-swapped
     bool     used;
 } sensor_t;
 
@@ -204,6 +220,8 @@ static void remember(const uint8_t *b, uint32_t n, const char *addr)
     e->voc      = le16(b, 15);
     e->pm1      = le16(b, 17);
     e->pm25     = le16(b, 19);
+    e->pm10     = le16(b, 21);
+    e->als      = le16(b, 7);
     e->co2      = ((le16(b, 23) & 0xffu) << 8) | (le16(b, 23) >> 8);
 }
 
@@ -269,6 +287,15 @@ static void put_u32(int32_t fd, uint32_t v)
     myrtos_write(fd, b, n);
 }
 
+// Hundredths, as JSON's own decimal rather than a scaled integer.
+static void put_tenths100(int32_t fd, uint32_t v)
+{
+    put_u32(fd, v / 100);
+    myrtos_write(fd, ".", 1);
+    char b[2] = { (char)('0' + (v / 10) % 10), (char)('0' + v % 10) };
+    myrtos_write(fd, b, 2);
+}
+
 static void publish(void)
 {
     int32_t fd = myrtos_open_flags(SENSORS_PATH,
@@ -304,11 +331,17 @@ static void publish(void)
         put_str(fd, "\",\"temp\":");     put_tenths(fd, e->temp);
         put_str(fd, ",\"humidity\":");   put_tenths(fd, (int32_t)e->hum);
         put_str(fd, ",\"pressure\":");   put_tenths(fd, (int32_t)e->bar);
-        put_str(fd, ",\"voc\":");        put_u32(fd, e->voc);
+        put_str(fd, ",\"voc\":");
+        // Hundredths when the unit is ppm, a plain number otherwise. A reader
+        // of this had no way to know that and was told 62 for 0.62.
+        if (e->voc_type == 2) put_tenths100(fd, e->voc);
+        else                  put_u32(fd, e->voc);
         put_str(fd, ",\"vocUnit\":\"");  put_str(fd, voc_unit(e->voc_type));
         put_str(fd, "\",\"co2\":");      put_u32(fd, e->co2);
         put_str(fd, ",\"pm1\":");        put_tenths(fd, (int32_t)e->pm1);
         put_str(fd, ",\"pm25\":");       put_tenths(fd, (int32_t)e->pm25);
+        put_str(fd, ",\"pm10\":");       put_tenths(fd, (int32_t)e->pm10);
+        put_str(fd, ",\"alsNoise\":");   put_u32(fd, e->als);
         put_str(fd, "}");
     }
     put_str(fd, "],\"count\":");
@@ -325,12 +358,14 @@ static void redraw(void)
     printf("board   address            type       temp    humid   press     VOC        CO2   PM1/2.5\x1b[K\n");
     for (uint32_t i = 0; i < sensor_count; i++) {
         sensor_t *e = &sensors[i];
-        printf("%06lX  %-17s  %s  %ld.%ld C  %lu.%lu %%  %lu.%lu  %5lu %s  %4lu  %lu.%lu/%lu.%lu\x1b[K\n",
+        char vt[16];
+        voc_text(vt, sizeof vt, e->voc, e->voc_type);
+        printf("%06lX  %-17s  %s  %ld.%ld C  %lu.%lu %%  %lu.%lu  %9s  %4lu  %lu.%lu/%lu.%lu\x1b[K\n",
                (unsigned long)e->board, e->addr, board_type_name(e->type),
                (long)(e->temp / 10), (long)(e->temp < 0 ? -(e->temp % 10) : e->temp % 10),
                (unsigned long)(e->hum / 10), (unsigned long)(e->hum % 10),
                (unsigned long)(e->bar / 10), (unsigned long)(e->bar % 10),
-               (unsigned long)e->voc, voc_unit(e->voc_type),
+               vt,
                (unsigned long)e->co2,
                (unsigned long)(e->pm1 / 10),  (unsigned long)(e->pm1 % 10),
                (unsigned long)(e->pm25 / 10), (unsigned long)(e->pm25 % 10));
