@@ -60,6 +60,18 @@
 // power-cycle the port from software. That matters: on the other board a
 // power cycle was more than once the only thing that recovered a wedged
 // device.
+// PIO-USB takes three state machines of pio0 and nothing else -- its defaults
+// are TX and RX both on index 0 -- so the budget closes exactly: pio0 the host,
+// pio1 the panel's sync, pio2 its pixels. All three blocks, nothing spare.
+//
+// pio0 keeps the default GPIO base of 0, which is what D+ on GPIO0 needs; the
+// panel's two blocks are moved to 16. See kernel/videorgb.c.
+// OFF, and not because the PIO budget failed -- that closed exactly. Turning it
+// on hangs the board: core 1 is alive and looping in busy_wait_us, and core 0
+// stops INSIDE myrtos_chargen_band16 with the band pump frozen. Not the QMI
+// fault either: the font is in SRAM and the line it stops on is a blank-cell
+// write. An unexplained two-core interaction between the display's render
+// interrupt and the USB host, and off is where it stays until it is understood.
 #define MYRTOS_HAS_PIO_USB_HOST 0
 #define MYRTOS_USB_HOST_DP          0        // D- is GPIO1
 #define MYRTOS_HAS_USB_HOST_POWER   0
