@@ -15,8 +15,8 @@ void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv, "touch -- print the touch points until Ctrl-C"))
         return;
 
-    int32_t fd = myrtos_open("touch");
-    if (fd < 0) { say("touch: no touch device\r\n"); return; }
+    int32_t fd = myrtos_open("/dev/touch");
+    if (fd < 0) { say("touch: no /dev/touch\r\n"); return; }
 
     uint32_t was = 0xffffffffu;
     for (;;) {
