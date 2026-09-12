@@ -273,6 +273,39 @@ int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
 // since the host simply retries -- and the tightest real limit is the 50 ms USB
 // gives a device to answer a standard request with no data stage. Fifty times
 // the margin, for a sleep that costs nothing.
+// Leave the bus and join it again, so the host enumerates us afresh.
+//
+// This is the fix for a network that never comes back after the Mac sleeps, and
+// the fault is ours rather than the host's. TinyUSB's ncm_device.c says so in
+// its own words: "Notifications are transferred to the host once during
+// connection setup." Its state machine runs SPEED -> CONNECTED -> DONE, and in
+// DONE it sends nothing. netd_reset, which clears that state, runs on a BUS
+// RESET only.
+//
+// A host sleep suspends and resumes without re-enumerating -- measured over a
+// 12.5 hour night on 12 Sep 2026: fourteen suspend/resume pairs, the longest
+// quiet 16m24s, and mounts stayed at 1 with unmounts at 0 throughout. So
+// CDC_NOTIF_NETWORK_CONNECTION was sent once, at boot, and never again. The
+// board's own interface was perfectly up with its address; the Mac's end sat
+// `status: inactive` with none. USB ethernet dongles survive sleep because they
+// re-assert the link. We did not.
+//
+// There is no public call for it -- net_device.h offers xmit and recv and
+// nothing else -- so the re-introduction has to be the whole device. That is
+// heavier than it sounds only if it were frequent: this ran nine times in a
+// night, once per real sleep, which is what a person does by hand with the
+// cable when the network does not come back.
+//
+// Done HERE, from the USB task, and never from boot: the same call at boot is
+// what wedged the machine on 11 Sep, because between tud_init and this task
+// there is nobody to answer an enumerating host. See myrtos_usb_init.
+static void present_again(void) {
+    myrtos_print("net: introducing this board to the host again\n");
+    tud_disconnect();
+    myrtos_sleep(150);          // past a hub's debounce; a yield, not a spin
+    tud_connect();
+}
+
 static void usb_thread(void) {
     // NOW join the bus. myrtos_usb_init left the pull-up down on purpose: from
     // here on there is a thread calling tud_task, so an enumerating host gets
@@ -332,15 +365,27 @@ static void usb_thread(void) {
                 // host is back. Ulf saw the pattern in the suspend log and
                 // asked the question before this was written the naive way.
                 static uint64_t quiet_since;
+                static bool owe_the_host_an_introduction;
+
                 if (tud_ready()) {
                     quiet_since = 0;
                     if (myrtos_lwip_set_link(true))
                         note_link("up", ++myrtos_net_link_ups);
+
+                    // And say hello again, properly. See present_again below --
+                    // this is the one thing that brings the host's end of the
+                    // cable back after it has slept.
+                    if (owe_the_host_an_introduction) {
+                        owe_the_host_an_introduction = false;
+                        present_again();
+                    }
                 } else if (!quiet_since) {
                     quiet_since = time_us_64();
                 } else if (time_us_64() - quiet_since > MYRTOS_USB_QUIET_US) {
-                    if (myrtos_lwip_set_link(false))
+                    if (myrtos_lwip_set_link(false)) {
                         note_link("down", ++myrtos_net_link_downs);
+                        owe_the_host_an_introduction = true;
+                    }
                 }
 
                 myrtos_lwip_poll();
