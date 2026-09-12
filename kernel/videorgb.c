@@ -52,6 +52,11 @@ void myrtos_print_u32(uint32_t v);
 // file counts from this.
 #define RGB_GPIO_BASE 16u
 
+// The one Pico-PIO-USB demands by number. Written here rather than included,
+// because the library's header is not this file's business -- but the number is,
+// and it must not drift from PIO_USB_DMA_TX_DEFAULT.
+#define PIO_USB_DMA_TX_CHANNEL 0u
+
 static uint16_t band[2][BAND_PIXELS] __attribute__((aligned(4)));
 static int ch[2];                 // one DMA channel per band, each chaining to the other
 static volatile uint32_t next_row;  // the cell row the finished band will be redrawn as
@@ -147,8 +152,28 @@ static void on_band_done(void)
 // clue than a black screen.
 static void dma_setup(uint data_sm)
 {
+    // NOT channel 0, where a board with a PIO USB host is concerned.
+    //
+    // Pico-PIO-USB takes its transmit channel by FIXED index -- PIO_USB_DMA_TX
+    // _DEFAULT is 0 -- with dma_claim_mask, and it does so on core 1, started
+    // fourteen lines before this in main. dma_claim_unused_channel hands out the
+    // lowest free one, so core 0 got 0 and 1 for the bands and core 1 then
+    // claimed a channel it did not own. The assertion that would have said so is
+    // compiled out under -DNDEBUG, so what happened instead was two masters
+    // programming one channel: the band pump froze and the render interrupt was
+    // left standing in it.
+    //
+    // Holding 0 across our own two claims settles it, and giving it straight
+    // back leaves it for the library that insists on it. Asking whether it is
+    // already taken makes the order the two cores arrive in stop mattering: if
+    // core 1 got there first the channel is its own, and we must neither claim
+    // nor release what we do not hold.
+    const bool reserve_for_pio_usb = MYRTOS_HAS_PIO_USB_HOST &&
+                                     !dma_channel_is_claimed(PIO_USB_DMA_TX_CHANNEL);
+    if (reserve_for_pio_usb) dma_channel_claim(PIO_USB_DMA_TX_CHANNEL);
     ch[0] = dma_claim_unused_channel(true);
     ch[1] = dma_claim_unused_channel(true);
+    if (reserve_for_pio_usb) dma_channel_unclaim(PIO_USB_DMA_TX_CHANNEL);
 
     // Each band feeds the pixel machine a halfword at a time and then hands
     // over to the other, so the two run round for ever and the picture never

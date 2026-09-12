@@ -161,6 +161,14 @@ static void core1_main(void)
 {
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = USB_HOST_DP_PIN;
+
+    // kernel/videorgb.c keeps this DMA channel free by number, because the
+    // library claims it by number and would otherwise claim one the video had
+    // already taken. If the default ever moves, that reservation guards the
+    // wrong channel, so say so here rather than let the panel freeze again.
+    static_assert(PIO_USB_DMA_TX_DEFAULT == 0,
+                  "videorgb.c reserves DMA channel 0 for this");
+
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
 
     if (!tuh_init(1)) {
