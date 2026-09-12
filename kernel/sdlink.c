@@ -45,6 +45,15 @@ static bool ensure_linked(void)
     return true;
 }
 
+// Whether there is a driver at all, as opposed to no card. Without this the
+// two are indistinguishable in the log, and on a board with no sdlib in its
+// module list "no card, or SPI was asked for first" sends somebody looking for
+// a card that was never going to be found.
+bool myrtos_sd_have_driver(void)
+{
+    return ensure_linked();
+}
+
 bool myrtos_sd_init(void)
 {
     if (!ensure_linked()) return false;

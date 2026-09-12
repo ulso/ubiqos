@@ -641,7 +641,15 @@ static void fs_thread(void) {
     // until the power is cut, so SPI first would spend the one chance at four
     // bits. A failed SDIO attempt never speaks SPI and leaves the card able to
     // answer either way, so falling back costs nothing.
-    if (!card_bring_up(true)) card_bring_up(false);
+    // Only if there is a driver to do it with. A board whose module list has
+    // no sdlib has no SD support built at all, and trying anyway printed two
+    // lines about a card -- which is a wrong answer to a question nobody asked.
+    extern bool myrtos_sd_have_driver(void);
+    if (!myrtos_sd_have_driver()) {
+        myrtos_print("SD: no driver in this build; the card is not read\n");
+    } else if (!card_bring_up(true)) {
+        card_bring_up(false);
+    }
 
     // Before the script, and before anything else can be told a hostname:
     // mDNS announces once, and a name corrected afterwards is worse than a

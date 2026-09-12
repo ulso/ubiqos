@@ -556,7 +556,9 @@ void myrtos_kernel_main(void) {
     // And then the host itself, on the other core. Its interrupts belong to
     // whichever core enables them, so tuh_init runs over there rather than
     // here -- see core1_main in usbhost.c.
+#if MYRTOS_HAS_PIO_USB_HOST
     { extern void myrtos_usbhost_start_core1(void); myrtos_usbhost_start_core1(); }
+#endif
 
     // After the USB host, and not by preference. Pico-PIO-USB claims DMA
     // channel zero by a hardcoded mask, so anything that claims channels

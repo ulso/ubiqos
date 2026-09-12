@@ -217,7 +217,24 @@ void myrtos_usbhost_drain(void)
             case LOG_ARMED:     myrtos_print("USB host:   armed\n"); break;
             case LOG_HID_GONE:  myrtos_print("USB host: HID gone\n"); break;
             case LOG_CDC_GONE:  myrtos_print("USB host: CDC-ACM device gone\n"); break;
-            case LOG_STARTED:   myrtos_print("USB host on core 1, PIO, D+ GP1, power GP11\n"); break;
+            case LOG_STARTED:
+                // The numbers, not a remembered pair of them. This line said
+                // "D+ GP1, power GP11" on a board whose D+ is GP0 and which has
+                // no power pin at all -- printed because starting the host on
+                // core 1 had been left unguarded, and believed because the line
+                // could not disagree with the code.
+                myrtos_print("USB host on core 1, PIO, D+ GP");
+                myrtos_print_u32(USB_HOST_DP_PIN);
+                myrtos_print(", D- GP");
+                myrtos_print_u32(USB_HOST_DP_PIN + 1);
+#if MYRTOS_HAS_USB_HOST_POWER
+                myrtos_print(", power GP");
+                myrtos_print_u32(USB_HOST_POWER);
+#else
+                myrtos_print(", 5V always on");
+#endif
+                myrtos_print("\n");
+                break;
             case LOG_INIT_FAIL: myrtos_print("USB host: tuh_init failed\n"); break;
             case LOG_CDC_UP:
                 myrtos_print("USB host: CDC-ACM ready as 'acm', ");

@@ -154,6 +154,11 @@ if(MYRTOS_BOARD STREQUAL "fruit-jam")
     set(myrtosBoardHeader "<boards/fruit-jam.h>")
     set(myrtosBoardRadio ON)
     set(myrtosBoardVideo chargen)     # or framebuffer; both exist here
+    set(myrtosBoardModules
+        fat32lib sdlib                # the SD card
+        leddesc i2cdesc audiodesc adcdesc gpiodesc
+        termdesc usbdesc kbddesc condesc acmdesc
+        espdesc ehdesc)               # the radio
 elseif(MYRTOS_BOARD STREQUAL "ws43b")
     # The SDK has no header for this one, so we carry ours -- see
     # boards/pico/. PICO_BOARD_HEADER_DIRS is how the SDK is told where to look.
@@ -163,6 +168,10 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     set(myrtosBoardHeader "<boards/ws43b.h>")
     set(myrtosBoardRadio OFF)         # no ESP32-C6 on this board
     set(myrtosBoardVideo none)        # the ST7262 panel has no driver yet
+    # Only the USB console. Every other descriptor names pins this board uses
+    # for something else -- the panel has twenty of them -- and a driver that
+    # configures the wrong pin is worse than an absent one.
+    set(myrtosBoardModules usbdesc)
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -1683,8 +1692,6 @@ set(MYRTOS_RESIDENT
     libctest
     newlibtest
 #    wifilib
-    fat32lib
-    sdlib
     uart
     esplink
     espflash
@@ -1694,17 +1701,12 @@ set(MYRTOS_RESIDENT
     ping
     browse
     neopixel
-    leddesc
     i2cbus
-    i2cdesc
     i2c
     i2sout
-    audiodesc
     adcdev
-    adcdesc
     adc
     gpiodev
-    gpiodesc
     gpio
     crit
     tone
@@ -1720,13 +1722,6 @@ set(MYRTOS_RESIDENT
     # Descriptors first. They are what the devices are made of, and a directory
     # that fills up turns away whatever comes last -- which twice now has been
     # these, leaving a machine with no console to print the complaint on.
-    termdesc
-    usbdesc
-    kbddesc
-    condesc
-    acmdesc
-    espdesc
-    ehdesc
 
     sh
     ls
@@ -1763,6 +1758,13 @@ set(MYRTOS_RESIDENT
     zhello
     msgtest
     msgcli
+
+    # And the board's own: descriptors and libraries for hardware that only
+    # exists on one machine. They left this list when there were two boards,
+    # because several of them would drive the wrong pins on the other one --
+    # i2cdesc is GP20/21, which on the Waveshare panel are DE and VSYNC, and
+    # leddesc and audiodesc sit on its data lines. Chosen where the board is.
+    ${myrtosBoardModules}
 )
 # What is resident is the intersection of what was asked for and what exists.
 #
