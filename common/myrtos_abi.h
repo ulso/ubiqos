@@ -1172,6 +1172,10 @@ typedef struct {
 #define MYRTOS_SOCK_BROWSE 11u  // buf = the service, e.g. "_http._tcp.local"
 #define MYRTOS_SOCK_FOUND  12u  // arg = which, buf = a name -> its length
 
+// Making a connection rather than answering one -- see myrtos_sock_connect.
+// arg = (stack << 16) | port, buf = the host, len its length.
+#define MYRTOS_SOCK_CONNECT 13u
+
 // --- WHICH STACK ------------------------------------------------------------
 //
 // There is going to be more than one. The NINA coprocessor carries its own
@@ -1780,6 +1784,28 @@ static inline int32_t myrtos_sock_listen_on(uint32_t stack, uint16_t port)
 {
     return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_LISTEN_ON,
                           (stack << 16) | port, 0);
+}
+
+// The other direction: a socket this machine opens, rather than one somebody
+// opened to it. Everything before this answered connections; a client needs to
+// start them, and nothing could.
+//
+// It does not wait, like the rest of this family. The socket comes back at once
+// and myrtos_sock_state says how far it has got:
+//
+//   MYRTOS_TCP_SYN_SENT     still resolving the name, or the handshake is out
+//   MYRTOS_TCP_ESTABLISHED  send and recv will work
+//   MYRTOS_TCP_CLOSED       it failed -- the socket is still yours to close
+//
+// The name is resolved inside the stack rather than here, because the resolver
+// belongs to it. A dotted address costs no lookup at all.
+static inline int32_t myrtos_sock_connect(uint32_t stack, const char *host, uint16_t port)
+{
+    uint32_t n = 0;
+    while (host[n]) n++;
+    myrtos_sockbuf_t b = { (uint8_t *)(uintptr_t)host, n };
+    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_CONNECT,
+                          (stack << 16) | port, (uint32_t)(uintptr_t)&b);
 }
 
 // Somebody's socket, or -1 for nobody yet. It does not wait: a server that

@@ -467,7 +467,10 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             // reads it out of the socket number, which carries it.
             uint32_t stack;
             uint32_t arg = frame->a1;
-            if (frame->a0 == MYRTOS_SOCK_LISTEN_ON) {
+            if (frame->a0 == MYRTOS_SOCK_LISTEN_ON
+                || frame->a0 == MYRTOS_SOCK_CONNECT) {
+                // Both name the stack in the argument for the same reason:
+                // there is no socket yet to carry it.
                 stack = (arg >> 16) & 0xffu;
                 arg   = arg & 0xffffu;              // the port
             } else if (frame->a0 == MYRTOS_SOCK_LISTEN) {

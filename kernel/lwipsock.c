@@ -17,6 +17,7 @@
 #include "../common/myrtos_abi.h"
 #include "lwip/tcp.h"
 #include "lwip/pbuf.h"
+#include "lwip/dns.h"
 
 int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms);
 int32_t myrtos_msg_reply(int32_t status);
@@ -33,6 +34,8 @@ typedef struct {
     uint16_t        port;        // non-zero only for a listener
     bool            used;
     bool            gone;        // the peer closed; the data before it stays
+    bool            connecting;  // ours, on its way out: resolving or handshaking
+    uint16_t        want_port;   // where it is going, until there is a pcb
     int8_t          pending[NPENDING];
     uint8_t         npending;
 } sock_t;
@@ -92,6 +95,9 @@ static void on_err(void *arg, err_t err)
     (void)err;
     sk[i].pcb = NULL;              // lwIP has freed it already
     sk[i].gone = true;
+    // A connection that failed on its way out ends here too, and clearing this
+    // is what stops do_state answering SYN_SENT for ever afterwards.
+    sk[i].connecting = false;
 }
 
 static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
@@ -111,6 +117,88 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
     sk[server].pending[sk[server].npending++] = (int8_t)i;
     myrtos_lwipsock_queued++;
     return ERR_OK;
+}
+
+// --- MAKING A CONNECTION --------------------------------------------------
+//
+// Everything above answers connections somebody else started. This is the other
+// direction, and until now the machine had none: a server could be written
+// without it, a client cannot. It is the first thing anything like fetch, or an
+// HTTP client, or tiny-curl would need.
+//
+// Non-blocking like the rest of the file, and for the same reason -- lwIP is
+// NO_SYS and this is the USB task, which may not wait. The socket exists before
+// the connection does, and MYRTOS_SOCK_STATE is how the caller finds out:
+// SYN_SENT while it is on its way, ESTABLISHED when it is there, CLOSED if it
+// failed.
+//
+// The name is resolved here rather than by the caller because the resolver is
+// lwIP's and lwIP is ours alone. dns_gethostbyname answers straight away for a
+// dotted address or a cached name, and otherwise calls back later -- which is
+// exactly the case the poll above exists to make bearable.
+
+static void start_connect(int i, const ip_addr_t *addr)
+{
+    struct tcp_pcb *p = tcp_new();
+    if (!p) { sk[i].connecting = false; sk[i].gone = true; myrtos_lwipsock_why = 32; return; }
+
+    sk[i].pcb = p;
+    tcp_arg(p, (void *)(intptr_t)i);
+    tcp_recv(p, on_recv);
+    tcp_err(p, on_err);
+
+    // on_connected only reports; the state the caller polls is the pcb's own.
+    extern err_t myrtos_sock_on_connected(void *, struct tcp_pcb *, err_t);
+    if (tcp_connect(p, addr, sk[i].want_port, myrtos_sock_on_connected) != ERR_OK) {
+        sk[i].connecting = false;
+        sk[i].gone = true;
+        myrtos_lwipsock_why = 33;
+    }
+}
+
+err_t myrtos_sock_on_connected(void *arg, struct tcp_pcb *pcb, err_t err)
+{
+    int i = (int)(intptr_t)arg;
+    (void)pcb;
+    if (i < 0 || i >= NSOCK || !sk[i].used) return ERR_OK;
+    sk[i].connecting = false;
+    if (err != ERR_OK) { sk[i].gone = true; myrtos_lwipsock_why = 31; }
+    return ERR_OK;
+}
+
+// The socket index rides in the callback argument rather than a lookup, so a
+// socket closed while its name was still being resolved cannot be mistaken for
+// a live one: `used` and `connecting` are both checked before anything happens.
+static void on_resolved(const char *name, const ip_addr_t *addr, void *arg)
+{
+    (void)name;
+    int i = (int)(intptr_t)arg;
+    if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].connecting) return;
+    if (!addr) { sk[i].connecting = false; sk[i].gone = true; myrtos_lwipsock_why = 30; return; }
+    start_connect(i, addr);
+}
+
+static int32_t do_connect(const char *host, uint16_t port, int32_t owner)
+{
+    if (!port || !host[0]) { myrtos_lwipsock_why = 34; return -1; }
+
+    int i = alloc_sock();
+    if (i < 0) { myrtos_lwipsock_why = 10; return -1; }
+
+    sk[i].owner = owner;
+    sk[i].want_port = port;
+    sk[i].connecting = true;
+
+    ip_addr_t addr;
+    err_t e = dns_gethostbyname(host, &addr, on_resolved, (void *)(intptr_t)i);
+    if (e == ERR_OK) {
+        start_connect(i, &addr);                  // dotted, or already known
+    } else if (e != ERR_INPROGRESS) {
+        free_sock(i);
+        myrtos_lwipsock_why = 35;
+        return -1;
+    }
+    return MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, i);
 }
 
 // --- THE OPERATIONS -------------------------------------------------------
@@ -209,6 +297,10 @@ static int32_t do_close(int i)
 static int32_t do_state(int i)
 {
     if (i < 0 || i >= NSOCK || !sk[i].used) return MYRTOS_TCP_CLOSED;
+    // Resolving a name is not a TCP state, but the caller's question is "may I
+    // write yet", and the honest answer while a lookup is out is the same as
+    // while the handshake is.
+    if (sk[i].connecting && !sk[i].pcb) return MYRTOS_TCP_SYN_SENT;
     if (!sk[i].pcb) return MYRTOS_TCP_CLOSED;
     return (int32_t)sk[i].pcb->state;
 }
@@ -224,6 +316,13 @@ int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
     case MYRTOS_SOCK_RECV:   return do_recv(i, r->buf, r->len);
     case MYRTOS_SOCK_SEND:   return do_send(i, r->buf, r->len);
     case MYRTOS_SOCK_CLOSE:  return do_close(i);
+    case MYRTOS_SOCK_CONNECT: {
+        char name[64];
+        uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;
+        for (uint32_t k = 0; k < n; k++) name[k] = (char)r->buf[k];
+        name[n] = 0;
+        return do_connect(name, (uint16_t)r->arg, from);
+    }
     // Not a socket, and here for the reason everything else here is: this is
     // the one context lwIP may be touched from.
     case MYRTOS_SOCK_PING: {
