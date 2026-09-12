@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
+#include "board.h"
 #include "pio_usb.h"
 #include "pio_usb_ll.h"
 #include "hardware/structs/sysinfo.h"
@@ -20,14 +21,14 @@ void myrtos_print_hex(uint32_t v);
 // The pins are the board's: D+ on GP1, D- on GP2 -- adjacent, which PIO-USB
 // requires -- and the 5V supply switched on GP11.
 
-#define USB_HOST_DP_PIN  1
-#define USB_HOST_POWER   11
+#define USB_HOST_DP_PIN  MYRTOS_USB_HOST_DP
+#define USB_HOST_POWER   MYRTOS_USB_HOST_POWER
 
 // The board holds its peripherals in reset until this is driven high. The USB
 // hub behind the two host sockets is one of them, so nothing enumerates while
 // it is low -- which looks exactly like a host that is not working.
-#define PERIPH_RESET     22
-#define ESP_BOOT          0   // to the ESP32-C6's GPIO9, and the BOOT button
+#define PERIPH_RESET     MYRTOS_PERIPH_RESET
+#define ESP_BOOT          MYRTOS_ESP_BOOT_STRAP   // to the ESP32-C6's GPIO9, and the BOOT button
 
 static uint8_t keys[32];
 static volatile uint32_t head, tail;

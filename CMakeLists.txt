@@ -134,8 +134,31 @@ endif()
 # picotool_VERSION_REQUIRED -- so matching them would point at a directory that
 # does not exist and send the build off to compile picotool from source.
 
-# Select the development board for your hardware
-set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Board type")
+# --- WHICH BOARD ----------------------------------------------------------
+# The machine myrtos is being built for, as its own dimension. It was four
+# things before: PICO_BOARD here, plus pin numbers in kernel/main.c,
+# kernel/usbhost.c, kernel/video.c and kernel/pins.c. Four places that happened
+# to agree about one board, which is fine until there are two.
+#
+# This selects the SDK's board (for its clocks, flash and PSRAM), and names a
+# header the kernel reads for everything else -- see kernel/board.h.
+#
+# MYRTOS_ARCH and MYRTOS_VIDEO stay separate on purpose: a board can run either
+# architecture and, where it has the pins for both, either video mode. Only the
+# facts that FOLLOW from the board belong here.
+set(MYRTOS_BOARD fruit-jam CACHE STRING "which board to build for")
+set_property(CACHE MYRTOS_BOARD PROPERTY STRINGS fruit-jam)
+
+if(MYRTOS_BOARD STREQUAL "fruit-jam")
+    set(myrtosPicoBoard adafruit_fruit_jam)
+    set(myrtosBoardHeader "<boards/fruit-jam.h>")
+else()
+    message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
+                        "each supported board in boards/, and no such file")
+endif()
+message(STATUS "Board: ${MYRTOS_BOARD}")
+
+set(PICO_BOARD ${myrtosPicoBoard} CACHE STRING "Board type")
 
 # Force the whole Pico SDK to the same machine MYRTOS_ARCH chose. The two must
 # agree: the SDK's own assembly, its interrupt handling and its crt0 are all
@@ -393,7 +416,12 @@ if(myrtosLwip)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
 endif()
 
-target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel
+# The repository root is on the path so that <boards/...> resolves; the kernel
+# asks for its board through kernel/board.h and never by name.
+target_compile_definitions(os_kernel PRIVATE MYRTOS_BOARD_HEADER=${myrtosBoardHeader})
+
+target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/include)

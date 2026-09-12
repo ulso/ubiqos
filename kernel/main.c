@@ -32,7 +32,8 @@ void myrtos_usbhost_init(void);
 // Diagnostics therefore go on UART0 TX / GP44, the same choice made in
 // pico-io-fruit-jam, so the same cable works.
 #define MYRTOS_UART        uart0
-#define MYRTOS_UART_TX_PIN 44
+// MYRTOS_UART_TX_PIN comes from the board header; see kernel/board.h.
+#include "board.h"
 #define MYRTOS_UART_BAUD   115200
 
 void myrtos_uart_init(void) {

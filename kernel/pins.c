@@ -18,8 +18,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../common/myrtos_abi.h"
+#include "board.h"
 
-#define MYRTOS_PINS 48u
+#define MYRTOS_PINS MYRTOS_PIN_COUNT
 
 static const char *owner[MYRTOS_PINS];
 
@@ -37,18 +38,7 @@ static const char *owner[MYRTOS_PINS];
 // pin changed under them -- what a pin is CALLED on the board is a different
 // fact and lives in the gpio driver, which is what prints it.
 static const struct { uint8_t pin; const char *who; } board_fixed[] = {
-    { 1, "usb host" }, { 2, "usb host" }, { 11, "usb 5V" },
-    { 3, "wifi" }, { 22, "wifi reset" }, { 28, "wifi" }, { 30, "wifi" },
-    { 31, "wifi" }, { 46, "wifi" },
-    { 12, "video" }, { 13, "video" }, { 14, "video" }, { 15, "video" },
-    { 16, "video" }, { 17, "video" }, { 18, "video" }, { 19, "video" },
-    { 33, "sd card" }, { 34, "sd card" }, { 35, "sd card" }, { 36, "sd card" },
-    { 37, "sd card" }, { 38, "sd card" }, { 39, "sd card" },
-    // The kernel's own debug UART, which had never been written down. It is
-    // also the board's A4, so the ADC asks for it and is refused -- which is
-    // the whole point of the table: the collision is reported instead of the
-    // console quietly going dead.
-    { 44, "uart" },
+    MYRTOS_BOARD_FIXED_PINS
 };
 
 void myrtos_pins_init(void)

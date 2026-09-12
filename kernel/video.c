@@ -1,4 +1,5 @@
 #include "tlsf.h"
+#include "board.h"
 #include "video.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -461,7 +462,8 @@ void myrtos_video_init(void) {
         hstx_ctrl_hw->bit[bit]     = sel | HSTX_CTRL_BIT0_INV_BITS;   // N
         hstx_ctrl_hw->bit[bit + 1] = sel;                             // P
     }
-    for (int i = 12; i <= 19; ++i) gpio_set_function(i, 0);
+    for (int i = MYRTOS_VIDEO_PIN_FIRST; i <= MYRTOS_VIDEO_PIN_LAST; ++i)
+        gpio_set_function(i, 0);
 
     build_frame_list();
 
