@@ -11,11 +11,11 @@
 void module_main(int argc, char **argv)
 {
     if (myrtos_help(argc, argv,
-            "usage: airview\n\n"
+            "usage: hello\n\n"
             "Says where it was built from. The example application in the\n"
             "myrtos SDK; see sdk/example in the myrtos tree.\n")) return;
 
     myrtos_write_str(MYRTOS_STDOUT,
-                     "airview: built out of tree, loaded from the application "
+                     "hello: built out of tree, loaded from the application "
                      "region\n");
 }

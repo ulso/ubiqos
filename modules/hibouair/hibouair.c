@@ -15,6 +15,15 @@
 #include <stdbool.h>
 #include "../../common/myrtos_stdio.h"
 
+// The reference HibouAir reader, and the SDK's worked example of one.
+//
+// New sensor models appear, and each may carry a beacon this does not decode
+// yet. Such changes belong with whoever ships them, so an application built
+// against the SDK carries its OWN reader under its own module name rather than
+// waiting on this one -- see docs/the-sdk.md. What stays here is the version
+// that is known to work against the sensors on the bench, which is what makes
+// it useful to read.
+
 #define AT_ECHO_OFF    "ATE0\r"
 #define AT_VERBOSE_ON  "ATV1\r"
 #define AT_CENTRAL     "AT+CENTRAL\r"

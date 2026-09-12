@@ -55,6 +55,22 @@ makes the one file a product ships as. `app.uf2` on its own updates the
 application and touches nothing else. Combining an Arm build with a RISC-V one
 is refused.
 
+## Reading the sensors
+
+`modules/hibouair` stays in this tree as the reference reader and the worked
+example of one: the BleuIO's AT commands, the JSON the dongle answers in, the
+HibouAir beacon's fields, and pages for a touch screen.
+
+An application does not extend it. New sensor models appear carrying beacons a
+given reader does not decode yet, and that change belongs with whoever ships
+the sensors -- so an application carries its own reader, under its own module
+name, and is free to update it without touching anything public. What stays
+here is the version known to work against the sensors on the bench, which is
+what makes it worth reading.
+
+Two modules of the same name, one in each region, would resolve to the system's
+-- so give the application's its own name.
+
 ## The trap
 
 Read [writing-modules.md](writing-modules.md) before writing anything with a

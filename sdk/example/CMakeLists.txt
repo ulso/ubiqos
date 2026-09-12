@@ -34,12 +34,12 @@ set(PICO_SDK_PATH $ENV{HOME}/.pico-sdk/sdk/2.3.1)
 set(PICO_BOARD pico2 CACHE STRING "")
 
 include(pico_sdk_import.cmake)
-project(airview C CXX ASM)
+project(myrtos_example C CXX ASM)
 pico_sdk_init()
 
 # The SDK brings myrtos_add_module, the flags a module must be built with, and
 # myrtos_app_image. It brings no libraries: a module links against nothing.
 include(${MYRTOS_DIR}/sdk/myrtos-sdk.cmake)
 
-myrtos_add_module(airview src/airview.c)
-myrtos_app_image(app airview)
+myrtos_add_module(hello src/hello.c)
+myrtos_app_image(app hello)

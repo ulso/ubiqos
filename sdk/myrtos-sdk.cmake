@@ -16,12 +16,12 @@
 #     cmake_minimum_required(VERSION 3.13)
 #     set(MYRTOS_ARCH arm)                     # or riscv, before the SDK import
 #     include(pico_sdk_import.cmake)           # copied from the myrtos tree
-#     project(airview C CXX ASM)
+#     project(myapp C CXX ASM)
 #     pico_sdk_init()
 #     include(${MYRTOS_DIR}/sdk/myrtos-sdk.cmake)
 #
-#     myrtos_add_module(airview src/airview.c)
-#     myrtos_app_image(app airview)            # -> app.bin, app.uf2
+#     myrtos_add_module(myapp src/myapp.c)
+#     myrtos_app_image(app myapp)              # -> app.bin, app.uf2
 #
 # and nothing of the application needs to be in this repository. The image it
 # produces is written to the application region in flash, so it is loaded
