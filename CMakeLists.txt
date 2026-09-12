@@ -174,7 +174,7 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     #
     # condesc carries no pins at all: it names the console driver, which is in
     # the kernel, so it is the one descriptor that is the same on both boards.
-    set(myrtosBoardModules usbdesc condesc)
+    set(myrtosBoardModules usbdesc condesc gt911 touchdesc touch)
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -395,7 +395,16 @@ endif()
 set(MYRTOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow MYRTOS_VIDEO")
 if(MYRTOS_HEAP_KB STREQUAL "auto")
     if(NOT MYRTOS_VIDEO STREQUAL "chargen")
-        set(myrtosHeapKB 40)
+        # 36 rather than 40 since 12 Sep 2026, and the four kilobytes bought
+        # ninety-eight bytes. The riscv framebuffer build sat that far below a
+        # 4 kB alignment boundary: the kernel grew by k_i2c_instance and one
+        # pointer in the API table, and `end` moved a whole page, taking the C
+        # heap from 4916 bytes to 820.
+        #
+        # Worth writing down because the next change will do it again. The
+        # number to watch is not how much was added but how close `end` is to
+        # the next page -- and check_heap is what notices.
+        set(myrtosHeapKB 36)
     else()
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
@@ -1440,6 +1449,17 @@ target_include_directories(i2cbus_app PRIVATE
 target_compile_definitions(i2cbus_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 myrtos_add_data_module(i2cdesc modules/i2cbus/i2c_desc.c)
+
+# The touch screen on the Waveshare panel. The chip is in the driver and the
+# board is in the descriptor, which is what lets the same gt911.c serve a panel
+# wired differently.
+myrtos_add_module(gt911 modules/gt911/gt911.c DRIVER)
+target_include_directories(gt911_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
+target_compile_definitions(gt911_app PRIVATE
+    $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
+myrtos_add_data_module(touchdesc modules/gt911/touch_desc.c)
+myrtos_add_module(touch modules/touchcmd/touch.c)
 myrtos_add_module(i2c modules/i2c/i2c.c)
 myrtos_add_module(tone modules/tone/tone.c)
 myrtos_add_module(volume modules/volume/volume.c)
@@ -1667,6 +1687,9 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
             ${CMAKE_CURRENT_BINARY_DIR}/date.mod
             ${CMAKE_CURRENT_BINARY_DIR}/fetch.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/gt911.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/touchdesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/touch.mod
             # wifi.mod: retired with the NINA firmware, see the note above. An old
             # build tree still had the file, so only a clean one saw this.
             ${CMAKE_CURRENT_BINARY_DIR}/lwipd.mod

@@ -72,14 +72,19 @@
 #define MYRTOS_HAS_PERIPH_RESET 0
 
 // --- WHAT THE HARDWARE FIXES -----------------------------------------------
-// The LCD's twenty pins and the touch controller's four are the board, not a
-// driver's choice, so they are claimed at boot. The USB host pair is claimed
-// even before there is a driver for it, because a person asking for GPIO0 at a
-// shell should be told what has it.
+// The LCD's twenty pins are the board rather than a driver's choice, so they are
+// claimed at boot. The USB host pair is claimed before there is a driver for it,
+// because a person asking for GPIO0 at a shell should be told what has it.
+//
+// The touch controller's four -- the I2C pair and its interrupt and reset -- are
+// NOT here, and that is the rule this file nearly broke: a driver's pins are
+// claimed by the driver, at the moment it configures itself, so the table says
+// what is true of this boot rather than of the board. Listing them here made the
+// gt911 driver's own claim fail and print "a pin was already claimed", which is
+// exactly the collision report the table exists to give and was, this once, a
+// lie.
 #define MYRTOS_BOARD_FIXED_PINS                                              \
     { 0, "usb host" }, { 1, "usb host" },                                     \
-    { 6, "i2c" }, { 7, "i2c" },                                               \
-    { 16, "touch" }, { 17, "touch" },                                         \
     { 18, "lcd" }, { 19, "lcd" }, { 20, "lcd" }, { 21, "lcd" },               \
     { 22, "lcd" }, { 23, "lcd" }, { 24, "lcd" }, { 25, "lcd" },               \
     { 26, "lcd" }, { 27, "lcd" }, { 28, "lcd" }, { 29, "lcd" },               \

@@ -86,6 +86,12 @@ static void   k_spi_write(void *spi, const uint8_t *src, uint32_t len)
 static void   k_spi_read(void *spi, uint8_t repeated, uint8_t *dst, uint32_t len)
 { spi_read_blocking((spi_inst_t*)spi, repeated, dst, (size_t)len); }
 static uint32_t k_clock_hz(void) { return clock_get_hz(clk_sys); }
+// Which bus, by number, because a module cannot name them.
+static void *k_i2c_instance(uint32_t index)
+{
+    return index == 0 ? (void *)i2c0 : index == 1 ? (void *)i2c1 : 0;
+}
+
 static uint32_t k_i2c_init(void *i2c, uint32_t baud)
 { return i2c_init((i2c_inst_t*)i2c, baud); }
 static int32_t  k_i2c_write(void *i2c, uint8_t addr, const uint8_t *src, uint32_t len, bool nostop)
@@ -174,6 +180,7 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .spi_read          = k_spi_read,
     .clock_hz          = k_clock_hz,
     .i2c               = i2c0,
+    .i2c_instance      = k_i2c_instance,
     .i2c_init          = k_i2c_init,
     .i2c_write         = k_i2c_write,
     .i2c_read          = k_i2c_read,

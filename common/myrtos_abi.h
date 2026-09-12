@@ -276,6 +276,11 @@ typedef struct {
     // write of the register number ends with a repeated start rather than a
     // stop, so nothing else can take the bus in between.
     void    *i2c;
+    // The other bus. A module cannot name i2c1 itself -- i2c0_inst and
+    // i2c1_inst live in the SDK, which a module does not link against -- and
+    // the calls below take the instance as an argument, so asking the kernel
+    // for it is all that was missing. 0 and 1; anything else is a null.
+    void   *(*i2c_instance)(uint32_t index);
     uint32_t (*i2c_init)(void *i2c, uint32_t baud);
     int32_t  (*i2c_write)(void *i2c, uint8_t addr, const uint8_t *src,
                           uint32_t len, bool nostop);
@@ -1220,6 +1225,33 @@ typedef struct {
     uint8_t *buf;
     uint32_t len;
 } myrtos_wifi_sock_t;
+
+// --- A TOUCH SCREEN --------------------------------------------------------
+//
+// What a read of /dev/touch hands back: however many fingers are down and where
+// each is. Five, because that is what the controller on the Waveshare panel
+// reports and more would be a number nobody can use.
+//
+// Reading it is a poll and never waits. No fingers is `points == 0` and not an
+// error, the same contract every other read in this system has: nothing yet is
+// not an end.
+#define MYRTOS_TOUCH_MAX 5u
+
+typedef struct {
+    uint32_t points;
+    struct { uint16_t x, y; } p[MYRTOS_TOUCH_MAX];
+} myrtos_touch_t;
+
+// What a touch descriptor carries, so the driver knows nothing about a board.
+// i2c_index is 0 or 1; the rest are pins, the controller's address and the bus
+// speed.
+typedef struct {
+    uint32_t i2c_index;
+    uint32_t sda_pin, scl_pin;
+    uint32_t int_pin, rst_pin;
+    uint32_t addr;
+    uint32_t baud;
+} myrtos_touch_config_t;
 
 #define MYRTOS_MEM_LARGEST_FREE 0u
 #define MYRTOS_MEM_PROCESSES    1u
