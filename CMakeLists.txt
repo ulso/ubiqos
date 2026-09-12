@@ -178,7 +178,7 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     # the hibouair module already knows how to talk to. No kbddesc -- the `con`
     # shell reads the host's key queue directly, so a keyboard would work on it
     # without a descriptor, and there is one socket.
-    set(myrtosBoardModules usbdesc condesc gt911 touchdesc touch)
+    set(myrtosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch)
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
