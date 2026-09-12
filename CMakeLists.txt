@@ -167,7 +167,7 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
         CACHE STRING "where to find board headers the SDK does not ship")
     set(myrtosBoardHeader "<boards/ws43b.h>")
     set(myrtosBoardRadio OFF)         # no ESP32-C6 on this board
-    set(myrtosBoardVideo none)        # the ST7262 panel has no driver yet
+    set(myrtosBoardVideo rgb)         # the ST7262 panel, no console on it yet
     # Only the USB console. Every other descriptor names pins this board uses
     # for something else -- the panel has twenty of them -- and a driver that
     # configures the wrong pin is worse than an absent one.
@@ -327,30 +327,44 @@ endif()
 # The console works either way. Nothing else does: a framebuffer is a bitmap
 # and character cells are not, so whatever wants to draw must wait for the
 # scanline renderer that will sit beside the character generator.
-# `none` is the third: a board whose panel has no driver yet. It is not a mode,
-# it is the absence of one, and it builds without video.c, chargen.c and
-# console.c -- console.c draws through one of the other two and means nothing
-# without them.
-set(MYRTOS_VIDEO "${myrtosBoardVideo}" CACHE STRING "framebuffer, chargen, or none")
-set_property(CACHE MYRTOS_VIDEO PROPERTY STRINGS framebuffer chargen none)
+# Four modes, and they answer two separate questions: is there a display driver,
+# and is there a text console on it. `rgb` is a display with no console yet --
+# the panel scanning out while the character generator that will feed it is
+# still to come -- and `none` is neither.
+set(MYRTOS_VIDEO "${myrtosBoardVideo}" CACHE STRING "framebuffer, chargen, rgb, or none")
+set_property(CACHE MYRTOS_VIDEO PROPERTY STRINGS framebuffer chargen rgb none)
+
+set(myrtosHasVideo 1)
+set(myrtosHasConsole 1)
 if(MYRTOS_VIDEO STREQUAL "chargen")
     target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1)
+elseif(MYRTOS_VIDEO STREQUAL "rgb")
+    set(myrtosHasConsole 0)
 elseif(MYRTOS_VIDEO STREQUAL "none")
-    target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_NONE=1)
+    set(myrtosHasVideo 0)
+    set(myrtosHasConsole 0)
 elseif(NOT MYRTOS_VIDEO STREQUAL "framebuffer")
-    message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer, chargen or none")
+    message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer, chargen, rgb or none")
 endif()
+target_compile_definitions(os_kernel PRIVATE
+    MYRTOS_HAS_VIDEO=${myrtosHasVideo} MYRTOS_HAS_CONSOLE=${myrtosHasConsole})
 message(STATUS "Video: ${MYRTOS_VIDEO}")
 
 # Added here rather than in the source list above, because which of them apply
 # is the question this block answers. chargen.c is built in both real modes: the
 # framebuffer console does not use it, and the linker drops what nothing calls.
-if(MYRTOS_VIDEO STREQUAL "none")
-    # The console's API is called from main.c, syscalls.c and io.c, so it cannot
-    # simply vanish. console_none.c answers it honestly instead -- see the note
-    # at the top of that file.
+# The console's API is called from main.c, syscalls.c and io.c, so it cannot
+# simply vanish where there is none. console_none.c answers it honestly instead
+# -- see the note at the top of that file.
+if(NOT myrtosHasConsole)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console_none.c)
-else()
+endif()
+
+if(MYRTOS_VIDEO STREQUAL "rgb")
+    # A parallel RGB panel driven by PIO. kernel/pio/rgb.pio holds the timing.
+    target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/videorgb.c)
+    pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/rgb.pio)
+elseif(myrtosHasVideo)
     target_sources(os_kernel PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/kernel/video.c
         ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console.c

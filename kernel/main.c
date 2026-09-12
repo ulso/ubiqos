@@ -570,8 +570,10 @@ void myrtos_kernel_main(void) {
     // console.c alike -- console.c draws through one of the two and has no
     // meaning without them. MYRTOS_VIDEO=none is that build; see the Waveshare
     // board, whose panel is RGB behind an ST7262 and nothing like DVI.
-#if !MYRTOS_VIDEO_NONE
+#if MYRTOS_HAS_VIDEO
     myrtos_video_init();
+#endif
+#if MYRTOS_HAS_CONSOLE
     myrtos_console_init();
 #endif
 
@@ -595,7 +597,7 @@ void myrtos_kernel_main(void) {
         }
         if (k) myrtos_console_write(line, k);
     }
-#if !MYRTOS_VIDEO_NONE
+#if MYRTOS_HAS_CONSOLE
     myrtos_console_start_server();
 #endif
     extern void myrtos_fs_start_server(void);

@@ -1,0 +1,161 @@
+; An 800x480 RGB panel, driven by four state machines.
+;
+; The ST7262 on the Waveshare RP2350-Touch-LCD-4.3B wants what every parallel
+; RGB panel wants: a pixel clock, a data enable, horizontal and vertical sync,
+; and sixteen data lines. HSTX cannot do it -- that peripheral speaks DVI -- so
+; this is PIO, and it costs two of the chip's three PIO blocks.
+;
+; The shape is Waveshare's, from their own pio_rgb.pio, and it is kept because
+; it is the design known to work against this exact panel. What is added here is
+; the explanation.
+;
+; HOW THE FOUR FIT TOGETHER
+;
+;   hsync   owns the time. It drives HSYNC and PCLK from its side-set and
+;           raises IRQ 2 once per pixel, which is the heartbeat everything
+;           else counts. It is the only one with a clock divider.
+;   vsync   counts those IRQs into lines and drives VSYNC. It runs at full
+;           speed, because it only has to react.
+;   rgb_de  drives DE, and derives it by WATCHING vsync, hsync and pclk rather
+;           than by counting -- which is why it needs no shared state.
+;   rgb     shifts the pixels out, gated on DE and on each pclk edge.
+;
+; THE PIN NUMBERS BELOW ARE NOT GPIO NUMBERS.
+;
+; `wait ... pin N` is relative to the state machine's IN_BASE, which is left at
+; 0, and the whole PIO block's pin window is moved with pio_set_gpio_base(pio,
+; 16) -- an RP2350 feature. So PIO pin 4 is GPIO20. That single call is the
+; thing that is invisible here and decides whether any of it works:
+;
+;   pin 4 = GPIO20 = DE      pin 6 = GPIO22 = HSYNC
+;   pin 5 = GPIO21 = VSYNC   pin 7 = GPIO23 = PCLK
+
+; ----------------------------------------------------------------------------
+; VSYNC. Fed the active line count once, then counts hsync's IRQ for ever.
+.program myrtos_rgb_vsync
+.side_set 1 opt
+.define public T1 31    ; front porch, in lines
+.define public T2 31    ; sync pulse
+.define public T3 31    ; back porch
+
+pull block side 1       ; the height, minus one
+
+.wrap_target
+set x, T1 side 1
+front:
+    wait 1 irq 2 side 1
+    jmp x-- front side 1
+
+set x, T2 side 0
+pulse:
+    wait 1 irq 2 side 0
+    jmp x-- pulse side 0
+
+set x, T3 side 1
+back:
+    wait 1 irq 2 side 1
+    jmp x-- back side 1
+
+mov x, osr side 1       ; osr still holds the height: reused every frame
+active:
+    wait 1 irq 2 side 1
+    jmp x--, active side 1
+.wrap
+
+; ----------------------------------------------------------------------------
+; HSYNC and PCLK. Side-set bit 0 is HSYNC, bit 1 is PCLK.
+;
+; Two instructions per pixel, with PCLK low on one and high on the other, so
+; the state machine runs at twice the pixel clock. That is where the divider
+; goes, and the other three run undivided.
+.program myrtos_rgb_hsync
+.side_set 2 opt
+.define public T1 31    ; front porch, in pixels
+.define public T2 31    ; sync pulse
+.define public T3 31    ; back porch
+
+pull block              ; the width, minus one
+mov y, osr
+.wrap_target
+
+set x, T1 side 0b11
+front:
+   nop side 0b01
+   jmp x-- front side 0b11
+
+irq set 2 side 0b01     ; the heartbeat vsync counts
+set x, T2 side 0b10
+pulse:
+    nop side 0b00
+    jmp x-- pulse side 0b10
+
+set x, T3 side 0b01
+back:
+    nop side 0b11
+    jmp x-- back side 0b01
+
+mov x, y side 0b11
+active:
+    nop side 0b01
+    jmp x--, active side 0b11
+.wrap
+
+; ----------------------------------------------------------------------------
+; DATA ENABLE, by watching rather than counting.
+;
+; It waits out the vertical back porch in whole lines, then for each active line
+; waits out the horizontal back porch in pixel clocks, raises DE, and hands the
+; line to `rgb` -- which tells it through IRQ 0 when the line has gone.
+.program myrtos_rgb_de
+.side_set 1 opt
+.define public T1 31    ; vertical back porch, in lines
+.define public T2 31    ; horizontal back porch, in pixels
+
+pull block side 0       ; the height, minus one
+
+.wrap_target
+mov y, osr side 0
+set x, T1 side 0
+wait 0 pin 5 side 0     ; VSYNC low
+wait 1 pin 5 side 0     ; and high again: a frame has begun
+vback:
+    wait 0 pin 6 side 0
+    wait 1 pin 6 side 0
+    jmp x--, vback side 0
+active:
+    wait 0 pin 6 side 0
+    wait 1 pin 6 side 0 ; HSYNC: a line has begun
+    set x, T2 side 0
+    hback:
+        wait 0 pin 7 side 0
+        wait 1 pin 7 side 0
+        jmp x--, hback side 0
+
+    wait 1 pin 7 side 0
+
+    wait 1 irq 0 side 1 ; DE high while rgb sends the line
+    jmp y--, active side 0
+.wrap
+
+; ----------------------------------------------------------------------------
+; THE PIXELS. One 16-bit word per pixel, out of the FIFO and onto the sixteen
+; data lines, one per pixel clock, and only while DE is high.
+;
+; The DMA writes halfwords, so the low sixteen bits of the OSR are the pixel and
+; `out pins, 16` with the default right shift is exactly those bits.
+.program myrtos_rgb_data
+
+pull block
+mov y, osr              ; the width, minus one
+.wrap_target
+
+mov x, y                ; this program has no side-set: the width, and nothing else
+wait 1 pin 4            ; DE
+colour:
+    pull block
+    wait 0 pin 7        ; PCLK low
+    out pins, 16
+    wait 1 pin 7        ; PCLK high
+    jmp x--, colour
+irq set 0               ; the line has gone; rgb_de may drop DE
+.wrap
