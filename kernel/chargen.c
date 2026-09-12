@@ -73,6 +73,30 @@ static bool     cur_on;
 // The two small tables stay because they cost 80 bytes between them and are
 // read four times per cell.
 static uint8_t  pal_ram[16];
+
+// The same sixteen colours as RGB565, for a panel whose pixels are two bytes.
+// Converted rather than tabulated a second time: one list of colours that can
+// disagree with itself is worse than a conversion nobody has to maintain.
+static uint16_t pal16[16];
+
+static uint16_t to565(uint8_t c)
+{
+    // RGB332, red in bits 7-5 -- see the note beside myrtos_ansi_colour.
+    const uint32_t r = (c >> 5) & 7u, g = (c >> 2) & 7u, b = c & 3u;
+    const uint32_t r5 = (r << 2) | (r >> 1);
+    const uint32_t g6 = (g << 3) | g;
+    const uint32_t b5 = (b << 3) | (b << 1) | (b >> 1);
+    return (uint16_t)((r5 << 11) | (g6 << 5) | b5);
+}
+
+// Two pixels to a word, so a mask covers a PAIR of font bits. The leftmost
+// pixel is the low half-word, because that is the byte the display reads first.
+static const uint32_t expand2[4] = {
+    0x00000000u,   // both background
+    0xffff0000u,   // the right-hand one lit
+    0x0000ffffu,   // the left-hand one
+    0xffffffffu,   // both
+};
 static uint32_t expand_ram[16];
 
 static const uint32_t expand4[16] = {
@@ -268,6 +292,7 @@ void myrtos_chargen_init(uint8_t attr)
     // learned to.
     for (uint32_t i = 0; i < 16; i++) {
         pal_ram[i] = myrtos_ansi_colour[i];
+        pal16[i]   = to565(myrtos_ansi_colour[i]);
         expand_ram[i] = expand4[i];
     }
 
@@ -363,6 +388,87 @@ void myrtos_chargen_band(uint32_t y0, uint8_t *base)
             out[1] = (fgw & m) | (bgw & ~m);
             out += MYRTOS_H_ACTIVE / 4;
         }
+    }
+}
+
+// The same as myrtos_chargen_band, in RGB565. A cell is eight pixels wide,
+// which is four words here rather than two, and a row of the band is
+// MYRTOS_H_ACTIVE/2 words further on.
+void myrtos_chargen_band16(uint32_t y0, uint16_t *base)
+{
+    const uint32_t crow = y0 / MYRTOS_CELL_H;
+    const myrtos_cell_t *c = view_at(crow);
+    const bool on_cursor_row = cur_on && view_back == 0 && crow == cur_row;
+    uint32_t last = 0x100, fgw = 0, bgw = 0;
+
+    for (uint32_t col = 0; col < MYRTOS_CELL_COLS; col++, c++) {
+        uint32_t attr = c->attr;
+        if (on_cursor_row && col == cur_col)
+            attr = ((attr & 0x0fu) << 4) | (attr >> 4);
+        if (attr != last) {
+            last = attr;
+            fgw = (uint32_t)pal16[attr >> 4]     * 0x00010001u;
+            bgw = (uint32_t)pal16[attr & 0x0fu]  * 0x00010001u;
+        }
+
+        uint32_t *out = (uint32_t *)(base + col * MYRTOS_CELL_W);
+        const uint32_t ch = c->ch;
+
+        if (ch == MYRTOS_CELL_BLANK) {
+            for (uint32_t gy = 0; gy < MYRTOS_CELL_H; gy++) {
+                out[0] = bgw; out[1] = bgw; out[2] = bgw; out[3] = bgw;
+                out += MYRTOS_H_ACTIVE / 2;
+            }
+            continue;
+        }
+
+        const uint8_t *g = myrtos_font8x16[ch];
+        for (uint32_t gy = 0; gy < MYRTOS_CELL_H; gy++) {
+            const uint32_t bits = g[gy];
+            uint32_t m;
+            m = expand2[(bits >> 6) & 3u]; out[0] = (fgw & m) | (bgw & ~m);
+            m = expand2[(bits >> 4) & 3u]; out[1] = (fgw & m) | (bgw & ~m);
+            m = expand2[(bits >> 2) & 3u]; out[2] = (fgw & m) | (bgw & ~m);
+            m = expand2[ bits       & 3u]; out[3] = (fgw & m) | (bgw & ~m);
+            out += MYRTOS_H_ACTIVE / 2;
+        }
+    }
+}
+
+// One scanline in RGB565, for the diagnostic peek. The band renderer would
+// write sixteen rows and is the wrong tool for a caller that wants one -- which
+// is not a style preference: handing it a one-line buffer overruns it eightfold.
+void myrtos_chargen_line16(uint32_t y, uint16_t *dst)
+{
+    const uint32_t crow = y / MYRTOS_CELL_H;
+    const uint32_t gy   = y % MYRTOS_CELL_H;
+    const myrtos_cell_t *c = view_at(crow);
+    const bool on_cursor_row = cur_on && view_back == 0 && crow == cur_row;
+    uint32_t *out = (uint32_t *)dst;
+    uint32_t last = 0x100, fgw = 0, bgw = 0;
+
+    for (uint32_t col = 0; col < MYRTOS_CELL_COLS; col++, c++) {
+        uint32_t attr = c->attr;
+        if (on_cursor_row && col == cur_col)
+            attr = ((attr & 0x0fu) << 4) | (attr >> 4);
+        if (attr != last) {
+            last = attr;
+            fgw = (uint32_t)pal16[attr >> 4]    * 0x00010001u;
+            bgw = (uint32_t)pal16[attr & 0x0fu] * 0x00010001u;
+        }
+
+        const uint32_t ch = c->ch;
+        if (ch == MYRTOS_CELL_BLANK) {
+            *out++ = bgw; *out++ = bgw; *out++ = bgw; *out++ = bgw;
+            continue;
+        }
+
+        const uint32_t bits = myrtos_font8x16[ch][gy];
+        uint32_t m;
+        m = expand2[(bits >> 6) & 3u]; *out++ = (fgw & m) | (bgw & ~m);
+        m = expand2[(bits >> 4) & 3u]; *out++ = (fgw & m) | (bgw & ~m);
+        m = expand2[(bits >> 2) & 3u]; *out++ = (fgw & m) | (bgw & ~m);
+        m = expand2[ bits       & 3u]; *out++ = (fgw & m) | (bgw & ~m);
     }
 }
 

@@ -339,7 +339,11 @@ set(myrtosHasConsole 1)
 if(MYRTOS_VIDEO STREQUAL "chargen")
     target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1)
 elseif(MYRTOS_VIDEO STREQUAL "rgb")
-    set(myrtosHasConsole 0)
+    # A parallel RGB panel with the character generator on it. MYRTOS_VIDEO_RGB
+    # picks the geometry -- see chargen.h -- and MYRTOS_VIDEO_CHARGEN is what
+    # tells console.c to draw in cells, and what puts font8x16 in SRAM where the
+    # renderer reads it from an interrupt.
+    target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1 MYRTOS_VIDEO_RGB=1)
 elseif(MYRTOS_VIDEO STREQUAL "none")
     set(myrtosHasVideo 0)
     set(myrtosHasConsole 0)
@@ -361,8 +365,13 @@ if(NOT myrtosHasConsole)
 endif()
 
 if(MYRTOS_VIDEO STREQUAL "rgb")
-    # A parallel RGB panel driven by PIO. kernel/pio/rgb.pio holds the timing.
-    target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/videorgb.c)
+    # The panel's own driver instead of video.c, and the same character
+    # generator and console as the other display. kernel/pio/rgb.pio holds the
+    # timing.
+    target_sources(os_kernel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernel/videorgb.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernel/chargen.c)
     pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/rgb.pio)
 elseif(myrtosHasVideo)
     target_sources(os_kernel PRIVATE

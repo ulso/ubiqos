@@ -8,7 +8,13 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+// Which display, and so which geometry. The cell arithmetic below is the same
+// either way; only the width and the bytes per pixel differ.
+#ifdef MYRTOS_VIDEO_RGB
+#include "videorgb.h"
+#else
 #include "video.h"
+#endif
 
 #define MYRTOS_CELL_W    8
 #define MYRTOS_CELL_H    16
@@ -42,6 +48,13 @@ void myrtos_chargen_fill(uint32_t row, uint32_t from, uint32_t to, uint8_t attr)
 void myrtos_chargen_clear(uint8_t attr);
 void myrtos_chargen_scroll(uint8_t attr);
 void myrtos_chargen_cursor(uint32_t row, uint32_t col, bool on);
+
+// The renderers. The 8-bit pair are for a display with one byte per pixel; the
+// 16-bit one is for RGB565, and exists because a mask that covers four pixels
+// in a word covers two in the other format -- the trick is the same and the
+// arithmetic is not.
+void myrtos_chargen_band16(uint32_t y0, uint16_t *base);
+void myrtos_chargen_line16(uint32_t y, uint16_t *dst);
 
 // Scrollback. The view is a window onto the ring, counted in rows back from the
 // live screen; writing always goes to the live screen whatever the view shows.

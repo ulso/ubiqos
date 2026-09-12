@@ -20,6 +20,7 @@
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
+#include "hardware/irq.h"
 #include "hardware/pio.h"
 #include "pico/time.h"
 #include "rgb.pio.h"
@@ -27,8 +28,20 @@
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
-#define RGB_W 800u
-#define RGB_H 480u
+#include "chargen.h"
+
+#define RGB_W MYRTOS_H_ACTIVE
+#define RGB_H MYRTOS_V_ACTIVE
+
+// One character row to a band, which is what makes the arithmetic disappear:
+// the renderer is handed a cell row and fills it, and the interrupt rate is one
+// per row rather than one per line.
+//
+// 16 lines x 800 pixels x two bytes is 25 kB, and there are two so that one can
+// be drawn while the other is read. 51 kB of SRAM, against the 768 kB a whole
+// framebuffer would want and the QMI contention it would cost.
+#define BAND_LINES  MYRTOS_CELL_H
+#define BAND_PIXELS (RGB_W * BAND_LINES)
 
 // Sync on one PIO block, pixels on another. Two of the chip's three, which
 // leaves exactly one for the PIO USB host and nothing at all spare.
@@ -39,27 +52,20 @@ void myrtos_print_u32(uint32_t v);
 // file counts from this.
 #define RGB_GPIO_BASE 16u
 
-static uint16_t line[RGB_W] __attribute__((aligned(4)));
-static const volatile void *line_start = line;   // what the address channel feeds back
+static uint16_t band[2][BAND_PIXELS] __attribute__((aligned(4)));
+static int ch[2];                 // one DMA channel per band, each chaining to the other
+static volatile uint32_t next_row;  // the cell row the finished band will be redrawn as
 
-static int ch_data, ch_addr;
+// How many bands the panel has asked for and how many were ready in time. A
+// band drawn late is a band of the previous frame shown twice, which is a
+// flicker rather than a fault -- but it is the number to look at if the picture
+// ever tears, and counting it costs nothing.
+uint32_t myrtos_video_pumps, myrtos_video_late;
 
-// Vertical bars, eight of them, in RGB565. Nothing subtle: the point is that a
-// wrong bit order or a swapped pin is visible at a glance rather than as a
-// slightly wrong shade.
-static void fill_bars(void)
+static void draw_band(uint32_t which, uint32_t row)
 {
-    static const uint16_t bar[8] = {
-        0xffffu,  // white
-        0xffe0u,  // yellow
-        0x07ffu,  // cyan
-        0x07e0u,  // green
-        0xf81fu,  // magenta
-        0xf800u,  // red
-        0x001fu,  // blue
-        0x0000u,  // black
-    };
-    for (uint32_t x = 0; x < RGB_W; x++) line[x] = bar[(x * 8u) / RGB_W];
+    myrtos_chargen_band16(row * MYRTOS_CELL_H, band[which]);
+    myrtos_video_pumps++;
 }
 
 // The panel's own three pins. EN and RST are plain GPIO; the backlight is on a
@@ -107,40 +113,101 @@ static bool sm_start(PIO pio, uint sm, uint off, pio_sm_config *c, const char *w
     return false;
 }
 
-// Configured, NOT started. Starting it here cost a boot: the DMA filled the
-// pixel machine's TX FIFO while that machine was still stopped, and the
-// pio_sm_put_blocking below then waited for ever for room that nothing would
-// ever make. The probe found it sitting in pio_sm_is_tx_fifo_full, which is a
-// better clue than a black screen would have been.
+// The band that has just been read is the one to redraw, and the other is
+// already going out. That is the whole of the double buffering: no ownership
+// flag, no waiting, and the interrupt does its work on the buffer nothing is
+// reading.
+static void on_band_done(void)
+{
+    for (uint32_t i = 0; i < 2; i++) {
+        if (!(dma_hw->ints0 & (1u << ch[i]))) continue;
+        dma_hw->ints0 = 1u << ch[i];
+
+        // Back to the start of its own band. A chained trigger reloads the
+        // transfer COUNT and not the read address, so without this each channel
+        // carried on from wherever it had got to: after one frame the two were
+        // reading 0x2007de4c and 0x20082000 -- the second exactly one byte past
+        // the end of SRAM -- and the DMA raised a read error and stopped. Thirty
+        // pumps, one frame, then nothing. That is what the address channel in
+        // the single-line version was for, and taking it away with the bands was
+        // the mistake.
+        dma_channel_set_read_addr(ch[i], band[i], false);
+
+        // Two rows ahead: this band will be read again after the other one, so
+        // it must hold the row after the row now going out.
+        draw_band(i, (next_row + 1u) % MYRTOS_CELL_ROWS);
+        next_row = (next_row + 1u) % MYRTOS_CELL_ROWS;
+    }
+}
+
+// Configured, NOT started. Starting it before the state machines cost a boot:
+// the DMA filled the pixel machine's TX FIFO while that machine was still
+// stopped, and pio_sm_put_blocking then waited for ever for room that nothing
+// would make. The probe found it in pio_sm_is_tx_fifo_full, which was a better
+// clue than a black screen.
 static void dma_setup(uint data_sm)
 {
-    ch_data = dma_claim_unused_channel(true);
-    ch_addr = dma_claim_unused_channel(true);
+    ch[0] = dma_claim_unused_channel(true);
+    ch[1] = dma_claim_unused_channel(true);
 
-    // One line, halfword at a time -- the pixels are 16 bits and the state
-    // machine takes one per pull -- then hand over to the address channel.
-    dma_channel_config d = dma_channel_get_default_config(ch_data);
-    channel_config_set_transfer_data_size(&d, DMA_SIZE_16);
-    channel_config_set_read_increment(&d, true);
-    channel_config_set_write_increment(&d, false);
-    channel_config_set_dreq(&d, pio_get_dreq(PIO_DATA, data_sm, true));
-    channel_config_set_chain_to(&d, ch_addr);
-    dma_channel_configure(ch_data, &d, &PIO_DATA->txf[data_sm], line, RGB_W, false);
+    // Each band feeds the pixel machine a halfword at a time and then hands
+    // over to the other, so the two run round for ever and the picture never
+    // stops even if a redraw is late.
+    for (uint32_t i = 0; i < 2; i++) {
+        dma_channel_config d = dma_channel_get_default_config(ch[i]);
+        channel_config_set_transfer_data_size(&d, DMA_SIZE_16);
+        channel_config_set_read_increment(&d, true);
+        channel_config_set_write_increment(&d, false);
+        channel_config_set_dreq(&d, pio_get_dreq(PIO_DATA, data_sm, true));
+        channel_config_set_chain_to(&d, ch[1u - i]);
+        dma_channel_configure(ch[i], &d, &PIO_DATA->txf[data_sm],
+                              band[i], BAND_PIXELS, false);
+        dma_channel_set_irq0_enabled(ch[i], true);
+    }
 
-    // And the address channel puts the start of the line back, which retriggers
-    // the data channel: two channels that restart each other for ever, so no
-    // interrupt is needed for a picture that never changes.
-    dma_channel_config a = dma_channel_get_default_config(ch_addr);
-    channel_config_set_transfer_data_size(&a, DMA_SIZE_32);
-    channel_config_set_read_increment(&a, false);
-    channel_config_set_write_increment(&a, false);
-    dma_channel_configure(ch_addr, &a, &dma_hw->ch[ch_data].al3_read_addr_trig,
-                          &line_start, 1, false);
+    irq_add_shared_handler(DMA_IRQ_0, on_band_done, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+    irq_set_enabled(DMA_IRQ_0, true);
+}
+
+// What `vidstat` asks for. The same sixteen slots as video.c fills for the other
+// display, and the ones that have no meaning here are left at zero rather than
+// filled with a number that would read as a measurement.
+void myrtos_video_stats_fill(uint32_t *sixteen)
+{
+    for (uint32_t i = 0; i < 16; i++) sixteen[i] = 0;
+    sixteen[1]  = myrtos_video_pumps;
+    sixteen[3]  = 2;                          // bands, not scanline buffers
+    sixteen[6]  = myrtos_chargen_view_back();
+    sixteen[7]  = myrtos_chargen_history();
+    sixteen[8]  = myrtos_chargen_deep();
+    sixteen[13] = myrtos_video_late;
+}
+
+// A scanline, rendered on demand rather than read back out of a band: the bands
+// hold two character rows between them and any other line is not in memory at
+// all. Rendering it is both cheaper than keeping it and always current.
+void myrtos_video_peek_line(uint32_t y, uint8_t *out, uint32_t n)
+{
+    static uint16_t one[MYRTOS_H_ACTIVE];
+    if (y >= RGB_H) { for (uint32_t i = 0; i < n; i++) out[i] = 0; return; }
+
+    myrtos_chargen_line16(y, one);
+    const uint16_t *src = one;
+
+    // Handed back a byte per pixel, because that is what the caller's buffer is
+    // and what the other display gives it. The high byte of each pixel is
+    // enough to tell lit from unlit, which is what a peek is for.
+    for (uint32_t i = 0; i < n; i++)
+        out[i] = (i < MYRTOS_H_ACTIVE) ? (uint8_t)(src[i] >> 8) : 0u;
 }
 
 void myrtos_video_init(void)
 {
-    fill_bars();
+    // The first two rows, before anything is scanning them out.
+    draw_band(0, 0);
+    draw_band(1, 1);
+    next_row = 1;
+
     panel_wake();
 
     // The window, before anything is configured against it.
@@ -215,9 +282,13 @@ void myrtos_video_init(void)
     // And only now the pixels. The machines have taken their counts and are
     // waiting on the first data enable, so the first thing the DMA feeds is a
     // pixel rather than something the program was going to read as a width.
-    dma_channel_start(ch_data);
+    dma_channel_start(ch[0]);
 
     myrtos_print("lcd: 800x480 RGB565, pixel clock ");
     myrtos_print_u32(MYRTOS_LCD_PCLK_HZ / 1000000u);
-    myrtos_print(" MHz, colour bars\n");
+    myrtos_print(" MHz, ");
+    myrtos_print_u32(MYRTOS_CELL_COLS);
+    myrtos_print(" by ");
+    myrtos_print_u32(MYRTOS_CELL_ROWS);
+    myrtos_print(" characters\n");
 }
