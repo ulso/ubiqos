@@ -147,11 +147,22 @@ endif()
 # architecture and, where it has the pins for both, either video mode. Only the
 # facts that FOLLOW from the board belong here.
 set(MYRTOS_BOARD fruit-jam CACHE STRING "which board to build for")
-set_property(CACHE MYRTOS_BOARD PROPERTY STRINGS fruit-jam)
+set_property(CACHE MYRTOS_BOARD PROPERTY STRINGS fruit-jam ws43b)
 
 if(MYRTOS_BOARD STREQUAL "fruit-jam")
     set(myrtosPicoBoard adafruit_fruit_jam)
     set(myrtosBoardHeader "<boards/fruit-jam.h>")
+    set(myrtosBoardRadio ON)
+    set(myrtosBoardVideo chargen)     # or framebuffer; both exist here
+elseif(MYRTOS_BOARD STREQUAL "ws43b")
+    # The SDK has no header for this one, so we carry ours -- see
+    # boards/pico/. PICO_BOARD_HEADER_DIRS is how the SDK is told where to look.
+    set(myrtosPicoBoard waveshare_rp2350_touch_lcd_4_3b)
+    set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/pico
+        CACHE STRING "where to find board headers the SDK does not ship")
+    set(myrtosBoardHeader "<boards/ws43b.h>")
+    set(myrtosBoardRadio OFF)         # no ESP32-C6 on this board
+    set(myrtosBoardVideo none)        # the ST7262 panel has no driver yet
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -226,9 +237,7 @@ add_executable(os_kernel
     ${MYRTOS_ARCH_KERNEL_SOURCES}
     kernel/pio/pioprobe.c
     kernel/usbhost.c
-    kernel/video.c
-    kernel/console.c
-    kernel/chargen.c
+    # video.c, console.c and chargen.c are added with the video mode below.
     kernel/net.c
     kernel/config.c
     kernel/clock.c
@@ -309,12 +318,34 @@ endif()
 # The console works either way. Nothing else does: a framebuffer is a bitmap
 # and character cells are not, so whatever wants to draw must wait for the
 # scanline renderer that will sit beside the character generator.
-set(MYRTOS_VIDEO "framebuffer" CACHE STRING "framebuffer (bitmap in SRAM) or chargen (character cells)")
-set_property(CACHE MYRTOS_VIDEO PROPERTY STRINGS framebuffer chargen)
+# `none` is the third: a board whose panel has no driver yet. It is not a mode,
+# it is the absence of one, and it builds without video.c, chargen.c and
+# console.c -- console.c draws through one of the other two and means nothing
+# without them.
+set(MYRTOS_VIDEO "${myrtosBoardVideo}" CACHE STRING "framebuffer, chargen, or none")
+set_property(CACHE MYRTOS_VIDEO PROPERTY STRINGS framebuffer chargen none)
 if(MYRTOS_VIDEO STREQUAL "chargen")
     target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1)
+elseif(MYRTOS_VIDEO STREQUAL "none")
+    target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_NONE=1)
 elseif(NOT MYRTOS_VIDEO STREQUAL "framebuffer")
-    message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer or chargen")
+    message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer, chargen or none")
+endif()
+message(STATUS "Video: ${MYRTOS_VIDEO}")
+
+# Added here rather than in the source list above, because which of them apply
+# is the question this block answers. chargen.c is built in both real modes: the
+# framebuffer console does not use it, and the linker drops what nothing calls.
+if(MYRTOS_VIDEO STREQUAL "none")
+    # The console's API is called from main.c, syscalls.c and io.c, so it cannot
+    # simply vanish. console_none.c answers it honestly instead -- see the note
+    # at the top of that file.
+    target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console_none.c)
+else()
+    target_sources(os_kernel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernel/video.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/kernel/chargen.c)
 endif()
 
 # The module pool: a fixed array in SRAM, which is where modules are loaded and
@@ -407,11 +438,14 @@ endif()
 message(STATUS "lwIP: ${myrtosLwip}")
 if(myrtosLwip)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c
-                                     ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipping.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipmdns.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsntp.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsock.c)
+    # The WiFi netif only where there is a radio behind it.
+    if(myrtosBoardRadio)
+        target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c)
+    endif()
     target_link_libraries(os_kernel pico_lwip pico_lwip_nosys pico_lwip_mdns)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
 endif()

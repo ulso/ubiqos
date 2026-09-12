@@ -18,19 +18,25 @@
 
 // --- DIAGNOSTICS -----------------------------------------------------------
 // The chip's UART0 would rather be on GP8/GP9, but those go to the on-board
-// ESP32-C6 rather than to any header, so the diagnostic line is GP44.
-#define MYRTOS_UART_TX_PIN  44
+// ESP32-C6 rather than to any header, so the diagnostic line is GP44 -- which
+// is UART0's TX there, hence uart0 and not the SDK header's default of uart1.
+#define MYRTOS_HAS_DIAG_UART 1
+#define MYRTOS_UART          uart0
+#define MYRTOS_UART_TX_PIN   44
 
 // --- USB HOST ON PIO -------------------------------------------------------
 // D- is D+ plus one, which is PIO_USB_PINOUT_DPDM and what Pico-PIO-USB
 // defaults to. The two must be adjacent whichever order is chosen.
-#define MYRTOS_USB_HOST_DP      1
-#define MYRTOS_USB_HOST_POWER   11           // switched, so a port can be cycled
+#define MYRTOS_HAS_PIO_USB_HOST 1
+#define MYRTOS_USB_HOST_DP          1
+#define MYRTOS_HAS_USB_HOST_POWER   1
+#define MYRTOS_USB_HOST_POWER       11       // switched, so a port can be cycled
 
 // --- WHAT A RESET RELEASES -------------------------------------------------
 // One pin holds the USB hub, the audio DAC and the ESP32-C6 together, and the
 // ESP samples its GPIO9 as it leaves reset -- which is wired to GP0 here, so
 // the strap has to be high before the reset is released. See usbhost.c.
+#define MYRTOS_HAS_PERIPH_RESET 1
 #define MYRTOS_PERIPH_RESET     22
 #define MYRTOS_ESP_BOOT_STRAP   0
 

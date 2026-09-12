@@ -31,22 +31,32 @@ void myrtos_usbhost_init(void);
 // GP8/GP9, but those go to the on-board ESP32-C6 rather than to any header.
 // Diagnostics therefore go on UART0 TX / GP44, the same choice made in
 // pico-io-fruit-jam, so the same cable works.
-#define MYRTOS_UART        uart0
+// MYRTOS_UART and MYRTOS_UART_TX_PIN come from the board header.
 // MYRTOS_UART_TX_PIN comes from the board header; see kernel/board.h.
 #include "board.h"
 #define MYRTOS_UART_BAUD   115200
 
+// A board without a diagnostic UART has none because its only broken-out pins
+// are doing something else -- see boards/ws43b.h. It has to be an absence at
+// build time rather than a peripheral left alone: myrtos_putc WAITS on the
+// UART, so an uninitialised one hangs the kernel on its first line.
+#if MYRTOS_HAS_DIAG_UART
 void myrtos_uart_init(void) {
     uart_init(MYRTOS_UART, MYRTOS_UART_BAUD);
     gpio_set_function(MYRTOS_UART_TX_PIN, UART_FUNCSEL_NUM(MYRTOS_UART, MYRTOS_UART_TX_PIN));
 }
+#define MYRTOS_UART_PUT(c) uart_putc_raw(MYRTOS_UART, (c))
+#else
+void myrtos_uart_init(void) { }
+#define MYRTOS_UART_PUT(c) ((void)(c))
+#endif
 
 void myrtos_putc(char c) {
     // Every line the system prints goes through here -- the kernel's own output
     // and every module's write syscall alike -- so hooking the screen on at this
     // one point puts all of it on the display without touching a single caller.
     myrtos_console_putc(c);
-    uart_putc_raw(MYRTOS_UART, c);
+    MYRTOS_UART_PUT(c);
 }
 
 // The kernel does not print from inside a trap, so interrupts are on here and a
@@ -165,10 +175,10 @@ void myrtos_print(const char *s) {
         // the console and dmesg both have the line whole -- and holding
         // interrupts off for 115200-baud characters would cost more than the
         // tidiness is worth.
-        for (uint32_t i = 0; i < n; i++) uart_putc_raw(MYRTOS_UART, run[i]);
+        for (uint32_t i = 0; i < n; i++) MYRTOS_UART_PUT(run[i]);
         if (nl) {
-            uart_putc_raw(MYRTOS_UART, '\r');
-            uart_putc_raw(MYRTOS_UART, '\n');
+            MYRTOS_UART_PUT('\r');
+            MYRTOS_UART_PUT('\n');
             s++;
         }
     }
@@ -538,7 +548,11 @@ void myrtos_kernel_main(void) {
         myrtos_usb_net_id(id.id, sizeof id.id);
     }
 
+    // Step 5 turns this on for the Waveshare board, once its PIO USB host has
+    // been tried. Until then the pads are wired and unasked.
+#if MYRTOS_HAS_PIO_USB_HOST
     myrtos_usbhost_init();
+#endif
     // And then the host itself, on the other core. Its interrupts belong to
     // whichever core enables them, so tuh_init runs over there rather than
     // here -- see core1_main in usbhost.c.
@@ -550,8 +564,14 @@ void myrtos_kernel_main(void) {
     // library's dma_claim_mask asserted on a channel already spoken for. The
     // system stopped before the USB process had started, so both consoles went
     // quiet at once and it looked like the clock change had broken everything.
+    // A board with no video driver yet builds without video.c, chargen.c and
+    // console.c alike -- console.c draws through one of the two and has no
+    // meaning without them. MYRTOS_VIDEO=none is that build; see the Waveshare
+    // board, whose panel is RGB behind an ST7262 and nothing like DVI.
+#if !MYRTOS_VIDEO_NONE
     myrtos_video_init();
     myrtos_console_init();
+#endif
 
     // Everything printed before this point went to the UART and to dmesg, and
     // to nothing else: the screen did not exist yet. That is a hundred and
@@ -573,14 +593,20 @@ void myrtos_kernel_main(void) {
         }
         if (k) myrtos_console_write(line, k);
     }
+#if !MYRTOS_VIDEO_NONE
     myrtos_console_start_server();
+#endif
     extern void myrtos_fs_start_server(void);
     myrtos_fs_start_server();
 
     // After the console and the servers, so that a chip which is not there says
     // so on a screen that exists rather than taking the boot down with it.
+    // Only where there is a radio to probe. A board without one has no
+    // ESP-Hosted at all and lwIP is then only ever the USB cable.
+#if MYRTOS_HAS_ESP_HOSTED
     extern void myrtos_wifi_probe(void);
     myrtos_wifi_probe();
+#endif
     extern void myrtos_wifi_start_server(void);
     myrtos_wifi_start_server();
 

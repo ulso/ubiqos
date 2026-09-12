@@ -18,17 +18,23 @@ void myrtos_print_hex(uint32_t v);
 // A USB host on two PIO state machines, so a keyboard can be plugged in while
 // the hardware controller stays busy being our console.
 //
-// The pins are the board's: D+ on GP1, D- on GP2 -- adjacent, which PIO-USB
-// requires -- and the 5V supply switched on GP11.
-
+// The pins are the board's, from its header. D- is always D+ plus one, which
+// PIO-USB requires; the rest a board may simply not have.
 #define USB_HOST_DP_PIN  MYRTOS_USB_HOST_DP
-#define USB_HOST_POWER   MYRTOS_USB_HOST_POWER
 
-// The board holds its peripherals in reset until this is driven high. The USB
-// hub behind the two host sockets is one of them, so nothing enumerates while
-// it is low -- which looks exactly like a host that is not working.
+#if MYRTOS_HAS_USB_HOST_POWER
+#define USB_HOST_POWER   MYRTOS_USB_HOST_POWER
+#endif
+
+// Some boards hold their peripherals in reset until a pin is driven high. The
+// USB hub behind the Fruit Jam's two host sockets is one of them, so nothing
+// enumerates while it is low -- which looks exactly like a host that is not
+// working. A board with a socket soldered straight to the pads has neither the
+// hub nor the pin.
+#if MYRTOS_HAS_PERIPH_RESET
 #define PERIPH_RESET     MYRTOS_PERIPH_RESET
-#define ESP_BOOT          MYRTOS_ESP_BOOT_STRAP   // to the ESP32-C6's GPIO9, and the BOOT button
+#define ESP_BOOT         MYRTOS_ESP_BOOT_STRAP   // the ESP32-C6's GPIO9, and the BOOT button
+#endif
 
 static uint8_t keys[32];
 static volatile uint32_t head, tail;
@@ -95,6 +101,7 @@ void myrtos_usbhost_init(void) {
     // reset as an input with its PULL-DOWN on, so GP0 was holding the ESP in
     // bootloader mode every time. The chip had power and drove its busy line,
     // which is what made it look present but permanently not ready.
+#if MYRTOS_HAS_PERIPH_RESET
     gpio_init(ESP_BOOT);
     gpio_set_dir(ESP_BOOT, GPIO_IN);
     gpio_set_pulls(ESP_BOOT, true, false);   // pull up, and leave the button alone
@@ -105,12 +112,20 @@ void myrtos_usbhost_init(void) {
     gpio_put(PERIPH_RESET, 0);            // a real pulse, not just a release
     sleep_ms(10);
     gpio_put(PERIPH_RESET, 1);            // let the on-board peripherals go
+#endif
 
+#if MYRTOS_HAS_USB_HOST_POWER
     gpio_init(USB_HOST_POWER);
     gpio_set_dir(USB_HOST_POWER, GPIO_OUT);
     gpio_put(USB_HOST_POWER, 1);          // the port is dead without this
+#else
+    // The 5V is wired permanently on this board, so the port is live from the
+    // moment it has power and there is no way to cycle it from software. Worth
+    // knowing: on the Fruit Jam a power cycle was more than once the only thing
+    // that recovered a device that had wedged its end of the bus.
+#endif
 
-    sleep_ms(100);                        // the hub needs a moment to come up
+    sleep_ms(100);                        // a hub, if there is one, needs a moment
 }
 
 // --- THE SECOND CORE -------------------------------------------------------
