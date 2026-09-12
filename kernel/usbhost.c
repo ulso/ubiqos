@@ -46,6 +46,20 @@ static volatile uint32_t head, tail;
 // interrupts would only protect it from the core already holding it.
 static spin_lock_t *keylock;
 
+// The key queue is a data structure and not a device, so its lock is claimed
+// whether or not a host is ever started.
+//
+// It used to be claimed inside myrtos_usbhost_init, which a board with no PIO
+// USB host does not call -- and then keylock stayed NULL and the first read
+// spun on address zero for ever. That deadlocked the Waveshare board the moment
+// a shell ran on its panel: `con` reads the keyboard, and a console with no
+// keyboard still reads it. The probe found it in spin_lock_unsafe_blocking with
+// the tick frozen thirteen milliseconds after pre-emption started.
+void myrtos_usbhost_queue_init(void)
+{
+    if (!keylock) keylock = spin_lock_instance((uint)spin_lock_claim_unused(true));
+}
+
 // --- WHAT CORE 1 MAY NOT DO ITSELF -----------------------------------------
 //
 // The USB host is moving to the second core, and the rule is the one already
@@ -90,7 +104,7 @@ uint32_t tusb_time_millis_api(void) {
 // drivers that come later in boot depend on having happened after it. Only the
 // PIO half belongs on the other core.
 void myrtos_usbhost_init(void) {
-    if (!keylock) keylock = spin_lock_instance((uint)spin_lock_claim_unused(true));
+    myrtos_usbhost_queue_init();
 
     // GP22 releases the USB hub, the audio DAC and the ESP32-C6 together, so the
     // ESP's reset happens here whether or not anybody wants WiFi.

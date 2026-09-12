@@ -168,10 +168,13 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     set(myrtosBoardHeader "<boards/ws43b.h>")
     set(myrtosBoardRadio OFF)         # no ESP32-C6 on this board
     set(myrtosBoardVideo rgb)         # the ST7262 panel, no console on it yet
-    # Only the USB console. Every other descriptor names pins this board uses
-    # for something else -- the panel has twenty of them -- and a driver that
-    # configures the wrong pin is worse than an absent one.
-    set(myrtosBoardModules usbdesc)
+    # The USB console and the panel's own. Every other descriptor names pins
+    # this board uses for something else -- the panel has twenty of them -- and
+    # a driver that configures the wrong pin is worse than an absent one.
+    #
+    # condesc carries no pins at all: it names the console driver, which is in
+    # the kernel, so it is the one descriptor that is the same on both boards.
+    set(myrtosBoardModules usbdesc condesc)
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")

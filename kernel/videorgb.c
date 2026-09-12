@@ -165,7 +165,21 @@ static void dma_setup(uint data_sm)
         dma_channel_set_irq0_enabled(ch[i], true);
     }
 
+    // BELOW THE KERNEL, at the same 0xC0 kernel/video.c settled on, and for the
+    // same reason stated at greater length there. Left at the default, which is
+    // zero and therefore the highest, this handler fires inside the kernel's
+    // own critical sections -- and the first thing it did was deadlock the
+    // machine in spin_lock_unsafe_blocking with the tick frozen at 13.
+    //
+    // The ordering follows from who has slack. A band is 717 microseconds of
+    // it; a USB frame, due every millisecond, has none. So this sits below both
+    // PIO-USB's timer and the kernel's threshold, and a band drawn late shows
+    // the previous one again -- which myrtos_video_late counts.
+    //
+    // Like the pump on the other board, it calls nothing: two DMA registers,
+    // cells, font bytes, pixels.
     irq_add_shared_handler(DMA_IRQ_0, on_band_done, PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+    irq_set_priority(DMA_IRQ_0, 0xc0);
     irq_set_enabled(DMA_IRQ_0, true);
 }
 

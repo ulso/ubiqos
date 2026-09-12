@@ -548,6 +548,10 @@ void myrtos_kernel_main(void) {
         myrtos_usb_net_id(id.id, sizeof id.id);
     }
 
+    // The key queue first, and unconditionally: anything reading a console
+    // reads it, host or no host. See myrtos_usbhost_queue_init.
+    { extern void myrtos_usbhost_queue_init(void); myrtos_usbhost_queue_init(); }
+
     // Step 5 turns this on for the Waveshare board, once its PIO USB host has
     // been tried. Until then the pads are wired and unasked.
 #if MYRTOS_HAS_PIO_USB_HOST
