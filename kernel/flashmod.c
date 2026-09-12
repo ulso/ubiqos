@@ -31,14 +31,14 @@ static void name_from_module(const myrtos_module_header_t *m, char *out) {
 // bytes as the file has -- so the scan found the modules at the end of the
 // previous image as well, and the directory listed echo, lsmod, free and both
 // descriptors twice.
-static const myrtos_module_header_t *flash_step(uintptr_t *p) {
-    if (*p + sizeof(myrtos_module_header_t) >= MYRTOS_FLASH_END) return 0;
+static const myrtos_module_header_t *flash_step(uintptr_t *p, uintptr_t end) {
+    if (*p + sizeof(myrtos_module_header_t) >= end) return 0;
     myrtos_module_header_t *m = (myrtos_module_header_t*)*p;
 
     // Unwritten flash reads as 0xFFFFFFFF, and make_flash_image.py writes a
     // terminator, so either way this is where the image ends.
     if (m->sync_code != MYRTOS_SYNC_CODE) return 0;
-    if (!m->module_size || *p + m->module_size > MYRTOS_FLASH_END) return 0;
+    if (!m->module_size || *p + m->module_size > end) return 0;
     if (!verify_myrtos_header(m)) return 0;
 
     *p += (m->module_size + 3u) & ~3u;   // the next may start right after
@@ -48,16 +48,36 @@ static const myrtos_module_header_t *flash_step(uintptr_t *p) {
 // The image is the directory. There is no need to copy it into another one:
 // OS-9 read modules straight out of ROM this way, and the whole point of the
 // sync word is that a module can be found where it lies.
+// The regions, in the order they are searched, so the system's own modules are
+// found before an application's. That order is the tie-break for a name in
+// both, and having the system win is the safer way round: an application cannot
+// shadow the shell by naming a module after it.
+#define MYRTOS_FLASH_REGIONS 2u
+
+static uintptr_t region_base(uint32_t i)
+{
+    return i == 0 ? MYRTOS_FLASH_MODULE_BASE : MYRTOS_FLASH_APP_BASE;
+}
+
+static uintptr_t region_end(uint32_t i)
+{
+    return i == 0 ? MYRTOS_FLASH_APP_BASE : MYRTOS_FLASH_END;
+}
+
 const myrtos_module_header_t *myrtos_flash_nth(uint32_t index, char *name_out) {
-    uintptr_t p = MYRTOS_FLASH_MODULE_BASE;
-    for (;;) {
-        const myrtos_module_header_t *m = flash_step(&p);
-        if (!m) return 0;
-        if (index-- == 0) {
-            if (name_out) name_from_module(m, name_out);
-            return m;
+    for (uint32_t r = 0; r < MYRTOS_FLASH_REGIONS; r++) {
+        uintptr_t p = region_base(r);
+        const uintptr_t end = region_end(r);
+        for (;;) {
+            const myrtos_module_header_t *m = flash_step(&p, end);
+            if (!m) break;                  // this region's end, not the last
+            if (index-- == 0) {
+                if (name_out) name_from_module(m, name_out);
+                return m;
+            }
         }
     }
+    return 0;
 }
 
 // By the eleven-character directory name, padded, as the directory stores it.
@@ -72,13 +92,12 @@ const myrtos_module_header_t *myrtos_flash_lookup(const char *name) {
     }
 }
 
-uint32_t myrtos_flash_scan(void) {
+// One region, walked and registered. Split out of the scan below when there
+// came to be two: the walk is identical and only the bounds differ, and a
+// second copy of it would have been a second place to forget the terminator.
+static uint32_t scan_region(uintptr_t p, uintptr_t stop)
+{
     uint32_t found = 0;
-    uintptr_t p = MYRTOS_FLASH_MODULE_BASE;
-
-    myrtos_print("Scanning flash for resident modules from 0x");
-    myrtos_print_hex(MYRTOS_FLASH_MODULE_BASE);
-    myrtos_print("\n");
 
     // The image is contiguous, so it ends at the first word that is not a
     // module and the scan stops there rather than searching the whole region.
@@ -88,13 +107,13 @@ uint32_t myrtos_flash_scan(void) {
     // bytes as the file has -- so the scan found the modules at the end of the
     // previous image as well, and the directory listed echo, lsmod, free and
     // both descriptors twice.
-    while (p + sizeof(myrtos_module_header_t) < MYRTOS_FLASH_END) {
+    while (p + sizeof(myrtos_module_header_t) < stop) {
         myrtos_module_header_t *m = (myrtos_module_header_t*)p;
 
         // Unwritten flash reads as 0xFFFFFFFF, and make_flash_image.py writes a
         // terminator, so either way this is where the image ends.
         if (m->sync_code != MYRTOS_SYNC_CODE) break;
-        if (!m->module_size || p + m->module_size > MYRTOS_FLASH_END) {
+        if (!m->module_size || p + m->module_size > stop) {
             myrtos_print("  implausible module size, stopping\n");
             break;
         }
@@ -121,9 +140,23 @@ uint32_t myrtos_flash_scan(void) {
         }
         found++;
 
-// Skip past the whole module; the next may start right after, 4-byte aligned.
+        // Skip past the whole module; the next may start right after, 4-byte
+        // aligned.
         p += (m->module_size + 3u) & ~3u;
     }
+    return found;
+}
+
+// Both regions, and the second is allowed to be empty: a board with no
+// application in it is the ordinary case, and an unwritten region reads as
+// 0xFFFFFFFF, which is not a sync word. So nothing is said about it unless
+// something is there.
+uint32_t myrtos_flash_scan(void) {
+    myrtos_print("Scanning flash for resident modules from 0x");
+    myrtos_print_hex(MYRTOS_FLASH_MODULE_BASE);
+    myrtos_print("\n");
+
+    uint32_t found = scan_region(MYRTOS_FLASH_MODULE_BASE, MYRTOS_FLASH_APP_BASE);
 
     if (!found) myrtos_print("  none found\n");
     else {
@@ -131,5 +164,14 @@ uint32_t myrtos_flash_scan(void) {
         myrtos_print_u32(found);
         myrtos_print(" modules in flash, looked up where they lie\n");
     }
-    return found;
+
+    const uint32_t app = scan_region(MYRTOS_FLASH_APP_BASE, MYRTOS_FLASH_END);
+    if (app) {
+        myrtos_print("  ");
+        myrtos_print_u32(app);
+        myrtos_print(" more from the application image at 0x");
+        myrtos_print_hex(MYRTOS_FLASH_APP_BASE);
+        myrtos_print("\n");
+    }
+    return found + app;
 }

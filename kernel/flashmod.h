@@ -5,10 +5,22 @@
 
 #include <stdint.h>
 
-// The module region in flash. The kernel image ends just past 24 kB; starting a
-// megabyte in leaves it ample room to grow. The rest -- close to 15 MB -- is
-// modules.
+// Two module regions in flash, because there can be two repositories.
+//
+// The system image is myrtos's own: the kernel ends just past 24 kB, so
+// starting a megabyte in leaves it ample room to grow, and the seven megabytes
+// after that are the shell, the commands and the descriptors.
+//
+// The application image is for modules built somewhere else against the SDK. It
+// exists so that an application can be shipped and updated without rebuilding
+// what it runs on, and without its source ever being in this tree: two images,
+// two owners, two UF2 files that can be written independently -- or combined
+// into one, since every UF2 block carries its own address.
+//
+// A region ends where the next begins, which is what keeps an oversized system
+// image from quietly swallowing the application's half.
 #define MYRTOS_FLASH_MODULE_BASE 0x10100000u
+#define MYRTOS_FLASH_APP_BASE    0x10800000u
 #define MYRTOS_FLASH_END         0x11000000u
 
 // Scan the flash region for module headers and register what is found as
