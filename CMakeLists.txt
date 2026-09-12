@@ -1850,6 +1850,60 @@ add_custom_command(
 add_custom_target(flashimage ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin)
 add_dependencies(flashimage modules)
 
+# --- One file for the whole machine ----------------------------------------
+#
+# The kernel and the module image are written to two addresses a megabyte apart,
+# which used to mean two files and two chances to load only one of them. A UF2
+# block carries its own target address, so both fit in one file with a gap in
+# the middle and the bootrom puts each block where it says.
+#
+# myrtos.uf2 is the system. An application built elsewhere against the SDK has
+# its own image at MYRTOS_FLASH_APP_BASE and its own UF2, and tools/combine_uf2
+# .py takes that and this and makes the one file a product is shipped as -- or
+# the application's alone, when only the application has changed.
+#
+# The address is read out of the header rather than written again here: there is
+# one place MYRTOS_FLASH_MODULE_BASE is defined and the kernel is it.
+file(STRINGS kernel/flashmod.h myrtosFlashBaseLine
+     REGEX "define[ \t]+MYRTOS_FLASH_MODULE_BASE")
+string(REGEX MATCH "0x[0-9a-fA-F]+" myrtosFlashBase "${myrtosFlashBaseLine}")
+if(NOT myrtosFlashBase)
+    message(FATAL_ERROR "MYRTOS_FLASH_MODULE_BASE is not in kernel/flashmod.h "
+                        "in a form this can read")
+endif()
+
+# The family is the chip and the machine together, and loading the wrong one is
+# refused by the bootrom rather than silently wrong -- but it is better refused
+# here, so the two builds cannot produce identically named files.
+if(MYRTOS_ARCH STREQUAL "riscv")
+    set(myrtosUf2Family rp2350-riscv)
+else()
+    set(myrtosUf2Family rp2350-arm-s)
+endif()
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
+    COMMAND $<TARGET_FILE:picotool> uf2 convert --quiet
+            ${CMAKE_CURRENT_BINARY_DIR}/modules.bin -t bin
+            -o ${myrtosFlashBase}
+            ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
+            --family ${myrtosUf2Family}
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin
+    COMMENT "Wrapping the module image for ${myrtosFlashBase}")
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/myrtos.uf2
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine_uf2.py
+            ${CMAKE_CURRENT_BINARY_DIR}/myrtos.uf2
+            ${CMAKE_CURRENT_BINARY_DIR}/os_kernel.uf2
+            ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2 os_kernel
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine_uf2.py
+    COMMENT "Combining the kernel and the module image into myrtos.uf2")
+
+add_custom_target(productimage ALL
+                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/myrtos.uf2)
+
 # The C library's heap is whatever is left of SRAM once this copy_to_ram build
 # has been laid down, and nothing in the toolchain complains when that is
 # nothing: the SDK's linker script asserts only that the stack and the heap do
