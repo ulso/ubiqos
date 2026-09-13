@@ -27,6 +27,7 @@
 #include "rgb.pio.h"
 
 void myrtos_print(const char *s);
+uint32_t myrtos_psram_bytes(void);
 void myrtos_print_u32(uint32_t v);
 
 #include "chargen.h"
@@ -82,13 +83,44 @@ uint32_t myrtos_video_pumps, myrtos_video_late;
 static const myrtos_draw_item_t *scene;
 static volatile uint32_t scene_count;
 
-void myrtos_video_set_scene(const myrtos_draw_item_t *items, uint32_t count)
+// A scene must live in SRAM, all of it, and this REFUSES one that does not.
+//
+// The interrupt reads the list and every bitmap in it, and nothing reached from
+// an interrupt may be in PSRAM or flash -- the QMI stalls one master against the
+// other. A module with writable data is private, a private module is copied into
+// the PSRAM pool, and so its __thread arrays are in PSRAM: the obvious way to
+// hold a scene is the wrong one. Measured 13 Sep 2026, an hour after this file
+// was written: a module put its glyphs in __thread, the pump read them, and core
+// 0 died at 0x110d1732 with UNDEFINSTR forced to a hard fault -- a PSRAM address,
+// executing PSRAM code while the interrupt read PSRAM data.
+//
+// So the check is here rather than in a comment somebody has to remember.
+// myrtos_alloc gives SRAM and myrtos_alloc_bulk gives PSRAM; a scene wants the
+// first. A refusal is a message, and a stalled bus is not.
+//
+// Both ends of the window, because SRAM is at 0x20000000 and PSRAM at
+// 0x11000000: "above the PSRAM base" is true of SRAM too, and this repository
+// has paid for that mistake twice already.
+static bool in_psram(const void *p)
 {
-    if (!items || !count) { scene_count = 0; scene = 0; return; }
+    const uintptr_t a = (uintptr_t)p;
+    const uint32_t n = myrtos_psram_bytes();
+    return n && a >= MYRTOS_PSRAM_BASE && a < (uintptr_t)MYRTOS_PSRAM_BASE + n;
+}
+
+int32_t myrtos_video_set_scene(const myrtos_draw_item_t *items, uint32_t count)
+{
+    if (!items || !count) { scene_count = 0; scene = 0; return 0; }
+
+    if (in_psram(items)) return -1;
+    for (uint32_t i = 0; i < count; i++)
+        if (items[i].kind != MYRTOS_DRAW_RECT && in_psram(items[i].data)) return -1;
+
     scene_count = 0;
     scene = items;
     __dmb();
     scene_count = count;
+    return 0;
 }
 
 // A run of one colour, two pixels to a word where the alignment allows it.
@@ -138,11 +170,26 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
         const int32_t line = sy - it->y;
         if (it->kind == MYRTOS_DRAW_MASK) {
             // One bit a pixel, the top bit leftmost, rows byte-aligned.
+            //
+            // A byte at a time, and an EMPTY byte skips eight pixels without
+            // looking at them. Most of a glyph cell is empty -- the digits are
+            // fifty pixels wide in a cell that has to hold the widest of them --
+            // and testing every bit of that cost 660 us on the band a big
+            // number sat in, against a deadline of 719.
             const uint8_t *bits = (const uint8_t *)it->data
                                 + (uint32_t)line * ((it->w + 7u) / 8u);
-            for (int32_t sx = x0; sx < x1; sx++) {
+            int32_t sx = x0;
+            while (sx < x1) {
                 const int32_t u = sx - it->x;
-                if (bits[u >> 3] & (uint8_t)(0x80u >> (u & 7))) row[sx] = it->colour;
+                const uint8_t b = bits[u >> 3];
+                const int32_t bit = u & 7;
+                if (!b) {                       // eight pixels of nothing
+                    sx += 8 - bit;
+                    continue;
+                }
+                const int32_t end = sx + (8 - bit) < x1 ? sx + (8 - bit) : x1;
+                for (int32_t k = bit; sx < end; sx++, k++)
+                    if (b & (uint8_t)(0x80u >> k)) row[sx] = it->colour;
             }
         } else {
             // A byte a pixel, straight through the chargen palette, so a scene

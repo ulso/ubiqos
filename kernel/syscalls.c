@@ -713,10 +713,9 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
             // nothing reached from an interrupt may be. A count of zero hands
             // the screen back to the character generator.
             if (frame->a1 == 4) {
-                void myrtos_video_set_scene(const myrtos_draw_item_t *, uint32_t);
-                myrtos_video_set_scene((const myrtos_draw_item_t *)(uintptr_t)frame->a0,
-                                       frame->a2);
-                frame->a0 = 0;
+                int32_t myrtos_video_set_scene(const myrtos_draw_item_t *, uint32_t);
+                frame->a0 = (uint32_t)myrtos_video_set_scene(
+                    (const myrtos_draw_item_t *)(uintptr_t)frame->a0, frame->a2);
                 break;
             }
 #endif
