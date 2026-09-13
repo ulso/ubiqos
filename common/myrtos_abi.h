@@ -53,6 +53,16 @@
 // them do -- but it is no longer the price of admission.
 #define MYRTOS_ATTR_PRIVATE   0x04
 
+// Start this program when the system comes up, after the card's startup script
+// if there is one. It is for an application in flash, which has to run whether
+// or not a card is in the slot: a product whose screen stays on the boot text
+// because somebody took the card out does not work. The program gets the
+// console for output and no input, as the script does.
+//
+// No ABI version for it. A kernel that predates the bit ignores it, and a
+// module that predates it has it clear.
+#define MYRTOS_ATTR_AUTOSTART 0x08
+
 // Which machine the code in a module is for, in the high nibble of type_lang's
 // low byte -- the language keeps the low nibble, as it did, and nothing has
 // ever read more than four bits of it.

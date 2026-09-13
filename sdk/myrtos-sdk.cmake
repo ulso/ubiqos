@@ -149,6 +149,14 @@ function(myrtos_add_module name source)
         list(REMOVE_ITEM ARGN "SINGLE")
     endif()
 
+    # A trailing AUTOSTART starts the program when the system comes up, card or
+    # no card. See MYRTOS_ATTR_AUTOSTART in the ABI.
+    set(autostart_flag "")
+    if("AUTOSTART" IN_LIST ARGN)
+        set(autostart_flag "--autostart")
+        list(REMOVE_ITEM ARGN "AUTOSTART")
+    endif()
+
     # A trailing NEWLIB gives the module the whole C library instead of the
     # header-only subset in common/myrtos_stdio.h and its neighbours. That
     # subset is smaller and links nothing; this is for ported code, where the
@@ -276,7 +284,7 @@ function(myrtos_add_module name source)
                 $<TARGET_FILE:${name}_app>
                 ${CMAKE_NM}
                 ${entry_symbol}
-                ${rt_flag} ${lib_flag}
+                ${rt_flag} ${lib_flag} ${autostart_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${MYRTOS_ROOT}/make_module.py
                 ${MYRTOS_ROOT}/common/myrtos_abi.h

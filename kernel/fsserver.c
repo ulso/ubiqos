@@ -27,6 +27,7 @@
 #include "usbdev.h"
 #include "sdcard.h"
 #include "moddir.h"
+#include "flashmod.h"
 #include "tlsf.h"
 #include "config.h"
 
@@ -612,6 +613,42 @@ static void run_startup_script(void) {
     myrtos_print("Running " STARTUP_PATH "\n");
 }
 
+// The programs in flash that asked to start with the system -- see
+// MYRTOS_ATTR_AUTOSTART. After the script, so that a card can still set things
+// up first; with no card these are the only thing that makes the machine do
+// anything, which is the point. An application region whose program waited for
+// somebody to type its name left the boot text on the screen after a reset.
+//
+// Output to the console, as the script has, and no input: nothing started here
+// should be reading keys from under the shell.
+static void run_autostart(void) {
+    char name[MYRTOS_NAME_LEN];
+    for (uint32_t i = 0; ; i++) {
+        const myrtos_module_header_t *h = myrtos_flash_nth(i, name);
+        if (!h) return;
+        if ((h->type_lang >> 8) != MYRTOS_TYPE_PROGRAM) continue;
+        if (!((h->attr_rev >> 8) & MYRTOS_ATTR_AUTOSTART)) continue;
+
+        const char *match = myrtos_moddir_match(name);
+        const myrtos_module_header_t *m = match ? myrtos_moddir_link(match) : 0;
+        const int32_t pid = m ? myrtos_process_create(m, name) : -1;
+        if (pid < 0) {
+            myrtos_print("autostart: could not start ");
+            myrtos_print(name);
+            myrtos_print("\n");
+            continue;
+        }
+
+        const char *console = myrtos_io_has_device("con") ? "con" : "usb";
+        myrtos_io_open_as(console, pid, MYRTOS_STDOUT);
+        myrtos_io_open_as(console, pid, MYRTOS_STDERR);
+
+        myrtos_print("Started ");
+        myrtos_print(name);
+        myrtos_print("\n");
+    }
+}
+
 static void fs_thread(void) {
     // The card is brought up here, in a process, and this is the only place it
     // can be. Not in main: that runs before the scheduler, so a driver that
@@ -657,6 +694,7 @@ static void fs_thread(void) {
     myrtos_config_read();
 
     run_startup_script();
+    run_autostart();
 
     for (;;) {
         myrtos_msg_t m;

@@ -346,7 +346,7 @@ def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_siz
 def create_module(input_bin_path, output_mod_path, module_name,
                   elf_path=None, nm_tool=None, entry_symbol="module_main",
                   revision=1, realtime=False, single=False,
-                  module_type="program"):
+                  module_type="program", autostart=False):
     with open(input_bin_path, "rb") as f:
         code_bytes = f.read()
 
@@ -461,6 +461,13 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # process. A module without it has writable data shared between instances,
     # so the kernel allows only one instance to exist.
     attrs = (0 if single else 1) | (2 if realtime else 0)
+    # Bit 3: start this program when the system comes up. See
+    # MYRTOS_ATTR_AUTOSTART; only a program can be started, so only a program
+    # may ask.
+    if autostart:
+        if module_type != "program":
+            sys.exit(f"{module_name}: --autostart is for programs, not a {module_type}")
+        attrs |= 8
 
     # Three reasons for one answer: writable data, addresses to fix, or a .bss
     # to zero. Any of them means the module cannot run where it lies.
@@ -535,9 +542,10 @@ if __name__ == "__main__":
     # --rev sets the module revision. The directory keeps the highest of a given
     # name, so a patched module replaces the one already there by carrying a
     # larger number and nothing else.
-    realtime = "--rt" in argv
-    single   = "--single" in argv
-    argv = [a for a in argv if a not in ("--rt", "--single")]
+    realtime  = "--rt" in argv
+    single    = "--single" in argv
+    autostart = "--autostart" in argv
+    argv = [a for a in argv if a not in ("--rt", "--single", "--autostart")]
 
     revision = 1
     if "--rev" in argv:
@@ -546,4 +554,4 @@ if __name__ == "__main__":
         del argv[i:i + 2]
 
     create_module(*argv, module_type=module_type, revision=revision,
-                  realtime=realtime, single=single)
+                  realtime=realtime, single=single, autostart=autostart)

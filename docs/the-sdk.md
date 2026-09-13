@@ -10,7 +10,7 @@ what is in the SDK were wrong, every module in this tree would be wrong with it.
 ## What it gives you
 
 `myrtos_add_module(<name> <source>...)` with the trailing words the in-tree
-modules use -- `RT`, `SINGLE`, `NEWLIB`, `LIBRARY`, `DRIVER` -- and everything
+modules use -- `RT`, `SINGLE`, `NEWLIB`, `LIBRARY`, `DRIVER`, `AUTOSTART` -- and everything
 that makes a module loadable at an address nobody knew at compile time:
 
 * the code model, which on RISC-V is `-mcmodel=medany`
@@ -21,6 +21,11 @@ that makes a module loadable at an address nobody knew at compile time:
 * the position-independence check, which reads the relocations and refuses what
   the loader cannot fix
 * `objcopy`, and `make_module.py` to put the header on
+
+`AUTOSTART` is for a program an application ships: the system starts it when it
+comes up, after the card's `/sd/startup` if there is one, with the console for
+output. A product has to work with no card in the slot, so what it runs cannot
+be written only on the card.
 
 `myrtos_app_image(<name> <module>...)` concatenates modules into an image for
 the application region and wraps it as a UF2.
