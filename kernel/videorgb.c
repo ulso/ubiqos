@@ -151,7 +151,17 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
                            uint32_t lines, uint16_t *base)
 {
     int32_t x0 = it->x, y = it->y;
-    int32_t x1 = x0 + (int32_t)it->w, y1 = y + (int32_t)it->h;
+    const uint32_t text_scale = it->w ? (it->w > 8u ? 8u : it->w) : 1u;
+    int32_t x1, y1;
+    if (it->kind == MYRTOS_DRAW_TEXT) {
+        uint32_t n = 0;
+        for (const char *t = (const char *)it->data; t && *t; t++) n++;
+        x1 = x0 + (int32_t)(n * 8u * text_scale);
+        y1 = y + (int32_t)(MYRTOS_CELL_H * text_scale);
+    } else {
+        x1 = x0 + (int32_t)it->w;
+        y1 = y + (int32_t)it->h;
+    }
 
     if (x0 < 0) x0 = 0;
     if (y  < (int32_t)y0) y = (int32_t)y0;
@@ -190,6 +200,31 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
                 const int32_t end = sx + (8 - bit) < x1 ? sx + (8 - bit) : x1;
                 for (int32_t k = bit; sx < end; sx++, k++)
                     if (b & (uint8_t)(0x80u >> k)) row[sx] = it->colour;
+            }
+        } else if (it->kind == MYRTOS_DRAW_TEXT) {
+            // The console's font, scaled by whole numbers. Each character is
+            // eight wide and sixteen tall before scaling, so the row of the
+            // glyph is the band line divided by the scale.
+            const uint32_t scale = it->w ? (it->w > 8u ? 8u : it->w) : 1u;
+            const uint32_t gy = (uint32_t)line / scale;
+            if (gy >= MYRTOS_CELL_H) continue;
+
+            const char *str = (const char *)it->data;
+            for (uint32_t c = 0; str[c]; c++) {
+                const int32_t cx = it->x + (int32_t)(c * 8u * scale);
+                if (cx >= x1) break;
+                if (cx + (int32_t)(8u * scale) <= x0) continue;
+
+                const uint32_t bits = myrtos_chargen_glyph_row(str[c], gy);
+                if (!bits) continue;
+                for (uint32_t b = 0; b < 8u; b++) {
+                    if (!(bits & (0x80u >> b))) continue;
+                    const int32_t px = cx + (int32_t)(b * scale);
+                    for (uint32_t k = 0; k < scale; k++) {
+                        const int32_t sx2 = px + (int32_t)k;
+                        if (sx2 >= x0 && sx2 < x1) row[sx2] = it->colour;
+                    }
+                }
             }
         } else {
             // A byte a pixel, straight through the chargen palette, so a scene

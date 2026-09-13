@@ -1266,6 +1266,16 @@ typedef struct {
                                 //   a 48x64 glyph is 384 bytes and its colour is
                                 //   chosen when it is drawn, not when it is made.
 #define MYRTOS_DRAW_BITMAP 2u   // a byte a pixel, through the scene's palette
+#define MYRTOS_DRAW_TEXT   3u   // the console's own 8x16 font, in `colour`.
+                                //   `data` is a NUL-terminated string -- which
+                                //   must be in SRAM like everything else a
+                                //   scene points at -- and `w` is a whole-number
+                                //   scale, 1 to 8. `h` is ignored.
+                                //
+                                //   Here so that labels and units cost the
+                                //   application no font of its own: the glyphs
+                                //   are the kernel's, already in SRAM, and only
+                                //   the big figures need masks.
 
 typedef struct {
     uint16_t kind;

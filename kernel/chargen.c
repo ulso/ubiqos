@@ -94,6 +94,17 @@ static uint16_t to565(uint8_t c)
 // does on the console. Sixteen entries; anything above wraps rather than reads
 // past the end, because this is called from an interrupt and a bad index there
 // is a stall and not a wrong pixel.
+// One row of one character's glyph, for anything that draws text outside this
+// file. Out of range in either direction gives a blank rather than a read past
+// the font, because the caller is an interrupt.
+uint32_t myrtos_chargen_glyph_row(char c, uint32_t row)
+{
+    if (row >= MYRTOS_CELL_H) return 0;
+    const uint8_t g = myrtos_chargen_glyph(c);
+    if (g >= 224) return 0;
+    return myrtos_font8x16[g][row];
+}
+
 uint16_t myrtos_chargen_colour(uint8_t index)
 {
     return pal16[index & 0x0fu];
