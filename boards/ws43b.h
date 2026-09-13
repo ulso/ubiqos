@@ -48,7 +48,12 @@
 // rather than merely unpleasant for some eyes -- cone dystrophy among them. A
 // screen nobody can look at shows nothing, so the comfortable setting is the
 // default and the bright one is asked for.
-#define MYRTOS_BACKLIGHT_DEFAULT 35u
+//
+// Twenty, and it was tried rather than reasoned. 35 was a guess; 10 was too
+// dark and 20 was right, judged on the bench against a dark screen in an
+// ordinary room. It belongs with the palette: light figures on a near-black
+// ground need far less backlight than the white panel this replaced.
+#define MYRTOS_BACKLIGHT_DEFAULT 20u
 #define MYRTOS_LCD_PCLK_HZ      20000000u
 
 // --- TOUCH -----------------------------------------------------------------
