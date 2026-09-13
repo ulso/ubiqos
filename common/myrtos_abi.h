@@ -1244,6 +1244,37 @@ typedef struct {
 // Reading it is a poll and never waits. No fingers is `points == 0` and not an
 // error, the same contract every other read in this system has: nothing yet is
 // not an end.
+// --- drawing on the panel --------------------------------------------------
+//
+// A scene is a list of things to draw, held as DATA in RAM, and the kernel
+// rasterises it one band at a time inside the video interrupt.
+//
+// It is data and not a callback on purpose, and the reason is the QMI rule: a
+// module's code lives in flash, and nothing reached from an interrupt may. A
+// callback into the application would be exactly the forbidden thing, and it
+// would fail as a stalled bus rather than as a wrong picture. A list is read by
+// kernel code in SRAM, over and over, once per band -- so the bitmaps a scene
+// points at have to be in RAM too.
+//
+// Items are drawn in order, so later ones cover earlier ones. Everything is
+// clipped to the band being built, which is what keeps the cost proportional to
+// what is actually on those sixteen lines rather than to the size of the list.
+#define MYRTOS_DRAW_RECT   0u   // colour, filled
+#define MYRTOS_DRAW_MASK   1u   // one bit a pixel: colour where set, nothing
+                                //   where clear. Rows are (w + 7) / 8 bytes,
+                                //   the top bit leftmost. Big digits are these:
+                                //   a 48x64 glyph is 384 bytes and its colour is
+                                //   chosen when it is drawn, not when it is made.
+#define MYRTOS_DRAW_BITMAP 2u   // a byte a pixel, through the scene's palette
+
+typedef struct {
+    uint16_t kind;
+    uint16_t colour;        // RGB565, for RECT and MASK
+    int16_t  x, y;          // top left; may be negative, and is clipped
+    uint16_t w, h;
+    const void *data;       // MASK and BITMAP; ignored by RECT
+} myrtos_draw_item_t;
+
 #define MYRTOS_TOUCH_MAX 5u
 
 typedef struct {
@@ -1779,6 +1810,14 @@ static inline int32_t myrtos_wifi_stats(uint32_t *eight)
 static inline int32_t myrtos_netdev_stats(uint32_t *six)
 {
     return myrtos_syscall(SYS_NETDEV, (uint32_t)(uintptr_t)six, 0, 0);
+}
+
+// Hands the kernel a scene, or clears it with a count of zero and the character
+// generator takes the screen back. The list and everything it points at must
+// stay put and stay valid until it is replaced: the interrupt reads them.
+static inline int32_t myrtos_video_scene(const myrtos_draw_item_t *items, uint32_t count)
+{
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)items, 4, count);
 }
 
 static inline int32_t myrtos_video_stats(uint32_t *sixteen)

@@ -56,6 +56,9 @@ void myrtos_chargen_cursor(uint32_t row, uint32_t col, bool on);
 void myrtos_chargen_band16(uint32_t y0, uint16_t *base);
 void myrtos_chargen_line16(uint32_t y, uint16_t *dst);
 
+// The console's palette, so a drawn scene and the console agree about colours.
+uint16_t myrtos_chargen_colour(uint8_t index);
+
 // Scrollback. The view is a window onto the ring, counted in rows back from the
 // live screen; writing always goes to the live screen whatever the view shows.
 void     myrtos_chargen_view_move(int32_t rows);   // negative is back in time

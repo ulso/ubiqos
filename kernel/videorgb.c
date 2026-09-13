@@ -22,6 +22,7 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
+#include "hardware/sync.h"
 #include "pico/time.h"
 #include "rgb.pio.h"
 
@@ -29,6 +30,8 @@ void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
 #include "chargen.h"
+#include "../common/myrtos_abi.h"
+#include "../common/myrtos_abi.h"
 
 #define RGB_W MYRTOS_H_ACTIVE
 #define RGB_H MYRTOS_V_ACTIVE
@@ -67,9 +70,123 @@ static volatile uint32_t next_row;  // the cell row the finished band will be re
 // ever tears, and counting it costs nothing.
 uint32_t myrtos_video_pumps, myrtos_video_late;
 
+// --- the scene -------------------------------------------------------------
+//
+// An application's screen, as a list the interrupt reads rather than code it
+// calls. See myrtos_draw_item_t: a callback would put module code in flash on
+// the path of an interrupt, which is the one thing the QMI forbids.
+//
+// Set and cleared from a thread, read from the interrupt. The count is written
+// last when a scene is set and first when it is cleared, so the interrupt never
+// sees a count that outlives its list.
+static const myrtos_draw_item_t *scene;
+static volatile uint32_t scene_count;
+
+void myrtos_video_set_scene(const myrtos_draw_item_t *items, uint32_t count)
+{
+    if (!items || !count) { scene_count = 0; scene = 0; return; }
+    scene_count = 0;
+    scene = items;
+    __dmb();
+    scene_count = count;
+}
+
+// A run of one colour, two pixels to a word where the alignment allows it.
+//
+// Measured: one halfword store a pixel made a scene cost 1040 us a band against
+// the character generator's 213, and the generator is doing more work -- it
+// packs two pixels into a word, which is why. A flat fill has no excuse to be
+// slower than glyphs.
+static inline void fill_span(uint16_t *p, uint32_t n, uint16_t colour)
+{
+    if (n && ((uintptr_t)p & 2u)) { *p++ = colour; n--; }   // odd start
+    const uint32_t pair = (uint32_t)colour * 0x00010001u;
+    uint32_t *w = (uint32_t *)p;
+    uint32_t words = n >> 1;
+
+    // Four at a time, because the loop itself was costing as much as the
+    // stores: a compare and a branch per word doubled the price of a fill.
+    // Measured across the change, a scene of one background and three bars went
+    // from 457 us a band to what vidstat says now.
+    while (words >= 4) { w[0] = pair; w[1] = pair; w[2] = pair; w[3] = pair;
+                         w += 4; words -= 4; }
+    while (words--) *w++ = pair;
+    if (n & 1u) *(uint16_t *)w = colour;
+}
+
+// One item, clipped to the band. y0 is the band's first screen line.
+static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
+                           uint32_t lines, uint16_t *base)
+{
+    int32_t x0 = it->x, y = it->y;
+    int32_t x1 = x0 + (int32_t)it->w, y1 = y + (int32_t)it->h;
+
+    if (x0 < 0) x0 = 0;
+    if (y  < (int32_t)y0) y = (int32_t)y0;
+    if (x1 > (int32_t)RGB_W) x1 = (int32_t)RGB_W;
+    if (y1 > (int32_t)(y0 + lines)) y1 = (int32_t)(y0 + lines);
+    if (x0 >= x1 || y >= y1) return;
+
+    for (int32_t sy = y; sy < y1; sy++) {
+        uint16_t *row = base + (uint32_t)(sy - (int32_t)y0) * RGB_W;
+
+        if (it->kind == MYRTOS_DRAW_RECT) {
+            fill_span(row + x0, (uint32_t)(x1 - x0), it->colour);
+            continue;
+        }
+
+        const int32_t line = sy - it->y;
+        if (it->kind == MYRTOS_DRAW_MASK) {
+            // One bit a pixel, the top bit leftmost, rows byte-aligned.
+            const uint8_t *bits = (const uint8_t *)it->data
+                                + (uint32_t)line * ((it->w + 7u) / 8u);
+            for (int32_t sx = x0; sx < x1; sx++) {
+                const int32_t u = sx - it->x;
+                if (bits[u >> 3] & (uint8_t)(0x80u >> (u & 7))) row[sx] = it->colour;
+            }
+        } else {
+            // A byte a pixel, straight through the chargen palette, so a scene
+            // and the console agree about what colour four means.
+            const uint8_t *px = (const uint8_t *)it->data + (uint32_t)line * it->w;
+            for (int32_t sx = x0; sx < x1; sx++)
+                row[sx] = myrtos_chargen_colour(px[sx - it->x]);
+        }
+    }
+}
+
+// One line of one item, which is draw_item with a band one line tall. Written
+// as its own name because peek_line means something different from the pump and
+// the two should not be read as the same call.
+static void draw_item_line(const myrtos_draw_item_t *it, uint32_t y, uint16_t *out)
+{
+    myrtos_draw_item_t one_line = *it;
+    draw_item_into(&one_line, y, 1u, out);
+}
+
 static void draw_band(uint32_t which, uint32_t row)
 {
-    myrtos_chargen_band16(row * MYRTOS_CELL_H, band[which]);
+    const uint32_t n = scene_count;
+    if (n) {
+        const uint32_t y0 = row * MYRTOS_CELL_H;
+        uint16_t *base = band[which];
+
+        // Cleared only when nothing is going to cover it anyway. A scene whose
+        // first item is a rectangle over the whole band -- which is what a
+        // background is -- would otherwise have the band written twice before
+        // anything of interest went on it.
+        const myrtos_draw_item_t *first = &scene[0];
+        const bool covered = first->kind == MYRTOS_DRAW_RECT &&
+                             first->x <= 0 &&
+                             first->x + (int32_t)first->w >= (int32_t)RGB_W &&
+                             first->y <= (int32_t)y0 &&
+                             first->y + (int32_t)first->h >= (int32_t)(y0 + BAND_LINES);
+        if (!covered) fill_span(base, BAND_PIXELS, 0);
+
+        for (uint32_t i = 0; i < n; i++)
+            draw_item_into(&scene[i], y0, BAND_LINES, base);
+    } else {
+        myrtos_chargen_band16(row * MYRTOS_CELL_H, band[which]);
+    }
     myrtos_video_pumps++;
 }
 
@@ -251,7 +368,20 @@ void myrtos_video_peek_line(uint32_t y, uint8_t *out, uint32_t n)
     static uint16_t one[MYRTOS_H_ACTIVE];
     if (y >= RGB_H) { for (uint32_t i = 0; i < n; i++) out[i] = 0; return; }
 
-    myrtos_chargen_line16(y, one);
+    if (scene_count) {
+        // The same rasteriser, given a band one line tall. Peeking has to show
+        // what is on the glass, and with a scene set the character cells are
+        // not it -- a reader of this that still saw the console would be a
+        // measuring instrument reporting the wrong screen.
+        fill_span(one, RGB_W, 0);
+        for (uint32_t i = 0; i < scene_count; i++) {
+            myrtos_draw_item_t it = scene[i];
+            if ((int32_t)y < it.y || (int32_t)y >= it.y + (int32_t)it.h) continue;
+            draw_item_line(&it, y, one);
+        }
+    } else {
+        myrtos_chargen_line16(y, one);
+    }
     const uint16_t *src = one;
 
     // Handed back a byte per pixel, because that is what the caller's buffer is

@@ -706,6 +706,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 frame->a0 = i;
                 break;
             }
+#if MYRTOS_VIDEO_RGB
+            // Kind 4 gives the panel to an application: a list of things to
+            // draw, which the video interrupt rasterises one band at a time.
+            // Data and not a callback, because a module's code is in flash and
+            // nothing reached from an interrupt may be. A count of zero hands
+            // the screen back to the character generator.
+            if (frame->a1 == 4) {
+                void myrtos_video_set_scene(const myrtos_draw_item_t *, uint32_t);
+                myrtos_video_set_scene((const myrtos_draw_item_t *)(uintptr_t)frame->a0,
+                                       frame->a2);
+                frame->a0 = 0;
+                break;
+            }
+#endif
 #if MYRTOS_VIDEO_CHARGEN
             if (frame->a1 == 2)      myrtos_chargen_peek_row(frame->a2, out, 80);
             else if (frame->a1 == 1) myrtos_video_peek_line(frame->a2, out, 64);

@@ -89,6 +89,16 @@ static uint16_t to565(uint8_t c)
     return (uint16_t)((r5 << 11) | (g6 << 5) | b5);
 }
 
+// The palette, for anything outside this file that draws in the same colours --
+// a scene's 8-bit bitmaps, so that four means the same on a drawn screen as it
+// does on the console. Sixteen entries; anything above wraps rather than reads
+// past the end, because this is called from an interrupt and a bad index there
+// is a stall and not a wrong pixel.
+uint16_t myrtos_chargen_colour(uint8_t index)
+{
+    return pal16[index & 0x0fu];
+}
+
 // Two pixels to a word, so a mask covers a PAIR of font bits. The leftmost
 // pixel is the low half-word, because that is the byte the display reads first.
 static const uint32_t expand2[4] = {
