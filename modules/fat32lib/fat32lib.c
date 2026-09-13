@@ -98,6 +98,22 @@ bool myrtos_fat_mount(void) {
     sectors_per_fat           = rd32(&sector[36]);
     root_cluster              = rd32(&sector[44]);
 
+    // FAT16 and FAT12 say so in two fields FAT32 leaves at zero: a root
+    // directory of a fixed number of entries, and a 16-bit FAT size. Naming
+    // them is worth the four lines, because the alternative is what happened on
+    // a 128 MB card: offsets 36 and 44 held a drive number and half a volume
+    // label, the numbers read as nonsense, and `ls` reported an empty card that
+    // had a file on it. A reader that cannot read something should say which
+    // something.
+    const uint32_t root_entries   = rd16(&sector[17]);
+    const uint32_t fat_size_16    = rd16(&sector[22]);
+    if (root_entries || fat_size_16) {
+        K->print("FAT: this is FAT16 or FAT12, and this reader is FAT32 only.\n"
+                 "     Reformat the card as FAT32. macOS formats a small card\n"
+                 "     as FAT16 whatever it is asked; Windows does as it is told.\n");
+        return false;
+    }
+
     if (bytes_per_sector != 512 || !sectors_per_cluster || !sectors_per_fat) {
         K->print("FAT: not a FAT32 volume this reader understands\n");
         return false;
