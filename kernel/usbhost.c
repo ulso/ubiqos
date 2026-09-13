@@ -616,7 +616,18 @@ void myrtos_usbhost_rearm(void) {
         //
         // The same fault exists on RISC-V and announces itself differently:
         // TU_ASSERT is an ebreak there, so it prints a stepped-over assertion,
-        // where on ARM it returns false and says nothing.
+        // where on ARM it returns false and says nothing -- ONLY when no
+        // debugger is attached. TU_BREAKPOINT on ARM reads DHCSR and executes
+        // BKPT #0 if C_DEBUGEN is set, so with a probe in the board the same
+        // assertion HALTS THE CORE instead of returning. Measured 13 Sep 2026:
+        // core 1 stopped at cdc_host.c:675 with DFSR reading BKPT, which also
+        // froze TIMER0 through DBGPAUSE and left tusb_time_millis_api standing
+        // still while core 0 ran on its own SysTick.
+        //
+        // So attaching a probe changes what this fault does, which is the worst
+        // property an instrument can have. Do not conclude anything about USB
+        // behaviour from a session with a probe attached without asking whether
+        // the same run without one would have gone further.
         //
         // Aborting first is what makes the ask land. Without it the claim
         // inside tuh_hid_receive_report is refused for exactly the reason the
