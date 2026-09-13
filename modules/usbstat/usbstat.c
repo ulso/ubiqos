@@ -23,6 +23,22 @@ static void kv(const char *label, uint32_t v) {
 }
 
 void module_main(void) {
+    // First, because it is the question every other line here depends on: the
+    // host loop runs on core 1 and nothing else does, so if it has stopped then
+    // every count below is a photograph of the moment it stopped rather than a
+    // description of now. An age of a few milliseconds is a loop going round;
+    // an age that grows between two readings is one that is not.
+    {
+        myrtos_line_t l;
+        myrtos_line_reset(&l);
+        myrtos_line_str(&l, "core 1 loop:    ");
+        myrtos_line_u32(&l, myrtos_usbinfo(MYRTOS_USB_CORE1_BEATS));
+        myrtos_line_str(&l, " passes, last one ");
+        myrtos_line_u32(&l, myrtos_usbinfo(MYRTOS_USB_CORE1_AGE));
+        myrtos_line_str(&l, " ms ago\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &l);
+    }
+
     kv("keys pushed:    ", myrtos_usbinfo(MYRTOS_USB_KEYSIN));
     kv("rearms:         ", myrtos_usbinfo(MYRTOS_USB_REARMS));
     kv("recoveries:     ", myrtos_usbinfo(MYRTOS_USB_RECOVERIES));

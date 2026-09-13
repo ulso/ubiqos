@@ -1317,6 +1317,18 @@ typedef struct {
 #define MYRTOS_USB_MOUNTS       9u   // times it configured us
 #define MYRTOS_USB_UNMOUNTS    10u
 #define MYRTOS_USB_LASTEVENT   11u   // milliseconds since boot of the last one
+
+// Core 1's own pulse. The USB host loop runs there and nothing else does, so
+// whether it is running is the first question any USB fault raises -- and it
+// could not be answered: the debugger cannot halt core 1 on this part, in a
+// healthy board as much as a broken one. Two words settle it without one.
+//
+// AGE is milliseconds since the loop last began a pass, computed when asked.
+// The count alone would need two readings and a subtraction; the age answers
+// it in one, which matters when the thing being diagnosed may not survive the
+// second command.
+#define MYRTOS_USB_CORE1_BEATS 12u   // passes of the host loop since boot
+#define MYRTOS_USB_CORE1_AGE   13u   // ms since the last one began
 // addr | instance<<8 | wanted<<16 | armed<<17 | idle<<24, for eight slots
 #define MYRTOS_USB_HID          0x10u
 // dev<<0 | ep<<8 | has_transfer<<16 | started<<17 | stalled<<18 | failed<<24

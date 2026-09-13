@@ -157,6 +157,13 @@ void myrtos_usbhost_init(void) {
 void myrtos_usbhost_repeat(void);
 void myrtos_usbhost_rearm(void);
 
+// Core 1's pulse, for the question a USB fault asks first and that nothing else
+// could answer: is the host loop running at all? The debugger cannot halt core 1
+// on this part -- not in a fault and not in a healthy board either, which was
+// learned the hard way by concluding the opposite from its silence.
+static volatile uint32_t core1_beats;
+static volatile uint32_t core1_last_ms;
+
 static void core1_main(void)
 {
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
@@ -178,6 +185,14 @@ static void core1_main(void)
     ev_push(EV_LOG, LOG_STARTED, 0, 0);
 
     for (;;) {
+        // Counted at the TOP of the pass, so that a tuh_task which never
+        // returns shows up as an age that grows rather than a count that is
+        // merely low. Written by core 1 and read by core 0: a word, aligned,
+        // which this machine stores in one go -- no lock, and none wanted on
+        // the path that has to work when everything else has stopped.
+        core1_beats++;
+        core1_last_ms = tusb_time_millis_api();
+
         tuh_task();
         myrtos_usbhost_repeat();
         myrtos_usbhost_rearm();
@@ -1034,6 +1049,8 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
     if (what == MYRTOS_USB_CDCGIVEUP)  return myrtos_cdc_gaveup;
     if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
     if (what == MYRTOS_USB_KEYSIN)     return head;
+    if (what == MYRTOS_USB_CORE1_BEATS) return core1_beats;
+    if (what == MYRTOS_USB_CORE1_AGE)   return tusb_time_millis_api() - core1_last_ms;
 
     // The device side's, not this file's -- but usbstat asks one question of
     // one call, and splitting it in two for four counters would be ceremony.
