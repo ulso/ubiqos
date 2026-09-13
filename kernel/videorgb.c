@@ -122,8 +122,22 @@ static bool sm_start(PIO pio, uint sm, uint off, pio_sm_config *c, const char *w
 // already going out. That is the whole of the double buffering: no ownership
 // flag, no waiting, and the interrupt does its work on the buffer nothing is
 // reading.
+// What the pump costs, because the next thing to go in it is a rasteriser and
+// nobody should find out afterwards whether there was room. Cumulative since
+// boot, like the chargen driver's, so the share vidstat prints is an average
+// and not a sample -- and the worst single call is kept separately, because an
+// average that fits says nothing about a deadline that does not.
+static uint32_t pump_us_total;
+static uint32_t pump_us_worst;
+static uint32_t pump_period_us;
+static uint32_t pump_last_us;
+
 static void on_band_done(void)
 {
+    const uint32_t t0 = time_us_32();
+    if (pump_last_us) pump_period_us = t0 - pump_last_us;
+    pump_last_us = t0;
+
     for (uint32_t i = 0; i < 2; i++) {
         if (!(dma_hw->ints0 & (1u << ch[i]))) continue;
         dma_hw->ints0 = 1u << ch[i];
@@ -143,6 +157,10 @@ static void on_band_done(void)
         draw_band(i, (next_row + 1u) % MYRTOS_CELL_ROWS);
         next_row = (next_row + 1u) % MYRTOS_CELL_ROWS;
     }
+
+    const uint32_t took = time_us_32() - t0;
+    pump_us_total += took;
+    if (took > pump_us_worst) pump_us_worst = took;
 }
 
 // Configured, NOT started. Starting it before the state machines cost a boot:
@@ -219,7 +237,10 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
     sixteen[6]  = myrtos_chargen_view_back();
     sixteen[7]  = myrtos_chargen_history();
     sixteen[8]  = myrtos_chargen_deep();
+    sixteen[10] = pump_us_total;
+    sixteen[11] = pump_us_worst;
     sixteen[13] = myrtos_video_late;
+    sixteen[15] = pump_period_us;
 }
 
 // A scanline, rendered on demand rather than read back out of a band: the bands
