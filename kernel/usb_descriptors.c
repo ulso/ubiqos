@@ -109,7 +109,20 @@ static const char *string_desc_arr[] = {
     (const char[]){ 0x09, 0x04 },   // 0: engelska (0x0409)
     "myrtos",                        // 1: manufacturer
     "myrtos console",                // 2: product
-    "000001",                        // 3: serial number
+    // 3: serial number, replaced at startup by the chip's own unique id.
+    //
+    // It was "000001" on every board, and that is not a cosmetic fault. Two
+    // myrtos boards on one Mac then differ in nothing the host can see -- same
+    // vendor, same product, same serial -- so macOS cannot keep them apart: the
+    // port names churn (usbmodem0000011, usbmodem6, usbmodem2013102 in one
+    // afternoon), one console can vanish when the other is reflashed, and a
+    // tool cannot be told which board to talk to. A whole day of this was spent
+    // identifying boards by asking them how many scanline buffers they had.
+    //
+    // The MAC beside it has been derived from the unique id all along, with a
+    // comment saying it is so two boards on one desk do not collide. The serial
+    // needed the same and did not have it.
+    "000001",
     "myrtos CDC",                    // 4: the CDC interface
     "myrtos SD card",                // 5: the mass storage interface
     "myrtos network",                // 6: the NCM interface
@@ -129,6 +142,7 @@ static uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
 #endif
 
 static char mac_string[13];
+static char serial_string[17];
 
 void myrtos_usb_net_id(const uint8_t *unique, uint32_t n)
 {
@@ -141,6 +155,27 @@ void myrtos_usb_net_id(const uint8_t *unique, uint32_t n)
     }
     mac_string[12] = 0;
     string_desc_arr[7] = mac_string;
+
+    // And the serial number: the LAST four bytes of the id, as eight hex
+    // digits.
+    //
+    // Four and not eight, because macOS puts a short serial into the device
+    // node's name and falls back to a location id for a long one -- sixteen
+    // digits gave /dev/cu.usbmodem2013701, which says where the cable is
+    // plugged in rather than which board answered, and moves when the cable
+    // does. Eight digits keeps the name with the board.
+    //
+    // The last bytes rather than the first: a flash id's low end varies between
+    // parts where its high end is a manufacturer's prefix.
+    if (n >= 4) {
+        const uint8_t *tail = unique + (n - 4);
+        for (uint32_t i = 0; i < 4; i++) {
+            serial_string[i * 2]     = hex[tail[i] >> 4];
+            serial_string[i * 2 + 1] = hex[tail[i] & 0x0f];
+        }
+        serial_string[8] = 0;
+        string_desc_arr[3] = serial_string;
+    }
 }
 
 static uint16_t desc_str[32];
