@@ -217,7 +217,9 @@ add_executable(os_kernel
     # TinyUSB's host side, and the glue that drives it from PIO rather than from
     # the hardware controller -- which is busy being our console.
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/usbh.c
-    ${PICO_SDK_PATH}/lib/tinyusb/src/host/hub.c
+    # Ours too: the hub stops polling for ever after one failed transfer, which
+    # is how an unplug goes unreported. See lib/tinyusb-patched/README.md.
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/host/hub.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/class/hid/hid_host.c
     # Ours, and the only file of TinyUSB's that is. An unplugged CDC device
     # asserts in cdch_xfer_cb, and that assert halts the core when a debugger is
@@ -457,7 +459,8 @@ target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     # Where our copy of cdc_host.c finds the header that used to sit beside it.
     # A quoted include falls back to the include path, so the copy needs no edit
     # of its own to compile from somewhere else.
-    ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc)
+    ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc
+    ${PICO_SDK_PATH}/lib/tinyusb/src/host)
 
 # Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)
