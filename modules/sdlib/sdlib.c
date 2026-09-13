@@ -25,11 +25,25 @@ extern const myrtos_kernel_api_t *myrtos_sd_k;
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
-#define SD_SPI       spi0
-#define SD_SCK_PIN   34
-#define SD_MOSI_PIN  35
-#define SD_MISO_PIN  36
-#define SD_CS_PIN    39
+// Which SPI and which pins, per board, from the build.
+//
+// The Fruit Jam's are the defaults because they were here first; the Waveshare
+// 4.3B has the card on spi1 at GPIO10, 11, 12 with chip select on 15, and gets
+// them through MYRTOS_SD_SPI_* . The instance travels as a NUMBER because spi0
+// and spi1 are addresses that no -D can carry.
+#ifndef MYRTOS_SD_SPI_INDEX
+#define MYRTOS_SD_SPI_INDEX 0
+#define MYRTOS_SD_SCK_PIN   34
+#define MYRTOS_SD_MOSI_PIN  35
+#define MYRTOS_SD_MISO_PIN  36
+#define MYRTOS_SD_CS_PIN    39
+#endif
+
+#define SD_SPI       (MYRTOS_SD_SPI_INDEX ? spi1 : spi0)
+#define SD_SCK_PIN   MYRTOS_SD_SCK_PIN
+#define SD_MOSI_PIN  MYRTOS_SD_MOSI_PIN
+#define SD_MISO_PIN  MYRTOS_SD_MISO_PIN
+#define SD_CS_PIN    MYRTOS_SD_CS_PIN
 // GP33 is card detect according to Adafruit's own board header
 // (ADAFRUIT_FRUIT_JAM_SD_CARD_DETECT_PIN), and on this board nothing drives it.
 // Measured 2 Sep 2026 with a card in the slot that mounted over four-bit SDIO
