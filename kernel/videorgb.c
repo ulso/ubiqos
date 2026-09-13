@@ -22,6 +22,7 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
+#include "hardware/pwm.h"
 #include "hardware/sync.h"
 #include "pico/time.h"
 #include "rgb.pio.h"
@@ -272,6 +273,19 @@ static void draw_band(uint32_t which, uint32_t row)
     myrtos_video_pumps++;
 }
 
+#define BL_WRAP 1000u
+
+// Nought is dark and a hundred is as bright as the panel goes. The level is
+// inverted because the backlight is active low -- see the note below, which is
+// the only place that fact is written down anywhere.
+int32_t myrtos_video_backlight(uint32_t percent)
+{
+    if (percent > 100u) percent = 100u;
+    pwm_set_gpio_level(MYRTOS_LCD_BL_PIN,
+                       (uint16_t)(BL_WRAP / 100u * (100u - percent)));
+    return (int32_t)percent;
+}
+
 // The panel's own three pins. EN and RST are plain GPIO; the backlight is on a
 // PWM slice on the real hardware but full brightness is a high pin, and dimming
 // is not what this step is about.
@@ -296,12 +310,21 @@ static void panel_wake(void)
     // function, which writes PWM_WRAP/100 * (100 - percent) as the level: at a
     // hundred per cent that is zero. Low is bright.
     //
-    // A level rather than PWM, because full brightness needs no modulation.
-    // Dimming would want the PWM slice this pin has, and is not what this step
-    // is about.
-    gpio_init(MYRTOS_LCD_BL_PIN);
-    gpio_set_dir(MYRTOS_LCD_BL_PIN, GPIO_OUT);
-    gpio_put(MYRTOS_LCD_BL_PIN, 0);
+    // PWM rather than a level, so the panel can be dimmed. Full brightness on a
+    // 4.3 inch white screen lights a room at night, and there are eyes it simply
+    // shuts out: cone dystrophy makes bright light disabling rather than merely
+    // uncomfortable, and a display nobody can look at shows nothing.
+    //
+    // The slice runs at about 1.2 kHz -- above flicker, below the range where a
+    // backlight driver starts to whine.
+    gpio_set_function(MYRTOS_LCD_BL_PIN, GPIO_FUNC_PWM);
+    {
+        pwm_config c = pwm_get_default_config();
+        pwm_config_set_clkdiv_int(&c, 100);
+        pwm_config_set_wrap(&c, BL_WRAP);
+        pwm_init(pwm_gpio_to_slice_num(MYRTOS_LCD_BL_PIN), &c, true);
+    }
+    myrtos_video_backlight(MYRTOS_BACKLIGHT_DEFAULT);
 }
 
 // pio_sm_init refuses a configuration its block's GPIO base cannot reach, and

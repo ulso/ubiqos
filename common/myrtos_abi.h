@@ -1830,6 +1830,14 @@ static inline int32_t myrtos_video_scene(const myrtos_draw_item_t *items, uint32
     return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)items, 4, count);
 }
 
+// The panel's brightness, 0 to 100, and what it was set to comes back. Full
+// brightness is not always kindness: it lights a room at night and shuts out
+// eyes that cannot take it.
+static inline int32_t myrtos_video_brightness(uint32_t percent)
+{
+    return myrtos_syscall(SYS_VIDSTAT, 0, 5, percent);
+}
+
 static inline int32_t myrtos_video_stats(uint32_t *sixteen)
 {
     return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)sixteen, 0, 0);

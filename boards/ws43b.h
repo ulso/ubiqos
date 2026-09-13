@@ -42,6 +42,13 @@
 #define MYRTOS_LCD_RST_PIN      19
 #define MYRTOS_LCD_EN_PIN       18
 #define MYRTOS_LCD_BL_PIN       40
+
+// Where the backlight starts, as a percentage. Not a hundred: this panel at
+// full brightness lights a room in the evening, and bright light is disabling
+// rather than merely unpleasant for some eyes -- cone dystrophy among them. A
+// screen nobody can look at shows nothing, so the comfortable setting is the
+// default and the bright one is asked for.
+#define MYRTOS_BACKLIGHT_DEFAULT 35u
 #define MYRTOS_LCD_PCLK_HZ      20000000u
 
 // --- TOUCH -----------------------------------------------------------------

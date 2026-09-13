@@ -121,7 +121,7 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     # the hibouair module already knows how to talk to. No kbddesc -- the `con`
     # shell reads the host's key queue directly, so a keyboard would work on it
     # without a descriptor, and there is one socket.
-    set(myrtosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch)
+    set(myrtosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch backlight)
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -248,6 +248,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardware_uart hardware_gpio hardware_spi pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
+    hardware_pwm
     hardware_i2c hardware_adc tinyusb_device)
 
 # TinyUSB looks for tusb_config.h on the include path.
@@ -1159,6 +1160,7 @@ myrtos_add_module(lsmod modules/lsmod/lsmod.c)
 myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
 myrtos_add_module(vidstat modules/vidstat/vidstat.c)
+myrtos_add_module(backlight modules/backlight/backlight.c)
 myrtos_add_module(pecho modules/pecho/pecho.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
