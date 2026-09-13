@@ -219,7 +219,11 @@ add_executable(os_kernel
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/usbh.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/hub.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/class/hid/hid_host.c
-    ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc/cdc_host.c
+    # Ours, and the only file of TinyUSB's that is. An unplugged CDC device
+    # asserts in cdch_xfer_cb, and that assert halts the core when a debugger is
+    # attached -- see lib/tinyusb-patched/README.md for the measurement and for
+    # how to re-sync this after an SDK upgrade.
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/class/cdc/cdc_host.c
     ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
 )
 
@@ -449,7 +453,11 @@ target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/include)
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/include
+    # Where our copy of cdc_host.c finds the header that used to sit beside it.
+    # A quoted include falls back to the include path, so the copy needs no edit
+    # of its own to compile from somewhere else.
+    ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc)
 
 # Enable extra warnings and optimisation for the RTOS
 target_compile_options(os_kernel PRIVATE -Wall -O2)
