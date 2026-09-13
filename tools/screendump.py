@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Print what is on the character-generator screen, read over the Debug Probe.
 
-    tools/screendump.py [build-dir]
+    tools/screendump.py [build-dir] [probe-serial]
+
+With two boards on the bench there are two probes, and OpenOCD picks one of
+them on its own. Reading one board's memory at the other board's addresses
+gives a screenful of mojibake that looks like a broken display and is not, so
+name the probe when more than one is attached. `ioreg -p IOUSB -l | grep -A2
+"Debug Probe"` lists the serials.
 
 For a board whose display cannot be photographed into a terminal -- and for
 checking a layout without asking anyone to squint at the panel. The chargen
@@ -17,6 +23,7 @@ import os, subprocess, sys
 OCD = os.path.expanduser("~/.pico-sdk/openocd/0.12.0+dev")
 TOOLCHAIN = os.path.expanduser("~/.pico-sdk/toolchain/15_2_Rel1/bin")
 BUILD = sys.argv[1] if len(sys.argv) > 1 else "build"
+PROBE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("MYRTOS_PROBE", "")
 COLS, ROWS, RING = 100, 30, 256          # as MYRTOS_CELL_* say for this panel
 
 
@@ -32,8 +39,10 @@ def symbol(name):
 
 def openocd(*commands):
     argv = [OCD + "/openocd", "-s", OCD + "/scripts",
-            "-f", "interface/cmsis-dap.cfg", "-f", "target/rp2350.cfg",
-            "-c", "adapter speed 5000", "-c", "init"]
+            "-f", "interface/cmsis-dap.cfg"]
+    if PROBE:
+        argv += ["-c", "adapter serial " + PROBE]
+    argv += ["-f", "target/rp2350.cfg", "-c", "adapter speed 5000", "-c", "init"]
     for c in commands:
         argv += ["-c", c]
     r = subprocess.run(argv + ["-c", "exit"], capture_output=True, text=True)
