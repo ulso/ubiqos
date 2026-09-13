@@ -85,6 +85,19 @@
 #define MYRTOS_USB_HOST_DP          0        // D- is GPIO1
 #define MYRTOS_HAS_USB_HOST_POWER   0
 
+// --- THE CARD ---------------------------------------------------------------
+//
+// A microSD slot on four data lines, from Waveshare's own pin table: SDIO_SCK
+// on GPIO10, SDIO_CMD on 11, and D0 to D3 on 12 through 15. The four data pins
+// are CONSECUTIVE from D0, which is what the driver requires -- it is given the
+// first and counts, so a board that scattered them could only be read one bit
+// at a time.
+//
+// The pins go to CMake rather than into this header, because the driver they
+// configure is third-party code that has never heard of a myrtos board header:
+// it reads PICO_SD_* as compile definitions and nothing else.
+#define MYRTOS_HAS_SD 1
+
 // --- WHAT IS ABSENT --------------------------------------------------------
 // No ESP32-C6, so no ESP-Hosted and no radio: lwIP here can only ever be the
 // USB cable. Nothing holds a hub, a DAC and a radio in reset either, so there
@@ -106,6 +119,8 @@
 // lie.
 #define MYRTOS_BOARD_FIXED_PINS                                              \
     { 0, "usb host" }, { 1, "usb host" },                                     \
+    { 10, "sd" }, { 11, "sd" }, { 12, "sd" }, { 13, "sd" },                   \
+    { 14, "sd" }, { 15, "sd" },                                               \
     { 18, "lcd" }, { 19, "lcd" }, { 20, "lcd" }, { 21, "lcd" },               \
     { 22, "lcd" }, { 23, "lcd" }, { 24, "lcd" }, { 25, "lcd" },               \
     { 26, "lcd" }, { 27, "lcd" }, { 28, "lcd" }, { 29, "lcd" },               \

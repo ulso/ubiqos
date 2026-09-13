@@ -350,6 +350,14 @@ bool myrtos_sd_try_sdio(void) {
         sdio_refused = false;
         needs_init = false;
     }
+#ifdef MYRTOS_SD_NO_SDIO
+    // A board whose PIO cannot be lent to the card. The driver takes pio1 by
+    // name, and on the Waveshare 4.3B pio1 is the panel's sync: the file server
+    // asks for SDIO at every boot, so without this the first thing a card in
+    // the slot did was have its driver load programs into the block that times
+    // the screen. Refused before a register is touched.
+    return false;
+#endif
     if (use_sdio) return true;
     if (sdio_refused) return false;     // the card is in SPI mode now
     sd_failed = false;

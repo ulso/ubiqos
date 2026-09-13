@@ -97,6 +97,9 @@ if(MYRTOS_BOARD STREQUAL "fruit-jam")
     set(myrtosBoardHeader "<boards/fruit-jam.h>")
     set(myrtosBoardRadio ON)
     set(myrtosBoardVideo chargen)     # or framebuffer; both exist here
+    # The same three the driver defaults to, written down rather than inherited:
+    # a default that happens to be right is a fact nobody can look up.
+    set(myrtosSdPins PICO_SD_CLK_PIN=23 PICO_SD_CMD_PIN=24 PICO_SD_DAT0_PIN=19)
     set(myrtosBoardModules
         fat32lib sdlib                # the SD card
         leddesc i2cdesc audiodesc adcdesc gpiodesc
@@ -121,7 +124,20 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     # the hibouair module already knows how to talk to. No kbddesc -- the `con`
     # shell reads the host's key queue directly, so a keyboard would work on it
     # without a descriptor, and there is one socket.
-    set(myrtosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch backlight)
+    # The card, on GPIO10-15 -- see boards/ws43b.h. Written here because
+    # third_party/pico_sd_card reads PICO_SD_* as compile definitions and has
+    # never heard of a board header; the module inherits the kernel's.
+    # SDIO's pins, for completeness -- but SDIO cannot run on this board: all
+    # three PIO blocks are spoken for (the USB host, and the panel's sync and
+    # pixels across two), the sd driver's own PIO is pio1 which the panel holds,
+    # and both panel blocks have their GPIO window moved to 16 and cannot reach
+    # these pins at all. The card is read over SPI here, which needs no PIO.
+    set(myrtosSdPins PICO_SD_CLK_PIN=10 PICO_SD_CMD_PIN=11 PICO_SD_DAT0_PIN=12
+                     MYRTOS_SD_NO_SDIO=1 MYRTOS_SD_SPI_INDEX=1
+                     MYRTOS_SD_SCK_PIN=10 MYRTOS_SD_MOSI_PIN=11
+                     MYRTOS_SD_MISO_PIN=12 MYRTOS_SD_CS_PIN=15)
+    set(myrtosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch backlight
+                           sdlib fat32lib)
 else()
     message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -292,6 +308,13 @@ target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardw
 #
 # THE RULE THAT COMES WITH IT is in the README under "What a handler above the
 # kernel may not do", and it is not optional.
+# Which pins the card is on. The board block chose them; they are applied here
+# because third_party/pico_sd_card reads PICO_SD_* as compile definitions, and
+# modules/sdlib inherits the kernel's definitions wholesale.
+if(myrtosSdPins)
+    target_compile_definitions(os_kernel PRIVATE ${myrtosSdPins})
+endif()
+
 set(MYRTOS_BASEPRI "0x80" CACHE STRING "priority value to mask down to; empty for PRIMASK")
 if(MYRTOS_BASEPRI)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_CRITICAL_BASEPRI=${MYRTOS_BASEPRI})
