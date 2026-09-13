@@ -30,7 +30,7 @@ RAM-only image gives the boot ROM nothing to switch on.
 Requires the Pico SDK 2.3.0 and a RISC-V toolchain.
 
 ```bash
-export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.3.0
+export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.3.1
 export PATH=$HOME/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin:$PATH
 cmake -S . -B build -G Ninja && ninja -C build
 ```
@@ -108,6 +108,25 @@ counter-intuitive: `-fPIC` creates a GOT, and the GOT entries are filled with
 addresses valid where the module was linked. A module loaded anywhere else then
 reads the wrong ones. `medany` instead gives `auipc`-based addressing, which is
 genuinely PC-relative.
+
+## Upgrading the Pico SDK
+
+**Two files of TinyUSB's are ours**, in
+[`lib/tinyusb-patched`](lib/tinyusb-patched): `class/cdc/cdc_host.c` and
+`host/hub.c`, each with one callback changed. `CMakeLists.txt` lists TinyUSB's
+host sources by path, so pointing two of them at our copies is the whole
+mechanism — there is no patch step and nothing to apply.
+
+Which means there is something to forget, so **the build refuses to configure**
+when `sdkVersion` and `myrtosPatchedFrom` disagree. It is not a warning: a stale
+copy is not a build error and not a wrong pixel, it is two fixes quietly gone,
+and the board hangs on an unplugged USB device exactly as it did before a day
+was spent finding out why.
+
+Re-syncing is two diffs and a number — the error says which — and
+[`lib/tinyusb-patched/README.md`](lib/tinyusb-patched/README.md) says what each
+change is and why, so it can be carried over or dropped if upstream has fixed
+it.
 
 [`docs/writing-modules.md`](docs/writing-modules.md) covers what this rules out
 in practice, which is less obvious than it sounds -- a switch returning string

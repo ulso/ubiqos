@@ -51,6 +51,11 @@ one the file already makes two cases further down.
 
 ## Re-syncing after an SDK upgrade
 
+`CMakeLists.txt` will not let you forget: it holds `myrtosPatchedFrom` beside
+the source list and **stops the configure** when that and `sdkVersion` differ.
+So this is not a note anybody has to remember to read — it is what the error
+tells you to come here for.
+
     SDK=~/.pico-sdk/sdk/<version>/lib/tinyusb/src
     diff $SDK/class/cdc/cdc_host.c lib/tinyusb-patched/class/cdc/cdc_host.c
     diff $SDK/host/hub.c           lib/tinyusb-patched/host/hub.c

@@ -174,6 +174,31 @@ if(MYRTOS_ARCH STREQUAL "riscv")
 else()
     set(MYRTOS_ARCH_KERNEL_SOURCES kernel/arm/scheduler.S kernel/arm/timer.c kernel/arm/stack.c)
 endif()
+# Which SDK the two copies below were taken from. If this and sdkVersion
+# disagree the build STOPS, and that is deliberate.
+#
+# A stale copy is not a build error and not a wrong pixel: it is two fixes
+# quietly gone, and the board hangs when a USB device is unplugged exactly
+# as it did before a day was spent finding out why. A note in a README does
+# not survive an upgrade six months from now; a build that refuses to
+# proceed does.
+#
+# Re-syncing is two diffs and a number. See lib/tinyusb-patched/README.md.
+set(myrtosPatchedFrom 2.3.1)
+if(NOT myrtosPatchedFrom STREQUAL sdkVersion)
+    message(FATAL_ERROR
+        "lib/tinyusb-patched holds copies of TinyUSB ${myrtosPatchedFrom} and "
+        "this build uses ${sdkVersion}.\n"
+        "  Two files are patched: class/cdc/cdc_host.c and host/hub.c. Diff each "
+        "against the new SDK, carry the change over -- each is one callback -- "
+        "and set myrtosPatchedFrom to ${sdkVersion}.\n"
+        "  If upstream has fixed them, delete the copy, put the SDK's path back "
+        "in the list below, and say so in lib/tinyusb-patched/README.md.\n"
+        "  What is at stake: without these, an unplugged CDC device halts the "
+        "core the USB host runs on, and one failed hub transfer makes every "
+        "device behind the hub unremovable for the rest of the run.")
+endif()
+
 
 add_executable(os_kernel 
     kernel/crashlog.c
