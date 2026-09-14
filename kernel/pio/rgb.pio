@@ -41,6 +41,16 @@
 pull block side 1       ; the height, minus one
 
 .wrap_target
+; The count of active lines has just run out. That is as the LAST line begins,
+; not after it ends -- this machine counts hsync pulses, and a line's pulse
+; comes before its pixels -- and then the pixels stand still for the porches and
+; the pulse, about four milliseconds. Said to the CPU as IRQ 0, because the band
+; pump counts rows by counting its own interrupts, and a count that lost one
+; stayed wrong: the whole picture moved down sixteen lines for every band drawn
+; late, and stayed there. videorgb.c checks the count here, and tells from the
+; DMA's read address whether the last band has finished yet. One instruction,
+; at full speed: nothing here is timed by it.
+irq set 0 side 1
 set x, T1 side 1
 front:
     wait 1 irq 2 side 1

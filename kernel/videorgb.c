@@ -65,6 +65,7 @@ void myrtos_print_u32(uint32_t v);
 static uint16_t band[2][BAND_PIXELS] __attribute__((aligned(4)));
 static int ch[2];                 // one DMA channel per band, each chaining to the other
 static volatile uint32_t next_row;  // the cell row the finished band will be redrawn as
+static uint32_t band_row[2];        // which row each band holds, for the check at frame start
 
 // How many bands the panel has asked for and how many were ready in time. A
 // band drawn late is a band of the previous frame shown twice, which is a
@@ -419,12 +420,11 @@ static uint32_t pump_us_worst;
 static uint32_t pump_period_us;
 static uint32_t pump_last_us;
 
-static void on_band_done(void)
+// The bands that have finished since last asked. Shared by the band interrupt
+// and the frame-start one below, which has to account for a band that finished
+// just before it before it can judge whether the count is right.
+static void service_bands(void)
 {
-    const uint32_t t0 = time_us_32();
-    if (pump_last_us) pump_period_us = t0 - pump_last_us;
-    pump_last_us = t0;
-
     for (uint32_t i = 0; i < 2; i++) {
         if (!(dma_hw->ints0 & (1u << ch[i]))) continue;
         dma_hw->ints0 = 1u << ch[i];
@@ -441,13 +441,98 @@ static void on_band_done(void)
 
         // Two rows ahead: this band will be read again after the other one, so
         // it must hold the row after the row now going out.
-        draw_band(i, (next_row + 1u) % MYRTOS_CELL_ROWS);
-        next_row = (next_row + 1u) % MYRTOS_CELL_ROWS;
+        const uint32_t row = (next_row + 1u) % MYRTOS_CELL_ROWS;
+        draw_band(i, row);
+        band_row[i] = row;
+        next_row = row;
     }
+}
 
+static void pump_account(uint32_t t0)
+{
     const uint32_t took = time_us_32() - t0;
     pump_us_total += took;
     if (took > pump_us_worst) pump_us_worst = took;
+}
+
+static void on_band_done(void)
+{
+    const uint32_t t0 = time_us_32();
+    if (pump_last_us) pump_period_us = t0 - pump_last_us;
+    pump_last_us = t0;
+    service_bands();
+    pump_account(t0);
+}
+
+// Once a frame, as vertical blanking begins: is the row count still right?
+//
+// It is a count of interrupts, and an interrupt can be lost. Each DMA channel
+// has ONE completion bit, so a pump call that runs longer than two bands -- a
+// scene with a chart took 2482 us, switching tabs -- lets a channel finish twice
+// and be counted once. From then on every band was drawn as the row above the
+// one the beam was on, and the picture stood sixteen lines down for good; a
+// second loss made it thirty-two. Nothing noticed, because myrtos_video_late was
+// declared and never incremented.
+//
+// So the count is checked once a frame, at the one place its answer is known.
+// The vsync machine raises IRQ 0 when its count of active lines runs out, which
+// is as the last line begins; the pixels then stand still for about four
+// milliseconds of blanking. Depending on how quickly this runs, the busy
+// channel is either finishing row 29 or already stalled on row 0, and the
+// channel's read address says which. If the bands and the count disagree with
+// that, the bands nobody is reading are drawn again, the count is put right, and
+// it is counted as late. In step, this costs a few register reads a frame.
+static void on_frame_start(void)
+{
+    const uint32_t t0 = time_us_32();
+    pio_interrupt_clear(PIO_SYNC, 0);
+    service_bands();
+
+    const bool busy0 = dma_channel_is_busy(ch[0]);
+    const bool busy1 = dma_channel_is_busy(ch[1]);
+    if (busy0 == busy1) return;              // the pixels have not started yet
+
+    const uint32_t going = busy0 ? 0u : 1u;
+    const uint32_t other = 1u - going;
+
+    // Which side of the frame's last band this is, from how far the busy
+    // channel has read. A few pixels in, it is row 0, stalled for the blanking.
+    // Most of the way through, it is still row 29: the interrupt came as the
+    // last line began, which is when vsync's count of lines runs out.
+    //
+    // Assuming the first cost a band every frame. Measured on the history
+    // page: 459 corrections in twelve seconds, a redraw of the band the beam
+    // was reading each time, a flicker above the arrows, and a correction long
+    // enough -- 2466 us -- to lose a real interrupt of its own.
+    const uint32_t read =
+        (uint32_t)((uintptr_t)dma_hw->ch[ch[going]].read_addr - (uintptr_t)band[going]) / 2u;
+
+    if (read < BAND_PIXELS / 2u) {
+        if (band_row[going] == 0u && band_row[other] == 1u && next_row == 1u) {
+            pump_account(t0);
+            return;
+        }
+        // Both are still: nothing reads either until the first line.
+        myrtos_video_late++;
+        draw_band(going, 0);
+        band_row[going] = 0;
+        draw_band(other, 1);
+        band_row[other] = 1;
+        next_row = 1;
+    } else {
+        const uint32_t last = MYRTOS_CELL_ROWS - 1u;
+        if (band_row[going] == last && band_row[other] == 0u && next_row == 0u) {
+            pump_account(t0);
+            return;
+        }
+        // The last band is going out and is left alone, whatever it holds; the
+        // one to follow it is made row 0 of the next frame.
+        myrtos_video_late++;
+        draw_band(other, 0);
+        band_row[other] = 0;
+        next_row = 0;
+    }
+    pump_account(t0);
 }
 
 // Configured, NOT started. Starting it before the state machines cost a boot:
@@ -526,7 +611,11 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
     sixteen[8]  = myrtos_chargen_deep();
     sixteen[10] = pump_us_total;
     sixteen[11] = pump_us_worst;
-    sixteen[13] = myrtos_video_late;
+    // Slot 0 is what vidstat prints as underruns, and a frame whose row count
+    // had to be put right is this panel's underrun. It sat in slot 13, which
+    // vidstat labels "Glyph rows built" -- where nobody would have looked.
+    sixteen[0]  = myrtos_video_late;
+
     sixteen[15] = pump_period_us;
 }
 
@@ -566,6 +655,8 @@ void myrtos_video_init(void)
     // The first two rows, before anything is scanning them out.
     draw_band(0, 0);
     draw_band(1, 1);
+    band_row[0] = 0;
+    band_row[1] = 1;
     next_row = 1;
 
     panel_wake();
@@ -625,6 +716,15 @@ void myrtos_video_init(void)
     if (!ok) { myrtos_print("lcd: not started\n"); return; }
 
     dma_setup(sm_data);
+
+    // The frame-start check, on IRQ 0 of the sync block -- see on_frame_start.
+    // At the band interrupt's priority, so neither can run inside the other and
+    // the row count has one writer at a time.
+    pio_set_irq0_source_enabled(PIO_SYNC, pis_interrupt0, true);
+    irq_add_shared_handler(PIO_IRQ_NUM(PIO_SYNC, 0), on_frame_start,
+                           PICO_SHARED_IRQ_HANDLER_DEFAULT_ORDER_PRIORITY);
+    irq_set_priority(PIO_IRQ_NUM(PIO_SYNC, 0), 0xc0);
+    irq_set_enabled(PIO_IRQ_NUM(PIO_SYNC, 0), true);
 
     // Each machine is told how far to count before any of them runs.
     pio_sm_put_blocking(PIO_SYNC, sm_hsync, RGB_W - 1u);
