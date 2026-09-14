@@ -114,8 +114,13 @@ int32_t myrtos_video_set_scene(const myrtos_draw_item_t *items, uint32_t count)
     if (!items || !count) { scene_count = 0; scene = 0; return 0; }
 
     if (in_psram(items)) return -1;
-    for (uint32_t i = 0; i < count; i++)
+    for (uint32_t i = 0; i < count; i++) {
+        // A kind this kernel does not know would be drawn as whatever the last
+        // branch below is, out of an array of the wrong size. Refused instead.
+        if (items[i].kind > MYRTOS_DRAW_PLOT_LINE) return -1;
+        if (items[i].kind >= MYRTOS_DRAW_PLOT_FILL && items[i].h > 255u) return -1;
         if (items[i].kind != MYRTOS_DRAW_RECT && in_psram(items[i].data)) return -1;
+    }
 
     scene_count = 0;
     scene = items;
@@ -169,6 +174,66 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
     if (x1 > (int32_t)RGB_W) x1 = (int32_t)RGB_W;
     if (y1 > (int32_t)(y0 + lines)) y1 = (int32_t)(y0 + lines);
     if (x0 >= x1 || y >= y1) return;
+
+    // A curve, drawn a COLUMN at a time rather than a line at a time.
+    //
+    // Line by line was the obvious shape, since everything else here is, and it
+    // cost 1625 us a band against a deadline of 719, measured on a 656-column
+    // chart: every line tested every column, twice over for the fill and the
+    // stroke, which is twenty thousand tests a band before a pixel is written.
+    // A column knows at once which of the band's lines it lights, so the test is
+    // made once a column and only the lit pixels are touched.
+    if (it->kind == MYRTOS_DRAW_PLOT_FILL || it->kind == MYRTOS_DRAW_PLOT_LINE) {
+        const uint8_t *top = (const uint8_t *)it->data;
+        const int32_t first = y - it->y;           // item rows this band covers
+        const int32_t last  = y1 - it->y;          //   (exclusive)
+        const int32_t down  = (int32_t)RGB_W;      // one row further in the band
+        const uint16_t colour = it->colour;
+
+        if (it->kind == MYRTOS_DRAW_PLOT_FILL) {
+            // The row from which every column in reach is lit. Below it the
+            // band is a flat run of the fill colour, and fill_span does that
+            // two pixels a word; only above it do columns differ.
+            int32_t all = first;
+            for (int32_t sx = x0; sx < x1; sx++) {
+                const int32_t t = top[sx - it->x];
+                if (t == (int32_t)MYRTOS_PLOT_NONE) { all = last; break; }
+                if (t > all) all = t;
+            }
+            if (all > last) all = last;
+
+            for (int32_t sx = x0; sx < x1; sx++) {
+                const int32_t t = top[sx - it->x];
+                if (t == (int32_t)MYRTOS_PLOT_NONE) continue;
+                const int32_t from = t < first ? first : t;
+                if (from >= all) continue;
+                uint16_t *p = base + (uint32_t)(from + it->y - (int32_t)y0) * RGB_W + (uint32_t)sx;
+                for (int32_t r = from; r < all; r++, p += down) *p = colour;
+            }
+            for (int32_t r = all; r < last; r++)
+                fill_span(base + (uint32_t)(r + it->y - (int32_t)y0) * RGB_W + (uint32_t)x0,
+                          (uint32_t)(x1 - x0), colour);
+        } else {
+            // Each column from the previous column's row to its own, one row
+            // deeper, so a flat stretch is two pixels thick and a spike is a
+            // connected stroke up and down.
+            for (int32_t sx = x0; sx < x1; sx++) {
+                const uint32_t u = (uint32_t)(sx - it->x);
+                const int32_t t = top[u];
+                if (t == (int32_t)MYRTOS_PLOT_NONE) continue;
+                int32_t prev = u ? top[u - 1] : t;
+                if (prev == (int32_t)MYRTOS_PLOT_NONE) prev = t;
+                int32_t from = prev < t ? prev : t;
+                int32_t to   = (prev < t ? t : prev) + 2;      // exclusive
+                if (from < first) from = first;
+                if (to > last) to = last;
+                if (from >= to) continue;
+                uint16_t *p = base + (uint32_t)(from + it->y - (int32_t)y0) * RGB_W + (uint32_t)sx;
+                for (int32_t r = from; r < to; r++, p += down) *p = colour;
+            }
+        }
+        return;
+    }
 
     for (int32_t sy = y; sy < y1; sy++) {
         uint16_t *row = base + (uint32_t)(sy - (int32_t)y0) * RGB_W;

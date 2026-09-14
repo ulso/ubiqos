@@ -1286,6 +1286,24 @@ typedef struct {
                                 //   application no font of its own: the glyphs
                                 //   are the kernel's, already in SRAM, and only
                                 //   the big figures need masks.
+#define MYRTOS_DRAW_PLOT_FILL 4u // a curve, filled beneath it. `data` is `w`
+                                 //   bytes, one a column: the row, counted down
+                                 //   from `y`, where the curve is in that
+                                 //   column, 0 to h - 1, or MYRTOS_PLOT_NONE for
+                                 //   a column with no reading. From that row to
+                                 //   the bottom of the item is `colour`.
+#define MYRTOS_DRAW_PLOT_LINE 5u // the same bytes, drawn as the curve itself:
+                                 //   each column lit from the previous column's
+                                 //   row to its own, two pixels deep, so a steep
+                                 //   rise is a stroke and not a scatter of dots.
+                                 //
+                                 //   Two kinds over one array, so a chart is its
+                                 //   fill and its line for `w` bytes of SRAM --
+                                 //   drawn as rectangles it was two a column,
+                                 //   sixteen bytes each, against five kilobytes
+                                 //   free. `h` is at most 255, which is what a
+                                 //   byte can count.
+#define MYRTOS_PLOT_NONE      0xffu
 
 typedef struct {
     uint16_t kind;
