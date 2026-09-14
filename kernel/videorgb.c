@@ -200,58 +200,99 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
     // Line by line was the obvious shape, since everything else here is, and it
     // cost 1625 us a band against a deadline of 719, measured on a 656-column
     // chart: every line tested every column, twice over for the fill and the
-    // stroke, which is twenty thousand tests a band before a pixel is written.
-    // A column knows at once which of the band's lines it lights, so the test is
-    // made once a column and only the lit pixels are touched.
+    // stroke. A column knows at once which of the band's lines it lights, so the
+    // test is made once a column and only the lit pixels are touched.
+    //
+    // A column is TWO pixels wide, so a lit column is one 32-bit store rather
+    // than two 16-bit ones, and there are half as many columns to walk. A chart
+    // of 504 readings across 656 pixels loses nothing it could show.
+    //
+    // And everything the loops need is copied out of the item first. A store
+    // through a uint16_t pointer might, as far as the compiler can tell, change
+    // the item's int16_t fields -- so it read x and y back from the item and
+    // multiplied out the row again for every column. The disassembly showed it:
+    // twenty instructions a column around a four-instruction store, and a curve
+    // line that cost 245 us for two thousand pixels.
     if (it->kind == MYRTOS_DRAW_PLOT_FILL || it->kind == MYRTOS_DRAW_PLOT_LINE) {
-        const uint8_t *top = (const uint8_t *)it->data;
-        const int32_t first = y - it->y;           // item rows this band covers
-        const int32_t last  = y1 - it->y;          //   (exclusive)
-        const int32_t down  = (int32_t)RGB_W;      // one row further in the band
+        const int32_t ix = it->x, iy = it->y;
         const uint16_t colour = it->colour;
+        const uint32_t pair = (uint32_t)colour * 0x00010001u;
+        const uint8_t *top = (const uint8_t *)it->data;
+        const int32_t first = y - iy;              // item rows this band covers
+        const int32_t last  = y1 - iy;             //   (exclusive)
+
+        // Where each of those rows starts in the band buffer. A band row is
+        // RGB_W halfwords from the last, which is a whole number of words, so a
+        // pixel at an even x is word-aligned on every row.
+        uint16_t *row_at[BAND_LINES];
+        for (int32_t r = first; r < last; r++)
+            row_at[r - first] = base + (uint32_t)(r + iy - (int32_t)y0) * RGB_W;
+        const uint32_t word_down = RGB_W / 2u;
+
+        const int32_t c0 = (x0 - ix) / 2;
+        const int32_t c1 = (x1 - ix + 1) / 2;
+
+        // Rows from..to-1 of one column, clipped to x0..x1 at the chart's edges.
+        #define PLOT_COLUMN(c, from, to)                                          \
+            do {                                                                  \
+                int32_t a = ix + 2 * (c), b = a + 2;                              \
+                if (a < x0) a = x0;                                               \
+                if (b > x1) b = x1;                                               \
+                if (b - a == 2 && !(a & 1)) {                                     \
+                    uint32_t *w = (uint32_t *)(row_at[(from) - first] + a);       \
+                    for (int32_t r = (from); r < (to); r++, w += word_down)       \
+                        *w = pair;                                                \
+                } else {                                                          \
+                    for (int32_t r = (from); r < (to); r++)                       \
+                        for (int32_t x = a; x < b; x++) row_at[r - first][x] = colour; \
+                }                                                                 \
+            } while (0)
 
         if (it->kind == MYRTOS_DRAW_PLOT_FILL) {
             // The row from which every column in reach is lit. Below it the
             // band is a flat run of the fill colour, and fill_span does that
             // two pixels a word; only above it do columns differ.
+            //
+            // Runs along each line were tried instead -- which columns are lit
+            // answered four at a time -- and cost 2.2 ms on a band this does in
+            // far less: a noisy curve alternates lit and dark nearly every
+            // column on the lines it crosses, and hundreds of short runs a line
+            // were hundreds of calls. A store a column has no cost a run.
             int32_t all = first;
-            for (int32_t sx = x0; sx < x1; sx++) {
-                const int32_t t = top[sx - it->x];
+            for (int32_t c = c0; c < c1; c++) {
+                const int32_t t = top[c];
                 if (t == (int32_t)MYRTOS_PLOT_NONE) { all = last; break; }
                 if (t > all) all = t;
             }
             if (all > last) all = last;
 
-            for (int32_t sx = x0; sx < x1; sx++) {
-                const int32_t t = top[sx - it->x];
+            for (int32_t c = c0; c < c1; c++) {
+                const int32_t t = top[c];
                 if (t == (int32_t)MYRTOS_PLOT_NONE) continue;
                 const int32_t from = t < first ? first : t;
                 if (from >= all) continue;
-                uint16_t *p = base + (uint32_t)(from + it->y - (int32_t)y0) * RGB_W + (uint32_t)sx;
-                for (int32_t r = from; r < all; r++, p += down) *p = colour;
+                PLOT_COLUMN(c, from, all);
             }
             for (int32_t r = all; r < last; r++)
-                fill_span(base + (uint32_t)(r + it->y - (int32_t)y0) * RGB_W + (uint32_t)x0,
-                          (uint32_t)(x1 - x0), colour);
+                fill_span(row_at[r - first] + x0, (uint32_t)(x1 - x0), colour);
         } else {
             // Each column from the previous column's row to its own, one row
             // deeper, so a flat stretch is two pixels thick and a spike is a
             // connected stroke up and down.
-            for (int32_t sx = x0; sx < x1; sx++) {
-                const uint32_t u = (uint32_t)(sx - it->x);
-                const int32_t t = top[u];
+            for (int32_t c = c0; c < c1; c++) {
+                const int32_t t = top[c];
                 if (t == (int32_t)MYRTOS_PLOT_NONE) continue;
-                int32_t prev = u ? top[u - 1] : t;
+                int32_t prev = c ? top[c - 1] : t;
                 if (prev == (int32_t)MYRTOS_PLOT_NONE) prev = t;
                 int32_t from = prev < t ? prev : t;
                 int32_t to   = (prev < t ? t : prev) + 2;      // exclusive
                 if (from < first) from = first;
                 if (to > last) to = last;
                 if (from >= to) continue;
-                uint16_t *p = base + (uint32_t)(from + it->y - (int32_t)y0) * RGB_W + (uint32_t)sx;
-                for (int32_t r = from; r < to; r++, p += down) *p = colour;
+                PLOT_COLUMN(c, from, to);
             }
         }
+        #undef PLOT_COLUMN
         return;
     }
 

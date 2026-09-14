@@ -1286,19 +1286,22 @@ typedef struct {
                                 //   application no font of its own: the glyphs
                                 //   are the kernel's, already in SRAM, and only
                                 //   the big figures need masks.
-#define MYRTOS_DRAW_PLOT_FILL 4u // a curve, filled beneath it. `data` is `w`
+#define MYRTOS_DRAW_PLOT_FILL 4u // a curve, filled beneath it. A column is TWO
+                                 //   pixels wide, and `data` is (w + 1) / 2
                                  //   bytes, one a column: the row, counted down
                                  //   from `y`, where the curve is in that
                                  //   column, 0 to h - 1, or MYRTOS_PLOT_NONE for
                                  //   a column with no reading. From that row to
-                                 //   the bottom of the item is `colour`.
+                                 //   the bottom of the item is `colour`. Put `x`
+                                 //   on an even pixel and each column is one
+                                 //   32-bit store a row.
 #define MYRTOS_DRAW_PLOT_LINE 5u // the same bytes, drawn as the curve itself:
                                  //   each column lit from the previous column's
                                  //   row to its own, two pixels deep, so a steep
                                  //   rise is a stroke and not a scatter of dots.
                                  //
                                  //   Two kinds over one array, so a chart is its
-                                 //   fill and its line for `w` bytes of SRAM --
+                                 //   fill and its line for w / 2 bytes of SRAM --
                                  //   drawn as rectangles it was two a column,
                                  //   sixteen bytes each, against five kilobytes
                                  //   free. `h` is at most 255, which is what a
