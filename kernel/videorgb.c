@@ -85,6 +85,25 @@ uint32_t myrtos_video_pumps, myrtos_video_late;
 static const myrtos_draw_item_t *scene;
 static volatile uint32_t scene_count;
 
+// The costliest band since vidstat last asked, and which row it was. The worst
+// single call says there is a problem; this says where on the screen it is.
+static uint32_t band_worst_us, band_worst_row;
+
+// And what it went on, by draw kind -- the band just drawn, and the worst. The
+// costliest band's total said a curve's band cost a millisecond; which part of
+// it did is the only thing that says what to change, and two guesses at that
+// were wrong before this was measured.
+static uint32_t band_kind_us[6], band_worst_kind_us[6];
+
+static inline void note_band(uint32_t row, uint32_t us)
+{
+    if (us > band_worst_us) {
+        band_worst_us = us;
+        band_worst_row = row;
+        for (uint32_t k = 0; k < 6; k++) band_worst_kind_us[k] = band_kind_us[k];
+    }
+}
+
 // A scene must live in SRAM, all of it, and this REFUSES one that does not.
 //
 // The interrupt reads the list and every bitmap in it, and nothing reached from
@@ -329,11 +348,21 @@ static void draw_band(uint32_t which, uint32_t row)
                              first->x + (int32_t)first->w >= (int32_t)RGB_W &&
                              first->y <= (int32_t)y0 &&
                              first->y + (int32_t)first->h >= (int32_t)(y0 + BAND_LINES);
+        for (uint32_t k = 0; k < 6; k++) band_kind_us[k] = 0;
+        uint32_t then = time_us_32();
         if (!covered) fill_span(base, BAND_PIXELS, 0);
+        uint32_t now = time_us_32();
+        band_kind_us[MYRTOS_DRAW_RECT] += now - then;
 
-        for (uint32_t i = 0; i < n; i++)
+        for (uint32_t i = 0; i < n; i++) {
+            const uint32_t kind = scene[i].kind <= MYRTOS_DRAW_PLOT_LINE ? scene[i].kind : 0u;
+            then = now;
             draw_item_into(&scene[i], y0, BAND_LINES, base);
+            now = time_us_32();
+            band_kind_us[kind] += now - then;
+        }
     } else {
+        for (uint32_t k = 0; k < 6; k++) band_kind_us[k] = 0;
         myrtos_chargen_band16(row * MYRTOS_CELL_H, band[which]);
     }
     myrtos_video_pumps++;
@@ -442,7 +471,9 @@ static void service_bands(void)
         // Two rows ahead: this band will be read again after the other one, so
         // it must hold the row after the row now going out.
         const uint32_t row = (next_row + 1u) % MYRTOS_CELL_ROWS;
+        const uint32_t d0 = time_us_32();
         draw_band(i, row);
+        note_band(row, time_us_32() - d0);
         band_row[i] = row;
         next_row = row;
     }
@@ -616,6 +647,20 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
     // vidstat labels "Glyph rows built" -- where nobody would have looked.
     sixteen[0]  = myrtos_video_late;
 
+    // The costliest band since the last ask, as its microseconds above the row
+    // plus one, so that zero still means nothing to report. Cleared on reading:
+    // a worst-since-boot hides whether the page on the screen now is the costly
+    // one.
+    sixteen[12] = band_worst_us ? (band_worst_us << 8) | (band_worst_row + 1u) : 0u;
+
+    // Its breakdown, in slots the character generator's own figures use on the
+    // other board; vidstat prints these instead of those when slot 12 is set.
+    sixteen[2]  = band_worst_kind_us[MYRTOS_DRAW_RECT];
+    sixteen[4]  = band_worst_kind_us[MYRTOS_DRAW_MASK];
+    sixteen[5]  = band_worst_kind_us[MYRTOS_DRAW_TEXT];
+    sixteen[13] = band_worst_kind_us[MYRTOS_DRAW_PLOT_FILL];
+    sixteen[14] = band_worst_kind_us[MYRTOS_DRAW_PLOT_LINE];
+    band_worst_us = 0;
     sixteen[15] = pump_period_us;
 }
 

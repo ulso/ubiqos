@@ -131,10 +131,14 @@ void module_main(int argc, char **argv) {
     row("Scrolled back:     ", s[6], " rows");
     row("History to go back:", s[7], " rows");
     row("  of which in PSRAM:", s[8], " rows");
-    row("Beam is at line:   ", s[4], "");
-    row("Built up to line:  ", s[5], "");
+    // A panel that reports its costliest band (slot 12) uses slots 2, 4, 5, 13
+    // and 14 for that band's breakdown, and has no beam line or glyph rows.
+    if (!s[12]) {
+        row("Beam is at line:   ", s[4], "");
+        row("Built up to line:  ", s[5], "");
+    }
     row("Pumps:             ", s[1], "");
-    row("Scanlines built:   ", s[2], "");
+    if (!s[12]) row("Scanlines built:   ", s[2], "");
     // What it costs. PUMP_US is 500, so pumps*500 is the elapsed time the
     // display has been asked about, and the share of it spent inside the
     // interrupt is the number that decides whether anything else can run.
@@ -148,9 +152,24 @@ void module_main(int argc, char **argv) {
     row("Time in the pump:  ", s[10] / 1000, " ms");
     row("  pump period:     ", s[15], " us");
     row("  worst one call:  ", s[11], " us");
+    // The RGB panel's pump draws bands of a scene, and the costliest band since
+    // the last time this was asked says WHERE a scene is expensive -- the worst
+    // call since boot only says that something once was. Zero from a display
+    // that does not keep it.
+    if (s[12]) {
+        row("  costliest band:  ", s[12] >> 8, " us");
+        row("    on row:        ", (s[12] & 0xffu) - 1u, "");
+        row("    rectangles:    ", s[2], " us");
+        row("    text:          ", s[5], " us");
+        row("    masks:         ", s[4], " us");
+        row("    curve fill:    ", s[13], " us");
+        row("    curve line:    ", s[14], " us");
+    }
     if (s[1] && s[15]) row("  share of the CPU:", (s[10] / 8) * 100 / (s[1] * s[15] / 8), " %");
-    row("Glyph rows built:  ", s[13], "");
-    row("Single lines built:", s[14], "");
+    if (!s[12]) {
+        row("Glyph rows built:  ", s[13], "");
+        row("Single lines built:", s[14], "");
+    }
     row("Underruns:         ", s[0], "");
     if (s[0]) row("  first at pump:   ", s[9], "");
 
