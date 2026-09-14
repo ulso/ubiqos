@@ -338,23 +338,36 @@ static void draw_band(uint32_t which, uint32_t row)
         const uint32_t y0 = row * MYRTOS_CELL_H;
         uint16_t *base = band[which];
 
-        // Cleared only when nothing is going to cover it anyway. A scene whose
-        // first item is a rectangle over the whole band -- which is what a
-        // background is -- would otherwise have the band written twice before
-        // anything of interest went on it.
-        const myrtos_draw_item_t *first = &scene[0];
-        const bool covered = first->kind == MYRTOS_DRAW_RECT &&
-                             first->x <= 0 &&
-                             first->x + (int32_t)first->w >= (int32_t)RGB_W &&
-                             first->y <= (int32_t)y0 &&
-                             first->y + (int32_t)first->h >= (int32_t)(y0 + BAND_LINES);
+        // Drawing starts at the LAST rectangle that covers the whole band,
+        // because nothing listed before it can show, and the band is cleared
+        // only when there is no such rectangle at all.
+        //
+        // It used to look at the first item alone, which is the background. A
+        // card drawn over the background then filled the same band twice --
+        // measured at 272 us of rectangles on the band of a chart where the
+        // deadline is 719 -- and a scene can avoid that only if the kernel
+        // looks for the covering rectangle wherever it is in the list.
+        uint32_t start = 0;
+        bool covered = false;
+        for (uint32_t i = n; i-- > 0; ) {
+            const myrtos_draw_item_t *it = &scene[i];
+            if (it->kind == MYRTOS_DRAW_RECT &&
+                it->x <= 0 &&
+                it->x + (int32_t)it->w >= (int32_t)RGB_W &&
+                it->y <= (int32_t)y0 &&
+                it->y + (int32_t)it->h >= (int32_t)(y0 + BAND_LINES)) {
+                start = i;
+                covered = true;
+                break;
+            }
+        }
         for (uint32_t k = 0; k < 6; k++) band_kind_us[k] = 0;
         uint32_t then = time_us_32();
         if (!covered) fill_span(base, BAND_PIXELS, 0);
         uint32_t now = time_us_32();
         band_kind_us[MYRTOS_DRAW_RECT] += now - then;
 
-        for (uint32_t i = 0; i < n; i++) {
+        for (uint32_t i = start; i < n; i++) {
             const uint32_t kind = scene[i].kind <= MYRTOS_DRAW_PLOT_LINE ? scene[i].kind : 0u;
             then = now;
             draw_item_into(&scene[i], y0, BAND_LINES, base);
