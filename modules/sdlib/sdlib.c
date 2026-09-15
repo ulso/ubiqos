@@ -58,7 +58,16 @@ void myrtos_print_u32(uint32_t v);
 // So a removed card has to be noticed by the card no longer answering, not by
 // asking the slot. That is the more robust test anyway -- a card can stop
 // answering without being pulled.
-#define SD_DETECT_PIN 33      // defined for the record; nothing reads it
+//
+// And the pin is not touched at all. It used to be made an input with a pull-up
+// at every SPI mount, on every board, for the sake of a reading nothing takes --
+// and on the Waveshare 4.3B GPIO33 is not a card detect but the panel's green
+// bit 4. The mount took it away from the pixel machine and held it high, and
+// from the day the card was enabled there every dark colour came out green:
+// the ground 0x080808 as a mid green, the cards a lighter one, while white and
+// amber, which have that bit set anyway, looked right. Found on 15 Sep 2026 by
+// reading GPIO33's function select over the probe -- SIO with a pull-up, high
+// in 50 samples of 50, where its neighbours were PIO2.
 
 #define CMD0_GO_IDLE          0
 #define CMD8_SEND_IF_COND     8
@@ -106,9 +115,6 @@ static bool spi_init_card(void) {
     gpio_init(SD_CS_PIN);
     gpio_set_dir(SD_CS_PIN, GPIO_OUT);
     cs_high();
-    gpio_init(SD_DETECT_PIN);
-    gpio_set_dir(SD_DETECT_PIN, GPIO_IN);
-    gpio_pull_up(SD_DETECT_PIN);
 
     // Initialisation has to be slow: the standard allows at most 400 kHz
     // before the card has said what it can take.
