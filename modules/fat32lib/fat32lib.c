@@ -59,6 +59,19 @@ static uint8_t sector[512] __attribute__((aligned(4)));
 // have them overwrite each other.
 static uint8_t fatbuf[512] __attribute__((aligned(4)));
 
+// Which FAT sector fatbuf holds, if any. fat_get read a sector from the card for
+// every entry, and entries come 128 to a sector, so following a chain or
+// looking for a free cluster read the same sector again and again: a 385 kB
+// file took four minutes to write, and the next file longer than that. Every
+// write to the FAT goes through fat_put, which writes fatbuf itself, so the
+// copy stays true. A mount forgets it -- the host may have written the card.
+static uint32_t fatbuf_lba = UINT32_MAX;
+
+// Where the search for a free cluster starts: just after the last one found.
+// It used to start at cluster 2 every time, which made giving a file its
+// clusters cost the square of its length.
+static uint32_t alloc_hint = 2;
+
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static uint32_t rd32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -67,6 +80,8 @@ static uint32_t rd32(const uint8_t *p) {
 void myrtos_fat_forget_read_cache(void);   // defined with the cache, below
 
 bool myrtos_fat_mount(void) {
+    fatbuf_lba = UINT32_MAX;
+    alloc_hint = 2;
     myrtos_fat_forget_read_cache();
     mounted = false;
 
@@ -618,7 +633,11 @@ static void wr32(uint8_t *p, uint32_t v) {
 
 static uint32_t fat_get(uint32_t cluster) {
     uint32_t offset = cluster * 4;
-    if (!K->sd_read_block(fat_start_lba + offset / 512, fatbuf)) return 0x0fffffff;
+    const uint32_t lba = fat_start_lba + offset / 512;
+    if (lba != fatbuf_lba) {
+        if (!K->sd_read_block(lba, fatbuf)) { fatbuf_lba = UINT32_MAX; return 0x0fffffff; }
+        fatbuf_lba = lba;
+    }
     return rd32(&fatbuf[offset % 512]) & 0x0fffffff;
 }
 
@@ -628,14 +647,22 @@ static uint32_t fat_get(uint32_t cluster) {
 static bool fat_put(uint32_t cluster, uint32_t value) {
     uint32_t offset = cluster * 4;
     uint32_t lba = fat_start_lba + offset / 512;
-    if (!K->sd_read_block(lba, fatbuf)) return false;
+    if (lba != fatbuf_lba) {
+        if (!K->sd_read_block(lba, fatbuf)) { fatbuf_lba = UINT32_MAX; return false; }
+        fatbuf_lba = lba;
+    }
 
     // The top four bits are reserved and must be preserved, not overwritten.
     uint32_t old = rd32(&fatbuf[offset % 512]);
     wr32(&fatbuf[offset % 512], (old & 0xf0000000u) | (value & 0x0fffffffu));
 
+    // A failed write leaves fatbuf saying something the card may not, so it is
+    // no longer taken as the card's copy.
     for (uint32_t f = 0; f < num_fats; f++) {
-        if (!K->sd_write_block(lba + f * sectors_per_fat, fatbuf)) return false;
+        if (!K->sd_write_block(lba + f * sectors_per_fat, fatbuf)) {
+            fatbuf_lba = UINT32_MAX;
+            return false;
+        }
     }
     return true;
 }
@@ -643,10 +670,16 @@ static bool fat_put(uint32_t cluster, uint32_t value) {
 // First free cluster, marked as end-of-chain so a second call cannot hand out
 // the same one. Returns 0 when the volume is full.
 static uint32_t fat_alloc(void) {
-    for (uint32_t c = 2; c < cluster_count + 2; c++) {
-        if (fat_get(c) != 0) continue;
-        if (!fat_put(c, 0x0ffffff8)) return 0;
-        return c;
+    const uint32_t end = cluster_count + 2;
+    if (alloc_hint < 2 || alloc_hint >= end) alloc_hint = 2;
+    uint32_t c = alloc_hint;
+    for (uint32_t n = 0; n < cluster_count; n++) {
+        if (fat_get(c) == 0) {
+            if (!fat_put(c, 0x0ffffff8)) return 0;
+            alloc_hint = c + 1;
+            return c;
+        }
+        c = c + 1 < end ? c + 1 : 2;      // round to the start, for freed ones
     }
     return 0;
 }
@@ -1091,7 +1124,10 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
             uint32_t dlba = cluster_to_lba(cluster) + s;
 
             // Read before write: a partial sector must keep the bytes around it.
-            if (!K->sd_read_block(dlba, sector)) return -1;
+            // A whole one has nothing to keep, and reading it first doubled the
+            // card traffic of every file written.
+            const bool whole = pos % 512 == 0 && len - written >= 512;
+            if (!whole && !K->sd_read_block(dlba, sector)) return -1;
             for (uint32_t i = pos % 512; i < 512 && written < len; i++) {
                 sector[i] = buf[written++];
             }
