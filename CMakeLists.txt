@@ -1209,6 +1209,7 @@ myrtos_add_module(free modules/freemem/free.c)
 myrtos_add_module(usbstat modules/usbstat/usbstat.c)
 myrtos_add_module(vidstat modules/vidstat/vidstat.c)
 myrtos_add_module(backlight modules/backlight/backlight.c)
+myrtos_add_module(screenshot modules/screenshot/screenshot.c)
 myrtos_add_module(pecho modules/pecho/pecho.c)
 myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
 myrtos_add_module(echo modules/echo/echo.c)
@@ -1586,6 +1587,7 @@ add_custom_target(modules ALL
 # leaving the machine in a state anyone else will type at.
 set(MYRTOS_RESIDENT
     vidstat
+    screenshot
     cxxdemo
     vtdemo
     wasm

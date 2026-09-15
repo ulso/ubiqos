@@ -721,25 +721,43 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
 // A scanline, rendered on demand rather than read back out of a band: the bands
 // hold two character rows between them and any other line is not in memory at
 // all. Rendering it is both cheaper than keeping it and always current.
+// One scanline exactly as the panel shows it, RGB565, the whole width into out.
+// What a screenshot is made of: the rasteriser the pump uses, given a band one
+// line tall, or the character generator when no scene is set. It runs in a
+// thread, so it may take its time.
+//
+// Every item is offered, and the rasteriser clips each to the line itself. The
+// peek below used to skip an item whose h did not cover the line first -- and
+// text keeps its scale in w and leaves h at zero, so a peek of a scene had no
+// text in it at all.
+//
+// The list is read once, pointer and count, the way the pump reads it. An
+// application that replaces its list rather than rewriting it in place could
+// still be caught between the two; airview never does.
+uint32_t myrtos_video_capture_line(uint32_t y, uint16_t *out)
+{
+    if (y >= RGB_H) {
+        for (uint32_t i = 0; i < RGB_W; i++) out[i] = 0;
+        return RGB_W;
+    }
+    const myrtos_draw_item_t *items = scene;
+    const uint32_t n = scene_count;
+    if (n && items) {
+        for (uint32_t i = 0; i < RGB_W; i++) out[i] = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            myrtos_draw_item_t it = items[i];
+            draw_item_line(&it, y, out);
+        }
+    } else {
+        myrtos_chargen_line16(y, out);
+    }
+    return RGB_W;
+}
+
 void myrtos_video_peek_line(uint32_t y, uint8_t *out, uint32_t n)
 {
     static uint16_t one[MYRTOS_H_ACTIVE];
-    if (y >= RGB_H) { for (uint32_t i = 0; i < n; i++) out[i] = 0; return; }
-
-    if (scene_count) {
-        // The same rasteriser, given a band one line tall. Peeking has to show
-        // what is on the glass, and with a scene set the character cells are
-        // not it -- a reader of this that still saw the console would be a
-        // measuring instrument reporting the wrong screen.
-        fill_span(one, RGB_W, 0);
-        for (uint32_t i = 0; i < scene_count; i++) {
-            myrtos_draw_item_t it = scene[i];
-            if ((int32_t)y < it.y || (int32_t)y >= it.y + (int32_t)it.h) continue;
-            draw_item_line(&it, y, one);
-        }
-    } else {
-        myrtos_chargen_line16(y, one);
-    }
+    myrtos_video_capture_line(y, one);
     const uint16_t *src = one;
 
     // Handed back a byte per pixel, because that is what the caller's buffer is

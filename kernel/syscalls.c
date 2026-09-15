@@ -706,6 +706,20 @@ uint32_t myrtos_trap_handler(myrtos_frame_t *frame) {
                 frame->a0 = i;
                 break;
             }
+            // Kind 6: one whole scanline as the display shows it, RGB565, the
+            // width in halfwords into a0. Only the RGB panel can say, and the
+            // question is answered here, before the kinds below: on any other
+            // display an unknown kind falls through to the statistics, which
+            // would write sixteen words into a buffer meant for a line.
+            if (frame->a1 == 6) {
+#if MYRTOS_VIDEO_RGB
+                uint32_t myrtos_video_capture_line(uint32_t, uint16_t *);
+                frame->a0 = myrtos_video_capture_line(frame->a2, (uint16_t *)(uintptr_t)frame->a0);
+#else
+                frame->a0 = (uint32_t)-1;
+#endif
+                break;
+            }
 #if MYRTOS_VIDEO_RGB
             // Kind 4 gives the panel to an application: a list of things to
             // draw, which the video interrupt rasterises one band at a time.

@@ -1881,6 +1881,14 @@ static inline int32_t myrtos_video_peek(uint32_t line, uint8_t *buf64)
     return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 1, line);
 }
 
+// One scanline of the screen exactly as it is shown, RGB565: the display's
+// whole width, 800 halfwords on the 4.3B, into buf. Returns the width, or -1 on
+// a display that cannot say. What `screenshot` is made of.
+static inline int32_t myrtos_video_capture(uint32_t line, uint16_t *buf)
+{
+    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf, 6, line);
+}
+
 // The bytes that entered the console ring, as records of
 // {0xfe, pid, length, bytes...} -- one per call, because a call is the unit
 // that cannot be interleaved and anything larger can. Returns how many bytes
