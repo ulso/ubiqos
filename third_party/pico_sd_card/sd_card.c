@@ -175,11 +175,19 @@ inline static int safe_wait_tx_not_full(pio_hw_t *pio, uint sm) {
         }                                                      \
     } while (0)
 
+// LOCAL CHANGE: a second, measured, rather than eight million spins. A spin
+// count is a time only on the machine it was chosen on, and this wait covers a
+// whole command and its answer at the slow initialisation clock -- the
+// Waveshare board runs its system clock at 120 MHz and this driver from the
+// module pool, and gave up here while the transfer was still on its way: the
+// channel was found finished, count zero, when the probe looked afterwards.
+#define SD_DMA_WAIT_US 1000000u
+
 inline static int safe_dma_wait_for_finish(pio_hw_t *pio, uint sm, uint chan) {
-    int wooble = 0;
+    uint32_t wooble = 0;
+    const uint64_t since = time_us_64();
     while (dma_channel_is_busy(chan)) {
-        wooble++;
-        if (wooble > 8000000) {
+        if ((++wooble & 0xfffu) == 0 && time_us_64() - since > SD_DMA_WAIT_US) {
             sd_note_stuck("a DMA channel to finish", (int)sm, (int)pio->sm[sm].addr);
             // LOCAL CHANGE, not upstream. __breakpoint() was here. With a probe
             // attached it is a gift; without one it is an ebreak that our trap
