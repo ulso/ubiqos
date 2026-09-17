@@ -8,12 +8,35 @@
 // It understands what that driver actually uses: %d, %u, %s, %c, %x and %08x.
 // Anything else is copied through, which is honest -- a format this does not
 // know shows up as itself rather than as silence or a crash.
+//
+// Collected and handed over through myrtos_print, not a character at a time
+// through myrtos_putc. putc reaches the screen and the UART but not the kernel
+// log, and the Waveshare board has no UART and, with an application on its
+// panel, no visible console either -- so all that reached /var/dmesg of
+// "sd: gave up waiting for a DMA channel to finish (sm 1 at 2)" was the one
+// part that came through %s, and the state the message exists to report was
+// lost.
 
 #include <stdint.h>
 #include <stdarg.h>
 
 void myrtos_print(const char *s);
-void myrtos_putc(char c);
+
+static char out_buf[96];
+static uint32_t out_len;
+
+static void out_flush(void) {
+    if (!out_len) return;
+    out_buf[out_len] = 0;
+    myrtos_print(out_buf);
+    out_len = 0;
+}
+
+static void out(char c) {
+    if (out_len == sizeof(out_buf) - 1) out_flush();
+    out_buf[out_len++] = c;
+    if (c == '\n') out_flush();
+}
 
 static void put_u32(uint32_t v, uint32_t base, uint32_t width, char pad) {
     char buf[12];
@@ -24,7 +47,7 @@ static void put_u32(uint32_t v, uint32_t base, uint32_t width, char pad) {
         v /= base;
     } while (v && n < sizeof(buf));
     while (n < width && n < sizeof(buf)) buf[n++] = pad;
-    while (n) myrtos_putc(buf[--n]);
+    while (n) out(buf[--n]);
 }
 
 void myrtos_printf(const char *fmt, ...) {
@@ -32,7 +55,7 @@ void myrtos_printf(const char *fmt, ...) {
     va_start(ap, fmt);
 
     for (const char *p = fmt; *p; p++) {
-        if (*p != '%') { myrtos_putc(*p); continue; }
+        if (*p != '%') { out(*p); continue; }
         p++;
 
         char pad = ' ';
@@ -44,22 +67,23 @@ void myrtos_printf(const char *fmt, ...) {
         switch (*p) {
         case 'd': {
             int32_t v = va_arg(ap, int32_t);
-            if (v < 0) { myrtos_putc('-'); put_u32((uint32_t)-v, 10, width, pad); }
+            if (v < 0) { out('-'); put_u32((uint32_t)-v, 10, width, pad); }
             else put_u32((uint32_t)v, 10, width, pad);
             break;
         }
         case 'u': put_u32(va_arg(ap, uint32_t), 10, width, pad); break;
         case 'x': put_u32(va_arg(ap, uint32_t), 16, width, pad); break;
-        case 'c': myrtos_putc((char)va_arg(ap, int)); break;
+        case 'c': out((char)va_arg(ap, int)); break;
         case 's': {
             const char *s = va_arg(ap, const char*);
-            myrtos_print(s ? s : "(null)");
+            for (s = s ? s : "(null)"; *s; s++) out(*s);
             break;
         }
-        case '%': myrtos_putc('%'); break;
+        case '%': out('%'); break;
         case 0:   p--; break;                    // a trailing percent
-        default:  myrtos_putc('%'); myrtos_putc(*p); break;
+        default:  out('%'); out(*p); break;
         }
     }
     va_end(ap);
+    out_flush();                                 // a line may be built in several calls; each goes as it is
 }
