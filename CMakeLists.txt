@@ -131,7 +131,8 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     # three PIO blocks are spoken for (the USB host, and the panel's sync and
     # pixels across two), the sd driver's own PIO is pio1 which the panel holds,
     # and both panel blocks have their GPIO window moved to 16 and cannot reach
-    # these pins at all. The card is read over SPI here, which needs no PIO.
+    # these pins at all. The card is read over SPI here, which needs no PIO --
+    # except in a MYRTOS_NATIVE_USB=host build, below, which frees pio0.
     set(myrtosSdPins PICO_SD_CLK_PIN=10 PICO_SD_CMD_PIN=11 PICO_SD_DAT0_PIN=12
                      MYRTOS_SD_NO_SDIO=1 MYRTOS_SD_SPI_INDEX=1
                      MYRTOS_SD_SCK_PIN=10 MYRTOS_SD_MOSI_PIN=11
@@ -260,6 +261,10 @@ elseif(MYRTOS_NATIVE_USB STREQUAL "host")
         ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/hcd_rp2040.c
         ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c)
     set(myrtosUsbLibrary tinyusb_common)
+    # And the card can have SDIO: pio0 is free without PIO-USB, and its window
+    # starts at GPIO0, which reaches the card on 10 to 15.
+    list(REMOVE_ITEM myrtosSdPins MYRTOS_SD_NO_SDIO=1)
+    list(APPEND myrtosSdPins MYRTOS_SD_PIO_INDEX=0 MYRTOS_SD_PIO_GPIO_BASE=0)
 else()
     message(FATAL_ERROR "MYRTOS_NATIVE_USB is '${MYRTOS_NATIVE_USB}'; it must be device or host")
 endif()
