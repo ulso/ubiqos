@@ -215,6 +215,56 @@ if(NOT myrtosPatchedFrom STREQUAL sdkVersion)
         "device behind the hub unremovable for the rest of the run.")
 endif()
 
+# --- THE NATIVE USB PORT ---------------------------------------------------
+# What the chip's own USB controller is. `device` is what every build has been:
+# the console, usbdisk and the network over the cable, with the host side on
+# PIO. `host` makes the controller the host instead -- the socket the board is
+# otherwise plugged into a computer by -- and drops PIO-USB and the device side
+# altogether.
+#
+# Only the Waveshare board, where the PIO host takes the UART pads and the three
+# PIO blocks, so a hardware host gives back both. The Fruit Jam's host is behind
+# a hub on its own pins, and one TinyUSB host is all there is room for.
+#
+# The file lists below keep their places in add_executable, so a device build
+# is the same image, byte for byte, as before this choice existed.
+set(MYRTOS_NATIVE_USB "device" CACHE STRING "the chip's own USB port: device or host")
+set_property(CACHE MYRTOS_NATIVE_USB PROPERTY STRINGS device host)
+if(MYRTOS_NATIVE_USB STREQUAL "device")
+    set(myrtosUsbDeviceSources kernel/usb_descriptors.c kernel/usbmsc.c)
+    # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
+    # as a submodule so the version is written down: the copy that was lying
+    # around was eleven months old and missing an out-of-bounds memcpy fix and
+    # the RP2350-E9 errata conditional.
+    set(myrtosUsbPioSources
+        lib/Pico-PIO-USB/src/pio_usb.c
+        lib/Pico-PIO-USB/src/pio_usb_host.c
+        lib/Pico-PIO-USB/src/pio_usb_device.c
+        lib/Pico-PIO-USB/src/usb_crc.c)
+    # The glue that drives TinyUSB's host from PIO rather than from the hardware
+    # controller -- which is busy being our console.
+    set(myrtosUsbHcdSources
+        ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c)
+    set(myrtosUsbLibrary tinyusb_device)
+elseif(MYRTOS_NATIVE_USB STREQUAL "host")
+    if(NOT MYRTOS_BOARD STREQUAL "ws43b")
+        message(FATAL_ERROR "MYRTOS_NATIVE_USB=host is for the ws43b board only")
+    endif()
+    set(myrtosUsbDeviceSources)
+    set(myrtosUsbPioSources)
+    # TinyUSB's own driver for the controller, and the half of the port it
+    # shares with the device driver. Named here rather than by linking
+    # tinyusb_host, which would bring the SDK's hub.c and cdc_host.c along with
+    # it -- and those are the two files myrtos carries patched copies of.
+    set(myrtosUsbHcdSources
+        ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/hcd_rp2040.c
+        ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c)
+    set(myrtosUsbLibrary tinyusb_common)
+else()
+    message(FATAL_ERROR "MYRTOS_NATIVE_USB is '${MYRTOS_NATIVE_USB}'; it must be device or host")
+endif()
+message(STATUS "Native USB port: ${MYRTOS_NATIVE_USB}")
+
 
 add_executable(os_kernel 
     kernel/crashlog.c
@@ -232,8 +282,7 @@ add_executable(os_kernel
     kernel/moddir.c
     kernel/flashmod.c
     kernel/usbdev.c
-    kernel/usb_descriptors.c
-        kernel/usbmsc.c
+    ${myrtosUsbDeviceSources}
     ${MYRTOS_ARCH_KERNEL_SOURCES}
     kernel/pio/pioprobe.c
     kernel/usbhost.c
@@ -246,17 +295,10 @@ add_executable(os_kernel
     kernel/font8x16.c
     kernel/font6x12.c
 
-    # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
-    # as a submodule so the version is written down: the copy that was lying
-    # around was eleven months old and missing an out-of-bounds memcpy fix and
-    # the RP2350-E9 errata conditional.
-    lib/Pico-PIO-USB/src/pio_usb.c
-    lib/Pico-PIO-USB/src/pio_usb_host.c
-    lib/Pico-PIO-USB/src/pio_usb_device.c
-    lib/Pico-PIO-USB/src/usb_crc.c
+    # PIO-USB, in a device build; see MYRTOS_NATIVE_USB above.
+    ${myrtosUsbPioSources}
 
-    # TinyUSB's host side, and the glue that drives it from PIO rather than from
-    # the hardware controller -- which is busy being our console.
+    # TinyUSB's host side. The controller driver under it is the last line.
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/usbh.c
     # Ours too: the hub stops polling for ever after one failed transfer, which
     # is how an unplug goes unreported. See lib/tinyusb-patched/README.md.
@@ -267,8 +309,16 @@ add_executable(os_kernel
     # attached -- see lib/tinyusb-patched/README.md for the measurement and for
     # how to re-sync this after an SDK upgrade.
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/class/cdc/cdc_host.c
-    ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
+    ${myrtosUsbHcdSources}
 )
+
+if(MYRTOS_NATIVE_USB STREQUAL "host")
+    # MYRTOS_USB_NATIVE_HOST is what the kernel and tusb_config.h read. The
+    # other is the SDK's: rp2040_usb.c does host-specific things under it, and
+    # tinyusb_host would have defined it had it been linked.
+    target_compile_definitions(os_kernel PRIVATE MYRTOS_USB_NATIVE_HOST=1
+                                                 RP2040_USB_HOST_MODE=1)
+endif()
 
 # Execution happens in RAM, but the image lives in flash and is copied there at
 # boot. That is deliberate: the boot ROM reads PICOBIN_IMAGE_TYPE_EXE_CPU from
@@ -290,7 +340,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardware_uart hardware_gpio hardware_spi pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
     hardware_pwm
-    hardware_i2c hardware_adc tinyusb_device)
+    hardware_i2c hardware_adc ${myrtosUsbLibrary})
 
 # TinyUSB looks for tusb_config.h on the include path.
 # What a kernel critical section masks, and it is BASEPRI by default.
@@ -482,6 +532,11 @@ else()
     set(myrtosLwip ${MYRTOS_LWIP})
 endif()
 message(STATUS "lwIP: ${myrtosLwip}")
+# The only link lwIP has on a board without a radio is the USB cable, and a host
+# build has no cable to be a network on.
+if(myrtosLwip AND MYRTOS_NATIVE_USB STREQUAL "host")
+    message(FATAL_ERROR "lwIP needs the device side of the USB port; MYRTOS_NATIVE_USB=host has none")
+endif()
 if(myrtosLwip)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipping.c

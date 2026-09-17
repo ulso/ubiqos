@@ -554,13 +554,14 @@ void myrtos_kernel_main(void) {
 
     // Step 5 turns this on for the Waveshare board, once its PIO USB host has
     // been tried. Until then the pads are wired and unasked.
-#if MYRTOS_HAS_PIO_USB_HOST
+#if MYRTOS_HAS_PIO_USB_HOST || MYRTOS_USB_NATIVE_HOST
     myrtos_usbhost_init();
 #endif
     // And then the host itself, on the other core. Its interrupts belong to
     // whichever core enables them, so tuh_init runs over there rather than
-    // here -- see core1_main in usbhost.c.
-#if MYRTOS_HAS_PIO_USB_HOST
+    // here -- see core1_main in usbhost.c. The same whether the host is PIO or
+    // the chip's own controller.
+#if MYRTOS_HAS_PIO_USB_HOST || MYRTOS_USB_NATIVE_HOST
     { extern void myrtos_usbhost_start_core1(void); myrtos_usbhost_start_core1(); }
 #endif
 

@@ -81,7 +81,16 @@
 //
 // Two things in videorgb.c follow from the host being here: that GPIO base, and
 // leaving DMA channel 0 alone, which the library claims by number.
+//
+// Built with MYRTOS_NATIVE_USB=host none of this is used: the chip's own USB
+// socket is the host, and the pads and pio0 are left alone.
+#if MYRTOS_USB_NATIVE_HOST
+#define MYRTOS_HAS_PIO_USB_HOST 0
+#define MYRTOS_USB_HOST_PADS
+#else
 #define MYRTOS_HAS_PIO_USB_HOST 1
+#define MYRTOS_USB_HOST_PADS        { 0, "usb host" }, { 1, "usb host" },
+#endif
 #define MYRTOS_USB_HOST_DP          0        // D- is GPIO1
 #define MYRTOS_HAS_USB_HOST_POWER   0
 
@@ -118,7 +127,7 @@
 // exactly the collision report the table exists to give and was, this once, a
 // lie.
 #define MYRTOS_BOARD_FIXED_PINS                                              \
-    { 0, "usb host" }, { 1, "usb host" },                                     \
+    MYRTOS_USB_HOST_PADS                                                      \
     { 10, "sd" }, { 11, "sd" }, { 12, "sd" }, { 13, "sd" },                   \
     { 14, "sd" }, { 15, "sd" },                                               \
     { 18, "lcd" }, { 19, "lcd" }, { 20, "lcd" }, { 21, "lcd" },               \

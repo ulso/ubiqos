@@ -3,8 +3,10 @@
 #include <stdbool.h>
 #include "pico/stdlib.h"
 #include "board.h"
+#if !MYRTOS_USB_NATIVE_HOST
 #include "pio_usb.h"
 #include "pio_usb_ll.h"
+#endif
 #include "hardware/structs/sysinfo.h"
 #include "tusb.h"
 #include "chargen.h"
@@ -166,6 +168,7 @@ static volatile uint32_t core1_last_ms;
 
 static void core1_main(void)
 {
+#if !MYRTOS_USB_NATIVE_HOST
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = USB_HOST_DP_PIN;
 
@@ -176,9 +179,12 @@ static void core1_main(void)
     static_assert(PIO_USB_DMA_TX_DEFAULT == 0,
                   "videorgb.c reserves DMA channel 0 for this");
 
-    tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
+    tuh_configure(CFG_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
+#endif
+    // The chip's own controller needs no configuring: its interrupt is taken
+    // on this core by tuh_init, exactly as PIO-USB's timer is.
 
-    if (!tuh_init(1)) {
+    if (!tuh_init(CFG_TUH_RHPORT)) {
         ev_push(EV_LOG, LOG_INIT_FAIL, 0, 0);
         for (;;) tight_loop_contents();
     }
@@ -260,6 +266,11 @@ void myrtos_usbhost_drain(void)
                 // no power pin at all -- printed because starting the host on
                 // core 1 had been left unguarded, and believed because the line
                 // could not disagree with the code.
+#if MYRTOS_USB_NATIVE_HOST
+                // And the same mistake the other way: a host on the chip's own
+                // controller said it was PIO on GP0 and GP1, which it has left.
+                myrtos_print("USB host on core 1, the chip's own controller");
+#else
                 myrtos_print("USB host on core 1, PIO, D+ GP");
                 myrtos_print_u32(USB_HOST_DP_PIN);
                 myrtos_print(", D- GP");
@@ -269,6 +280,7 @@ void myrtos_usbhost_drain(void)
                 myrtos_print_u32(USB_HOST_POWER);
 #else
                 myrtos_print(", 5V always on");
+#endif
 #endif
                 myrtos_print("\n");
                 break;
@@ -465,6 +477,10 @@ int32_t myrtos_usbhost_cdc_index(void);
 //
 // The pool is filled in the order the endpoints are opened, which is the order
 // the interfaces are mounted, which is the order the instances are numbered.
+//
+// PIO-USB's own pool, so a host on the chip's controller has no such look and
+// goes without this recovery; the ready sweep below still applies to it.
+#if !MYRTOS_USB_NATIVE_HOST
 static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
     for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
         const endpoint_t *e = PIO_USB_ENDPOINT(i);
@@ -482,6 +498,7 @@ static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
     }
     return 0;
 }
+#endif
 
 // Long enough that the ordinary gap between one transfer completing and the
 // next being queued cannot be mistaken for the fault. That gap is microseconds
@@ -559,7 +576,10 @@ static void cdc_rearm(void) {
     tuh_itf_info_t info;
     if (!tuh_cdc_itf_get_info((uint8_t)idx, &info)) { idle_sweeps = 0; return; }
 
+    // Read from PIO-USB's pool; on the chip's controller there is no pool to
+    // read, so nothing is ever seen as stalled and this does nothing.
     bool stalled = false;
+#if !MYRTOS_USB_NATIVE_HOST
     for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
         const endpoint_t *e = PIO_USB_ENDPOINT(i);
         if (e->dev_addr != info.daddr) continue;
@@ -571,6 +591,7 @@ static void cdc_rearm(void) {
         if (e->attr != 2) continue;
         if (!e->has_transfer) stalled = true;
     }
+#endif
     if (!stalled) { idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return; }
     if (++idle_sweeps < 2)    return;
 
@@ -632,6 +653,7 @@ void myrtos_usbhost_rearm(void) {
         // Aborting first is what makes the ask land. Without it the claim
         // inside tuh_hid_receive_report is refused for exactly the reason the
         // report is needed, and the retry would repeat for ever.
+#if !MYRTOS_USB_NATIVE_HOST
         const endpoint_t *ep = hid_in_endpoint(hid_poll[i].addr, hid_poll[i].instance);
         if (ep && !ep->has_transfer) {
             if (++hid_poll[i].dead < HID_DEAD_SWEEPS) continue;
@@ -646,6 +668,7 @@ void myrtos_usbhost_rearm(void) {
             forget_held_keys();
             continue;
         }
+#endif
         hid_poll[i].dead = 0;
 
         if (!tuh_hid_receive_ready(hid_poll[i].addr, hid_poll[i].instance)) {
@@ -1076,12 +1099,14 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
         if (what == MYRTOS_USB_LASTEVENT) return myrtos_usb_last_event_ms;
     }
 
+#if !MYRTOS_USB_NATIVE_HOST             // see the note above the endpoint pool
     if (what == MYRTOS_USB_ROOT) {
         const root_port_t *r = PIO_USB_ROOT_PORT(0);
         return (uint32_t)r->initialized | ((uint32_t)r->connected << 1)
              | ((uint32_t)r->is_fullspeed << 2) | ((uint32_t)r->suspended << 3)
              | ((uint32_t)r->event << 8);
     }
+#endif
 
     if (what >= MYRTOS_USB_HID && what < MYRTOS_USB_HID + HID_SLOTS) {
         int i = (int)(what - MYRTOS_USB_HID);
@@ -1090,6 +1115,9 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
              | ((uint32_t)hid_poll[i].idle << 24);
     }
 
+    // The root port and the endpoint pool are PIO-USB's. A host on the chip's
+    // controller answers zero for both, which usbstat shows as nothing there.
+#if !MYRTOS_USB_NATIVE_HOST
     if (what >= MYRTOS_USB_EP && what < MYRTOS_USB_EP + PIO_USB_EP_POOL_CNT) {
         const endpoint_t *e = PIO_USB_ENDPOINT((int)(what - MYRTOS_USB_EP));
         // Bit 19 says the slot is in use. Closing an endpoint sets size to zero
@@ -1109,5 +1137,6 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
              | ((uint32_t)(e->dev_addr > CFG_TUH_DEVICE_MAX) << 20)
              | ((uint32_t)e->failed_count << 24);
     }
+#endif
     return 0;
 }

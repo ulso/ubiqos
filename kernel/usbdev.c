@@ -14,6 +14,8 @@
 void myrtos_print(const char *s);
 void myrtos_print_u32(uint32_t v);
 
+#if !MYRTOS_USB_NATIVE_HOST
+
 void myrtos_usb_init(void) {
     // TinyUSB's RP2040 port registers itself for USBCTRL_IRQ through the SDK's
     // irq_add_shared_handler. That only works now that we stopped taking over
@@ -458,3 +460,70 @@ int32_t myrtos_usb_read(uint8_t *buf, uint32_t len) {
     if (!tud_mounted() || !tud_cdc_available()) return 0;
     return (int32_t)tud_cdc_read(buf, len);
 }
+
+#else   // MYRTOS_USB_NATIVE_HOST
+
+// --- NO DEVICE SIDE ----------------------------------------------------------
+//
+// Built with MYRTOS_NATIVE_USB=host the chip's controller is the host, and all
+// of the above is gone: no console on the cable, no card to lend, no network.
+// The names stay, and answer the way the device side always has with no
+// computer at the other end -- a write that is refused, a read with nothing in
+// it -- so the descriptor, the shell and usbdisk need no build of their own.
+//
+// The thread stays too, for the one job it has that was never the device's:
+// taking delivery of what the host core cannot do itself.
+
+uint32_t myrtos_usb_suspends, myrtos_usb_resumes;
+uint32_t myrtos_usb_mounts, myrtos_usb_unmounts;
+uint32_t myrtos_usb_last_event_ms;
+
+void myrtos_usb_init(void) {
+    myrtos_print("USB: the port is a host; no console, disk or network on it\n");
+}
+
+void myrtos_usb_task(void) {}
+bool myrtos_usb_ready(void) { return false; }
+uint32_t myrtos_usb_writable(void) { return 0; }
+uint32_t myrtos_usb_available(void) { return 0; }
+
+int32_t myrtos_usb_write(const uint8_t *buf, uint32_t len) {
+    (void)buf; (void)len;
+    return -1;
+}
+
+int32_t myrtos_usb_read(uint8_t *buf, uint32_t len) {
+    (void)buf; (void)len;
+    return 0;
+}
+
+// usb_descriptors.c's, which a host build leaves out: there is no network
+// device for an address to belong to.
+void myrtos_usb_net_id(const uint8_t *unique, uint32_t n) {
+    (void)unique; (void)n;
+}
+
+// usbmsc.c's. A card cannot be lent to a computer that is not there, and a
+// refusal is what fsserver.c already knows how to report.
+bool myrtos_msc_hand_over(void) { return false; }
+void myrtos_msc_take_back(void) {}
+bool myrtos_msc_host_has_card(void) { return false; }
+
+static void usb_thread(void) {
+    for (;;) {
+        { extern void myrtos_usbhost_drain(void); myrtos_usbhost_drain(); }
+        myrtos_sleep(1);
+    }
+}
+
+void myrtos_usb_start_task(void) {
+    extern int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes,
+                                        uint32_t priority);
+    // Four kilobytes: the drain prints, moves the console and interrupts
+    // processes, and nothing of the network is here to need the other two.
+    if (myrtos_kernel_thread(usb_thread, 4096, MYRTOS_PRIO_USB) < 0) {
+        myrtos_print("USB: could not start its service process\n");
+    }
+}
+
+#endif  // MYRTOS_USB_NATIVE_HOST
