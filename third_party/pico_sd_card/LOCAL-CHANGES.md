@@ -213,3 +213,41 @@ being asked for rather than declared.
 
 `sd_dma_buffer_words()` says how much, in words, and the sizes are the ones the
 arrays had.
+
+## The DMA wait is a second, not eight million spins
+
+17 Sep 2026. `safe_dma_wait_for_finish` gave up after a spin count, which is a
+time only on the machine it was chosen on. On the Waveshare 4.3B -- system clock
+at 120 MHz, the driver running from the module pool -- it gave up on the very
+first command while the transfer was still under way: the probe found the
+command channel finished, count zero, a moment later. It now measures, with a
+check of the clock every 4096 spins.
+
+That was not why SDIO failed there, as it turned out -- the card had been left
+in SPI mode by an earlier boot, and only cutting the power cleared it -- but a
+wait that is too short for one card is a wrong answer waiting to happen.
+
+## Any PIO block, and standard-capacity cards
+
+17 Sep 2026, for the Waveshare board built with `MYRTOS_NATIVE_USB=host`, where
+pio1 is the panel's and pio0 is free.
+
+**The block.** `pio1` was named in the global, in every DMA request
+(`DREQ_PIO1_RX0`, `DREQ_PIO1_TX0`) and in every pin function
+(`GPIO_FUNC_PIO1`). `MYRTOS_SD_PIO_INDEX` in `sd_card.h` chooses it now, pio1
+unless the build says otherwise. The replacements are constant expressions, so
+a pio1 build asks for the same numbers it did. The block's GPIO window is still
+the caller's business: `modules/sdlib` sets it from `MYRTOS_SD_PIO_GPIO_BASE`,
+16 by default for the Fruit Jam's GP34-39, 0 on the Waveshare board's GP10-15.
+
+**The card.** Upstream passes the block number straight to CMD17 and CMD24,
+which is right for SDHC and SDXC only. A standard-capacity card is addressed by
+byte, and the 4.3B's card is one. `sd_is_high_capacity()` reports the CCS bit
+from the ACMD41 answer the init loop already waits on, and `modules/sdlib`
+multiplies by 512 when it is clear -- as its SPI path already did. Verified on
+that card: FAT32 mounted over four-bit SDIO, and a file written over SDIO was
+there after a power cycle.
+
+`modules/sdlib/printf.c` changed too: it collects a call's output and hands it
+to `myrtos_print`, because character-at-a-time `myrtos_putc` does not reach the
+kernel log, and the Waveshare board has nowhere else to read it.

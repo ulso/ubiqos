@@ -43,7 +43,19 @@ static inline uint32_t sd_pio_cmd(uint cmd, uint32_t param)
 }
 
 #define SD_PIO_CMD(a, b)
-PIO sd_pio = pio1;
+// LOCAL CHANGE: pio1 was named here, in every DMA request and in the pin
+// functions below; see MYRTOS_SD_PIO_INDEX in sd_card.h. Constants, so a build that keeps pio1
+// compiles to what it did.
+PIO sd_pio = PIO_INSTANCE(MYRTOS_SD_PIO_INDEX);
+#define SD_DREQ_RX0 (MYRTOS_SD_PIO_INDEX == 0 ? DREQ_PIO0_RX0 : \
+                     MYRTOS_SD_PIO_INDEX == 1 ? DREQ_PIO1_RX0 : DREQ_PIO2_RX0)
+#define SD_DREQ_TX0 (MYRTOS_SD_PIO_INDEX == 0 ? DREQ_PIO0_TX0 : \
+                     MYRTOS_SD_PIO_INDEX == 1 ? DREQ_PIO1_TX0 : DREQ_PIO2_TX0)
+#define SD_GPIO_FUNC ((gpio_function_t)(GPIO_FUNC_PIO0 + MYRTOS_SD_PIO_INDEX))
+
+// LOCAL: from the card's answer to ACMD41. See sd_is_high_capacity.
+static bool sd_high_capacity;
+bool sd_is_high_capacity(void) { return sd_high_capacity; }
 
 static uint sd_dat_pin_base; // todo remove me
 // todo struct these
@@ -227,7 +239,7 @@ static int __time_critical_func(start_single_dma)(uint dma_channel, uint sm, uin
     channel_config_set_bswap(&c, bswap);
     channel_config_set_read_increment(&c, false);
     channel_config_set_write_increment(&c, true);
-    channel_config_set_dreq(&c, DREQ_PIO1_RX0 + sm);
+    channel_config_set_dreq(&c, SD_DREQ_RX0 + sm);
     dma_channel_configure(
             dma_channel,
             &c,
@@ -253,7 +265,7 @@ static void __time_critical_func(start_chain_dma_read_with_address_size_only)(ui
     channel_config_set_bswap(&c, bswap);
     channel_config_set_read_increment(&c, false);
     channel_config_set_write_increment(&c, true);
-    channel_config_set_dreq(&c, DREQ_PIO1_RX0 + sm);
+    channel_config_set_dreq(&c, SD_DREQ_RX0 + sm);
     channel_config_set_chain_to(&c, sd_chain_dma_channel); // individual buffers chain back to master
     channel_config_set_irq_quiet(&c, true);
 
@@ -643,9 +655,9 @@ static int sd_init( bool _allow_four_data_pins)
     int sd_cmd_pin = PICO_SD_CMD_PIN;
     sd_dat_pin_base = PICO_SD_DAT0_PIN;
     // todo #define for four allowing four pins
-    gpio_set_function(sd_clk_pin, GPIO_FUNC_PIO1);
-    gpio_set_function(sd_cmd_pin, GPIO_FUNC_PIO1);
-    gpio_set_function(sd_dat_pin_base, GPIO_FUNC_PIO1);
+    gpio_set_function(sd_clk_pin, SD_GPIO_FUNC);
+    gpio_set_function(sd_cmd_pin, SD_GPIO_FUNC);
+    gpio_set_function(sd_dat_pin_base, SD_GPIO_FUNC);
     gpio_set_pulls(sd_clk_pin, false, true);
     gpio_set_pulls(sd_cmd_pin, true, false);
     gpio_set_pulls(sd_dat_pin_base, true, false);
@@ -653,9 +665,9 @@ static int sd_init( bool _allow_four_data_pins)
 
     // Have to set pulls on other pins regardless otherwise SD card fails to
     // initialise in 1 bit mode
-    gpio_set_function(sd_dat_pin_base+1, GPIO_FUNC_PIO1);
-    gpio_set_function(sd_dat_pin_base+2, GPIO_FUNC_PIO1);
-    gpio_set_function(sd_dat_pin_base+3, GPIO_FUNC_PIO1);
+    gpio_set_function(sd_dat_pin_base+1, SD_GPIO_FUNC);
+    gpio_set_function(sd_dat_pin_base+2, SD_GPIO_FUNC);
+    gpio_set_function(sd_dat_pin_base+3, SD_GPIO_FUNC);
     gpio_set_pulls(sd_dat_pin_base+1, true, false);
     gpio_set_pulls(sd_dat_pin_base+2, true, false);
     gpio_set_pulls(sd_dat_pin_base+3, true, false);
@@ -762,6 +774,9 @@ static int sd_init( bool _allow_four_data_pins)
         fixup_cmd_response_48(response_buffer);
     }
     while (!(byte_buf[1] & 0x80u)); // repeat while nbusy bit is low
+    // LOCAL CHANGE: CCS, the bit beside the one just waited for. See
+    // sd_is_high_capacity.
+    sd_high_capacity = (byte_buf[1] & 0x40u) != 0;
     printf("Card ready\r\n");
 
     sd_command(sd_make_command(2, 0, 0, 0, 0), response_buffer, 17);
@@ -943,7 +958,7 @@ int sd_readblocks_scatter_async(uint32_t *control_words, uint32_t block, uint bl
     dma_channel_config c = dma_channel_get_default_config(sd_pio_dma_channel);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
-    channel_config_set_dreq(&c, DREQ_PIO1_TX0 + SD_DAT_SM);
+    channel_config_set_dreq(&c, SD_DREQ_TX0 + SD_DAT_SM);
     dma_channel_configure(
             sd_pio_dma_channel,
             &c,
@@ -1134,7 +1149,7 @@ int sd_writeblocks_async(const uint32_t *data, uint32_t sector_num, uint sector_
         *p++ = (uintptr_t)(src); \
         *p++ = (uintptr_t)(&sd_pio->txf[SD_DAT_SM]); \
         *p++ = words; \
-        *p++ = dma_ctrl_for(size, true, false, DREQ_PIO1_TX0 + SD_DAT_SM, sd_chain_dma_channel, 0, 0, true) | (flags);
+        *p++ = dma_ctrl_for(size, true, false, SD_DREQ_TX0 + SD_DAT_SM, sd_chain_dma_channel, 0, 0, true) | (flags);
 
 #endif
     for(int i=0;i<sector_count;i++) {
@@ -1247,12 +1262,12 @@ int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint s
         *p++ = (uintptr_t)(&sd_pio->rxf[SD_DAT_SM]);
         *p++ = (uintptr_t)(sector_buf + i * 128);
         *p++ = 128;
-        *p++ = dma_ctrl_for(DMA_SIZE_32, false, true, DREQ_PIO1_RX0 + SD_DAT_SM, sd_chain_dma_channel, 0, 0, true) | DMA_CH0_CTRL_TRIG_SNIFF_EN_BITS | DMA_CH0_CTRL_TRIG_BSWAP_BITS;
+        *p++ = dma_ctrl_for(DMA_SIZE_32, false, true, SD_DREQ_RX0 + SD_DAT_SM, sd_chain_dma_channel, 0, 0, true) | DMA_CH0_CTRL_TRIG_SNIFF_EN_BITS | DMA_CH0_CTRL_TRIG_BSWAP_BITS;
         // third crc from stream
         *p++ = (uintptr_t)(&sd_pio->rxf[SD_DAT_SM]);
         *p++ = (uintptr_t)(crcs + i * 2);
         *p++ = 1;
-        *p++ = dma_ctrl_for(DMA_SIZE_32, false, false, DREQ_PIO1_RX0 + SD_DAT_SM, sd_chain_dma_channel, 0, 0, true);
+        *p++ = dma_ctrl_for(DMA_SIZE_32, false, false, SD_DREQ_RX0 + SD_DAT_SM, sd_chain_dma_channel, 0, 0, true);
         // fourth crc from sniff
         *p++ = (uintptr_t)&dma_hw->sniff_data;
         *p++ = (uintptr_t)(crcs + i * 2 + 1);
@@ -1279,7 +1294,7 @@ int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint s
     dma_channel_config c = dma_channel_get_default_config(sd_pio_dma_channel);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
-    channel_config_set_dreq(&c, DREQ_PIO1_TX0 + SD_DAT_SM);
+    channel_config_set_dreq(&c, SD_DREQ_TX0 + SD_DAT_SM);
     dma_channel_configure(
             sd_pio_dma_channel,
             &c,

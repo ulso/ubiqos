@@ -31,6 +31,15 @@ extern "C" {
 #define PICO_SD_DAT0_PIN 19
 #endif
 
+// LOCAL CHANGE: which PIO block the driver takes. Upstream names pio1
+// throughout -- the block, the DMA requests and the pin function -- and on a
+// board where pio1 is somebody else's that is five places to be wrong in. One
+// number now, pio1 unless the build says otherwise. The block's GPIO window is
+// the caller's to set, as before.
+#ifndef MYRTOS_SD_PIO_INDEX
+#define MYRTOS_SD_PIO_INDEX 1
+#endif
+
 // todo for now
 #define PICO_SD_MAX_BLOCK_COUNT 32
 // todo buffer pool
@@ -60,6 +69,12 @@ void sd_bus_revive(void);
 int sd_read_sectors_1bit_crc_async(uint32_t *sector_buf, uint32_t sector, uint sector_count);
 int sd_set_wide_bus(bool wide);
 int sd_set_clock_divider(uint div);
+
+// LOCAL: whether the card said it was SDHC or SDXC as it came ready. Those are
+// addressed by block; a standard-capacity card is addressed by BYTE, and the
+// driver passes whatever it is given straight to CMD17 and CMD24 -- so for such
+// a card the caller multiplies by 512. Upstream assumed high capacity.
+bool sd_is_high_capacity(void);
 
 // LOCAL CHANGE: the driver's three DMA buffers are allocated rather than
 // declared, so that this can be built into a library module whose own memory is

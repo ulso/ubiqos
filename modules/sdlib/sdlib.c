@@ -243,6 +243,20 @@ static bool spi_write_block(uint32_t lba, const uint8_t *buf) {
 #include "pico/sd_card.h"
 #include "hardware/pio.h"
 
+// The window of the block the driver takes -- MYRTOS_SD_PIO_INDEX, in
+// sd_card.h. 16 is the Fruit Jam's, whose card is on GP34-39.
+#ifndef MYRTOS_SD_PIO_GPIO_BASE
+#define MYRTOS_SD_PIO_GPIO_BASE 16
+#endif
+
+// What CMD17 and CMD24 are given for a sector. The driver passes it straight
+// through, which is right for SDHC and SDXC and wrong by a factor of 512 for a
+// standard-capacity card -- which the 4.3B's card is, and which SPI already
+// allowed for. A card that small cannot overflow the multiplication.
+static inline uint32_t sdio_address(uint32_t lba) {
+    return sd_is_high_capacity() ? lba : lba * 512u;
+}
+
 static bool use_sdio;
 
 // A card that has stopped answering stays stopped until it is mounted again.
@@ -357,11 +371,12 @@ bool myrtos_sd_try_sdio(void) {
         needs_init = false;
     }
 #ifdef MYRTOS_SD_NO_SDIO
-    // A board whose PIO cannot be lent to the card. The driver takes pio1 by
-    // name, and on the Waveshare 4.3B pio1 is the panel's sync: the file server
+    // A board with no PIO block to lend the card. On the Waveshare 4.3B the
+    // panel has pio1 and pio2 and the PIO USB host has pio0: the file server
     // asks for SDIO at every boot, so without this the first thing a card in
     // the slot did was have its driver load programs into the block that times
-    // the screen. Refused before a register is touched.
+    // the screen. Refused before a register is touched. A build whose USB host
+    // is the chip's own controller gives pio0 back, and the card gets it.
     return false;
 #endif
     if (use_sdio) return true;
@@ -369,12 +384,13 @@ bool myrtos_sd_try_sdio(void) {
     sd_failed = false;
     sd_bus_revive();
 
-    // The card is on GP34 to GP39, and on RP2350 one PIO reaches either GPIO
-    // 0-31 or 16-47, never both. The default window is the low one, so without
-    // this the state machines are configured for pins they cannot see: nothing
-    // is driven, the card never answers, and the driver waits for ever. The
-    // driver comes from the RP2040 world, where the question does not arise.
-    pio_set_gpio_base(pio1, 16);
+    // On the Fruit Jam the card is on GP34 to GP39, and on RP2350 one PIO
+    // reaches either GPIO 0-31 or 16-47, never both. The default window is the
+    // low one, so without this the state machines are configured for pins they
+    // cannot see: nothing is driven, the card never answers, and the driver
+    // waits for ever. The driver comes from the RP2040 world, where the
+    // question does not arise. The block and its window come from the build.
+    pio_set_gpio_base(PIO_INSTANCE(MYRTOS_SD_PIO_INDEX), MYRTOS_SD_PIO_GPIO_BASE);
 
     if (sd_init_4pins() != SD_OK) return false;
     if (sd_set_wide_bus(true) != SD_OK) return false;
@@ -423,14 +439,14 @@ bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
     if ((uintptr_t)buf & 3u) return false;
 
     if (needs_bounce(buf)) {
-        if (sd_readblocks_sync(sd_bounce, lba, 1) != SD_OK)
+        if (sd_readblocks_sync(sd_bounce, sdio_address(lba), 1) != SD_OK)
             return sd_fail("a read did not complete");
         const uint8_t *src = (const uint8_t*)sd_bounce;
         for (uint32_t i = 0; i < 512; i++) buf[i] = src[i];
         return true;
     }
 
-    if (sd_readblocks_sync((uint32_t*)(void*)buf, lba, 1) != SD_OK)
+    if (sd_readblocks_sync((uint32_t*)(void*)buf, sdio_address(lba), 1) != SD_OK)
         return sd_fail("a read did not complete");
     return true;
 }
@@ -487,7 +503,7 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
         buf = dst;
     }
 
-    if (sd_writeblocks_async((const uint32_t*)(const void*)buf, lba, 1) != SD_OK) {
+    if (sd_writeblocks_async((const uint32_t*)(const void*)buf, sdio_address(lba), 1) != SD_OK) {
         restore_wide_bus();
         return sd_fail("a write was refused before it started");
     }
