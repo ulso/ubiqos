@@ -61,7 +61,8 @@ build. The installer of the Pico VS Code extension puts all of them under
 `~/.pico-sdk`.
 
 ```bash
-git clone --recursive <this repository>
+git clone --recursive https://github.com/ulso/ubiqos.git
+cd ubiqos
 export PICO_SDK_PATH=$HOME/.pico-sdk/sdk/2.3.1
 cmake -S . -B build -G Ninja
 ninja -C build
