@@ -101,6 +101,11 @@ There is no memory protection: no MPU, no user mode, and any module can write
 anywhere. Position independence is what makes sharing code possible, not a
 guard rail.
 
+## Licence
+
+myrtos is released under the [MIT License](LICENSE). The third-party code it
+includes keeps its own licence, as below.
+
 ## Third-party code
 
 myrtos is built on the Pico SDK, TinyUSB, Pico-PIO-USB, lwIP, wasm3, Atto and
