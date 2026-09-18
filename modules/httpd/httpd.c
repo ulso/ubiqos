@@ -364,8 +364,9 @@ static void serve(int32_t sock, const char *req) {
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: httpd [port] [stack]\n\n"
-            "Serves /sd over HTTP, and /status for the machine's own numbers,\n"
-            "on port 80 unless told otherwise.\n\n"
+            "Serves the sensors at /, the card at /files and the files under it,\n"
+            "and the machine's own numbers at /api/status -- on port 80 unless\n"
+            "told otherwise.\n\n"
             "The stack is 1, lwIP, by default: the USB cable and the WiFi both.\n"
             "0 is the WiFi coprocessor's own stack, which only NINA firmware has.\n"
             "Asking for one that is not there is refused rather than served\n"
