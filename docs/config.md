@@ -25,6 +25,25 @@ A hostname is also an mDNS label, so it may hold letters, digits and hyphens
 and nothing else, and may not begin or end with one. Anything else is said out
 loud and ignored rather than announced and refused later by the responder.
 
+## The USB cable's address
+
+    usb_address = 192.168.7.1
+
+The board's address on the network over its USB cable, and the default when
+the file does not say. The computer at the other end is offered the next
+address up by the board's own DHCP server, on a /24 -- 192.168.7.2 here -- with
+no router and no DNS server, so it never tries to reach the internet through
+the board. The name still works: `hostname.local` answers on the cable as on
+the WiFi.
+
+Choose one that is not on any network the computer already has. The last
+number must be 1 to 253, to leave room for the computer's; loopback, multicast
+and 169.254 are refused, with a line saying so, and the default kept.
+
+It was 169.254, from AutoIP, until 18 Sep 2026. On a computer with more than
+one network that address range is routed out of one of the others, and the
+board could not be reached on its own cable -- see `kernel/lwipdhcpd.c`.
+
 ## When it is read, and why that is the whole of it
 
 The filesystem server reads it as soon as the card is up and before

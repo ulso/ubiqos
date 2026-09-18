@@ -499,7 +499,12 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # heap has none, which is the trade the paragraph above describes. Only
         # the chargen builds pay: a framebuffer build keeps its font in flash
         # because nothing reads it from an interrupt there.
-        set(myrtosHeapKB 120)
+        #
+        # 116 since 18 Sep 2026, for the USB cable's DHCP server
+        # (kernel/lwipdhcpd.c, 1.3 kB of code on RISC-V): with it the riscv
+        # chargen C heap was 2640 bytes and check_heap refused the link. The
+        # Fruit Jam's `free` showed 58 kB of this pool unused at the time.
+        set(myrtosHeapKB 116)
     endif()
 else()
     set(myrtosHeapKB ${MYRTOS_HEAP_KB})
@@ -550,6 +555,7 @@ if(myrtosLwip AND MYRTOS_NATIVE_USB STREQUAL "host")
 endif()
 if(myrtosLwip)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipdhcpd.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipping.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipmdns.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsntp.c

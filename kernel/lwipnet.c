@@ -6,16 +6,18 @@
 // into the netif -- no queue, because TinyUSB already has one: returning false
 // from the callback means "ask me again", which is the flow control.
 //
-// The address comes from AutoIP. There is one host on the other end of this
-// link and it gives itself a 169.254 address whether or not anybody offers
-// DHCP, so a server would be answering a question nobody asked.
+// The address is fixed -- 192.168.7.1, or usb_address in /sd/config.txt -- and
+// the computer at the other end is given the next one by the DHCP server in
+// lwipdhcpd.c. It was AutoIP, on the reasoning that the host takes a 169.254
+// address anyway and a server would answer a question nobody asked. The host
+// did take one, and then routed 169.254 through some other interface of its
+// own: see the note at the top of lwipdhcpd.c.
 #include <stdint.h>
 #include <string.h>
 
 #include "lwip/init.h"
 #include "lwip/netif.h"
 #include "lwip/etharp.h"
-#include "lwip/autoip.h"
 #include "lwip/timeouts.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
@@ -173,7 +175,14 @@ void myrtos_lwip_start(void)
     if (started) return;
 
     lwip_init();
-    netif_add(&nif, NULL, NULL, NULL, NULL, if_init, ethernet_input);
+    // A /24 and no gateway: the cable leads to one computer and nowhere else,
+    // so nothing is routed through it that is not for that computer.
+    const uint32_t board = myrtos_config_usb_address();
+    ip4_addr_t addr, mask, gw;
+    ip4_addr_set_u32(&addr, lwip_htonl(board));
+    ip4_addr_set_u32(&mask, lwip_htonl(0xffffff00u));
+    ip4_addr_set_zero(&gw);
+    netif_add(&nif, &addr, &mask, &gw, NULL, if_init, ethernet_input);
     // The name the card gave, or "myrtos" when it gave none. The filesystem
     // server has already read it: usbdev waits for that before starting this.
     const char *host = myrtos_config_hostname();
@@ -181,15 +190,18 @@ void myrtos_lwip_start(void)
     netif_set_default(&nif);
     netif_set_status_callback(&nif, on_status);
     netif_set_up(&nif);
-    // The LINK is left down, and so is AutoIP. This interface is a cable to a
-    // host, and there is not always a host: the board runs just as well on a
-    // charger, and the Mac it is normally on goes to sleep. myrtos_lwip_set_link
-    // follows tud_ready from the USB task, so the link says what is actually
-    // true, and AutoIP goes with it.
+    // The LINK is left down. This interface is a cable to a host, and there is
+    // not always a host: the board runs just as well on a charger, and the Mac
+    // it is normally on goes to sleep. myrtos_lwip_set_link follows tud_ready
+    // from the USB task, so the link says what is actually true.
 
-    // The responder goes up with the interface rather than when an address
-    // arrives: it announces again by itself once AutoIP settles, and a name
-    // that exists before the address does is one less thing to sequence.
+    {
+        extern void myrtos_dhcpd_start(struct netif *n, uint32_t board_address);
+        myrtos_dhcpd_start(&nif, board);
+    }
+
+    // The responder goes up with the interface, and announces again each time
+    // the link comes up -- see myrtos_lwip_set_link.
 #if LWIP_MDNS_RESPONDER
     mdns_resp_init();
     if (mdns_resp_add_netif(&nif, host) == ERR_OK) {
@@ -204,7 +216,11 @@ void myrtos_lwip_start(void)
 #endif
 
     started = true;
-    myrtos_print("net: lwIP up, asking AutoIP for an address\n");
+    const uint8_t *a = (const uint8_t *)&netif_ip4_addr(&nif)->addr;
+    myrtos_print("net: lwIP up; on the cable ");
+    for (int i = 0; i < 4; i++) { myrtos_print_u32(a[i]); myrtos_print(i < 3 ? "." : ""); }
+    myrtos_print(", offering the computer ");
+    for (int i = 0; i < 4; i++) { myrtos_print_u32(i < 3 ? a[i] : a[i] + 1u); myrtos_print(i < 3 ? "." : "\n"); }
 }
 
 // Whether there is a host on the other end of the USB cable. Called every turn
@@ -224,16 +240,15 @@ bool myrtos_lwip_set_link(bool up)
     if (!started) return false;
     if (up == (bool)netif_is_link_up(&nif)) return false;
 
-    // AutoIP is started and stopped with the link rather than at boot. Left
-    // running on a cable with nobody on it, it probes, hears no objection --
-    // there is no one to object -- and settles on a 169.254 address for an
-    // interface that cannot carry a packet. The board then announced an address
-    // it could not be reached at, which is worse than having none.
+    // With the link comes the name again: the computer on the other end may be
+    // a different one, or the same one after a sleep, and either way it has not
+    // heard the announcement made while nobody was there.
     if (up) {
         netif_set_link_up(&nif);
-        autoip_start(&nif);
+#if LWIP_MDNS_RESPONDER
+        mdns_resp_announce(&nif);
+#endif
     } else {
-        autoip_stop(&nif);
         netif_set_link_down(&nif);
     }
     return true;
@@ -299,7 +314,7 @@ void myrtos_lwip_stats(uint32_t *out)
     }
 }
 
-// The address AutoIP settled on, host order, or 0 while it is still deciding.
+// The cable's address, host order, or 0 before lwIP has started.
 uint32_t myrtos_lwip_addr(void)
 {
     return started ? lwip_ntohl(netif_ip4_addr(&nif)->addr) : 0u;

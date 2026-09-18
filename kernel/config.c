@@ -5,6 +5,7 @@
 //     ssid     = the-network
 //     password = ...
 //     timezone = +2
+//     usb_address = 192.168.7.1
 //
 // Keys are case-insensitive, everything after '#' is a comment, and a value
 // runs to the end of the line with the spaces either side trimmed. Trailing
@@ -45,6 +46,13 @@ static char host[32] = "myrtos";
 static char ssid[33];
 static char pass[64];
 static bool done;
+
+// 192.168.7.1, the address a Linux board in USB gadget mode takes, so that the
+// computer gets 192.168.7.2. A subnet of its own for the cable -- see
+// kernel/lwipdhcpd.c for why 169.254 was not one.
+#define USB_ADDRESS_DEFAULT ((192u << 24) | (168u << 16) | (7u << 8) | 1u)
+static uint32_t usb_address = USB_ADDRESS_DEFAULT;
+uint32_t myrtos_config_usb_address(void) { return usb_address; }
 
 bool myrtos_config_done(void) { return done; }
 void myrtos_config_give_up(void) { done = true; }
@@ -127,6 +135,33 @@ static void take_timezone(const char *v, uint32_t n) {
     myrtos_clock_set_offset(sign * (hours * 60 + mins));
 }
 
+// "usb_address = 10.0.5.1": four numbers, each 0 to 255, and nothing else. Not
+// every address will do. Loopback, multicast and the reserved blocks are not
+// addresses a link can have; 169.254 is what this replaced; and the last number
+// must leave room for the computer's, which is one more, below the broadcast
+// address of the /24.
+static void take_usb_address(const char *v, uint32_t n) {
+    uint32_t a = 0, i = 0;
+    for (int part = 0; part < 4; part++) {
+        uint32_t x = 0, digits = 0;
+        while (i < n && v[i] >= '0' && v[i] <= '9' && digits < 4) { x = x * 10 + (uint32_t)(v[i++] - '0'); digits++; }
+        if (!digits || x > 255) goto bad;
+        a = (a << 8) | x;
+        if (part < 3) { if (i >= n || v[i] != '.') goto bad; i++; }
+    }
+    if (i != n) goto bad;
+    {
+        const uint32_t first = a >> 24, last = a & 0xffu;
+        if (first == 0 || first == 127 || first >= 224) goto bad;
+        if ((a >> 16) == ((169u << 8) | 254u)) goto bad;
+        if (last == 0 || last > 253) goto bad;
+    }
+    usb_address = a;
+    return;
+bad:
+    myrtos_print("config: that usb_address is not one to use; keeping 192.168.7.1\n");
+}
+
 // One line, already stripped of its newline.
 static void take_line(char *l, uint32_t n) {
     // A comment starts at a '#' that begins the line or follows a blank, and
@@ -173,6 +208,8 @@ static void take_line(char *l, uint32_t n) {
         copy_into(pass, sizeof(pass), l + val, vallen);
     } else if (key_is(l + key, keylen, "timezone")) {
         take_timezone(l + val, vallen);
+    } else if (key_is(l + key, keylen, "usb_address")) {
+        take_usb_address(l + val, vallen);
     }
     // Anything else is somebody else's setting, or a typo. Neither is worth
     // refusing the rest of the file over.

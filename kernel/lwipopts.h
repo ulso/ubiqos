@@ -23,17 +23,19 @@
 #define LWIP_TCP                    1
 // Both, because there are two networks now and they want different answers.
 //
-// The USB link has one host on the other end and nothing offering addresses,
-// so AutoIP is right there and a DHCP client would wait out its timeout before
-// giving up. The WiFi network has a real router, and asking it is the only way
-// to get an address anybody else can route to.
+// The WiFi network has a real router, and asking it is the only way to get an
+// address anybody else can route to. The USB link has a fixed address and the
+// board is the DHCP server there -- kernel/lwipdhcpd.c, which is ours and not
+// lwIP's, so nothing below turns it on.
 //
 // DHCP costs 6.7 kB of SRAM on arm and 8.4 on riscv, measured, and 68 bytes of
 // that is its variables -- the rest is dhcp.c's code, which this kernel keeps
 // in SRAM because it is linked copy_to_ram. The heap figure moves by ±4 kB
 // either side of that on alignment alone, so it is the wrong number to read.
 #define LWIP_DHCP                   1
-#define LWIP_AUTOIP                 1
+// Off since 18 Sep 2026: the cable has its own subnet now, and 169.254 on a
+// computer with more than one network was routed out of the wrong one.
+#define LWIP_AUTOIP                 0
 #define LWIP_DNS                    1
 
 // A name ending in .local is asked for by MULTICAST rather than of a DNS
@@ -58,12 +60,6 @@
 #define MDNS_MAX_SERVICES           2
 #define LWIP_RAND()                 ((u32_t)rand())
 
-// AutoIP and not DHCP, and that is the whole address story for a link with one
-// host on the other end. macOS gave itself 169.254.221.131 the moment the
-// interface appeared, with nothing offering DHCP -- so a server would have
-// been answering a question nobody asked. The seed address is lwIP's own,
-// which is the MAC's last two bytes: mine took several statements where the
-// macro is used as an expression, and had nothing to add.
 
 #define MEM_LIBC_MALLOC             0
 #define MEM_ALIGNMENT               4
@@ -75,7 +71,7 @@
 // cannot allocate a segment simply stops, and the client waits.
 #define MEM_SIZE                    8000
 #define MEMP_NUM_PBUF               8
-#define MEMP_NUM_UDP_PCB            6    // a responder on each interface now
+#define MEMP_NUM_UDP_PCB            7    // a responder on each interface, and the cable's DHCP server
 #define MEMP_NUM_TCP_PCB            4
 #define MEMP_NUM_TCP_PCB_LISTEN     2
 #define MEMP_NUM_TCP_SEG            8

@@ -19,10 +19,10 @@
 //
 // --- THE ADDRESS ------------------------------------------------------------
 //
-// DHCP, not AutoIP. There is a real router on this network and an address it
-// hands out is one other machines can route to; the USB link keeps AutoIP,
-// because the host at the other end of that one gives itself a 169.254 address
-// whether or not anybody offers otherwise.
+// DHCP, as a client. There is a real router on this network and an address it
+// hands out is one other machines can route to. The USB link is the other way
+// round: the board has a fixed address there and is the DHCP server -- see
+// kernel/lwipdhcpd.c.
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
@@ -123,7 +123,7 @@ static void print_ip(const void *addr)
 // out of.
 //
 // It was the USB link, because that one came up first and set itself. But that
-// link has an AutoIP address and NO ROUTER: anything not on the wire itself --
+// link has an address of its own and NO ROUTER: anything not on the wire itself --
 // a DNS server, dn.se, the rest of the internet -- was routed into a cable
 // with nowhere to go. `ping dn.se` failed as "nobody answers to that name",
 // which was true and was not the reason.

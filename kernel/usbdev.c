@@ -355,11 +355,9 @@ static void usb_thread(void) {
                 // This host suspends and resumes the bus about once a minute,
                 // three or four seconds at a time, with nothing wrong and
                 // nobody touching the cable. Taking the link down for that
-                // would stop and restart AutoIP every minute, taking the
-                // address away for as long as it takes to probe again and
-                // re-announcing over mDNS each time. (The address itself does
-                // come back: lwIP seeds its candidate from the hardware
-                // address, so it is the same one unless somebody objects.)
+                // re-announced the name over mDNS every minute -- and, while
+                // the address came from AutoIP, took the address away for as
+                // long as it took to probe again.
                 // A pause is not an unplug.
                 //
                 // So the link falls only once the bus has stayed quiet for

@@ -34,4 +34,10 @@ bool myrtos_config_has_password(void);
 // returned on its own, because there is no caller that needs to see it.
 const char *myrtos_config_credentials(void);
 
+// The board's own address on the USB cable, host byte order: 192.168.7.1
+// unless the file said otherwise. The computer at the other end is offered the
+// next one, by DHCP, on a /24 -- see kernel/lwipdhcpd.c.
+#include <stdint.h>
+uint32_t myrtos_config_usb_address(void);
+
 #endif
