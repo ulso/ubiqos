@@ -1,10 +1,11 @@
 build
+__pycache__/
 !.vscode/*
 
 .DS_Store
 
-# Sparade webbsidor som referensmaterial -- flera megabyte binärt per fil,
-# och de går inte att ta bort ur historiken i efterhand.
+# Web pages saved as reference material -- several megabytes of binary each,
+# and they cannot be taken out of the history afterwards.
 docs/*.webarchive
 
 # Adafruit's own recovery route for the ESP32-C6, downloaded rather than
