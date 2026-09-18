@@ -381,7 +381,7 @@ typedef struct {
     // work out through something lock-free -- an aligned 32-bit store is
     // atomic on both machines, which is enough for a latest value or a counter
     // -- and a reader picks it up later in thread context, where all of the
-    // above is allowed again. See the README under "What a handler above the
+    // above is allowed again. See docs/design.md under "What a handler above the
     // kernel may not do", and modules/adc for the whole shape of one.
     //
     // A handler that seems to need a lock is at the wrong priority. Put it at

@@ -68,7 +68,7 @@
 // came back. That is why the fault gets worse with pitch and not why anyone
 // would guess -- at 1 kHz the sidebands sit at 19 and 21 kHz where nobody
 // hears them, and at 10 kHz one of them lands at 14 kHz. The source of the
-// 68176 Hz is not known. See the README.
+// 68176 Hz is not known. See docs/design.md.
 #define I2S_HZ     46875
 
 // The codec's master clock, which this board wires to GP25 and which nothing

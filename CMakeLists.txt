@@ -371,7 +371,7 @@ target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardw
 # system did before. Arm only: RISC-V has no equivalent and takes the hammer
 # either way, which kernel/critical.h decides for itself.
 #
-# THE RULE THAT COMES WITH IT is in the README under "What a handler above the
+# THE RULE THAT COMES WITH IT is in docs/design.md under "What a handler above the
 # kernel may not do", and it is not optional.
 # Which pins the card is on. The board block chose them; they are applied here
 # because third_party/pico_sd_card reads PICO_SD_* as compile definitions, and

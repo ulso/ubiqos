@@ -72,7 +72,7 @@ static uint32_t next_channel;
 // A single register store, and deliberately not K->gpio_put. Going through the
 // kernel API table from a handler above the threshold is the thing the rule
 // beside irq_install forbids; writing this driver's own bit in the SIO is its
-// own hardware, which is what the rule allows. See the README.
+// own hardware, which is what the rule allows. See docs/design.md.
 static volatile uint32_t scope_mask;
 
 // --- A SWEEP ---------------------------------------------------------------

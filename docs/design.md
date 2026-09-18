@@ -1,4 +1,12 @@
-# myrtos
+# myrtos, the design
+
+This was the README until September 2026, and it is the long account of why
+the system is built the way it is: the module format, the display, the
+console, the shell, system calls, audio, pin ownership, interrupts, the WiFi
+co-processor and scheduling. It grew alongside the code, so the opening still
+describes the RISC-V-only system of August 2026 -- the Arm port, the second
+board and the network came later and have their own documents. The front page
+is [the README](../README.md).
 
 A small real-time operating system for RISC-V, in the spirit of OS-9:
 **position-independent code** and a **module system** where code is shared
@@ -94,7 +102,7 @@ route in use.
 A module is a file with a header — no ELF, and no loader that relocates it. It
 runs where it lies: straight out of flash without being copied, or from a copy
 on the heap when it came from the card. The header is defined in
-[`common/myrtos_abi.h`](common/myrtos_abi.h) and states, among other things, how
+[`common/myrtos_abi.h`](../common/myrtos_abi.h) and states, among other things, how
 much RAM the process needs: the data area grows from the bottom and the stack
 from the top of the same block.
 
@@ -112,7 +120,7 @@ genuinely PC-relative.
 ## Upgrading the Pico SDK
 
 **Two files of TinyUSB's are ours**, in
-[`lib/tinyusb-patched`](lib/tinyusb-patched): `class/cdc/cdc_host.c` and
+[`lib/tinyusb-patched`](../lib/tinyusb-patched): `class/cdc/cdc_host.c` and
 `host/hub.c`, each with one callback changed. `CMakeLists.txt` lists TinyUSB's
 host sources by path, so pointing two of them at our copies is the whole
 mechanism — there is no patch step and nothing to apply.
@@ -124,19 +132,19 @@ and the board hangs on an unplugged USB device exactly as it did before a day
 was spent finding out why.
 
 Re-syncing is two diffs and a number — the error says which — and
-[`lib/tinyusb-patched/README.md`](lib/tinyusb-patched/README.md) says what each
+[`lib/tinyusb-patched/README.md`](../lib/tinyusb-patched/README.md) says what each
 change is and why, so it can be carried over or dropped if upstream has fixed
 it.
 
-[`docs/writing-modules.md`](docs/writing-modules.md) covers what this rules out
+[`docs/writing-modules.md`](writing-modules.md) covers what this rules out
 in practice, which is less obvious than it sounds -- a switch returning string
 literals breaks it, and so does the same code written as an if-chain.
 
-A module need not be in this tree. [`docs/the-sdk.md`](docs/the-sdk.md) is how a
+A module need not be in this tree. [`docs/the-sdk.md`](the-sdk.md) is how a
 separate repository builds one against the same knowledge, and
-[`sdk/example`](sdk/example) is a working application that does.
+[`sdk/example`](../sdk/example) is a working application that does.
 
-The requirement is checked at build time. [`check_module.py`](check_module.py)
+The requirement is checked at build time. [`check_module.py`](../check_module.py)
 reads the relocations out of the object files with `readelf -W` and rejects the
 module if any allocated section contains an absolute reference such as
 `R_RISCV_32`. Without that check the fault first appears as a crash after

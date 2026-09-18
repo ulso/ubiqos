@@ -51,7 +51,7 @@ typedef uint32_t myrtos_critical_t;
 // `crit 500 20` then `adc -i` is the whole experiment.
 //
 // The rule above is written out for driver authors beside irq_install in
-// common/myrtos_abi.h and in the README, because this file is not one they
+// common/myrtos_abi.h and in docs/design.md, because this file is not one they
 // read.
 #if defined(MYRTOS_CRITICAL_BASEPRI) && (defined(__arm__) || defined(__thumb__))
 
