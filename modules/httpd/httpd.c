@@ -1,12 +1,13 @@
 #include "../../common/myrtos_abi.h"
 
-// httpd -- a web server, in the only way this machine could have one cheaply.
+// httpd -- a web server.
 //
-// The ESP32-C6 carries the TCP/IP stack, so there is no stack here and there is
-// not going to be one: this asks the chip to listen on a port, asks it who is
-// there, reads the request and writes the answer. What makes a web server
-// possible on a machine with half a megabyte of SRAM is that the hard half is
-// on the other chip. See the note at the top of modules/wifilib.
+// It was written when the ESP32-C6 ran NINA and carried the TCP/IP stack, so the
+// machine had none: this asked the chip to listen on a port, asked it who was
+// there, read the request and wrote the answer. Since 10 Sep 2026 the chip runs
+// ESP-Hosted and is only a radio, and the stack is lwIP in the kernel -- one
+// stack for the USB cable and the WiFi alike. The socket calls stayed the same;
+// only the stack they name changed, which is the second argument below.
 //
 // It serves files from the SD card, and the machine's own state where a file
 // would not do. Both matter: a file server is what makes it useful, and /status
@@ -363,11 +364,12 @@ static void serve(int32_t sock, const char *req) {
 void module_main(int argc, char **argv) {
     if (myrtos_help(argc, argv,
             "usage: httpd [port] [stack]\n\n"
-            "The stack is 0 for the WiFi coprocessor, which is the default.\n"
+            "Serves /sd over HTTP, and /status for the machine's own numbers,\n"
+            "on port 80 unless told otherwise.\n\n"
+            "The stack is 1, lwIP, by default: the USB cable and the WiFi both.\n"
+            "0 is the WiFi coprocessor's own stack, which only NINA firmware has.\n"
             "Asking for one that is not there is refused rather than served\n"
-            "on a different network.\n"
-            "Serves /sd over HTTP, and /status for the machine's own numbers.\n"
-            "Needs the board to be on a network -- 'wifi connect' first.\n"))
+            "on a different network.\n"))
         return;
 
     uint32_t port = 80;
@@ -377,10 +379,11 @@ void module_main(int argc, char **argv) {
         if (!port || port > 65535) { say("httpd: that is not a port\r\n"); return; }
     }
 
-    // Which stack. The default form is kept rather than always naming
-    // MYRTOS_NET_NINA, because it is the one every caller written before there
-    // was a choice uses, and it should go on meaning what it meant.
-    uint32_t stack = MYRTOS_NET_NINA;
+    // Which stack. lwIP unless told otherwise: NINA was the default while the
+    // chip ran it, and went on being the default after the chip stopped -- so
+    // plain `httpd` asked a stack that was no longer there for an address, got
+    // none, and said the board was not on a network while it was on two.
+    uint32_t stack = MYRTOS_NET_LWIP;
     if (argc > 2) {
         stack = 0;
         for (const char *q = argv[2]; *q >= '0' && *q <= '9'; q++)
@@ -395,22 +398,18 @@ void module_main(int argc, char **argv) {
         say("httpd: not on a network. 'wifi connect <ssid>' first.\r\n");
         return;
     }
-    if (stack != MYRTOS_NET_NINA) {
-        addr[0] = '?'; addr[1] = 0;
-    }
-
-    int32_t server = (argc > 2) ? myrtos_sock_listen_on(stack, (uint16_t)port)
-                                : myrtos_sock_listen((uint16_t)port);
+    int32_t server = myrtos_sock_listen_on(stack, (uint16_t)port);
     if (server < 0) {
-        say(argc > 2 ? "httpd: no such network stack, or it would not listen\r\n"
-                     : "httpd: the chip would not listen\r\n");
+        say("httpd: no such network stack, or it would not listen\r\n");
         return;
     }
 
+    // lwIP answers on every interface it has, so there is no one address to
+    // name: the board is its hostname.local on the cable and on the WiFi.
     myrtos_line_t l;
     myrtos_line_reset(&l);
     myrtos_line_str(&l, "httpd: serving on ");
-    myrtos_line_str(&l, addr);
+    myrtos_line_str(&l, stack == MYRTOS_NET_NINA ? addr : "lwIP (the cable and the WiFi)");
     myrtos_line_str(&l, " port ");
     myrtos_line_u32(&l, port);
     myrtos_line_str(&l, ", ctrl-C to stop\r\n");

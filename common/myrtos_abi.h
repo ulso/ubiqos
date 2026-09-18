@@ -1216,7 +1216,7 @@ typedef struct {
 // waiting inside a trap stops the machine -- so dispatching is choosing a pid.
 #define MYRTOS_NET_STACKS  4u
 #define MYRTOS_NET_NINA    0u   // the coprocessor, over SPI
-#define MYRTOS_NET_LWIP    1u   // reserved: lwIP, over CDC-NCM
+#define MYRTOS_NET_LWIP    1u   // lwIP: the USB cable (CDC-NCM) and the WiFi (ESP-Hosted)
 
 // A stack RETURNS numbers already carrying its own byte, and receives them
 // with the byte stripped. So NINA, whose byte is zero, needs no change at all,
