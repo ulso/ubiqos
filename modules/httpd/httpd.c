@@ -401,9 +401,18 @@ void module_main(int argc, char **argv) {
         say("httpd: not on a network. 'wifi connect <ssid>' first.\r\n");
         return;
     }
+    // The likeliest reason by far is a server already on the port -- a second
+    // `httpd &` -- so that is what is said first. It used to lead with "no such
+    // network stack", which on a board whose stack was plainly up and serving
+    // the very browser asking read as a fault.
     int32_t server = myrtos_sock_listen_on(stack, (uint16_t)port);
     if (server < 0) {
-        say("httpd: no such network stack, or it would not listen\r\n");
+        myrtos_line_t e;
+        myrtos_line_reset(&e);
+        myrtos_line_str(&e, "httpd: could not listen on port ");
+        myrtos_line_u32(&e, port);
+        myrtos_line_str(&e, " -- is another httpd already running? (ps)\r\n");
+        myrtos_line_flush(MYRTOS_STDOUT, &e);
         return;
     }
 
