@@ -1,6 +1,6 @@
 # UbiqOS
 
-A small operating system for the RP2350, in the spirit of OS-9: programs are
+A real-time operating system for the RP2350: programs are
 **position-independent modules**, one copy of the code is shared by every
 process running it, and a module runs where it lies -- straight out of flash,
 or from wherever it was loaded off the SD card.
