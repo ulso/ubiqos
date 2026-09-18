@@ -97,9 +97,15 @@ if(MYRTOS_BOARD STREQUAL "fruit-jam")
     set(myrtosBoardHeader "<boards/fruit-jam.h>")
     set(myrtosBoardRadio ON)
     set(myrtosBoardVideo chargen)     # or framebuffer; both exist here
-    # The same three the driver defaults to, written down rather than inherited:
-    # a default that happens to be right is a fact nobody can look up.
-    set(myrtosSdPins PICO_SD_CLK_PIN=23 PICO_SD_CMD_PIN=24 PICO_SD_DAT0_PIN=19)
+    # The card's SDIO pins, as the SDK's adafruit_fruit_jam.h has them: clock 34,
+    # command 35, data 36 to 39. Written down rather than inherited -- but from
+    # the board, not from the driver. These lines once said 23, 24 and 19, "the
+    # same three the driver defaults to", and those ARE the driver's defaults,
+    # for a Pico. On the Fruit Jam a -D beats the board header, so SDIO ran on
+    # GP19-24 from 13 to 18 Sep 2026: it never found the card, and it drove
+    # GP22 and GP23 -- the ESP32-C6's reset and strap -- so the WiFi was dead
+    # after every boot too.
+    set(myrtosSdPins PICO_SD_CLK_PIN=34 PICO_SD_CMD_PIN=35 PICO_SD_DAT0_PIN=36)
     set(myrtosBoardModules
         fat32lib sdlib                # the SD card
         leddesc i2cdesc audiodesc adcdesc gpiodesc
