@@ -171,21 +171,31 @@ static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
 // So 0 means ask again, as it already does for receive, and only a negative
 // answer is the client having gone. The wait is bounded because a client that
 // has stopped reading must not hold this here for ever.
-static void send_str(int32_t sock, const char *s) {
-    uint32_t n = 0;
-    while (s[n]) n++;
+//
+// One loop for everything that sends, so the rule cannot be forgotten again: it
+// was, in send_file, which still took 0 for a client that had gone -- so a file
+// larger than the send buffer stopped at 2812 bytes, every time. False when the
+// client has gone or taken nothing for a second.
+static bool send_all(int32_t sock, const uint8_t *p, uint32_t n) {
     uint32_t stalled = 0;
     for (uint32_t done = 0; done < n; ) {
-        int32_t sent = myrtos_sock_send(sock, (const uint8_t *)s + done, n - done);
-        if (sent < 0) return;                  // the client has gone
+        int32_t sent = myrtos_sock_send(sock, p + done, n - done);
+        if (sent < 0) return false;            // the client has gone
         if (sent == 0) {
-            if (++stalled > 1000) return;      // a second of nothing taken
+            if (++stalled > 1000) return false;   // a second of nothing taken
             myrtos_sleep(1);                   // let the acknowledgements in
             continue;
         }
         stalled = 0;
         done += (uint32_t)sent;
     }
+    return true;
+}
+
+static void send_str(int32_t sock, const char *s) {
+    uint32_t n = 0;
+    while (s[n]) n++;
+    send_all(sock, (const uint8_t *)s, n);
 }
 
 static void send_head(int32_t sock, const char *status, const char *type, uint32_t len) {
@@ -202,7 +212,7 @@ static void send_head(int32_t sock, const char *status, const char *type, uint32
     // and the reason it is safe to say so.
     for (const char *q = "\r\nConnection: keep-alive\r\n\r\n"; *q; q++) head[n++] = *q;
     head[n] = 0;
-    myrtos_sock_send(sock, (const uint8_t *)head, n);
+    send_all(sock, (const uint8_t *)head, n);
 }
 
 // What the machine will say about itself, as JSON.
@@ -288,15 +298,7 @@ static bool send_file(int32_t sock, const char *path, const char *as_type) {
     for (;;) {
         int32_t got = myrtos_read(fd, buf, sizeof buf);
         if (got <= 0) break;
-        // The same loop, for the same reason. This one happened to be safe --
-        // BUF_MAX is 512 and the chip takes 2000 -- which is exactly how a
-        // missing loop survives review.
-        bool gone = false;
-        for (uint32_t done = 0; done < (uint32_t)got && !gone; ) {
-            int32_t sent = myrtos_sock_send(sock, buf + done, (uint32_t)got - done);
-            if (sent <= 0) gone = true; else done += (uint32_t)sent;
-        }
-        if (gone) break;
+        if (!send_all(sock, buf, (uint32_t)got)) break;
     }
     myrtos_close(fd);
     return true;
