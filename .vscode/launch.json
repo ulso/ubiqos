@@ -15,16 +15,17 @@
             // device name. Changing the path alone would give a working gdb
             // pointed at the wrong core.
             "gdbPath": "${env:HOME}/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_2_0_3/bin/riscv32-unknown-elf-gdb",
-            // RP2350_RV32_0 väljer Hazard3-kärna 0. J-Link har fyra RP2350-enheter:
-            // _M33_0, _M33_1, _RV32_0, _RV32_1, och byter läge efter enhetsnamnet.
+            // RP2350_RV32_0 selects Hazard3 core 0. J-Link has four RP2350 devices,
+            // _M33_0, _M33_1, _RV32_0 and _RV32_1, and picks the mode by the name.
             "device": "RP2350_RV32_0",
             "interface": "swd",
-            // Inget -connectunderreset. Anslutningen gör reset-och-halt, och det
-            // fungerar bara så länge chippet startar i RISC-V: boot-ROM:et läser
-            // PICOBIN_IMAGE_TYPE_EXE_CPU ur flash-imagen och växlar arkitektur
-            // först då. Därav copy_to_ram i CMakeLists -- med no_flash finns
-            // ingen image att växla på, chippet startar i ARM, och servern faller
-            // på "Timeout while waiting for core to halt after reset".
+            // No -connectunderreset. Connecting does a reset-and-halt, and that
+            // only works while the chip boots into RISC-V: the boot ROM reads
+            // PICOBIN_IMAGE_TYPE_EXE_CPU from the flash image and switches
+            // architecture only then. Hence copy_to_ram in CMakeLists -- with
+            // no_flash there is no image to switch on, the chip boots into Arm,
+            // and the server fails with "Timeout while waiting for core to halt
+            // after reset".
             "serverArgs": [
                 "-speed", "4000"
             ],
