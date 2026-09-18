@@ -219,7 +219,11 @@ if(NOT myrtosPatchedFrom STREQUAL sdkVersion)
         "in the list below, and say so in lib/tinyusb-patched/README.md.\n"
         "  What is at stake: without these, an unplugged CDC device halts the "
         "core the USB host runs on, and one failed hub transfer makes every "
-        "device behind the hub unremovable for the rest of the run.")
+        "device behind the hub unremovable for the rest of the run.\n"
+        "  lib/lwip-patched holds lwIP's apps/mdns/mdns.c and mdns_out.c from the "
+        "same SDK, changed to answer an AAAA question with NSEC. Carry that "
+        "over too -- see lib/lwip-patched/README.md -- or name look-ups of the "
+        "board wait five seconds again.")
 endif()
 
 # --- THE NATIVE USB PORT ---------------------------------------------------
@@ -564,7 +568,14 @@ if(myrtosLwip)
     if(myrtosBoardRadio)
         target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c)
     endif()
-    target_link_libraries(os_kernel pico_lwip pico_lwip_nosys pico_lwip_mdns)
+    # The mDNS responder is lwIP's, built from here rather than by linking
+    # pico_lwip_mdns: two of its three files are the patched copies in
+    # lib/lwip-patched, which answer an AAAA question with NSEC.
+    target_sources(os_kernel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/lwip-patched/apps/mdns/mdns.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/lwip-patched/apps/mdns/mdns_out.c
+        ${PICO_SDK_PATH}/lib/lwip/src/apps/mdns/mdns_domain.c)
+    target_link_libraries(os_kernel pico_lwip pico_lwip_nosys)
     target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
 endif()
 
