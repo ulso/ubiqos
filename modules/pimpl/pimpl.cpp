@@ -10,11 +10,11 @@
 // An initialised thread-local, to exercise the other half of the mechanism:
 // this one has a value in the module image that the kernel copies per process,
 // rather than being zeroed like the instance itself.
-static __thread char tag[8] = "myrtos";
+static __thread char tag[8] = "ubiqos";
 
 void Pimpl::run(int argc, char **argv) {
     counter = 0;
-    tag[0] = (char)('A' + (myrtos_ticks_now() & 7));   // proves it is per process
+    tag[0] = (char)('A' + (ubiqos_ticks_now() & 7));   // proves it is per process
 
     int n = 0;
     if (argc > 1) while (n < 15 && argv[1][n]) { label[n] = argv[1][n]; n++; }
@@ -26,19 +26,19 @@ void Pimpl::run(int argc, char **argv) {
     if (!rounds) rounds = 1000;
 
     // Counted in the other file, and interleaved with the other process.
-    for (uint32_t i = 0; i < rounds / 100; i++) { bump(100); myrtos_sleep(1); }
+    for (uint32_t i = 0; i < rounds / 100; i++) { bump(100); ubiqos_sleep(1); }
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, label);
-    myrtos_line_str(&l, ": counter ");
-    myrtos_line_u32(&l, counter);
-    myrtos_line_str(&l, ", tag ");
-    myrtos_line_str(&l, tag);
-    myrtos_line_str(&l, ", area ");
-    myrtos_line_u32(&l, room());
-    myrtos_line_str(&l, " bytes\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, label);
+    ubiqos_line_str(&l, ": counter ");
+    ubiqos_line_u32(&l, counter);
+    ubiqos_line_str(&l, ", tag ");
+    ubiqos_line_str(&l, tag);
+    ubiqos_line_str(&l, ", area ");
+    ubiqos_line_u32(&l, room());
+    ubiqos_line_str(&l, " bytes\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
-MYRTOS_MODULE(Pimpl)
+UBIQOS_MODULE(Pimpl)

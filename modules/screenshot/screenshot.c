@@ -1,4 +1,4 @@
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // screenshot -- what the panel shows, as a BMP file on the card.
 //
@@ -25,8 +25,8 @@
 // so a shorter picture written over a longer file would leave the old tail
 // behind it -- an image that opens and is wrong.
 
-MYRTOS_LIBC_DEFINE
-MYRTOS_MEM_SIZE(16384);
+UBIQOS_LIBC_DEFINE
+UBIQOS_MEM_SIZE(16384);
 
 #define W 800u
 #define H 480u
@@ -82,7 +82,7 @@ static uint32_t make_header(uint8_t *h, uint32_t bpp, uint32_t colours)
 
 void module_main(int argc, char **argv)
 {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: screenshot [FILE]\n\n"
             "Saves what the panel shows as a BMP: FILE, which must not exist yet,\n"
             "or the next free /sd/shotNNN.bmp. 800 x 480, eight bits a pixel with\n"
@@ -109,19 +109,19 @@ void module_main(int argc, char **argv)
     }
 
     uint16_t line[W];
-    if (myrtos_video_capture(0, line) < 0) {
+    if (ubiqos_video_capture(0, line) < 0) {
         printf("screenshot: this display cannot be captured\n");
         return;
     }
 
-    uint8_t *pixels = myrtos_alloc_bulk(W * H);
-    uint8_t *index  = myrtos_alloc_bulk(65536u);    // 0 unseen, else palette slot + 1
-    uint8_t *chunk  = myrtos_alloc_bulk(W * 3u * ROWS_A_WRITE);
+    uint8_t *pixels = ubiqos_alloc_bulk(W * H);
+    uint8_t *index  = ubiqos_alloc_bulk(65536u);    // 0 unseen, else palette slot + 1
+    uint8_t *chunk  = ubiqos_alloc_bulk(W * 3u * ROWS_A_WRITE);
     if (!pixels || !index || !chunk) {
         printf("screenshot: no memory for the picture\n");
-        if (pixels) myrtos_free(pixels);
-        if (index)  myrtos_free(index);
-        if (chunk)  myrtos_free(chunk);
+        if (pixels) ubiqos_free(pixels);
+        if (index)  ubiqos_free(index);
+        if (chunk)  ubiqos_free(chunk);
         return;
     }
     for (uint32_t i = 0; i < 65536u; i++) index[i] = 0;
@@ -130,9 +130,9 @@ void module_main(int argc, char **argv)
     uint32_t colours = 0;
     bool fits = true;
 
-    const uint32_t t0 = myrtos_ticks_now();
+    const uint32_t t0 = ubiqos_ticks_now();
     for (uint32_t y = 0; y < H && fits; y++) {
-        myrtos_video_capture(y, line);
+        ubiqos_video_capture(y, line);
         for (uint32_t x = 0; x < W; x++) {
             const uint16_t c = line[x];
             uint32_t slot = index[c];
@@ -145,12 +145,12 @@ void module_main(int argc, char **argv)
             pixels[y * W + x] = (uint8_t)(slot - 1u);
         }
     }
-    const uint32_t t1 = myrtos_ticks_now();
+    const uint32_t t1 = ubiqos_ticks_now();
 
     const int fd = open(path, O_WRONLY | O_CREAT);
     if (fd < 0) {
         printf("screenshot: cannot write %s -- is there a card?\n", path);
-        myrtos_free(pixels); myrtos_free(index); myrtos_free(chunk);
+        ubiqos_free(pixels); ubiqos_free(index); ubiqos_free(chunk);
         return;
     }
 
@@ -182,18 +182,18 @@ void module_main(int argc, char **argv)
         for (uint32_t r = 0; ok && r < H; r += ROWS_A_WRITE) {
             const uint32_t n = H - r < ROWS_A_WRITE ? H - r : ROWS_A_WRITE;
             for (uint32_t k = 0; k < n; k++) {
-                myrtos_video_capture(H - 1u - r - k, line);
+                ubiqos_video_capture(H - 1u - r - k, line);
                 for (uint32_t x = 0; x < W; x++) to_bgr(line[x], chunk + (k * W + x) * 3u);
             }
             ok = write_all(fd, chunk, n * W * 3u);
         }
     }
     close(fd);
-    const uint32_t t2 = myrtos_ticks_now();
+    const uint32_t t2 = ubiqos_ticks_now();
 
-    myrtos_free(pixels);
-    myrtos_free(index);
-    myrtos_free(chunk);
+    ubiqos_free(pixels);
+    ubiqos_free(index);
+    ubiqos_free(chunk);
 
     if (!ok) {
         printf("screenshot: writing %s failed part way; the file is incomplete\n", path);

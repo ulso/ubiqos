@@ -13,9 +13,9 @@
 #include "hardware/timer.h"
 #include "chargen.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-void myrtos_print_hex(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+void ubiqos_print_hex(uint32_t v);
 
 // DVI out of the HSTX peripheral, 640x480 at one byte per pixel.
 //
@@ -31,11 +31,11 @@ void myrtos_print_hex(uint32_t v);
 #define H_FRONT_PORCH   16
 #define H_SYNC_WIDTH    96
 #define H_BACK_PORCH    48
-#define H_ACTIVE        MYRTOS_H_ACTIVE
+#define H_ACTIVE        UBIQOS_H_ACTIVE
 #define V_FRONT_PORCH   10
 #define V_SYNC_WIDTH    2
 #define V_BACK_PORCH    52      // 33 by the standard; see the note on the table
-#define V_ACTIVE        MYRTOS_V_ACTIVE
+#define V_ACTIVE        UBIQOS_V_ACTIVE
 #define H_TOTAL (H_FRONT_PORCH + H_SYNC_WIDTH + H_BACK_PORCH + H_ACTIVE)
 #define V_TOTAL (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH + V_ACTIVE)
 
@@ -94,7 +94,7 @@ static uint32_t vactive_line[] = {
 //
 // So the 300 kB stays here. PSRAM is for bulk that is not streamed 57 times a
 // second: module data, file buffers, whatever the shell wants.
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
 
 // Character cells instead, and a handful of scanlines in flight.
 //
@@ -105,13 +105,13 @@ static uint32_t vactive_line[] = {
 // cannot mask. The first version of this display took an interrupt per scanline
 // and died when pre-emption arrived; the slack is the answer to that.
 #define LINE_BUFS 48
-static uint8_t linebuf[LINE_BUFS][MYRTOS_H_ACTIVE] __attribute__((aligned(4)));
+static uint8_t linebuf[LINE_BUFS][UBIQOS_H_ACTIVE] __attribute__((aligned(4)));
 
 #else
 
-static uint8_t framebuf_store[MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE]
+static uint8_t framebuf_store[UBIQOS_H_ACTIVE * UBIQOS_V_ACTIVE]
     __attribute__((aligned(4)));
-uint8_t *myrtos_framebuf = framebuf_store;
+uint8_t *ubiqos_framebuf = framebuf_store;
 
 #endif
 
@@ -162,19 +162,19 @@ static const void  *frame_addrs[FRAME_ENTRIES]
 
 static int ch_data = -1, ch_count = -1, ch_addr = -1;
 
-#if !MYRTOS_VIDEO_CHARGEN
-uint32_t myrtos_video_origin;
+#if !UBIQOS_VIDEO_CHARGEN
+uint32_t ubiqos_video_origin;
 
 // Point every active display row at a framebuffer line, offset by the origin.
 // The control channel may be reading the table while this runs; it reads about
 // one entry per 32 us and the rewrite takes some sixteen, so at worst a single
 // scanline shows the wrong content for a single frame. That is the same tear any
 // unsynchronised scroll has, and it is not visible.
-void myrtos_video_set_origin(uint32_t line) {
-    myrtos_video_origin = line % V_ACTIVE;
+void ubiqos_video_set_origin(uint32_t line) {
+    ubiqos_video_origin = line % V_ACTIVE;
     for (uint r = 0; r < V_ACTIVE; r++) {
-        uint fb = (myrtos_video_origin + r) % V_ACTIVE;
-        frame_addrs[BLANK_LINES + r * 2 + 1] = &myrtos_framebuf[fb * H_ACTIVE];
+        uint fb = (ubiqos_video_origin + r) % V_ACTIVE;
+        frame_addrs[BLANK_LINES + r * 2 + 1] = &ubiqos_framebuf[fb * H_ACTIVE];
     }
 }
 #endif
@@ -195,16 +195,16 @@ static void build_frame_list(void) {
             frame_counts[n] = count_of(vactive_line);
             frame_addrs[n++] = vactive_line;
             frame_counts[n] = H_ACTIVE / sizeof(uint32_t);
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
             frame_addrs[n++] = linebuf[(line - BLANK_LINES) % LINE_BUFS];
 #else
-            frame_addrs[n++] = &myrtos_framebuf[(line - BLANK_LINES) * H_ACTIVE];
+            frame_addrs[n++] = &ubiqos_framebuf[(line - BLANK_LINES) * H_ACTIVE];
 #endif
         }
     }
 }
 
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
 
 // --- KEEPING AHEAD OF THE BEAM --------------------------------------------
 //
@@ -219,7 +219,7 @@ static void build_frame_list(void) {
 //
 // THE PRIORITY IS BELOW THE KERNEL, AND THAT IS DELIBERATE.
 //
-// It was 0x40, above MYRTOS_CRITICAL_BASEPRI, on the theory that the display
+// It was 0x40, above UBIQOS_CRITICAL_BASEPRI, on the theory that the display
 // must never be delayed. That was wrong, and `vec demo` proved it: PIO-USB
 // drives its SOF from a repeating timer at the SDK's default 0x80
 // (alarm_pool_add_repeating_timer_us, -1000 us, in pio_usb_host.c), so a pump
@@ -246,7 +246,7 @@ static void build_frame_list(void) {
 // and masks everything, so a critical section stops the pump exactly the way it
 // stopped the per-scanline interrupt the first time. Prioritised traps on
 // RISC-V were tried once and reverted, and a trap stack is the prerequisite --
-// so on RISC-V the honest answer today is MYRTOS_VIDEO=framebuffer.
+// so on RISC-V the honest answer today is UBIQOS_VIDEO=framebuffer.
 
 // 700, not 500, and the reason is the glyph row. A pump renders whatever the
 // beam has advanced since the last one, so at 500 microseconds that is about
@@ -258,14 +258,14 @@ static void build_frame_list(void) {
 // slack. The underrun counter is what says whether that was enough.
 #define PUMP_US 700
 
-uint32_t myrtos_video_underruns, myrtos_video_pumps, myrtos_video_lines;
+uint32_t ubiqos_video_underruns, ubiqos_video_pumps, ubiqos_video_lines;
 static uint32_t first_underrun_pump;
 
 // What the display actually costs, in microseconds, because guessing it has now
 // been wrong twice. total against elapsed gives the share of the processor this
 // interrupt is taking, and max is the one number that says whether a single
 // call can sit on top of something that cannot wait.
-uint32_t myrtos_video_us_total, myrtos_video_us_max;
+uint32_t ubiqos_video_us_total, ubiqos_video_us_max;
 static uint32_t bands_done, singles_done;
 
 static int      pump_alarm = -1;
@@ -273,7 +273,7 @@ static uint32_t beam_epoch;     // active lines completed in whole frames
 static uint32_t beam_last;      // the line seen last time, to catch the wrap
 static uint32_t rendered_to;    // the next line to build, on the same scale
 
-uint32_t myrtos_video_buffers(void) { return LINE_BUFS; }
+uint32_t ubiqos_video_buffers(void) { return LINE_BUFS; }
 
 // Everything the one measurement needs, in the order vidstat prints it. beam
 // and rendered say whether the display is moving at all and whether anything is
@@ -291,27 +291,27 @@ static inline uint32_t beam_line(void)
 
 // What the display is actually playing for one line. The buffer is live: this
 // is the bytes the DMA hands to HSTX, not a re-rendering of them.
-void myrtos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
+void ubiqos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n)
 {
     const uint8_t *p = linebuf[line % LINE_BUFS];
     for (uint32_t i = 0; i < n; i++)
         out[i] = p[i];
 }
 
-void myrtos_video_stats_fill(uint32_t *sixteen)
+void ubiqos_video_stats_fill(uint32_t *sixteen)
 {
-    sixteen[0] = myrtos_video_underruns;
-    sixteen[1] = myrtos_video_pumps;
-    sixteen[2] = myrtos_video_lines;
+    sixteen[0] = ubiqos_video_underruns;
+    sixteen[1] = ubiqos_video_pumps;
+    sixteen[2] = ubiqos_video_lines;
     sixteen[3] = LINE_BUFS;
     sixteen[4] = beam_line();
     sixteen[5] = rendered_to;
-    sixteen[6] = myrtos_chargen_view_back();
-    sixteen[7] = myrtos_chargen_history();
-    sixteen[8] = myrtos_chargen_deep();
+    sixteen[6] = ubiqos_chargen_view_back();
+    sixteen[7] = ubiqos_chargen_history();
+    sixteen[8] = ubiqos_chargen_deep();
     sixteen[9]  = first_underrun_pump;
-    sixteen[10] = myrtos_video_us_total;
-    sixteen[11] = myrtos_video_us_max;
+    sixteen[10] = ubiqos_video_us_total;
+    sixteen[11] = ubiqos_video_us_max;
     sixteen[12] = 0;
     sixteen[13] = bands_done;
     sixteen[14] = singles_done;
@@ -332,9 +332,9 @@ static void video_pump(void)
     // Say so and start again from where it is, rather than racing to catch up
     // with work whose result is already on the screen.
     if (rendered_to < now) {
-        if (!myrtos_video_underruns)
-            first_underrun_pump = myrtos_video_pumps;   // when, not just how many
-        myrtos_video_underruns += now - rendered_to;
+        if (!ubiqos_video_underruns)
+            first_underrun_pump = ubiqos_video_pumps;   // when, not just how many
+        ubiqos_video_underruns += now - rendered_to;
         rendered_to = now;
     }
 
@@ -355,26 +355,26 @@ static void video_pump(void)
         // absorbs the unevenness. 48 buffers is three sixteens and 480 lines is
         // thirty of them, so a 16-aligned line is a 16-aligned buffer and the
         // block never wraps.
-        if ((rendered_to % MYRTOS_CELL_H) == 0) {
-            if (rendered_to + MYRTOS_CELL_H > target)
+        if ((rendered_to % UBIQOS_CELL_H) == 0) {
+            if (rendered_to + UBIQOS_CELL_H > target)
                 break;
-            myrtos_chargen_band(y, buf);
-            rendered_to += MYRTOS_CELL_H;
-            myrtos_video_lines += MYRTOS_CELL_H;
+            ubiqos_chargen_band(y, buf);
+            rendered_to += UBIQOS_CELL_H;
+            ubiqos_video_lines += UBIQOS_CELL_H;
             bands_done++;
             continue;
         }
 
-        myrtos_chargen_line(y, buf);
+        ubiqos_chargen_line(y, buf);
         rendered_to++;
         singles_done++;
-        myrtos_video_lines++;
+        ubiqos_video_lines++;
     }
-    myrtos_video_pumps++;
+    ubiqos_video_pumps++;
 
     uint32_t dt = timer_hw->timerawl - t0;
-    myrtos_video_us_total += dt;
-    if (dt > myrtos_video_us_max) myrtos_video_us_max = dt;
+    ubiqos_video_us_total += dt;
+    if (dt > ubiqos_video_us_max) ubiqos_video_us_max = dt;
 }
 
 static void pump_isr(void)
@@ -390,7 +390,7 @@ static void pump_start(void)
     // SRAM held at reset. The cells are blank at this point, so which line
     // index each buffer was built for does not matter.
     for (uint32_t i = 0; i < LINE_BUFS; i++)
-        myrtos_chargen_line(i, linebuf[i]);
+        ubiqos_chargen_line(i, linebuf[i]);
 
     // THEN start the bookkeeping from where the beam actually is. The DMA chain
     // has been running since dma_channel_start, so claiming that forty-eight
@@ -414,7 +414,7 @@ static void pump_start(void)
 
 #endif
 
-void myrtos_video_init(void) {
+void ubiqos_video_init(void) {
     // set_sys_clock_khz does not touch clk_hstx: it kept its own source, the
     // system PLL at 150 MHz, while the processor went down to 125. The pixel
     // clock is clk_hstx/5, so the display was being driven at 30 MHz instead of
@@ -462,7 +462,7 @@ void myrtos_video_init(void) {
         hstx_ctrl_hw->bit[bit]     = sel | HSTX_CTRL_BIT0_INV_BITS;   // N
         hstx_ctrl_hw->bit[bit + 1] = sel;                             // P
     }
-    for (int i = MYRTOS_VIDEO_PIN_FIRST; i <= MYRTOS_VIDEO_PIN_LAST; ++i)
+    for (int i = UBIQOS_VIDEO_PIN_FIRST; i <= UBIQOS_VIDEO_PIN_LAST; ++i)
         gpio_set_function(i, 0);
 
     build_frame_list();
@@ -503,33 +503,33 @@ void myrtos_video_init(void) {
 
     dma_channel_start(ch_count);
 
-#if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_init(0xf0);      // white on black, before anything prints
+#if UBIQOS_VIDEO_CHARGEN
+    ubiqos_chargen_init(0xf0);      // white on black, before anything prints
     pump_start();
 #endif
 
-    myrtos_print("Video: clk_sys ");
-    myrtos_print_u32(clock_get_hz(clk_sys) / 1000000);
-    myrtos_print(" MHz, clk_hstx ");
-    myrtos_print_u32(clock_get_hz(clk_hstx) / 1000000);
-    myrtos_print(" MHz\n");
-    myrtos_print("Video: csr 0x");
-    myrtos_print_hex(hstx_ctrl_hw->csr);
-    myrtos_print(" (want 0x50050203), fifo stat 0x");
-    myrtos_print_hex(hstx_fifo_hw->stat);
-    myrtos_print(", 640x480, DMA ");
-    myrtos_print_u32((uint32_t)ch_data);
-    myrtos_print(", ");
-    myrtos_print_u32((uint32_t)ch_count);
-    myrtos_print(", ");
-    myrtos_print_u32((uint32_t)ch_addr);
-    myrtos_print("\n");
+    ubiqos_print("Video: clk_sys ");
+    ubiqos_print_u32(clock_get_hz(clk_sys) / 1000000);
+    ubiqos_print(" MHz, clk_hstx ");
+    ubiqos_print_u32(clock_get_hz(clk_hstx) / 1000000);
+    ubiqos_print(" MHz\n");
+    ubiqos_print("Video: csr 0x");
+    ubiqos_print_hex(hstx_ctrl_hw->csr);
+    ubiqos_print(" (want 0x50050203), fifo stat 0x");
+    ubiqos_print_hex(hstx_fifo_hw->stat);
+    ubiqos_print(", 640x480, DMA ");
+    ubiqos_print_u32((uint32_t)ch_data);
+    ubiqos_print(", ");
+    ubiqos_print_u32((uint32_t)ch_count);
+    ubiqos_print(", ");
+    ubiqos_print_u32((uint32_t)ch_addr);
+    ubiqos_print("\n");
 }
 
-#if !MYRTOS_VIDEO_CHARGEN
+#if !UBIQOS_VIDEO_CHARGEN
 // Something recognisable, so the first picture says whether the pinout and the
 // timing are right rather than merely that something came out.
-void myrtos_video_testcard(void) {
+void ubiqos_video_testcard(void) {
     // Below the bars, all 256 colours in a 16x16 grid, ordered by byte value.
     // The previous ramp built its colour with ((x >> 5) << 5), which wraps at
     // 256 pixels, and ((y >> 5) << 2), which grows past the three bits of the
@@ -556,7 +556,7 @@ void myrtos_video_testcard(void) {
                 if (row > 15) row = 15;
                 c = (uint8_t)(row * 16 + col);
             }
-            myrtos_framebuf[y * H_ACTIVE + x] = c;
+            ubiqos_framebuf[y * H_ACTIVE + x] = c;
         }
     }
 }

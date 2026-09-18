@@ -1,4 +1,4 @@
-#include "../../common/myrtos_posix.h"
+#include "../../common/ubiqos_posix.h"
 
 __thread int errno;
 
@@ -16,7 +16,7 @@ __thread int errno;
 void module_main(void) {
     const int fd = open("/var/time", O_RDONLY);
     if (fd < 0) {
-        myrtos_write_str(MYRTOS_STDERR, "date: the kernel is not keeping a clock\n");
+        ubiqos_write_str(UBIQOS_STDERR, "date: the kernel is not keeping a clock\n");
         return;
     }
 
@@ -27,9 +27,9 @@ void module_main(void) {
     close(fd);
 
     if (n <= 0) {
-        myrtos_write_str(MYRTOS_STDERR, "date: the clock said nothing\n");
+        ubiqos_write_str(UBIQOS_STDERR, "date: the clock said nothing\n");
         return;
     }
     line[n] = 0;
-    myrtos_write_str(MYRTOS_STDOUT, line);
+    ubiqos_write_str(UBIQOS_STDOUT, line);
 }

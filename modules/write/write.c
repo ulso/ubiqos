@@ -1,23 +1,23 @@
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // write -- puts its arguments into a file, separated by spaces.
 //
-//     write notes.txt hello myrtos
+//     write notes.txt hello UbiqOS
 //     write -a notes.txt and some more
 //
 // The shell has no redirection, so without this there is no way to create a
 // file from the keyboard at all. It is the smallest thing that closes that gap,
 // and where an editor would start.
 //
-// Written against myrtos_stdio.h, and the writing counterpart to head: fopen,
+// Written against ubiqos_stdio.h, and the writing counterpart to head: fopen,
 // fputs, fclose, and "a" for appending -- which only became possible when stat
 // arrived and open could ask how long the file already was.
 
-MYRTOS_LIBC_DEFINE
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_LIBC_DEFINE
+UBIQOS_MEM_SIZE(8192);
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: write [-a] FILE TEXT...\n\nPuts its arguments into a file, separated by spaces.\n  -a   append instead of replacing\n")) return;
 
     int arg = 1;

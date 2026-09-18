@@ -6,7 +6,7 @@
 // walks a tree, completes a filename or looks for a config file opens a
 // directory on its first page.
 //
-// Underneath is not a handle but an index. myrtos answers "the nth entry of
+// Underneath is not a handle but an index. UbiqOS answers "the nth entry of
 // this directory", which is the same question readdir asks, so a DIR is a path
 // and a counter and there is no cache to keep coherent. A file created while
 // somebody is reading may be seen or missed depending on where the index has
@@ -15,7 +15,7 @@
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
-#include "myrtos_abi.h"
+#include "ubiqos_abi.h"
 
 DIR *opendir(const char *path)
 {
@@ -25,11 +25,11 @@ DIR *opendir(const char *path)
     // by returning no entries -- which a caller cannot tell from an empty one.
     // ls learned this the hard way and the note beside it says so.
     uint32_t size = 0;
-    char probe[MYRTOS_DIRNAME_MAX];
-    if (myrtos_fs_dir_at(path, 0, probe, &size) < 0) {
+    char probe[UBIQOS_DIRNAME_MAX];
+    if (ubiqos_fs_dir_at(path, 0, probe, &size) < 0) {
         uint32_t st = 0;
-        int32_t attr = myrtos_fs_stat(path, &st);
-        if (attr < 0 || !(attr & MYRTOS_ATTR_DIRECTORY)) {
+        int32_t attr = ubiqos_fs_stat(path, &st);
+        if (attr < 0 || !(attr & UBIQOS_ATTR_DIRECTORY)) {
             errno = ENOENT;
             return 0;
         }
@@ -52,16 +52,16 @@ struct dirent *readdir(DIR *d)
 
     // The kernel hands back what FAT stores -- "W4         ", eleven characters
     // with the extension implied by position -- and a caller needs a name it
-    // can pass straight to open(). The rule is in myrtos_abi.h because ls and
+    // can pass straight to open(). The rule is in ubiqos_abi.h because ls and
     // the wasm host need the same one.
     uint32_t size = 0;
-    char raw[MYRTOS_DIRNAME_MAX];
-    int32_t attr = myrtos_fs_dir_at(d->path, d->index, raw, &size);
+    char raw[UBIQOS_DIRNAME_MAX];
+    int32_t attr = ubiqos_fs_dir_at(d->path, d->index, raw, &size);
     if (attr < 0) return 0;                       // the end, and not an error
     d->index++;
-    myrtos_pretty_name(raw, d->entry.d_name);
+    ubiqos_pretty_name(raw, d->entry.d_name);
 
-    // Never zero. POSIX does not say what an inode number means here and myrtos
+    // Never zero. POSIX does not say what an inode number means here and UbiqOS
     // has none to give, but a zero d_ino is treated as "no entry" by enough
     // code to be worth avoiding -- wasi-libc drops the entry outright and that
     // cost an evening on the guest side. An FNV hash of the name is stable
@@ -72,7 +72,7 @@ struct dirent *readdir(DIR *d)
         h *= 16777619u;
     }
     d->entry.d_ino  = h | 1u;
-    d->entry.d_type = (attr & MYRTOS_ATTR_DIRECTORY) ? DT_DIR : DT_REG;
+    d->entry.d_type = (attr & UBIQOS_ATTR_DIRECTORY) ? DT_DIR : DT_REG;
     d->entry.d_size = size;
     return &d->entry;
 }

@@ -1,4 +1,4 @@
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // more -- a file or standard input, a screenful at a time.
 //
@@ -10,18 +10,18 @@
 //
 // Space shows the next screenful, Return one more line, q gives up.
 
-MYRTOS_LIBC_DEFINE
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_LIBC_DEFINE
+UBIQOS_MEM_SIZE(8192);
 
 // The keys are read from descriptor 2, not from standard input, and that is
 // the point: "cat x | more" has replaced standard input with the pipe, and a
 // more that waited there would be waiting for the file to press a key. Two is
 // still the terminal, which is where the reader's hands are.
-#define KEYS MYRTOS_STDERR
+#define KEYS UBIQOS_STDERR
 
 static int screen_rows(void) {
-    myrtos_confont_t f;
-    if (myrtos_console_font_info(-1, &f) < 0 || !f.rows) return 24;  // no screen
+    ubiqos_confont_t f;
+    if (ubiqos_console_font_info(-1, &f) < 0 || !f.rows) return 24;  // no screen
     return f.rows;
 }
 
@@ -30,7 +30,7 @@ static bool pause_here(int *left, int rows) {
     fputs("-- more --", stderr);
     for (;;) {
         char c;
-        if (myrtos_read(KEYS, &c, 1) != 1) return false;    // nothing more to ask
+        if (ubiqos_read(KEYS, &c, 1) != 1) return false;    // nothing more to ask
         // Wipe the prompt, so the text that follows starts in a clean line.
         fputs("\r          \r", stderr);
         if (c == 'q' || c == 'Q') return false;
@@ -42,7 +42,7 @@ static bool pause_here(int *left, int rows) {
 
 void module_main(int argc, char **argv)
 {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: more [FILE]\n\nA screenful at a time; standard input when no file is named.\nSpace for the next screen, q to stop.\n")) return;
 
     FILE *f = stdin;

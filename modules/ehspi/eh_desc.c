@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // Device descriptor for ESP-Hosted's SPI transport. No code -- the module is
 // just these bytes.
@@ -9,8 +9,8 @@
 // co-processor's own log.
 
 typedef struct {
-    myrtos_descriptor_t desc;
-    myrtos_ehspi_config_t spi;
+    ubiqos_descriptor_t desc;
+    ubiqos_ehspi_config_t spi;
 } eh_descriptor_t;
 
 __attribute__((section(".rodata.descriptor"), used))
@@ -18,10 +18,10 @@ const eh_descriptor_t eh_descriptor = {
     .desc = {
         .device_name   = "eh",
         .driver_name   = "ehspi",
-        .device_class  = MYRTOS_CLASS_CHAR,
+        .device_class  = UBIQOS_CLASS_CHAR,
         .reserved      = 0,
-        .config_offset = sizeof(myrtos_descriptor_t),
-        .config_size   = sizeof(myrtos_ehspi_config_t),
+        .config_offset = sizeof(ubiqos_descriptor_t),
+        .config_size   = sizeof(ubiqos_ehspi_config_t),
     },
     .spi = {
         .sck_pin         = 30,

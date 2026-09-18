@@ -16,41 +16,41 @@
 // that does DMA -- so its buffers are asked for from the kernel, in SRAM, at
 // init. See sd_set_dma_buffers in the vendored driver and sd_bounce below.
 #include "../../kernel/sdcard.h"
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
 
-extern const myrtos_kernel_api_t *myrtos_sd_k;
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
+extern const ubiqos_kernel_api_t *ubiqos_sd_k;
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
 
 // Which SPI and which pins, per board, from the build.
 //
 // The Fruit Jam's are the defaults because they were here first; the Waveshare
 // 4.3B has the card on spi1 at GPIO10, 11, 12 with chip select on 15, and gets
-// them through MYRTOS_SD_SPI_* . The instance travels as a NUMBER because spi0
+// them through UBIQOS_SD_SPI_* . The instance travels as a NUMBER because spi0
 // and spi1 are addresses that no -D can carry.
-#ifndef MYRTOS_SD_SPI_INDEX
-#define MYRTOS_SD_SPI_INDEX 0
-#define MYRTOS_SD_SCK_PIN   34
-#define MYRTOS_SD_MOSI_PIN  35
-#define MYRTOS_SD_MISO_PIN  36
-#define MYRTOS_SD_CS_PIN    39
+#ifndef UBIQOS_SD_SPI_INDEX
+#define UBIQOS_SD_SPI_INDEX 0
+#define UBIQOS_SD_SCK_PIN   34
+#define UBIQOS_SD_MOSI_PIN  35
+#define UBIQOS_SD_MISO_PIN  36
+#define UBIQOS_SD_CS_PIN    39
 #endif
 
-#define SD_SPI       (MYRTOS_SD_SPI_INDEX ? spi1 : spi0)
-#define SD_SCK_PIN   MYRTOS_SD_SCK_PIN
-#define SD_MOSI_PIN  MYRTOS_SD_MOSI_PIN
-#define SD_MISO_PIN  MYRTOS_SD_MISO_PIN
-#define SD_CS_PIN    MYRTOS_SD_CS_PIN
+#define SD_SPI       (UBIQOS_SD_SPI_INDEX ? spi1 : spi0)
+#define SD_SCK_PIN   UBIQOS_SD_SCK_PIN
+#define SD_MOSI_PIN  UBIQOS_SD_MOSI_PIN
+#define SD_MISO_PIN  UBIQOS_SD_MISO_PIN
+#define SD_CS_PIN    UBIQOS_SD_CS_PIN
 // GP33 is card detect according to Adafruit's own board header
 // (ADAFRUIT_FRUIT_JAM_SD_CARD_DETECT_PIN), and on this board nothing drives it.
 // Measured 2 Sep 2026 with a card in the slot that mounted over four-bit SDIO
 // in the next breath: with a pull-up GP33 reads 1, with a pull-down it reads 0.
 // It follows the pull, which is what an unconnected pin does.
 //
-// There was a myrtos_sd_present() here that read it and returned "empty". It is
+// There was a ubiqos_sd_present() here that read it and returned "empty". It is
 // gone rather than left for someone to trust: gating the mount on it stopped
 // the machine reading a card that was plainly there, and a function that
 // answers wrongly is worse than no function.
@@ -132,11 +132,11 @@ static bool spi_init_card(void) {
     for (int i = 0; i < 16 && r != R1_IDLE; i++) {
         r = sd_command(CMD0_GO_IDLE, 0, 0x95);
     }
-    if (r != R1_IDLE) { cs_high(); myrtos_print("SD: no response to CMD0\n"); return false; }
+    if (r != R1_IDLE) { cs_high(); ubiqos_print("SD: no response to CMD0\n"); return false; }
 
     // CMD8 separates modern cards (v2) from old ones. 0x1AA = 2.7-3.6 V, pattern AA.
     r = sd_command(CMD8_SEND_IF_COND, 0x1aa, 0x87);
-    if (r & ~R1_IDLE) { cs_high(); myrtos_print("SD: card too old (no CMD8)\n"); return false; }
+    if (r & ~R1_IDLE) { cs_high(); ubiqos_print("SD: card too old (no CMD8)\n"); return false; }
     for (int i = 0; i < 4; i++) sd_xfer(0xff);   // resten av R7
 
     // ACMD41 with the HCS bit: ask the card to leave idle, and say that we can
@@ -146,12 +146,12 @@ static bool spi_init_card(void) {
         sd_command(CMD55_APP, 0, 0xff);
         r = sd_command(ACMD41_SEND_OP_COND, 0x40000000, 0xff);
         if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) {
-            cs_high(); myrtos_print("SD: timed out leaving idle\n"); return false;
+            cs_high(); ubiqos_print("SD: timed out leaving idle\n"); return false;
         }
     } while (r != 0);
 
     r = sd_command(CMD58_READ_OCR, 0, 0xff);
-    if (r) { cs_high(); myrtos_print("SD: CMD58 failed\n"); return false; }
+    if (r) { cs_high(); ubiqos_print("SD: CMD58 failed\n"); return false; }
     uint8_t ocr0 = sd_xfer(0xff);
     for (int i = 0; i < 3; i++) sd_xfer(0xff);
     sd_block_addressed = (ocr0 & 0x40) != 0;   // CCS
@@ -162,8 +162,8 @@ static bool spi_init_card(void) {
     // Now bring the speed up.
     spi_set_baudrate(SD_SPI, 12 * 1000 * 1000);
 
-    myrtos_print("SD: card ready, ");
-    myrtos_print(sd_block_addressed ? "block addressed (SDHC/SDXC)\n" : "byte addressed (SDSC)\n");
+    ubiqos_print("SD: card ready, ");
+    ubiqos_print(sd_block_addressed ? "block addressed (SDHC/SDXC)\n" : "byte addressed (SDSC)\n");
     return true;
 }
 
@@ -243,10 +243,10 @@ static bool spi_write_block(uint32_t lba, const uint8_t *buf) {
 #include "pico/sd_card.h"
 #include "hardware/pio.h"
 
-// The window of the block the driver takes -- MYRTOS_SD_PIO_INDEX, in
+// The window of the block the driver takes -- UBIQOS_SD_PIO_INDEX, in
 // sd_card.h. 16 is the Fruit Jam's, whose card is on GP34-39.
-#ifndef MYRTOS_SD_PIO_GPIO_BASE
-#define MYRTOS_SD_PIO_GPIO_BASE 16
+#ifndef UBIQOS_SD_PIO_GPIO_BASE
+#define UBIQOS_SD_PIO_GPIO_BASE 16
 #endif
 
 // What CMD17 and CMD24 are given for a sector. The driver passes it straight
@@ -279,18 +279,18 @@ static bool sd_failed;
 // idea of the bus is stale and the next mount has to start from CMD0.
 //
 // It cannot simply clear use_sdio, which was the first attempt: with use_sdio
-// false, myrtos_sd_read_block falls through to spi_read_block, and speaking SPI
+// false, ubiqos_sd_read_block falls through to spi_read_block, and speaking SPI
 // to a freshly inserted card latches it into SPI mode for good -- spending the
 // one chance at four bits on a read that was only ever going to fail.
 static bool needs_init;
 
 // Whether the card has stopped answering, for anyone who needs to act on it --
 // the filesystem server unmounts the volume when it has.
-bool myrtos_sd_failed(void) { return sd_failed || sd_bus_dead(); }
+bool ubiqos_sd_failed(void) { return sd_failed || sd_bus_dead(); }
 
 // The card is gone. Nothing more may be spoken to it on either bus until
 // something mounts again, and when that happens it starts from the beginning.
-void myrtos_sd_forget(void) {
+void ubiqos_sd_forget(void) {
     needs_init = true;
     sd_failed = false;
     sd_bus_revive();
@@ -299,9 +299,9 @@ void myrtos_sd_forget(void) {
 static bool sd_fail(const char *why) {
     if (!sd_failed) {
         sd_failed = true;
-        myrtos_print("SD: ");
-        myrtos_print(why);
-        myrtos_print(" -- the card is offline until it is mounted again\n");
+        ubiqos_print("SD: ");
+        ubiqos_print(why);
+        ubiqos_print(" -- the card is offline until it is mounted again\n");
         // Once, and with it the state that says where it stopped. A failure
         // that only says "it failed" costs a power cycle to learn anything
         // from; this one is meant to be read afterwards in /var/dmesg. The
@@ -315,13 +315,13 @@ static bool sd_fail(const char *why) {
 // Writing over four-bit SDIO works, verified 1 Sep 2026: a 100000-byte copy
 // read back byte for byte across all 196 sectors. Kept as a variable rather
 // than an #if so it can be turned off in one line if a card ever misbehaves.
-const bool myrtos_sd_sdio_writes_allowed = true;
+const bool ubiqos_sd_sdio_writes_allowed = true;
 
 // Once SPI has been spoken to the card, SDIO is not worth asking for again --
 // see below. This says so, so that the mount command's retry does not hang.
 static bool sdio_refused;
 
-bool myrtos_sd_init(void) {
+bool ubiqos_sd_init(void) {
     use_sdio = false;
     sdio_refused = false;
     sd_failed = false;
@@ -359,7 +359,7 @@ bool myrtos_sd_init(void) {
 
 // Try to move the card to four-bit SDIO. Returns false and leaves SPI in place
 // if the card will not have it.
-bool myrtos_sd_try_sdio(void) {
+bool ubiqos_sd_try_sdio(void) {
     // A card that vanished leaves stale state behind: use_sdio still says four
     // bits, so without this the call returned true at once and the mount went
     // on to read a card that had never been initialised. That is what "mount:
@@ -370,7 +370,7 @@ bool myrtos_sd_try_sdio(void) {
         sdio_refused = false;
         needs_init = false;
     }
-#ifdef MYRTOS_SD_NO_SDIO
+#ifdef UBIQOS_SD_NO_SDIO
     // A board with no PIO block to lend the card. On the Waveshare 4.3B the
     // panel has pio1 and pio2 and the PIO USB host has pio0: the file server
     // asks for SDIO at every boot, so without this the first thing a card in
@@ -390,7 +390,7 @@ bool myrtos_sd_try_sdio(void) {
     // cannot see: nothing is driven, the card never answers, and the driver
     // waits for ever. The driver comes from the RP2040 world, where the
     // question does not arise. The block and its window come from the build.
-    pio_set_gpio_base(PIO_INSTANCE(MYRTOS_SD_PIO_INDEX), MYRTOS_SD_PIO_GPIO_BASE);
+    pio_set_gpio_base(PIO_INSTANCE(UBIQOS_SD_PIO_INDEX), UBIQOS_SD_PIO_GPIO_BASE);
 
     if (sd_init_4pins() != SD_OK) return false;
     if (sd_set_wide_bus(true) != SD_OK) return false;
@@ -398,7 +398,7 @@ bool myrtos_sd_try_sdio(void) {
     return true;
 }
 
-bool myrtos_sd_is_sdio(void) { return use_sdio; }
+bool ubiqos_sd_is_sdio(void) { return use_sdio; }
 
 // The driver takes words, so a caller's buffer has to be aligned. Everything
 // that reaches here is a static 512-byte buffer in the kernel, declared aligned.
@@ -430,12 +430,12 @@ static uint32_t *sd_bounce;
 // bounds have to be checked at BOTH ends -- SRAM lives at 0x20000000, above the
 // PSRAM base, so "is it above PSRAM" says yes to SRAM too. That mistake has
 // been made twice in this repository already.
-static inline bool needs_bounce(const void *p) { return !myrtos_sd_k->dma_safe(p); }
+static inline bool needs_bounce(const void *p) { return !ubiqos_sd_k->dma_safe(p); }
 
-bool myrtos_sd_read_block(uint32_t lba, uint8_t *buf) {
+bool ubiqos_sd_read_block(uint32_t lba, uint8_t *buf) {
     if (needs_init) return false;
     if (!use_sdio) return spi_read_block(lba, buf);
-    if (myrtos_sd_failed()) return false;
+    if (ubiqos_sd_failed()) return false;
     if ((uintptr_t)buf & 3u) return false;
 
     if (needs_bounce(buf)) {
@@ -485,12 +485,12 @@ static void restore_wide_bus(void) {
 // Upstream guessed at this from the other end and left the note in
 // sd_writeblocks_async: "probably need a delay between sectors". It is not a
 // delay, it is the card's own answer to CMD13.
-bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
+bool ubiqos_sd_write_block(uint32_t lba, const uint8_t *buf) {
     if (needs_init) return false;
     if (!use_sdio) return spi_write_block(lba, buf);
     if ((uintptr_t)buf & 3u) return false;
-    if (!myrtos_sd_sdio_writes_allowed) return false;
-    if (myrtos_sd_failed()) return false;
+    if (!ubiqos_sd_sdio_writes_allowed) return false;
+    if (ubiqos_sd_failed()) return false;
 
     // The same hazard the other way round: DMA reads what the processor wrote,
     // and a write into PSRAM may still be sitting in the cache when it does.
@@ -546,10 +546,10 @@ bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf) {
 //
 // The order of the entries is the interface. kernel/sdlink.c names them in the
 // same order and neither list may be reordered without the other.
-static bool sdlib_init(const myrtos_kernel_api_t *api)
+static bool sdlib_init(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
-    myrtos_sd_k = api;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
+    ubiqos_sd_k = api;
 
     // SRAM, and the two allocations are separate because they are different
     // things: the vendored driver's DMA control blocks and CRC landing area,
@@ -569,17 +569,17 @@ static bool sdlib_init(const myrtos_kernel_api_t *api)
     return true;
 }
 
-const myrtos_lib_table_t myrtos_lib = {
-    .abi = MYRTOS_LIB_ABI,
+const ubiqos_lib_table_t ubiqos_lib = {
+    .abi = UBIQOS_LIB_ABI,
     .count = 8,
     .fn = {
         (void *)sdlib_init,
-        (void *)myrtos_sd_init,
-        (void *)myrtos_sd_try_sdio,
-        (void *)myrtos_sd_read_block,
-        (void *)myrtos_sd_write_block,
-        (void *)myrtos_sd_is_sdio,
-        (void *)myrtos_sd_failed,
-        (void *)myrtos_sd_forget,
+        (void *)ubiqos_sd_init,
+        (void *)ubiqos_sd_try_sdio,
+        (void *)ubiqos_sd_read_block,
+        (void *)ubiqos_sd_write_block,
+        (void *)ubiqos_sd_is_sdio,
+        (void *)ubiqos_sd_failed,
+        (void *)ubiqos_sd_forget,
     },
 };

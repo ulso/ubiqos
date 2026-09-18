@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // ehstat -- what the ESP-Hosted link has been doing.
 //
@@ -21,19 +21,19 @@ static const char *if_name(int i) {
     }
 }
 
-// One line, written and flushed. myrtos_line_t holds 96 characters and stops
+// One line, written and flushed. ubiqos_line_t holds 96 characters and stops
 // there without saying so: the first version of this built six counters into
 // one buffer and printed four and a half of them.
 static void num(const char *label, uint32_t v) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, label);
-    myrtos_line_u32(&l, v);
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, label);
+    ubiqos_line_u32(&l, v);
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
-static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
+static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
 // What the co-processor announces itself with. A hexdump would be honest and
 // useless: these are the terms of the link, and the terms are the point.
@@ -57,31 +57,31 @@ static const char *tlv_name(uint8_t t) {
 }
 
 static void caps_in_words(uint8_t caps) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "      ");
-    if (caps & 0x20u) myrtos_line_str(&l, "WLAN over SPI  ");
-    if (caps & 0x80u) myrtos_line_str(&l, "checksum on  ");
-    if (caps & 0x01u) myrtos_line_str(&l, "WLAN over SDIO  ");
-    if (caps & 0x08u) myrtos_line_str(&l, "BLE  ");
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "      ");
+    if (caps & 0x20u) ubiqos_line_str(&l, "WLAN over SPI  ");
+    if (caps & 0x80u) ubiqos_line_str(&l, "checksum on  ");
+    if (caps & 0x01u) ubiqos_line_str(&l, "WLAN over SDIO  ");
+    if (caps & 0x08u) ubiqos_line_str(&l, "BLE  ");
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 // The version is four bytes, and they read patch, minor, major -- which is the
 // order that makes 3.0.7 out of 07 00 03 00 and would otherwise read as a very
 // large number nobody would question.
 static void version_in_words(const uint8_t *v) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "      ");
-    myrtos_line_u32(&l, v[2]);
-    myrtos_line_str(&l, ".");
-    myrtos_line_u32(&l, v[1]);
-    myrtos_line_str(&l, ".");
-    myrtos_line_u32(&l, v[0]);
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "      ");
+    ubiqos_line_u32(&l, v[2]);
+    ubiqos_line_str(&l, ".");
+    ubiqos_line_u32(&l, v[1]);
+    ubiqos_line_str(&l, ".");
+    ubiqos_line_u32(&l, v[0]);
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 static void decode_priv(const uint8_t *p, uint32_t n) {
@@ -100,18 +100,18 @@ static void decode_priv(const uint8_t *p, uint32_t n) {
         if (at + 2u + len > end) break;
 
         const char *name = tlv_name(type);
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "  ");
-        if (name) myrtos_line_str(&l, name);
-        else { myrtos_line_str(&l, "tag "); myrtos_line_hex_byte(&l, type); }
-        myrtos_line_str(&l, "  ");
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "  ");
+        if (name) ubiqos_line_str(&l, name);
+        else { ubiqos_line_str(&l, "tag "); ubiqos_line_hex_byte(&l, type); }
+        ubiqos_line_str(&l, "  ");
         for (uint8_t i = 0; i < len; i++) {
-            myrtos_line_hex_byte(&l, val[i]);
-            myrtos_line_str(&l, " ");
+            ubiqos_line_hex_byte(&l, val[i]);
+            ubiqos_line_str(&l, " ");
         }
-        myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
         if (type == 0x11 && len == 1) caps_in_words(val[0]);
         if (type == 0x17 && len == 4) version_in_words(val);
@@ -121,22 +121,22 @@ static void decode_priv(const uint8_t *p, uint32_t n) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: ehstat\n\nWhat the ESP-Hosted SPI link has carried.\n")) return;
 
-    int32_t dev = myrtos_open("/dev/eh");
+    int32_t dev = ubiqos_open("/dev/eh");
     if (dev < 0) {
-        myrtos_write_str(MYRTOS_STDOUT, "ehstat: no /dev/eh\r\n");
+        ubiqos_write_str(UBIQOS_STDOUT, "ehstat: no /dev/eh\r\n");
         return;
     }
 
-    myrtos_eh_stats_t s;
-    if (myrtos_getstat(dev, MYRTOS_SS_EH_STATS, &s, sizeof(s)) < 0) {
-        myrtos_write_str(MYRTOS_STDOUT, "ehstat: the driver would not say\r\n");
-        myrtos_close(dev);
+    ubiqos_eh_stats_t s;
+    if (ubiqos_getstat(dev, UBIQOS_SS_EH_STATS, &s, sizeof(s)) < 0) {
+        ubiqos_write_str(UBIQOS_STDOUT, "ehstat: the driver would not say\r\n");
+        ubiqos_close(dev);
         return;
     }
-    myrtos_close(dev);
+    ubiqos_close(dev);
 
     num("transactions   ", s.transactions);
     num("frames in      ", s.frames);
@@ -170,29 +170,29 @@ void module_main(int argc, char **argv) {
     say("\r\nby interface\r\n");
     for (int i = 0; i < 9; i++) {
         if (!s.by_if[i]) continue;
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "  ");
-        myrtos_line_str(&l, if_name(i));
-        myrtos_line_str(&l, "  ");
-        myrtos_line_u32(&l, s.by_if[i]);
-        myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "  ");
+        ubiqos_line_str(&l, if_name(i));
+        ubiqos_line_str(&l, "  ");
+        ubiqos_line_u32(&l, s.by_if[i]);
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
 
     // The private frame is the co-processor announcing itself, and at this
     // stage its bytes are more useful than any reading of them: it is the
     // difference between a link that works and one that merely does not fail.
     if (s.bad_seen) {
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "\r\nthe first header it could not read\r\n ");
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "\r\nthe first header it could not read\r\n ");
         for (int i = 0; i < 12; i++) {
-            myrtos_line_str(&l, " ");
-            myrtos_line_hex_byte(&l, s.first_bad[i]);
+            ubiqos_line_str(&l, " ");
+            ubiqos_line_hex_byte(&l, s.first_bad[i]);
         }
-        myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
 
     if (!s.last_priv_len) {

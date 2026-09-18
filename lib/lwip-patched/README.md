@@ -4,7 +4,7 @@ The Pico SDK's lwIP is used as it ships, except for the mDNS responder's
 `apps/mdns/mdns.c` and `apps/mdns/mdns_out.c`, copied here from SDK 2.3.1.
 `CMakeLists.txt` builds the responder from these two and the SDK's own
 `mdns_domain.c` instead of linking `pico_lwip_mdns`, so there is no patch step.
-The build stops if the SDK version moves -- `myrtosPatchedFrom`, shared with
+The build stops if the SDK version moves -- `ubiqosPatchedFrom`, shared with
 `lib/tinyusb-patched`.
 
 ## What is changed, and why
@@ -35,5 +35,5 @@ have. So, in a build without IPv6:
 A legacy one-shot querier, one asking from a port other than 5353, is not
 answered with it.
 
-Every change is marked `MYRTOS:` in the source. To re-sync after an SDK
+Every change is marked `UBIQOS:` in the source. To re-sync after an SDK
 upgrade, copy the new files over these and put those marked blocks back.

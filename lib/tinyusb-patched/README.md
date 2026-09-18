@@ -21,7 +21,7 @@ harmful things:
   the dongle goes deaf and stays deaf. `tu_edpt_stream_read` queues the next
   read after every read, and nothing reads a stream with nothing queued.
 
-In its place: a failed IN transfer is queued again, at most `MYRTOS_RX_RETRY`
+In its place: a failed IN transfer is queued again, at most `UBIQOS_RX_RETRY`
 times, and then left alone. A device that is really gone must not be asked for
 ever — and once this returns instead of halting, the removal is noticed and
 `cdch_close` tidies up. A transfer that lands resets the count, so an unplug
@@ -42,7 +42,7 @@ endpoint 0x81 reading `NOTHING QUEUED` with three failures, and neither that
 removal nor plugging it back in was reported at all. The keyboard was dead and
 the board looked healthy.
 
-In its place: re-arm on failure, bounded at `MYRTOS_HUB_RETRY` **consecutive**
+In its place: re-arm on failure, bounded at `UBIQOS_HUB_RETRY` **consecutive**
 failures, with any success resetting the count. Re-arming here is what an
 earlier attempt to do it from outside could not — that one was refused because
 the endpoint was still busy, asserted, and was reverted. In this callback the
@@ -51,7 +51,7 @@ one the file already makes two cases further down.
 
 ## Re-syncing after an SDK upgrade
 
-`CMakeLists.txt` will not let you forget: it holds `myrtosPatchedFrom` beside
+`CMakeLists.txt` will not let you forget: it holds `ubiqosPatchedFrom` beside
 the source list and **stops the configure** when that and `sdkVersion` differ.
 So this is not a note anybody has to remember to read — it is what the error
 tells you to come here for.

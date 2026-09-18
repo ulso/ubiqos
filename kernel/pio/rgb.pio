@@ -32,7 +32,7 @@
 
 ; ----------------------------------------------------------------------------
 ; VSYNC. Fed the active line count once, then counts hsync's IRQ for ever.
-.program myrtos_rgb_vsync
+.program ubiqos_rgb_vsync
 .side_set 1 opt
 .define public T1 31    ; front porch, in lines
 .define public T2 31    ; sync pulse
@@ -78,7 +78,7 @@ active:
 ; Two instructions per pixel, with PCLK low on one and high on the other, so
 ; the state machine runs at twice the pixel clock. That is where the divider
 ; goes, and the other three run undivided.
-.program myrtos_rgb_hsync
+.program ubiqos_rgb_hsync
 .side_set 2 opt
 .define public T1 31    ; front porch, in pixels
 .define public T2 31    ; sync pulse
@@ -129,7 +129,7 @@ active:
 ; height is kept in the ISR and copied back each frame, and the width stays in
 ; the OSR for the life of the program -- neither is ever shifted, so both
 ; survive.
-.program myrtos_rgb_de
+.program ubiqos_rgb_de
 .side_set 1 opt
 .define public T1 31    ; vertical back porch, in lines
 .define public T2 31    ; horizontal back porch, in pixels
@@ -170,7 +170,7 @@ active:
 ;
 ; The DMA writes halfwords, so the low sixteen bits of the OSR are the pixel and
 ; `out pins, 16` with the default right shift is exactly those bits.
-.program myrtos_rgb_data
+.program ubiqos_rgb_data
 
 pull block
 mov y, osr              ; the width, minus one

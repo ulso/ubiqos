@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the ESP-Hosted co-processor firmware for the Fruit Jam's ESP32-C6.
 #
-# Nothing here is myrtos code. It is Espressif's firmware with this board's
+# Nothing here is UbiqOS code. It is Espressif's firmware with this board's
 # wiring poured into it, and the only thing worth keeping in this repo is the
 # wiring and the two traps that cost an afternoon:
 #

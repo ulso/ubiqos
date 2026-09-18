@@ -1,4 +1,4 @@
-# myrtos
+# UbiqOS
 
 A small operating system for the RP2350, in the spirit of OS-9: programs are
 **position-independent modules**, one copy of the code is shared by every
@@ -11,7 +11,7 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 
 ## Boards
 
-| Board | What myrtos uses |
+| Board | What UbiqOS uses |
 |---|---|
 | **Adafruit Fruit Jam** (RP2350B) | HDMI console, USB keyboard through the on-board hub, microSD over 4-bit SDIO, 8 MB PSRAM, the TLV320 audio codec, WiFi through the ESP32-C6, NeoPixels and buttons |
 | **Waveshare RP2350-Touch-LCD-4.3B** | the 800x480 RGB panel, the GT911 touch controller, microSD, PSRAM; the USB-C port as device or as host |
@@ -42,11 +42,11 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 
 1. Hold **button 1** (BOOT), press and release **reset**, and let go of button 1
    when a drive called `RP2350` appears.
-2. Copy `myrtos.uf2` onto it. The board restarts into myrtos.
+2. Copy `ubiqos.uf2` onto it. The board restarts into UbiqOS.
 3. Talk to it on the HDMI screen with a USB keyboard in one of the host ports,
    or over the USB-C cable: `screen /dev/cu.usbmodem… 115200` on a Mac, PuTTY
    on the COM port on Windows.
-4. The cable is also a network: `ping myrtos.local`.
+4. The cable is also a network: `ping ubiqos.local`.
 
 WiFi needs the ESP32-C6 reflashed with ESP-Hosted once, and a `config.txt` on
 the card naming the network -- see [docs/config.md](docs/config.md) and
@@ -68,16 +68,16 @@ ninja -C build
 ```
 
 That is the Fruit Jam on Arm with the character console, and the result is
-`build/myrtos.uf2`: the kernel and every resident module in one file. The other
+`build/ubiqos.uf2`: the kernel and every resident module in one file. The other
 configurations are chosen when configuring:
 
 | Configuration | Add to `cmake` |
 |---|---|
 | Fruit Jam, Arm, character console | (the default) |
-| Fruit Jam, Arm, framebuffer | `-DMYRTOS_VIDEO=framebuffer` |
-| Fruit Jam, RISC-V | `-DMYRTOS_ARCH=riscv -DPICO_TOOLCHAIN_PATH=$HOME/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_3_0_0` |
-| Waveshare 4.3B | `-DMYRTOS_BOARD=ws43b` |
-| Waveshare 4.3B, USB-C as host | `-DMYRTOS_BOARD=ws43b -DMYRTOS_NATIVE_USB=host` |
+| Fruit Jam, Arm, framebuffer | `-DUBIQOS_VIDEO=framebuffer` |
+| Fruit Jam, RISC-V | `-DUBIQOS_ARCH=riscv -DPICO_TOOLCHAIN_PATH=$HOME/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_3_0_0` |
+| Waveshare 4.3B | `-DUBIQOS_BOARD=ws43b` |
+| Waveshare 4.3B, USB-C as host | `-DUBIQOS_BOARD=ws43b -DUBIQOS_NATIVE_USB=host` |
 
 Use a separate build directory for each. Only Release builds fit in RAM, and
 that is forced. clang, `ldc2`, `zig` and `rustc` are used for modules in those
@@ -103,12 +103,12 @@ guard rail.
 
 ## Licence
 
-myrtos is released under the [MIT License](LICENSE). The third-party code it
+UbiqOS is released under the [MIT License](LICENSE). The third-party code it
 includes keeps its own licence, as below.
 
 ## Third-party code
 
-myrtos is built on the Pico SDK, TinyUSB, Pico-PIO-USB, lwIP, wasm3, Atto and
+UbiqOS is built on the Pico SDK, TinyUSB, Pico-PIO-USB, lwIP, wasm3, Atto and
 the Terminus font. What each one is, where it lives and its licence are in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which should travel with any
 UF2 passed on.

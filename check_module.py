@@ -214,7 +214,7 @@ if not_pic:
 
 # Writable data is no longer refused. It used to be, because one copy of the
 # code in flash served every process and they would have shared it; a module
-# that has any is marked MYRTOS_ATTR_PRIVATE and given a copy of its own, so a
+# that has any is marked UBIQOS_ATTR_PRIVATE and given a copy of its own, so a
 # static variable is simply a variable. It is still worth saying, because a
 # module without one costs no memory at all.
 if not_shared and not single:

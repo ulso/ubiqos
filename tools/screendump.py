@@ -23,8 +23,8 @@ import os, subprocess, sys
 OCD = os.path.expanduser("~/.pico-sdk/openocd/0.12.0+dev")
 TOOLCHAIN = os.path.expanduser("~/.pico-sdk/toolchain/15_2_Rel1/bin")
 BUILD = sys.argv[1] if len(sys.argv) > 1 else "build"
-PROBE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("MYRTOS_PROBE", "")
-COLS, ROWS, RING = 100, 30, 256          # as MYRTOS_CELL_* say for this panel
+PROBE = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("UBIQOS_PROBE", "")
+COLS, ROWS, RING = 100, 30, 256          # as UBIQOS_CELL_* say for this panel
 
 
 def symbol(name):

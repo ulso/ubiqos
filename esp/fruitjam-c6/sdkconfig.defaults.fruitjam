@@ -2,7 +2,7 @@
 #
 # Read out of "Adafruit Fruit Jam.sch" (adafruit/Adafruit-Fruit-Jam-PCB), not
 # out of the pinout page, which has the strap pin wrong. The RP2350 side of
-# each net is in myrtos docs/esp-hosted/README.md.
+# each net is in UbiqOS docs/esp-hosted/README.md.
 
 # SPI full duplex, not SDIO. The C6 supports SDIO and would default to it, but
 # this board has no SDIO wiring to the C6 -- it has four SPI lines and two
@@ -21,6 +21,6 @@ CONFIG_EH_TRANSPORT_CP_SPI_GPIO_HANDSHAKE=18
 # IO9 -> RP2350 GP23. This is also the chip's download strap, which is why it
 # is pulled up by R27 and why nothing may hold it low across a reset. As an
 # output after boot it is an ordinary pin. It is shared with the audio DAC's
-# GPIO1; myrtos never writes that DAC's register 51, so the DAC leaves the net
+# GPIO1; UbiqOS never writes that DAC's register 51, so the DAC leaves the net
 # alone.
 CONFIG_EH_TRANSPORT_CP_SPI_GPIO_DATA_READY=9

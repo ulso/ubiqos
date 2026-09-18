@@ -1,20 +1,20 @@
 # atto -- an emacs, built natively
 
 Hugh Barney's Atto, about two thousand lines of public-domain C, running as an
-ordinary myrtos module. `upstream/` holds the editor unmodified and says where
-it came from; everything myrtos adds is here.
+ordinary UbiqOS module. `upstream/` holds the editor unmodified and says where
+it came from; everything UbiqOS adds is here.
 
 It ran as `atto.wasm` first, and still can -- see
 `modules/wasm/examples/README.md`. Native is 3.5 times smaller on the card and
 needs no interpreter under it.
 
-## What it takes to build a C program for myrtos
+## What it takes to build a C program for UbiqOS
 
 Three things, and the size of each is the point:
 
 **The C library.** `NEWLIB` on the module line. Atto was written against a
 hosted libc and rewriting it is not the job, so it gets one:
-`common/myrtos_syscalls.c` is the bottom end and the module is copied per
+`common/ubiqos_syscalls.c` is the bottom end and the module is copied per
 process, which is what makes newlib's `_impure_ptr` correct without anyone
 arranging it.
 

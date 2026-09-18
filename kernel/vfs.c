@@ -1,6 +1,6 @@
 #include "vfs.h"
 #include "io.h"
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 
 // See vfs.h for the shape of this. The table is four entries because a machine
 // with more than a handful of volumes is not the machine this is for, and a
@@ -8,10 +8,10 @@
 
 typedef struct {
     char name[12];
-    const myrtos_fsops_t *ops;
+    const ubiqos_fsops_t *ops;
 } volume_t;
 
-static volume_t volumes[MYRTOS_MAX_VOLUMES];
+static volume_t volumes[UBIQOS_MAX_VOLUMES];
 static uint32_t volume_count;
 
 static bool name_eq(const char *a, const char *b) {
@@ -33,7 +33,7 @@ static void name_copy(char *dst, const char *src) {
 static int32_t dev_stat_nth(const char *dirpath, uint32_t index,
                             char *name_out, uint32_t *size_out) {
     if (dirpath[0] != '/' || dirpath[1] != 0) return -1;   // no subdirectories
-    if (!myrtos_io_device_nth(index, name_out)) return -1;
+    if (!ubiqos_io_device_nth(index, name_out)) return -1;
     if (size_out) *size_out = 0;
     return 0;                                              // a file, not a directory
 }
@@ -43,35 +43,35 @@ static int32_t dev_stat_nth(const char *dirpath, uint32_t index,
 static int32_t dev_stat(const char *path, uint32_t *size_out) {
     if (size_out) *size_out = 0;
     if (!path || path[0] != '/') return -1;
-    if (!path[1]) return MYRTOS_ATTR_DIRECTORY;          // /dev itself
-    return myrtos_io_has_device(path + 1) ? 0 : -1;
+    if (!path[1]) return UBIQOS_ATTR_DIRECTORY;          // /dev itself
+    return ubiqos_io_has_device(path + 1) ? 0 : -1;
 }
 
-static const myrtos_fsops_t dev_ops = {
+static const ubiqos_fsops_t dev_ops = {
     .stat_nth = dev_stat_nth,
     .stat     = dev_stat,
 };
 
-void myrtos_vfs_init(void) {
+void ubiqos_vfs_init(void) {
     volume_count = 0;
-    myrtos_vfs_add("dev", &dev_ops);
+    ubiqos_vfs_add("dev", &dev_ops);
 }
 
-bool myrtos_vfs_add(const char *name, const myrtos_fsops_t *ops) {
+bool ubiqos_vfs_add(const char *name, const ubiqos_fsops_t *ops) {
     for (uint32_t i = 0; i < volume_count; i++) {
         if (name_eq(volumes[i].name, name)) {       // a remount is the same volume
             volumes[i].ops = ops;
             return true;
         }
     }
-    if (volume_count >= MYRTOS_MAX_VOLUMES) return false;
+    if (volume_count >= UBIQOS_MAX_VOLUMES) return false;
     name_copy(volumes[volume_count].name, name);
     volumes[volume_count].ops = ops;
     volume_count++;
     return true;
 }
 
-void myrtos_vfs_remove(const char *name) {
+void ubiqos_vfs_remove(const char *name) {
     for (uint32_t i = 0; i < volume_count; i++) {
         if (!name_eq(volumes[i].name, name)) continue;
         volumes[i] = volumes[--volume_count];        // close the gap
@@ -79,7 +79,7 @@ void myrtos_vfs_remove(const char *name) {
     }
 }
 
-const myrtos_fsops_t *myrtos_vfs_split(const char *path, const char **rest_out) {
+const ubiqos_fsops_t *ubiqos_vfs_split(const char *path, const char **rest_out) {
     if (!path || path[0] != '/') return 0;
 
     char vol[12];
@@ -98,17 +98,17 @@ const myrtos_fsops_t *myrtos_vfs_split(const char *path, const char **rest_out) 
     return 0;
 }
 
-int32_t myrtos_vfs_root_nth(uint32_t index, char *name_out, uint32_t *size_out) {
+int32_t ubiqos_vfs_root_nth(uint32_t index, char *name_out, uint32_t *size_out) {
     if (index >= volume_count) return -1;
     name_copy(name_out, volumes[index].name);
     if (size_out) *size_out = 0;
-    return MYRTOS_ATTR_DIRECTORY;
+    return UBIQOS_ATTR_DIRECTORY;
 }
 
 // Modules are looked for on the first volume that can be read as a filesystem.
 // /dev cannot, having no find_nth, so it is skipped without being a special
 // case here.
-const myrtos_fsops_t *myrtos_vfs_module_volume(const char **name_out) {
+const ubiqos_fsops_t *ubiqos_vfs_module_volume(const char **name_out) {
     for (uint32_t i = 0; i < volume_count; i++) {
         if (!volumes[i].ops || !volumes[i].ops->find_nth) continue;
         if (name_out) *name_out = volumes[i].name;

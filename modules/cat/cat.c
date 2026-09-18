@@ -1,4 +1,4 @@
-#include "../../common/myrtos_posix.h"
+#include "../../common/ubiqos_posix.h"
 
 // The one definition of errno the program owes, exactly as a C library would
 // have provided it. Thread-local because it is per-process writable state, and
@@ -11,9 +11,9 @@ __thread int errno;
 // data and stack together, so holding a file in memory would put an arbitrary
 // ceiling on what cat can show; reading in slices puts none.
 //
-// Written against myrtos_posix.h rather than the system calls, so this file is
+// Written against ubiqos_posix.h rather than the system calls, so this file is
 // also the answer to "can ordinary C be built here": open, read, close and
-// STDOUT_FILENO, with nothing myrtos-shaped in the loop at all.
+// STDOUT_FILENO, with nothing ubiqos-shaped in the loop at all.
 
 // 256 was four hundred read calls for a hundred-kilobyte file, and while the
 // filesystem no longer re-walks the FAT chain for each one, every call is still
@@ -32,16 +32,16 @@ static void complain(const char *name) {
                     : errno == EACCES ? ": this one is not readable\n"
                     : errno == EMFILE ? ": too many open files\n"
                     :                   ": no such file\n";
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "cat: ");
-    myrtos_line_str(&l, name);
-    myrtos_line_str(&l, why);
-    myrtos_line_flush(MYRTOS_STDERR, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "cat: ");
+    ubiqos_line_str(&l, name);
+    ubiqos_line_str(&l, why);
+    ubiqos_line_flush(UBIQOS_STDERR, &l);
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: cat FILE...\n\nWrites each file to standard output.\n")) return;
 
     // No arguments means standard input, as cat has always done -- which is

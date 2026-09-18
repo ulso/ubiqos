@@ -1,10 +1,10 @@
 #include "flashmod.h"
 #include "moddir.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-void myrtos_print_hex(uint32_t v);
-bool verify_myrtos_header(myrtos_module_header_t *header);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+void ubiqos_print_hex(uint32_t v);
+bool verify_ubiqos_header(ubiqos_module_header_t *header);
 
 // The name lives in the module, but moddir wants eleven characters in 8.3
 // form. A module in flash has no filename, so the name is derived from the
@@ -15,10 +15,10 @@ bool verify_myrtos_header(myrtos_module_header_t *header);
 // module never carried an extension; this manufactured one, to match the 8.3
 // name the same module would have had coming off a FAT card. Neither end needs
 // it any more.
-static void name_from_module(const myrtos_module_header_t *m, char *out) {
+static void name_from_module(const ubiqos_module_header_t *m, char *out) {
     const char *src = (const char*)m + m->name_offset;
     int i = 0;
-    for (; i < MYRTOS_NAME_LEN - 1 && src[i]; i++) out[i] = src[i];
+    for (; i < UBIQOS_NAME_LEN - 1 && src[i]; i++) out[i] = src[i];
     out[i] = 0;
 }
 
@@ -31,15 +31,15 @@ static void name_from_module(const myrtos_module_header_t *m, char *out) {
 // bytes as the file has -- so the scan found the modules at the end of the
 // previous image as well, and the directory listed echo, lsmod, free and both
 // descriptors twice.
-static const myrtos_module_header_t *flash_step(uintptr_t *p, uintptr_t end) {
-    if (*p + sizeof(myrtos_module_header_t) >= end) return 0;
-    myrtos_module_header_t *m = (myrtos_module_header_t*)*p;
+static const ubiqos_module_header_t *flash_step(uintptr_t *p, uintptr_t end) {
+    if (*p + sizeof(ubiqos_module_header_t) >= end) return 0;
+    ubiqos_module_header_t *m = (ubiqos_module_header_t*)*p;
 
     // Unwritten flash reads as 0xFFFFFFFF, and make_flash_image.py writes a
     // terminator, so either way this is where the image ends.
-    if (m->sync_code != MYRTOS_SYNC_CODE) return 0;
+    if (m->sync_code != UBIQOS_SYNC_CODE) return 0;
     if (!m->module_size || *p + m->module_size > end) return 0;
-    if (!verify_myrtos_header(m)) return 0;
+    if (!verify_ubiqos_header(m)) return 0;
 
     *p += (m->module_size + 3u) & ~3u;   // the next may start right after
     return m;
@@ -52,24 +52,24 @@ static const myrtos_module_header_t *flash_step(uintptr_t *p, uintptr_t end) {
 // found before an application's. That order is the tie-break for a name in
 // both, and having the system win is the safer way round: an application cannot
 // shadow the shell by naming a module after it.
-#define MYRTOS_FLASH_REGIONS 2u
+#define UBIQOS_FLASH_REGIONS 2u
 
 static uintptr_t region_base(uint32_t i)
 {
-    return i == 0 ? MYRTOS_FLASH_MODULE_BASE : MYRTOS_FLASH_APP_BASE;
+    return i == 0 ? UBIQOS_FLASH_MODULE_BASE : UBIQOS_FLASH_APP_BASE;
 }
 
 static uintptr_t region_end(uint32_t i)
 {
-    return i == 0 ? MYRTOS_FLASH_APP_BASE : MYRTOS_FLASH_END;
+    return i == 0 ? UBIQOS_FLASH_APP_BASE : UBIQOS_FLASH_END;
 }
 
-const myrtos_module_header_t *myrtos_flash_nth(uint32_t index, char *name_out) {
-    for (uint32_t r = 0; r < MYRTOS_FLASH_REGIONS; r++) {
+const ubiqos_module_header_t *ubiqos_flash_nth(uint32_t index, char *name_out) {
+    for (uint32_t r = 0; r < UBIQOS_FLASH_REGIONS; r++) {
         uintptr_t p = region_base(r);
         const uintptr_t end = region_end(r);
         for (;;) {
-            const myrtos_module_header_t *m = flash_step(&p, end);
+            const ubiqos_module_header_t *m = flash_step(&p, end);
             if (!m) break;                  // this region's end, not the last
             if (index-- == 0) {
                 if (name_out) name_from_module(m, name_out);
@@ -81,10 +81,10 @@ const myrtos_module_header_t *myrtos_flash_nth(uint32_t index, char *name_out) {
 }
 
 // By the eleven-character directory name, padded, as the directory stores it.
-const myrtos_module_header_t *myrtos_flash_lookup(const char *name) {
-    char n[MYRTOS_NAME_LEN];
+const ubiqos_module_header_t *ubiqos_flash_lookup(const char *name) {
+    char n[UBIQOS_NAME_LEN];
     for (uint32_t i = 0; ; i++) {
-        const myrtos_module_header_t *m = myrtos_flash_nth(i, n);
+        const ubiqos_module_header_t *m = ubiqos_flash_nth(i, n);
         if (!m) return 0;
         const char *a = n, *b = name;
         while (*a && *a == *b) { a++; b++; }
@@ -107,22 +107,22 @@ static uint32_t scan_region(uintptr_t p, uintptr_t stop)
     // bytes as the file has -- so the scan found the modules at the end of the
     // previous image as well, and the directory listed echo, lsmod, free and
     // both descriptors twice.
-    while (p + sizeof(myrtos_module_header_t) < stop) {
-        myrtos_module_header_t *m = (myrtos_module_header_t*)p;
+    while (p + sizeof(ubiqos_module_header_t) < stop) {
+        ubiqos_module_header_t *m = (ubiqos_module_header_t*)p;
 
         // Unwritten flash reads as 0xFFFFFFFF, and make_flash_image.py writes a
         // terminator, so either way this is where the image ends.
-        if (m->sync_code != MYRTOS_SYNC_CODE) break;
+        if (m->sync_code != UBIQOS_SYNC_CODE) break;
         if (!m->module_size || p + m->module_size > stop) {
-            myrtos_print("  implausible module size, stopping\n");
+            ubiqos_print("  implausible module size, stopping\n");
             break;
         }
-        if (!verify_myrtos_header(m)) {
-            myrtos_print("  bad header, stopping\n");
+        if (!verify_ubiqos_header(m)) {
+            ubiqos_print("  bad header, stopping\n");
             break;
         }
 
-        char name[MYRTOS_NAME_LEN];
+        char name[UBIQOS_NAME_LEN];
         name_from_module(m, name);
 
         // Only the descriptors are registered. They are what the devices are
@@ -131,11 +131,11 @@ static uint32_t scan_region(uintptr_t p, uintptr_t stop)
         // where it lies and found by name when somebody runs it -- which is
         // what the sync word is for, and what keeps a directory of thirty-two
         // entries from bounding how many modules the system may have.
-        if ((m->type_lang >> 8) == MYRTOS_TYPE_DATA) {
-            if (myrtos_moddir_add_resident(m, name)) {
-                myrtos_print("  descriptor ");
-                myrtos_print(name);
-                myrtos_print("\n");
+        if ((m->type_lang >> 8) == UBIQOS_TYPE_DATA) {
+            if (ubiqos_moddir_add_resident(m, name)) {
+                ubiqos_print("  descriptor ");
+                ubiqos_print(name);
+                ubiqos_print("\n");
             }
         }
         found++;
@@ -151,27 +151,27 @@ static uint32_t scan_region(uintptr_t p, uintptr_t stop)
 // application in it is the ordinary case, and an unwritten region reads as
 // 0xFFFFFFFF, which is not a sync word. So nothing is said about it unless
 // something is there.
-uint32_t myrtos_flash_scan(void) {
-    myrtos_print("Scanning flash for resident modules from 0x");
-    myrtos_print_hex(MYRTOS_FLASH_MODULE_BASE);
-    myrtos_print("\n");
+uint32_t ubiqos_flash_scan(void) {
+    ubiqos_print("Scanning flash for resident modules from 0x");
+    ubiqos_print_hex(UBIQOS_FLASH_MODULE_BASE);
+    ubiqos_print("\n");
 
-    uint32_t found = scan_region(MYRTOS_FLASH_MODULE_BASE, MYRTOS_FLASH_APP_BASE);
+    uint32_t found = scan_region(UBIQOS_FLASH_MODULE_BASE, UBIQOS_FLASH_APP_BASE);
 
-    if (!found) myrtos_print("  none found\n");
+    if (!found) ubiqos_print("  none found\n");
     else {
-        myrtos_print("  ");
-        myrtos_print_u32(found);
-        myrtos_print(" modules in flash, looked up where they lie\n");
+        ubiqos_print("  ");
+        ubiqos_print_u32(found);
+        ubiqos_print(" modules in flash, looked up where they lie\n");
     }
 
-    const uint32_t app = scan_region(MYRTOS_FLASH_APP_BASE, MYRTOS_FLASH_END);
+    const uint32_t app = scan_region(UBIQOS_FLASH_APP_BASE, UBIQOS_FLASH_END);
     if (app) {
-        myrtos_print("  ");
-        myrtos_print_u32(app);
-        myrtos_print(" more from the application image at 0x");
-        myrtos_print_hex(MYRTOS_FLASH_APP_BASE);
-        myrtos_print("\n");
+        ubiqos_print("  ");
+        ubiqos_print_u32(app);
+        ubiqos_print(" more from the application image at 0x");
+        ubiqos_print_hex(UBIQOS_FLASH_APP_BASE);
+        ubiqos_print("\n");
     }
     return found + app;
 }

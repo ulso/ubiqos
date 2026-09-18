@@ -17,7 +17,7 @@
 // three, and this is the first thing to want the third.
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/pio.h"
 #include "ws2812.pio.h"
 
@@ -33,7 +33,7 @@
 #define LED_HZ       800000
 #define PIO_CYCLES   (ws2812_T1 + ws2812_T2 + ws2812_T3)
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 static bool ready;
 static uint8_t pixels[LED_COUNT * 3];
 
@@ -139,15 +139,15 @@ static int32_t leds_read(uint8_t *buf, uint32_t len)
 
 static int32_t leds_readable(void) { return (int32_t)sizeof pixels; }
 
-static bool leds_init(const myrtos_kernel_api_t *api)
+static bool leds_init(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = leds_init,
     .ops = {

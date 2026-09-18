@@ -31,25 +31,25 @@
 #include "tlsf.h"
 #include "config.h"
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 // No header declares this one; main.c reaches for it the same way.
-int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const char *args);
-void    myrtos_cwd_inherit(int32_t parent, int32_t child);
-int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
-const char *myrtos_cwd_of(int32_t pid);
+int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr, const char *args);
+void    ubiqos_cwd_inherit(int32_t parent, int32_t child);
+int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
+const char *ubiqos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
 static bool card_mounted;
 static bool load_module_from_card(const char *name);
-bool myrtos_msc_hand_over(void);
-void myrtos_msc_take_back(void);
-bool myrtos_msc_host_has_card(void);
+bool ubiqos_msc_hand_over(void);
+void ubiqos_msc_take_back(void);
+bool ubiqos_msc_host_has_card(void);
 // Which pool a module belongs in: SRAM if it is real-time, PSRAM otherwise.
-tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
-bool myrtos_cwd_set_of(int32_t pid, const char *abs);
+tlsf_pool_t ubiqos_pool_for(const ubiqos_module_header_t *m);
+bool ubiqos_cwd_set_of(int32_t pid, const char *abs);
 
 static int32_t server_pid = -1;
 
-int32_t myrtos_fs_server_pid(void) { return server_pid; }
+int32_t ubiqos_fs_server_pid(void) { return server_pid; }
 
 // Build an absolute, tidied path from one as the client typed it. Relative
 // paths start at the client's current directory -- the client's, not the
@@ -61,7 +61,7 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
 
     if (!in) in = "";
     if (in[0] != '/') {
-        const char *cwd = myrtos_cwd_of(pid);
+        const char *cwd = ubiqos_cwd_of(pid);
         while (cwd[n] && n < sizeof(buf) - 2) { buf[n] = cwd[n]; n++; }
         if (n == 0 || buf[n - 1] != '/') buf[n++] = '/';
     } else {
@@ -74,7 +74,7 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
 
         // As long as a name may now be: a component cut short here would turn
         // "/sd/a-long-name.wasm" into a path to something that is not there.
-        char comp[MYRTOS_DIRNAME_MAX];
+        char comp[UBIQOS_DIRNAME_MAX];
         uint32_t c = 0;
         while (in[i] && in[i] != '/' && c < sizeof(comp) - 1) comp[c++] = in[i++];
         comp[c] = 0;
@@ -104,7 +104,7 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
 // given.
 #define VOLUME_OR_FAIL(op)                                       \
     const char *rest;                                            \
-    const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);    \
+    const ubiqos_fsops_t *ops = ubiqos_vfs_split(abs, &rest);    \
     if (!ops || !ops->op) return -1
 
 // A card that has stopped answering loses its volume.
@@ -118,11 +118,11 @@ static void make_abs(int32_t pid, const char *in, char *out, uint32_t out_len) {
 // Checked here rather than in the driver because unmounting is the filesystem's
 // business, and this is the one place every filesystem request passes through.
 static void drop_card_if_dead(void) {
-    if (!card_mounted || !myrtos_sd_failed()) return;
-    myrtos_vfs_remove("sd");
-    myrtos_sd_forget();          // so the next mount starts from CMD0
+    if (!card_mounted || !ubiqos_sd_failed()) return;
+    ubiqos_vfs_remove("sd");
+    ubiqos_sd_forget();          // so the next mount starts from CMD0
     card_mounted = false;
-    myrtos_print("SD: the card stopped answering; /sd is unmounted\n");
+    ubiqos_print("SD: the card stopped answering; /sd is unmounted\n");
 }
 
 // The one file a process may not read. The kernel reads it at boot -- see
@@ -130,7 +130,7 @@ static void drop_card_if_dead(void) {
 // must not be the way round the rule that a password is typed and never shown.
 //
 // Writing is still allowed, so an editor can replace it, and so is removing it.
-// This is not a permission system: myrtos has no users to have permissions. It
+// This is not a permission system: UbiqOS has no users to have permissions. It
 // is one path with one rule, which is what the one secret on the card needs.
 static bool is_secret(const char *abs) {
     static const char *secret = "/sd/config.txt";
@@ -143,32 +143,32 @@ static bool is_secret(const char *abs) {
     return abs[i] == 0;
 }
 
-static int32_t handle(int32_t from, const myrtos_msg_t *m) {
+static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
     char abs[128];
 
     drop_card_if_dead();
 
     switch (m->type) {
-    case MYRTOS_MSG_FS_READ: {
-        const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)m->data;
+    case UBIQOS_MSG_FS_READ: {
+        const ubiqos_fs_io_t *r = (const ubiqos_fs_io_t*)m->data;
         make_abs(from, r->name, abs, sizeof(abs));
-        if (is_secret(abs)) return MYRTOS_FS_REFUSED;
+        if (is_secret(abs)) return UBIQOS_FS_REFUSED;
         VOLUME_OR_FAIL(read_at);
         return ops->read_at(rest, r->offset, r->buf, r->len);
     }
-    case MYRTOS_MSG_FS_WRITE: {
-        const myrtos_fs_io_t *r = (const myrtos_fs_io_t*)m->data;
+    case UBIQOS_MSG_FS_WRITE: {
+        const ubiqos_fs_io_t *r = (const ubiqos_fs_io_t*)m->data;
         make_abs(from, r->name, abs, sizeof(abs));
         VOLUME_OR_FAIL(write_at);
         return ops->write_at(rest, r->offset, r->buf, r->len);
     }
-    case MYRTOS_MSG_FS_REMOVE: {
+    case UBIQOS_MSG_FS_REMOVE: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         VOLUME_OR_FAIL(remove);
         return ops->remove(rest) ? 0 : -1;
     }
-    case MYRTOS_MSG_FS_RENAME: {
-        const myrtos_fs_rename_t *r = (const myrtos_fs_rename_t*)m->data;
+    case UBIQOS_MSG_FS_RENAME: {
+        const ubiqos_fs_rename_t *r = (const ubiqos_fs_rename_t*)m->data;
         char abs2[128];
         make_abs(from, r->from, abs,  sizeof(abs));
         make_abs(from, r->to,   abs2, sizeof(abs2));
@@ -178,43 +178,43 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // would have to be a copy, and a copy that answers to "mv" is how a
         // full card loses the file it was moving.
         const char *rest_from = 0, *rest_to = 0;
-        const myrtos_fsops_t *a = myrtos_vfs_split(abs,  &rest_from);
-        const myrtos_fsops_t *b = myrtos_vfs_split(abs2, &rest_to);
+        const ubiqos_fsops_t *a = ubiqos_vfs_split(abs,  &rest_from);
+        const ubiqos_fsops_t *b = ubiqos_vfs_split(abs2, &rest_to);
         if (!a || a != b) return -1;
         if (!a->rename) return -1;
         return a->rename(rest_from, rest_to) ? 0 : -1;
     }
-    case MYRTOS_MSG_FS_MKDIR: {
+    case UBIQOS_MSG_FS_MKDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         VOLUME_OR_FAIL(mkdir);
         return ops->mkdir(rest) ? 0 : -1;
     }
-    case MYRTOS_MSG_FS_RMDIR: {
+    case UBIQOS_MSG_FS_RMDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         VOLUME_OR_FAIL(rmdir);
         return ops->rmdir(rest) ? 0 : -1;
     }
-    case MYRTOS_MSG_FS_OPEN: {
-        const myrtos_fs_open_t *o = (const myrtos_fs_open_t*)m->data;
+    case UBIQOS_MSG_FS_OPEN: {
+        const ubiqos_fs_open_t *o = (const ubiqos_fs_open_t*)m->data;
         make_abs(from, o->name, abs, sizeof(abs));
         // Write-only is allowed on the secret; anything that could read is not.
-        if (is_secret(abs) && (o->flags & 3u) != MYRTOS_O_WRONLY) return MYRTOS_FS_REFUSED;
+        if (is_secret(abs) && (o->flags & 3u) != UBIQOS_O_WRONLY) return UBIQOS_FS_REFUSED;
         const char *rest;
-        const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);
+        const ubiqos_fsops_t *ops = ubiqos_vfs_split(abs, &rest);
         if (!ops) return -1;
 
         uint32_t size = 0;
         int32_t attr = ops->stat ? ops->stat(rest, &size) : -1;
         bool exists = attr >= 0;
-        bool creating = (o->flags & (MYRTOS_O_CREAT | MYRTOS_O_TRUNC)) != 0;
+        bool creating = (o->flags & (UBIQOS_O_CREAT | UBIQOS_O_TRUNC)) != 0;
 
         // A directory is not a file and must not open as one. It used to: the
         // check was only that the name existed, so opening a directory gave a
         // descriptor onto something with no bytes in it, and writing through
-        // that descriptor was a question nobody had an answer for. myrtos has a
+        // that descriptor was a question nobody had an answer for. UbiqOS has a
         // separate way to read a directory -- the nth entry -- and that is the
         // only way it can be read.
-        if (exists && (attr & MYRTOS_ATTR_DIRECTORY)) return -1;
+        if (exists && (attr & UBIQOS_ATTR_DIRECTORY)) return -1;
 
         // Reading something that is not there is an error, and this is the
         // moment to say so: leaving it to the first read means the caller has a
@@ -222,50 +222,50 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // tell a missing file from an empty one by the sign of a return value.
         if (!exists && !creating) return -1;
 
-        if ((o->flags & MYRTOS_O_TRUNC) && exists && ops->remove) {
+        if ((o->flags & UBIQOS_O_TRUNC) && exists && ops->remove) {
             ops->remove(rest);
             size = 0;
         }
 
-        int32_t fd = myrtos_io_open_file(abs, from);
+        int32_t fd = ubiqos_io_open_file(abs, from);
         if (fd < 0) return -1;
         // Appending is a position, and setting it here means the caller never
         // holds a descriptor that is pointing at the wrong place.
-        if ((o->flags & MYRTOS_O_APPEND) && size)
-            myrtos_io_file_seek(fd, from, (int32_t)size, MYRTOS_SEEK_SET);
+        if ((o->flags & UBIQOS_O_APPEND) && size)
+            ubiqos_io_file_seek(fd, from, (int32_t)size, UBIQOS_SEEK_SET);
         return fd;
     }
     // Seek from the end, sent here because it needs the file's length. Asked
     // of the filesystem at this moment rather than remembered from open: a
     // descriptor that has been written through is longer than it was, and a
     // cached length would send the caller to the wrong place with no sign.
-    case MYRTOS_MSG_FS_SEEK: {
-        const myrtos_fs_seek_t *k = (const myrtos_fs_seek_t*)m->data;
+    case UBIQOS_MSG_FS_SEEK: {
+        const ubiqos_fs_seek_t *k = (const ubiqos_fs_seek_t*)m->data;
         const char *stored;
         uint32_t pos = 0;
-        if (!myrtos_io_file_at(k->fd, from, &stored, &pos)) return -1;
+        if (!ubiqos_io_file_at(k->fd, from, &stored, &pos)) return -1;
 
         const char *rest;
-        const myrtos_fsops_t *ops = myrtos_vfs_split(stored, &rest);
+        const ubiqos_fsops_t *ops = ubiqos_vfs_split(stored, &rest);
         if (!ops || !ops->stat) return -1;
 
         uint32_t size = 0;
         if (ops->stat(rest, &size) < 0) return -1;
 
-        return myrtos_io_file_seek(k->fd, from, (int32_t)size + k->offset,
-                                   MYRTOS_SEEK_SET);
+        return ubiqos_io_file_seek(k->fd, from, (int32_t)size + k->offset,
+                                   UBIQOS_SEEK_SET);
     }
-    case MYRTOS_MSG_FS_FDIO: {
-        const myrtos_fs_fdio_t *r = (const myrtos_fs_fdio_t*)m->data;
+    case UBIQOS_MSG_FS_FDIO: {
+        const ubiqos_fs_fdio_t *r = (const ubiqos_fs_fdio_t*)m->data;
         const char *stored;
         uint32_t pos = 0;
-        if (!myrtos_io_file_at(r->fd, from, &stored, &pos)) return -1;
+        if (!ubiqos_io_file_at(r->fd, from, &stored, &pos)) return -1;
 
         // The stored path is already absolute -- it was resolved when the
         // descriptor was opened, against the working directory of that moment.
         // A process that has since done cd does not move its open files.
         const char *rest;
-        const myrtos_fsops_t *ops = myrtos_vfs_split(stored, &rest);
+        const ubiqos_fsops_t *ops = ubiqos_vfs_split(stored, &rest);
         if (!ops) return -1;
 
         int32_t n;
@@ -276,15 +276,15 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
             if (!ops->read_at) return -1;
             n = ops->read_at(rest, pos, r->buf, r->len);
         }
-        if (n > 0) myrtos_io_file_advance(r->fd, from, (uint32_t)n);
+        if (n > 0) ubiqos_io_file_advance(r->fd, from, (uint32_t)n);
         return n;
     }
-    case MYRTOS_MSG_FS_STAT: {
-        const myrtos_fs_stat_t *r = (const myrtos_fs_stat_t*)m->data;
+    case UBIQOS_MSG_FS_STAT: {
+        const ubiqos_fs_stat_t *r = (const ubiqos_fs_stat_t*)m->data;
         make_abs(from, r->name, abs, sizeof(abs));
         // The machine root is a directory that no volume owns, and saying so is
         // better than saying it does not exist.
-        if (!abs[1]) { if (r->size) *r->size = 0; return MYRTOS_ATTR_DIRECTORY; }
+        if (!abs[1]) { if (r->size) *r->size = 0; return UBIQOS_ATTR_DIRECTORY; }
         VOLUME_OR_FAIL(stat);
         return ops->stat(rest, r->size);
     }
@@ -301,37 +301,37 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
     //
     // This server rather than a new one, because it is already the place where
     // the slow parts of starting something live: a module read off the card
-    // arrives through MYRTOS_MSG_FS_LOADMOD a few lines from here.
+    // arrives through UBIQOS_MSG_FS_LOADMOD a few lines from here.
     //
     // The descriptors and the working directory are inherited from the SENDER,
     // not from this thread. It is the shell that is starting a command, and it
     // is the shell's stdin the command should read.
-    case MYRTOS_MSG_FS_EXEC: {
-        const myrtos_fs_exec_t *e = (const myrtos_fs_exec_t*)m->data;
-        int32_t pid = myrtos_process_create(e->module, e->args);
+    case UBIQOS_MSG_FS_EXEC: {
+        const ubiqos_fs_exec_t *e = (const ubiqos_fs_exec_t*)m->data;
+        int32_t pid = ubiqos_process_create(e->module, e->args);
         if (pid >= 0) {
-            myrtos_io_inherit(from, pid);
-            myrtos_cwd_inherit(from, pid);
+            ubiqos_io_inherit(from, pid);
+            ubiqos_cwd_inherit(from, pid);
         }
         return pid;
     }
 
-    case MYRTOS_MSG_FS_USBDISK: {
+    case UBIQOS_MSG_FS_USBDISK: {
         uintptr_t what = (uintptr_t)m->data;
         bool give_away = (what == 1);
         bool force     = (what == 2);
         if (give_away) {
             if (!card_mounted) return -1;
-            if (!myrtos_msc_hand_over()) return -1;
-            myrtos_vfs_remove("sd");
+            if (!ubiqos_msc_hand_over()) return -1;
+            ubiqos_vfs_remove("sd");
             card_mounted = false;
-            myrtos_print("USB disk: the card is the host's now; eject it there\n");
+            ubiqos_print("USB disk: the card is the host's now; eject it there\n");
             return 0;
         }
         // Taking it back is not a mount. The card was never lost -- only lent --
         // so it is still on whatever bus it was, still initialised, and the
         // driver's state is intact. Re-running the bring-up would call
-        // myrtos_sd_init, which speaks SPI to it, and a card latches into SPI
+        // ubiqos_sd_init, which speaks SPI to it, and a card latches into SPI
         // the moment it is addressed that way and stays there until the power
         // is cut. Lending the card out would then cost four-bit SDIO for the
         // rest of the session, which is a steep price for copying a file.
@@ -351,67 +351,67 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
         // Not a hard refusal: a host that has gone away -- an unplugged cable,
         // a sleeping machine -- will never send anything, and then this is the
         // only way back. `usbdisk force` says so deliberately.
-        if (myrtos_msc_host_has_card() && !force) {
-            myrtos_print("USB disk: the host has not ejected it\n");
+        if (ubiqos_msc_host_has_card() && !force) {
+            ubiqos_print("USB disk: the host has not ejected it\n");
             return -2;
         }
-        myrtos_msc_take_back();
-        if (!myrtos_fat_mount()) {
-            myrtos_print("USB disk: the card came back unreadable\n");
+        ubiqos_msc_take_back();
+        if (!ubiqos_fat_mount()) {
+            ubiqos_print("USB disk: the card came back unreadable\n");
             return -1;
         }
-        if (!card_mounted && !myrtos_vfs_add("sd", myrtos_fat_ops_ptr())) {
-            myrtos_print("USB disk: no room in the volume table\n");
+        if (!card_mounted && !ubiqos_vfs_add("sd", ubiqos_fat_ops_ptr())) {
+            ubiqos_print("USB disk: no room in the volume table\n");
             return -1;
         }
         card_mounted = true;
         return 0;
     }
-    case MYRTOS_MSG_FS_LOADMOD:
+    case UBIQOS_MSG_FS_LOADMOD:
         return load_module_from_card((const char*)m->data) ? 0 : -1;
-    case MYRTOS_MSG_FS_MOUNT:
+    case UBIQOS_MSG_FS_MOUNT:
         // A distinct answer, so `mount` can say which of the two it is. Saying
         // "no card, or not FAT32" about a card the host is holding sends the
         // reader looking for the wrong problem entirely.
-        if (myrtos_msc_host_has_card()) return -2;
+        if (ubiqos_msc_host_has_card()) return -2;
         // Asking must not answer by doing. A bare `mount` used to mean "mount
         // over SPI", so asking which bus the card was on took it off SDIO --
         // and back is a power cycle away.
-        if ((uintptr_t)m->data == MYRTOS_MOUNT_QUERY)
+        if ((uintptr_t)m->data == UBIQOS_MOUNT_QUERY)
             return card_mounted
-                       ? (int32_t)(myrtos_sd_is_sdio() ? MYRTOS_MOUNT_SDIO
-                                                       : MYRTOS_MOUNT_SPI)
+                       ? (int32_t)(ubiqos_sd_is_sdio() ? UBIQOS_MOUNT_SDIO
+                                                       : UBIQOS_MOUNT_SPI)
                        : -1;
         // Talking to the card can take a second when there is none in the slot,
         // which is a reason for this to be asked for rather than attempted
         // behind every failed listing.
-        return card_bring_up((uintptr_t)m->data == MYRTOS_MOUNT_SDIO) ? 0 : -1;
-    case MYRTOS_MSG_FS_DIR: {
-        const myrtos_fs_dir_t *d = (const myrtos_fs_dir_t*)m->data;
+        return card_bring_up((uintptr_t)m->data == UBIQOS_MOUNT_SDIO) ? 0 : -1;
+    case UBIQOS_MSG_FS_DIR: {
+        const ubiqos_fs_dir_t *d = (const ubiqos_fs_dir_t*)m->data;
         make_abs(from, d->path, abs, sizeof(abs));
         // The root is owned by nobody, so listing it lists the volumes. That is
         // the one directory no filesystem can answer for.
-        if (!abs[1]) return myrtos_vfs_root_nth(d->index, d->name, d->size);
+        if (!abs[1]) return ubiqos_vfs_root_nth(d->index, d->name, d->size);
         VOLUME_OR_FAIL(stat_nth);
         return ops->stat_nth(rest, d->index, d->name, d->size);
     }
-    case MYRTOS_MSG_FS_CHDIR: {
+    case UBIQOS_MSG_FS_CHDIR: {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         // The directory has to exist, and listing its first entry is the
         // cheapest way to ask: even an empty one still has "." in it, so a real
         // directory always answers. The root is taken on trust.
-        char name[MYRTOS_DIRNAME_MAX];
+        char name[UBIQOS_DIRNAME_MAX];
         uint32_t size = 0;
         if (abs[1]) {
             const char *rest;
-            const myrtos_fsops_t *ops = myrtos_vfs_split(abs, &rest);
+            const ubiqos_fsops_t *ops = ubiqos_vfs_split(abs, &rest);
             if (!ops) return -1;
             // A volume's own root is taken on trust, as the machine root always
             // was: an empty FAT root has no entries to prove itself with.
             if (rest[1] && (!ops->stat_nth || ops->stat_nth(rest, 0, name, &size) < 0))
                 return -1;
         }
-        return myrtos_cwd_set_of(from, abs) ? 0 : -1;
+        return ubiqos_cwd_set_of(from, abs) ? 0 : -1;
     }
     default:
         return -1;
@@ -432,9 +432,9 @@ static int32_t handle(int32_t from, const myrtos_msg_t *m) {
 // there takes the console and USB with it and leaves the BOOTSEL button. Here
 // it costs this one process, and the shell, the screen and the keyboard carry
 // on, which is the difference between a fault you can look at and a dark board.
-extern tlsf_pool_t myrtos_mem_pool;
-extern tlsf_pool_t myrtos_bulk_pool;
-void myrtos_print_u32(uint32_t v);
+extern tlsf_pool_t ubiqos_mem_pool;
+extern tlsf_pool_t ubiqos_bulk_pool;
+void ubiqos_print_u32(uint32_t v);
 
 // One module off the card, by name, because something is trying to run it.
 //
@@ -454,7 +454,7 @@ void myrtos_print_u32(uint32_t v);
 // fixed 32 kB staging buffer for every module regardless.
 static bool load_module_from_card(const char *name) {
     const char *vol = "";
-    const myrtos_fsops_t *ops = myrtos_vfs_module_volume(&vol);
+    const ubiqos_fsops_t *ops = ubiqos_vfs_module_volume(&vol);
     if (!ops || !ops->stat || !ops->read_at) return false;
 
     // The name as given, and then the name with .mod after it.
@@ -473,10 +473,10 @@ static bool load_module_from_card(const char *name) {
     // what made "hibouair&" -- a mistyped command line, with the ampersand
     // meant for the shell -- load hibouair.mod and start the scanner, with the
     // log reading "Loaded hibouair& from /sd" as though it had worked.
-    char file[MYRTOS_DIRNAME_MAX + 8];
+    char file[UBIQOS_DIRNAME_MAX + 8];
     uint32_t n = 0;
     while (name[n]) {
-        if (n >= MYRTOS_NAME_LEN - 1) return false;
+        if (n >= UBIQOS_NAME_LEN - 1) return false;
         file[n] = name[n];
         n++;
     }
@@ -484,35 +484,35 @@ static bool load_module_from_card(const char *name) {
     file[n] = 0;
 
     uint32_t sync = 0;
-    if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != MYRTOS_SYNC_CODE) {
+    if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != UBIQOS_SYNC_CODE) {
         file[n] = '.'; file[n+1] = 'm'; file[n+2] = 'o'; file[n+3] = 'd'; file[n+4] = 0;
-        if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != MYRTOS_SYNC_CODE)
+        if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != UBIQOS_SYNC_CODE)
             return false;
     }
 
     uint32_t size = 0;
     if (ops->stat(file, &size) < 0 || !size) return false;
 
-    myrtos_module_header_t hdr;
+    ubiqos_module_header_t hdr;
     if (ops->read_at(file, 0, (uint8_t*)&hdr, sizeof hdr) != (int32_t)sizeof hdr)
         return false;
     if (hdr.module_size > size) return false;      // a header that outruns its file
 
-    tlsf_pool_t pool = myrtos_pool_for(&hdr);
-    uint8_t *image = myrtos_tlsf_malloc(pool, hdr.module_size);
-    if (!image) { myrtos_print("SD: no room for module\n"); return false; }
+    tlsf_pool_t pool = ubiqos_pool_for(&hdr);
+    uint8_t *image = ubiqos_tlsf_malloc(pool, hdr.module_size);
+    if (!image) { ubiqos_print("SD: no room for module\n"); return false; }
 
     bool ok = ops->read_at(file, 0, image, hdr.module_size) == (int32_t)hdr.module_size
-              && myrtos_moddir_add_image(image, hdr.module_size, name);
+              && ubiqos_moddir_add_image(image, hdr.module_size, name);
     if (!ok) {
-        myrtos_tlsf_free(pool, image);
+        ubiqos_tlsf_free(pool, image);
         return false;
     }
-    myrtos_print("Loaded ");
-    myrtos_print(name);
-    myrtos_print(" from /");
-    myrtos_print(vol);
-    myrtos_print("\n");
+    ubiqos_print("Loaded ");
+    ubiqos_print(name);
+    ubiqos_print(" from /");
+    ubiqos_print(vol);
+    ubiqos_print("\n");
     return true;
 }
 
@@ -554,26 +554,26 @@ static bool card_bring_up(bool try_sdio) {
     // built on it.
 
     // What the detect pin says, reported and not acted on. See the note on
-    // myrtos_sd_present: with a card in the slot it reads as empty, so gating
+    // ubiqos_sd_present: with a card in the slot it reads as empty, so gating
     // the mount on it stopped the machine mounting a card that was there.
     if (try_sdio) {
-        if (!myrtos_sd_try_sdio() || !myrtos_fat_mount()) {
-            myrtos_print("SD: no SDIO -- no card, or SPI was asked for first\n");
+        if (!ubiqos_sd_try_sdio() || !ubiqos_fat_mount()) {
+            ubiqos_print("SD: no SDIO -- no card, or SPI was asked for first\n");
             return false;
         }
-        myrtos_print("SD: four-bit SDIO\n");
+        ubiqos_print("SD: four-bit SDIO\n");
     } else {
-        if (!myrtos_sd_init() || !myrtos_fat_mount()) {
-            myrtos_print("SD: no card, or not FAT32\n");
+        if (!ubiqos_sd_init() || !ubiqos_fat_mount()) {
+            ubiqos_print("SD: no card, or not FAT32\n");
             return false;
         }
-        myrtos_print("SD: SPI\n");
+        ubiqos_print("SD: SPI\n");
     }
     // It becomes /sd. The name is the volume's, not the filesystem's: a
     // LittleFS partition or a USB stick would come in the same way under its
     // own name, and nothing above here would know the difference.
-    if (!myrtos_vfs_add("sd", myrtos_fat_ops_ptr())) {
-        myrtos_print("SD: no room in the volume table\n");
+    if (!ubiqos_vfs_add("sd", ubiqos_fat_ops_ptr())) {
+        ubiqos_print("SD: no room in the volume table\n");
         return false;
     }
     card_mounted = true;
@@ -593,28 +593,28 @@ static bool card_bring_up(bool try_sdio) {
 
 static void run_startup_script(void) {
     uint32_t size = 0;
-    if (myrtos_fat_stat("startup", &size) < 0) return;   // no script, nothing to say
+    if (ubiqos_fat_stat("startup", &size) < 0) return;   // no script, nothing to say
 
-    const char *sh = myrtos_moddir_match("sh");
-    const myrtos_module_header_t *m = sh ? myrtos_moddir_link(sh) : 0;
-    int32_t pid = m ? myrtos_process_create(m, "script") : -1;
-    if (pid < 0) { myrtos_print("startup: no shell to run it\n"); return; }
+    const char *sh = ubiqos_moddir_match("sh");
+    const ubiqos_module_header_t *m = sh ? ubiqos_moddir_link(sh) : 0;
+    int32_t pid = m ? ubiqos_process_create(m, "script") : -1;
+    if (pid < 0) { ubiqos_print("startup: no shell to run it\n"); return; }
 
     // A new process has no paths, so the file lands on 0 -- but take the
     // number the call gives rather than trusting that, and put it on stdin.
-    int32_t in = myrtos_io_open_file(STARTUP_PATH, pid);
-    if (in < 0) { myrtos_print("startup: could not open " STARTUP_PATH "\n"); return; }
-    if (in != MYRTOS_STDIN) myrtos_io_dup(in, MYRTOS_STDIN, pid);
+    int32_t in = ubiqos_io_open_file(STARTUP_PATH, pid);
+    if (in < 0) { ubiqos_print("startup: could not open " STARTUP_PATH "\n"); return; }
+    if (in != UBIQOS_STDIN) ubiqos_io_dup(in, UBIQOS_STDIN, pid);
 
-    const char *console = myrtos_io_has_device("con") ? "con" : "usb";
-    myrtos_io_open_as(console, pid, MYRTOS_STDOUT);
-    myrtos_io_open_as(console, pid, MYRTOS_STDERR);
+    const char *console = ubiqos_io_has_device("con") ? "con" : "usb";
+    ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
+    ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
 
-    myrtos_print("Running " STARTUP_PATH "\n");
+    ubiqos_print("Running " STARTUP_PATH "\n");
 }
 
 // The programs in flash that asked to start with the system -- see
-// MYRTOS_ATTR_AUTOSTART. After the script, so that a card can still set things
+// UBIQOS_ATTR_AUTOSTART. After the script, so that a card can still set things
 // up first; with no card these are the only thing that makes the machine do
 // anything, which is the point. An application region whose program waited for
 // somebody to type its name left the boot text on the screen after a reset.
@@ -622,30 +622,30 @@ static void run_startup_script(void) {
 // Output to the console, as the script has, and no input: nothing started here
 // should be reading keys from under the shell.
 static void run_autostart(void) {
-    char name[MYRTOS_NAME_LEN];
+    char name[UBIQOS_NAME_LEN];
     for (uint32_t i = 0; ; i++) {
-        const myrtos_module_header_t *h = myrtos_flash_nth(i, name);
+        const ubiqos_module_header_t *h = ubiqos_flash_nth(i, name);
         if (!h) return;
-        if ((h->type_lang >> 8) != MYRTOS_TYPE_PROGRAM) continue;
-        if (!((h->attr_rev >> 8) & MYRTOS_ATTR_AUTOSTART)) continue;
+        if ((h->type_lang >> 8) != UBIQOS_TYPE_PROGRAM) continue;
+        if (!((h->attr_rev >> 8) & UBIQOS_ATTR_AUTOSTART)) continue;
 
-        const char *match = myrtos_moddir_match(name);
-        const myrtos_module_header_t *m = match ? myrtos_moddir_link(match) : 0;
-        const int32_t pid = m ? myrtos_process_create(m, name) : -1;
+        const char *match = ubiqos_moddir_match(name);
+        const ubiqos_module_header_t *m = match ? ubiqos_moddir_link(match) : 0;
+        const int32_t pid = m ? ubiqos_process_create(m, name) : -1;
         if (pid < 0) {
-            myrtos_print("autostart: could not start ");
-            myrtos_print(name);
-            myrtos_print("\n");
+            ubiqos_print("autostart: could not start ");
+            ubiqos_print(name);
+            ubiqos_print("\n");
             continue;
         }
 
-        const char *console = myrtos_io_has_device("con") ? "con" : "usb";
-        myrtos_io_open_as(console, pid, MYRTOS_STDOUT);
-        myrtos_io_open_as(console, pid, MYRTOS_STDERR);
+        const char *console = ubiqos_io_has_device("con") ? "con" : "usb";
+        ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
+        ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
 
-        myrtos_print("Started ");
-        myrtos_print(name);
-        myrtos_print("\n");
+        ubiqos_print("Started ");
+        ubiqos_print(name);
+        ubiqos_print("\n");
     }
 }
 
@@ -681,9 +681,9 @@ static void fs_thread(void) {
     // Only if there is a driver to do it with. A board whose module list has
     // no sdlib has no SD support built at all, and trying anyway printed two
     // lines about a card -- which is a wrong answer to a question nobody asked.
-    extern bool myrtos_sd_have_driver(void);
-    if (!myrtos_sd_have_driver()) {
-        myrtos_print("SD: no driver in this build; the card is not read\n");
+    extern bool ubiqos_sd_have_driver(void);
+    if (!ubiqos_sd_have_driver()) {
+        ubiqos_print("SD: no driver in this build; the card is not read\n");
     } else if (!card_bring_up(true)) {
         card_bring_up(false);
     }
@@ -691,26 +691,26 @@ static void fs_thread(void) {
     // Before the script, and before anything else can be told a hostname:
     // mDNS announces once, and a name corrected afterwards is worse than a
     // name that arrives a moment later.
-    myrtos_config_read();
+    ubiqos_config_read();
 
     run_startup_script();
     run_autostart();
 
     for (;;) {
-        myrtos_msg_t m;
-        int32_t from = myrtos_receive(&m);
+        ubiqos_msg_t m;
+        int32_t from = ubiqos_receive(&m);
         if (from < 0) continue;              // -2 would mean an unanswered one
-        myrtos_reply(handle(from, &m));
+        ubiqos_reply(handle(from, &m));
     }
 }
 
-void myrtos_fs_start_server(void) {
+void ubiqos_fs_start_server(void) {
     // Below the USB task and the console, above a shell. It holds the card's
     // only buffers, so there is exactly one of it and no locking to get wrong.
-    server_pid = myrtos_kernel_thread(fs_thread, 4096, MYRTOS_PRIO_FS);
+    server_pid = ubiqos_kernel_thread(fs_thread, 4096, UBIQOS_PRIO_FS);
     if (server_pid < 0) {
-        myrtos_print("FS: could not start its service process\n");
+        ubiqos_print("FS: could not start its service process\n");
         // Nothing will ever read the card, so nothing should wait for it.
-        myrtos_config_give_up();
+        ubiqos_config_give_up();
     }
 }

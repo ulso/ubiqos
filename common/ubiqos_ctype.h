@@ -1,5 +1,5 @@
-#ifndef MYRTOS_CTYPE_H
-#define MYRTOS_CTYPE_H
+#ifndef UBIQOS_CTYPE_H
+#define UBIQOS_CTYPE_H
 
 // ctype.h. ASCII only, and deliberately: there is no locale here to consult and
 // pretending otherwise would be the wrong kind of completeness.

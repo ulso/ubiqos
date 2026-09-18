@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // A real virtual call: the vtable is a table of function pointers, which is the
 // one thing a module could not contain before the loader could relocate.
@@ -37,13 +37,13 @@ extern "C" void module_main(int argc, char **argv) {
     calls++;
     Shape *p = pick(argc);
 
-    myrtos_write_str(MYRTOS_STDOUT, p->name());
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "sides ");
-    myrtos_line_u32(&l, p->sides());
-    myrtos_line_str(&l, ", calls ");
-    myrtos_line_u32(&l, calls);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_write_str(UBIQOS_STDOUT, p->name());
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "sides ");
+    ubiqos_line_u32(&l, p->sides());
+    ubiqos_line_str(&l, ", calls ");
+    ubiqos_line_u32(&l, calls);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }

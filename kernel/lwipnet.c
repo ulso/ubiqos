@@ -25,25 +25,25 @@
 #include "config.h"
 #include "class/net/net_device.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
 
 static struct netif nif;
 static bool started;
 
-uint32_t myrtos_lwip_in, myrtos_lwip_out, myrtos_lwip_dropped;
+uint32_t ubiqos_lwip_in, ubiqos_lwip_out, ubiqos_lwip_dropped;
 
 // What kind of frames arrive, counted before lwIP sees them. This separates
 // "the frame never came" from "the stack did not take it", which is the whole
 // question when ARP counts zero and IP counts four.
-uint32_t myrtos_lwip_arp_frames, myrtos_lwip_ip4_frames, myrtos_lwip_other_frames;
+uint32_t ubiqos_lwip_arp_frames, ubiqos_lwip_ip4_frames, ubiqos_lwip_other_frames;
 
 // IPv4 frames actually addressed to us, and of those, how many are ICMP. This
 // is the last thing the counters cannot already answer: whether the echo
 // request arrives at all, or arrives and is refused.
-uint32_t myrtos_lwip_for_us, myrtos_lwip_icmp_frames;
+uint32_t ubiqos_lwip_for_us, ubiqos_lwip_icmp_frames;
 
-uint32_t myrtos_lwip_addr(void);
+uint32_t ubiqos_lwip_addr(void);
 
 // --- OUT ------------------------------------------------------------------
 // tud_network_xmit hands the pbuf back to tud_network_xmit_cb, which copies it
@@ -55,7 +55,7 @@ static err_t link_output(struct netif *n, struct pbuf *p)
     if (!tud_network_can_xmit(p->tot_len))
         return ERR_IF;                    // no room; lwIP will retry
     tud_network_xmit(p, 0);
-    myrtos_lwip_out++;
+    ubiqos_lwip_out++;
     return ERR_OK;
 }
 
@@ -76,27 +76,27 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
     // handed back the moment this returns.
     struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
     if (!p) {
-        myrtos_lwip_dropped++;
+        ubiqos_lwip_dropped++;
         return false;                     // ask again -- do not lose it quietly
     }
     pbuf_take(p, src, size);
-    myrtos_lwip_in++;
+    ubiqos_lwip_in++;
 
     if (size >= 14) {
         uint16_t type = (uint16_t)((src[12] << 8) | src[13]);
-        if (type == 0x0806)      myrtos_lwip_arp_frames++;
+        if (type == 0x0806)      ubiqos_lwip_arp_frames++;
         else if (type == 0x0800) {
-            myrtos_lwip_ip4_frames++;
+            ubiqos_lwip_ip4_frames++;
             if (size >= 34) {
                 uint32_t dst = ((uint32_t)src[30] << 24) | ((uint32_t)src[31] << 16) |
                                ((uint32_t)src[32] << 8) | (uint32_t)src[33];
-                if (dst == myrtos_lwip_addr()) {
-                    myrtos_lwip_for_us++;
-                    if (src[23] == 1) myrtos_lwip_icmp_frames++;   // protocol ICMP
+                if (dst == ubiqos_lwip_addr()) {
+                    ubiqos_lwip_for_us++;
+                    if (src[23] == 1) ubiqos_lwip_icmp_frames++;   // protocol ICMP
                 }
             }
         }
-        else                     myrtos_lwip_other_frames++;
+        else                     ubiqos_lwip_other_frames++;
     }
 
     if (nif.input(p, &nif) != ERR_OK)
@@ -162,65 +162,65 @@ static void on_status(struct netif *n)
 #if LWIP_MDNS_RESPONDER
         mdns_resp_announce(n);
 #endif
-        myrtos_print("net: address ");
+        ubiqos_print("net: address ");
         for (int i = 0; i < 4; i++) {
-            myrtos_print_u32(a[i]);
-            myrtos_print(i < 3 ? "." : "\n");
+            ubiqos_print_u32(a[i]);
+            ubiqos_print(i < 3 ? "." : "\n");
         }
     }
 }
 
-void myrtos_lwip_start(void)
+void ubiqos_lwip_start(void)
 {
     if (started) return;
 
     lwip_init();
     // A /24 and no gateway: the cable leads to one computer and nowhere else,
     // so nothing is routed through it that is not for that computer.
-    const uint32_t board = myrtos_config_usb_address();
+    const uint32_t board = ubiqos_config_usb_address();
     ip4_addr_t addr, mask, gw;
     ip4_addr_set_u32(&addr, lwip_htonl(board));
     ip4_addr_set_u32(&mask, lwip_htonl(0xffffff00u));
     ip4_addr_set_zero(&gw);
     netif_add(&nif, &addr, &mask, &gw, NULL, if_init, ethernet_input);
-    // The name the card gave, or "myrtos" when it gave none. The filesystem
+    // The name the card gave, or "ubiqos" when it gave none. The filesystem
     // server has already read it: usbdev waits for that before starting this.
-    const char *host = myrtos_config_hostname();
+    const char *host = ubiqos_config_hostname();
     netif_set_hostname(&nif, host);
     netif_set_default(&nif);
     netif_set_status_callback(&nif, on_status);
     netif_set_up(&nif);
     // The LINK is left down. This interface is a cable to a host, and there is
     // not always a host: the board runs just as well on a charger, and the Mac
-    // it is normally on goes to sleep. myrtos_lwip_set_link follows tud_ready
+    // it is normally on goes to sleep. ubiqos_lwip_set_link follows tud_ready
     // from the USB task, so the link says what is actually true.
 
     {
-        extern void myrtos_dhcpd_start(struct netif *n, uint32_t board_address);
-        myrtos_dhcpd_start(&nif, board);
+        extern void ubiqos_dhcpd_start(struct netif *n, uint32_t board_address);
+        ubiqos_dhcpd_start(&nif, board);
     }
 
     // The responder goes up with the interface, and announces again each time
-    // the link comes up -- see myrtos_lwip_set_link.
+    // the link comes up -- see ubiqos_lwip_set_link.
 #if LWIP_MDNS_RESPONDER
     mdns_resp_init();
     if (mdns_resp_add_netif(&nif, host) == ERR_OK) {
         mdns_resp_add_service(&nif, host, "_http", DNSSD_PROTO_TCP, 80, http_txt, NULL);
         mdns_resp_announce(&nif);
-        myrtos_print("net: answering to ");
-        myrtos_print(host);
-        myrtos_print(".local\n");
+        ubiqos_print("net: answering to ");
+        ubiqos_print(host);
+        ubiqos_print(".local\n");
     } else {
-        myrtos_print("net: the mDNS responder would not start\n");
+        ubiqos_print("net: the mDNS responder would not start\n");
     }
 #endif
 
     started = true;
     const uint8_t *a = (const uint8_t *)&netif_ip4_addr(&nif)->addr;
-    myrtos_print("net: lwIP up; on the cable ");
-    for (int i = 0; i < 4; i++) { myrtos_print_u32(a[i]); myrtos_print(i < 3 ? "." : ""); }
-    myrtos_print(", offering the computer ");
-    for (int i = 0; i < 4; i++) { myrtos_print_u32(i < 3 ? a[i] : a[i] + 1u); myrtos_print(i < 3 ? "." : "\n"); }
+    ubiqos_print("net: lwIP up; on the cable ");
+    for (int i = 0; i < 4; i++) { ubiqos_print_u32(a[i]); ubiqos_print(i < 3 ? "." : ""); }
+    ubiqos_print(", offering the computer ");
+    for (int i = 0; i < 4; i++) { ubiqos_print_u32(i < 3 ? a[i] : a[i] + 1u); ubiqos_print(i < 3 ? "." : "\n"); }
 }
 
 // Whether there is a host on the other end of the USB cable. Called every turn
@@ -235,7 +235,7 @@ void myrtos_lwip_start(void)
 // Returns whether this actually changed anything, so the caller can log the
 // transition and nothing else. It is called every turn; the answer is almost
 // always false.
-bool myrtos_lwip_set_link(bool up)
+bool ubiqos_lwip_set_link(bool up)
 {
     if (!started) return false;
     if (up == (bool)netif_is_link_up(&nif)) return false;
@@ -255,18 +255,18 @@ bool myrtos_lwip_set_link(bool up)
 }
 
 // Called from the USB device task's loop, which is the one context lwIP has.
-void myrtos_lwip_poll(void)
+void ubiqos_lwip_poll(void)
 {
     if (started) sys_check_timeouts();
 }
 
-bool myrtos_lwip_started(void) { return started; }
+bool ubiqos_lwip_started(void) { return started; }
 
 // lwIP's own counters, which say where a packet stopped rather than that it
 // did. link.recv is what reached the stack, etharp.recv what ARP saw, ip.recv
 // what got past the ethernet layer, and icmp.recv what a ping reached.
 #include "lwip/stats.h"
-void myrtos_lwip_stats(uint32_t *out)
+void ubiqos_lwip_stats(uint32_t *out)
 {
     out[0] = lwip_stats.link.recv;
     out[1] = lwip_stats.link.drop;
@@ -278,28 +278,28 @@ void myrtos_lwip_stats(uint32_t *out)
     out[7] = lwip_stats.icmp.recv;
     out[8] = lwip_stats.icmp.xmit;
     out[9] = lwip_stats.ip.chkerr;
-    out[10] = myrtos_lwip_arp_frames;
-    out[11] = myrtos_lwip_ip4_frames;
-    out[12] = myrtos_lwip_other_frames;
-    out[13] = myrtos_lwip_for_us;
-    out[14] = myrtos_lwip_icmp_frames;
+    out[10] = ubiqos_lwip_arp_frames;
+    out[11] = ubiqos_lwip_ip4_frames;
+    out[12] = ubiqos_lwip_other_frames;
+    out[13] = ubiqos_lwip_for_us;
+    out[14] = ubiqos_lwip_icmp_frames;
     {
-        extern uint32_t myrtos_lwipsock_served, myrtos_lwipsock_queued,
-                        myrtos_lwipsock_taken, myrtos_lwipsock_recv,
-                        myrtos_lwipsock_sent;
-        out[15] = myrtos_lwipsock_served;
-        out[16] = myrtos_lwipsock_queued;
-        out[17] = myrtos_lwipsock_taken;
-        out[18] = myrtos_lwipsock_recv;
-        out[19] = myrtos_lwipsock_sent;
-        extern uint32_t myrtos_lwipsock_why;
-        out[20] = myrtos_lwipsock_why;
-        extern uint32_t myrtos_lwipsock_lastop, myrtos_lwipsock_lastreply;
-        out[21] = myrtos_lwipsock_lastop;
-        out[22] = myrtos_lwipsock_lastreply;
-        extern uint32_t myrtos_lwipsock_oncalls, myrtos_lwipsock_onbytes;
-        out[23] = myrtos_lwipsock_oncalls;
-        out[24] = myrtos_lwipsock_onbytes;
+        extern uint32_t ubiqos_lwipsock_served, ubiqos_lwipsock_queued,
+                        ubiqos_lwipsock_taken, ubiqos_lwipsock_recv,
+                        ubiqos_lwipsock_sent;
+        out[15] = ubiqos_lwipsock_served;
+        out[16] = ubiqos_lwipsock_queued;
+        out[17] = ubiqos_lwipsock_taken;
+        out[18] = ubiqos_lwipsock_recv;
+        out[19] = ubiqos_lwipsock_sent;
+        extern uint32_t ubiqos_lwipsock_why;
+        out[20] = ubiqos_lwipsock_why;
+        extern uint32_t ubiqos_lwipsock_lastop, ubiqos_lwipsock_lastreply;
+        out[21] = ubiqos_lwipsock_lastop;
+        out[22] = ubiqos_lwipsock_lastreply;
+        extern uint32_t ubiqos_lwipsock_oncalls, ubiqos_lwipsock_onbytes;
+        out[23] = ubiqos_lwipsock_oncalls;
+        out[24] = ubiqos_lwipsock_onbytes;
     }
     {
         // TCP's own view, which was the gap: ip and icmp were exposed and this
@@ -315,7 +315,7 @@ void myrtos_lwip_stats(uint32_t *out)
 }
 
 // The cable's address, host order, or 0 before lwIP has started.
-uint32_t myrtos_lwip_addr(void)
+uint32_t ubiqos_lwip_addr(void)
 {
     return started ? lwip_ntohl(netif_ip4_addr(&nif)->addr) : 0u;
 }

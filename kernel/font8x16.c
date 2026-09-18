@@ -22,7 +22,7 @@
 // The kernel is linked copy_to_ram, which pulls everything not marked
 // .flashdata into SRAM "to avoid accidental flash accesses" as the SDK's
 // linker script puts it. This table used to be marked, for 3584 bytes that a
-// process got instead. Nothing writes flash while myrtos runs, so reading it
+// process got instead. Nothing writes flash while UbiqOS runs, so reading it
 // looked always safe.
 //
 // It is not, and the accident is not a WRITE. The character generator reads
@@ -52,14 +52,14 @@
 
 // The one line that decides where it lands. Empty in a chargen build, so
 // copy_to_ram takes the table into SRAM with everything else.
-#ifdef MYRTOS_VIDEO_CHARGEN
-#define MYRTOS_FONT_HOME
+#ifdef UBIQOS_VIDEO_CHARGEN
+#define UBIQOS_FONT_HOME
 #else
-#define MYRTOS_FONT_HOME __attribute__((section(".flashdata.font8x16")))
+#define UBIQOS_FONT_HOME __attribute__((section(".flashdata.font8x16")))
 #endif
 
-MYRTOS_FONT_HOME
-const uint8_t myrtos_font8x16[224][16] = {
+UBIQOS_FONT_HOME
+const uint8_t ubiqos_font8x16[224][16] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 32
     {0x00,0x00,0x10,0x10,0x10,0x10,0x10,0x10,0x10,0x00,0x10,0x10,0x00,0x00,0x00,0x00},  // 33
     {0x00,0x24,0x24,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},  // 34

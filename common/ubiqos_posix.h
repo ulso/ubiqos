@@ -1,7 +1,7 @@
-#ifndef MYRTOS_POSIX_H
-#define MYRTOS_POSIX_H
+#ifndef UBIQOS_POSIX_H
+#define UBIQOS_POSIX_H
 
-#include "myrtos_abi.h"
+#include "ubiqos_abi.h"
 
 // A thin POSIX face on the system calls, so that ordinary C which opens, reads
 // and closes a file can be built here with its file-handling untouched.
@@ -20,35 +20,35 @@
 
 // This header IS the C library for a module that does not link one, so it must
 // not be mixed with a module that does. The names below are the same as
-// <fcntl.h>'s and the numbers are not: myrtos took Linux's -- O_CREAT 0x40,
+// <fcntl.h>'s and the numbers are not: UbiqOS took Linux's -- O_CREAT 0x40,
 // O_TRUNC 0x200, O_APPEND 0x400 -- and newlib took BSD's, 0x200, 0x400 and
 // 0x008. Two honest Unix lineages that disagree above the access mode.
 //
 // Mixing the two already fails to compile, on struct stat and on open. It fails
 // in forty-six diagnostics that never mention the flags, so this says it once
 // and first. A module built NEWLIB wants <fcntl.h> and newlib's own open;
-// common/myrtos_syscalls.c translates the numbers on the way to the kernel.
+// common/ubiqos_syscalls.c translates the numbers on the way to the kernel.
 #ifdef O_RDONLY
-#error "myrtos_posix.h is for a module built without a C library, and this one has <fcntl.h>. Use it and newlib's open(); common/myrtos_syscalls.c translates the flags."
+#error "ubiqos_posix.h is for a module built without a C library, and this one has <fcntl.h>. Use it and newlib's open(); common/ubiqos_syscalls.c translates the flags."
 #endif
 
 // Aliases, not translations: the kernel uses POSIX's own numbers and acts on
 // them itself, so nothing here has to arrange afterwards what the flag asked
 // for. That is the difference between a flag and a convention.
-#define O_RDONLY MYRTOS_O_RDONLY
-#define O_WRONLY MYRTOS_O_WRONLY
-#define O_RDWR   MYRTOS_O_RDWR
-#define O_CREAT  MYRTOS_O_CREAT
-#define O_TRUNC  MYRTOS_O_TRUNC
-#define O_APPEND MYRTOS_O_APPEND
+#define O_RDONLY UBIQOS_O_RDONLY
+#define O_WRONLY UBIQOS_O_WRONLY
+#define O_RDWR   UBIQOS_O_RDWR
+#define O_CREAT  UBIQOS_O_CREAT
+#define O_TRUNC  UBIQOS_O_TRUNC
+#define O_APPEND UBIQOS_O_APPEND
 
-#define SEEK_SET MYRTOS_SEEK_SET
-#define SEEK_CUR MYRTOS_SEEK_CUR
+#define SEEK_SET UBIQOS_SEEK_SET
+#define SEEK_CUR UBIQOS_SEEK_CUR
 // SEEK_END works on a raw descriptor now. It used to be refused because a
 // descriptor did not carry the path and there was nothing to ask about the
 // length of; the kernel keeps the path it was opened with, so SYS_SEEK sends
 // this one case to the file server and gets an answer.
-#define SEEK_END MYRTOS_SEEK_END
+#define SEEK_END UBIQOS_SEEK_END
 
 #define ENOENT  2
 #define EBADF   9
@@ -82,7 +82,7 @@ struct stat {
 static inline int stat(const char *path, struct stat *st)
 {
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(path, &size);
+    int32_t attr = ubiqos_fs_stat(path, &size);
     if (attr < 0) { errno = ENOENT; return -1; }
     if (st) { st->st_size = size; st->st_mode = (uint32_t)attr; }
     return 0;
@@ -93,33 +93,33 @@ static inline int stat(const char *path, struct stat *st)
 // O_TRUNC and positions the descriptor for O_APPEND, all before this returns.
 // Why an open failed, worked out afterwards rather than reported by the kernel,
 // which answers -1 to every cause alike. The same reasoning -- and the same
-// three answers -- as common/myrtos_syscalls.c gives the other library here:
+// three answers -- as common/ubiqos_syscalls.c gives the other library here:
 // "not there" and "there and it still did not open" are different problems, and
 // a caller told ENOENT for the second will create a file it should not.
 //
 // EMFILE for the last case is the likeliest of what remains rather than a fact.
-static inline int myrtos_open_errno(const char *path)
+static inline int ubiqos_open_errno(const char *path)
 {
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(path, &size);
+    int32_t attr = ubiqos_fs_stat(path, &size);
     if (attr < 0) return ENOENT;
-    if (attr & MYRTOS_ATTR_DIRECTORY) return EISDIR;
+    if (attr & UBIQOS_ATTR_DIRECTORY) return EISDIR;
     return EMFILE;
 }
 
 static inline int open(const char *path, int flags, ...)
 {
-    int32_t fd = myrtos_open_flags(path, (uint32_t)flags);
+    int32_t fd = ubiqos_open_flags(path, (uint32_t)flags);
     // A refusal says so itself, and does not need guessing at.
-    if (fd == MYRTOS_FS_REFUSED) { errno = EACCES; return -1; }
-    if (fd < 0) { errno = myrtos_open_errno(path); return -1; }
+    if (fd == UBIQOS_FS_REFUSED) { errno = EACCES; return -1; }
+    if (fd < 0) { errno = ubiqos_open_errno(path); return -1; }
     return (int)fd;
 }
 
 static inline int pipe(int fds[2])
 {
     int32_t f[2];
-    if (myrtos_pipe(f) < 0) { errno = ENOSYS; return -1; }
+    if (ubiqos_pipe(f) < 0) { errno = ENOSYS; return -1; }
     fds[0] = (int)f[0];
     fds[1] = (int)f[1];
     return 0;
@@ -127,21 +127,21 @@ static inline int pipe(int fds[2])
 
 static inline int dup(int fd)
 {
-    int32_t n = myrtos_dup((int32_t)fd, -1);
+    int32_t n = ubiqos_dup((int32_t)fd, -1);
     if (n < 0) errno = EBADF;
     return (int)n;
 }
 
 static inline int dup2(int oldfd, int newfd)
 {
-    int32_t n = myrtos_dup((int32_t)oldfd, (int32_t)newfd);
+    int32_t n = ubiqos_dup((int32_t)oldfd, (int32_t)newfd);
     if (n < 0) errno = EBADF;
     return (int)n;
 }
 
 static inline int close(int fd)
 {
-    return myrtos_close((int32_t)fd) < 0 ? (errno = EBADF, -1) : 0;
+    return ubiqos_close((int32_t)fd) < 0 ? (errno = EBADF, -1) : 0;
 }
 
 // Nought is end of file and a negative is an error, as POSIX has it. Note that
@@ -149,14 +149,14 @@ static inline int close(int fd)
 // a write should create -- so a missing file is discovered here.
 static inline int32_t read(int fd, void *buf, uint32_t len)
 {
-    int32_t n = myrtos_read((int32_t)fd, buf, len);
+    int32_t n = ubiqos_read((int32_t)fd, buf, len);
     if (n < 0) errno = ENOENT;
     return n;
 }
 
 static inline int32_t write(int fd, const void *buf, uint32_t len)
 {
-    int32_t n = myrtos_write((int32_t)fd, buf, len);
+    int32_t n = ubiqos_write((int32_t)fd, buf, len);
     if (n < 0) errno = EBADF;
     return n;
 }
@@ -164,13 +164,13 @@ static inline int32_t write(int fd, const void *buf, uint32_t len)
 static inline int32_t lseek(int fd, int32_t offset, int whence)
 {
     if (whence == SEEK_END) { errno = ENOSYS; return -1; }
-    int32_t n = myrtos_seek((int32_t)fd, offset, (uint32_t)whence);
+    int32_t n = ubiqos_seek((int32_t)fd, offset, (uint32_t)whence);
     if (n < 0) errno = EINVAL;
     return n;
 }
 
-#define STDIN_FILENO  MYRTOS_STDIN
-#define STDOUT_FILENO MYRTOS_STDOUT
-#define STDERR_FILENO MYRTOS_STDERR
+#define STDIN_FILENO  UBIQOS_STDIN
+#define STDOUT_FILENO UBIQOS_STDOUT
+#define STDERR_FILENO UBIQOS_STDERR
 
 #endif

@@ -1,9 +1,9 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "wasm3.h"
 #include "m3_env.h"      // for looking inside the module while this is being chased
 
 // wasm -- a WebAssembly host, so an application can be written in any language
-// with a wasm backend and shipped as a file rather than as a myrtos module.
+// with a wasm backend and shipped as a file rather than as a UbiqOS module.
 //
 // This is the reason it exists. Everything docs/writing-modules.md teaches --
 // no writable statics, no tables of pointers, __thread on every variable that
@@ -22,10 +22,10 @@
 // One instance, therefore. That is not the limitation it sounds like: wasm3 is
 // built to host several modules in one runtime, with IM3Runtime as the per
 // program handle, so several wasm programs share one host process and are
-// isolated from each other inside it rather than by myrtos.
+// isolated from each other inside it rather than by UbiqOS.
 //
 // Measured before any of this was written: the twelve source files compile for
-// rv32 with myrtos's own flags without a change, and come to 122 kB of code
+// rv32 with UbiqOS's own flags without a change, and come to 122 kB of code
 // with .data and .bss both empty -- wasm3 has no writable globals in this
 // configuration. Linked against newlib it is about 193 kB against the 512 kB
 // the SINGLE region reserves.
@@ -50,7 +50,7 @@
 // the default 4096 and crashed hard enough to take USB with it; the second
 // tried 64 kB, still less than one frame; and mem_size is capped at 65536 by
 // the module format anyway, so the stack was never the way out.
-MYRTOS_MEM_SIZE(64 * 1024);
+UBIQOS_MEM_SIZE(64 * 1024);
 
 // m3_info.c is left out of the build: it is the debug and tracing half of
 // wasm3 and the only part that reaches newlib's stdio, which cannot work here.
@@ -63,23 +63,23 @@ void m3_PrintProfilerInfo(void) { }
 // first call reads a FILE at a misaligned address. That is what crashed the
 // board three times: mcause 4 at lh a5,12(s1) inside _vfprintf_r, with s1 odd.
 //
-// myrtos_write_str is the kernel's own path and needs nothing set up.
+// ubiqos_write_str is the kernel's own path and needs nothing set up.
 static void say(const char *a, const char *b)
 {
-    myrtos_write_str(MYRTOS_STDOUT, a);
-    if (b) myrtos_write_str(MYRTOS_STDOUT, b);
-    myrtos_write_str(MYRTOS_STDOUT, "\n");
+    ubiqos_write_str(UBIQOS_STDOUT, a);
+    if (b) ubiqos_write_str(UBIQOS_STDOUT, b);
+    ubiqos_write_str(UBIQOS_STDOUT, "\n");
 }
 
 static void say_num(const char *a, int32_t v)
 {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, a);
-    if (v < 0) { myrtos_line_str(&l, "-"); v = -v; }
-    myrtos_line_u32(&l, (uint32_t)v);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, a);
+    if (v < 0) { ubiqos_line_str(&l, "-"); v = -v; }
+    ubiqos_line_u32(&l, (uint32_t)v);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 // An M3Result is a const char*, and printing it is what actually crashed the
@@ -115,25 +115,25 @@ static void report_error_site(IM3Runtime rt)
     m3_GetErrorInfo(rt, &info);
     if (!info.line && !info.file) return;
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "  thrown at line ");
-    myrtos_line_u32(&l, info.line);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "  thrown at line ");
+    ubiqos_line_u32(&l, info.line);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
     if (result_readable(info.message)) say("  ", info.message);
 }
 
 static void fail(const char *what, M3Result r)
 {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "wasm: ");
-    myrtos_line_str(&l, what);
-    myrtos_line_str(&l, " failed, M3Result 0x");
-    myrtos_line_hex(&l, (uint32_t)(unsigned long)r);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "wasm: ");
+    ubiqos_line_str(&l, what);
+    ubiqos_line_str(&l, " failed, M3Result 0x");
+    ubiqos_line_hex(&l, (uint32_t)(unsigned long)r);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
     if (r && result_readable(r))  say("  ", r);
     else if (r)                   say("  ", "(pointer is not in this module)");
@@ -176,7 +176,7 @@ static void clear_bss(void)
 //
 // HOW TO READ A CRASH HERE, since it took four attempts to learn:
 //
-//   A fatal trap never reaches the screen. myrtos_print puts the text in the
+//   A fatal trap never reaches the screen. ubiqos_print puts the text in the
 //   console ring and the task that draws it never runs again, so the machine
 //   parks with the diagnosis written and undrawn. It is still in dmesg_buf:
 //
@@ -196,7 +196,7 @@ static void clear_bss(void)
 // being the only parts of wasm3 that reach newlib's stdio, which has no C
 // startup here to initialise it.
 
-#define MARK(s) myrtos_write_str(MYRTOS_STDOUT, "wasm: " s "\n")
+#define MARK(s) ubiqos_write_str(UBIQOS_STDOUT, "wasm: " s "\n")
 
 // Which step to stop after, so the one that costs the USB bus can be found.
 //
@@ -241,7 +241,7 @@ void module_main(int argc, char **argv)
     if (argc >= 2 && same(argv[1], "entry")) return;
 
     // Before clear_bss too, for the same reason: nothing here needs .bss.
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: wasm PATH.wasm [ARGS...]\n       wasm STAGE\n\n"
             "Runs a WebAssembly program.\n"
             "A relative path is taken from the current directory.\n"
@@ -274,7 +274,7 @@ void module_main(int argc, char **argv)
     // M3Runtime is another 41, and the compiler allocates code pages on top.
     extern int wasm_heap_init(uint32_t bytes);
     if (wasm_heap_init(4096u * 1024u) != 0) {
-        myrtos_write_str(MYRTOS_STDOUT, "wasm: no room for a heap\n");
+        ubiqos_write_str(UBIQOS_STDOUT, "wasm: no room for a heap\n");
         return;
     }
 
@@ -303,18 +303,18 @@ void module_main(int argc, char **argv)
     unsigned int code_len = 0;
     unsigned char *loaded = 0;
     if (!path) {
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
                          "usage: wasm PATH.wasm [ARGS...]\n");
         goto done;
     }
     {
         uint32_t size = 0;
-        if (myrtos_fs_stat(path, &size) < 0) { say("wasm: no such file: ", path); goto done; }
+        if (ubiqos_fs_stat(path, &size) < 0) { say("wasm: no such file: ", path); goto done; }
         if (!size)                           { say("wasm: empty file: ", path);   goto done; }
         loaded = (unsigned char*)malloc(size);
         if (!loaded)                         { say("wasm: no room for ", path);   goto done; }
 
-        int32_t fd = myrtos_open(path);
+        int32_t fd = ubiqos_open(path);
         if (fd < 0) { say("wasm: cannot open ", path); free(loaded); loaded = 0; goto done; }
 
         // A read returns what it has rather than all that was asked for, so it
@@ -323,11 +323,11 @@ void module_main(int argc, char **argv)
         // it, and half a module is not worth trying to parse.
         uint32_t got = 0;
         while (got < size) {
-            int32_t n = myrtos_read(fd, loaded + got, size - got);
+            int32_t n = ubiqos_read(fd, loaded + got, size - got);
             if (n <= 0) break;
             got += (uint32_t)n;
         }
-        myrtos_close(fd);
+        ubiqos_close(fd);
         if (got != size) { say("wasm: short read on ", path); free(loaded); loaded = 0; goto done; }
 
         code = loaded;
@@ -336,12 +336,12 @@ void module_main(int argc, char **argv)
     }
 
     IM3Environment env = m3_NewEnvironment();
-    if (!env) { myrtos_write_str(MYRTOS_STDOUT, "wasm: no environment\n"); return; }
+    if (!env) { ubiqos_write_str(UBIQOS_STDOUT, "wasm: no environment\n"); return; }
 
     MARK("environment");
     if (stop_here("env")) goto free_env;
     IM3Runtime runtime = m3_NewRuntime(env, 8192, NULL);
-    if (!runtime) { myrtos_write_str(MYRTOS_STDOUT, "wasm: no runtime\n"); goto free_env; }
+    if (!runtime) { ubiqos_write_str(UBIQOS_STDOUT, "wasm: no runtime\n"); goto free_env; }
 
     MARK("runtime");
     if (stop_here("runtime")) goto free_rt;

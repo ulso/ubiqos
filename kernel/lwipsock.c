@@ -14,15 +14,15 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 #include "lwip/tcp.h"
 #include "lwip/pbuf.h"
 #include "lwip/dns.h"
 
-int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms);
-int32_t myrtos_msg_reply(int32_t status);
-int32_t myrtos_net_register(uint32_t stack, int32_t pid);
-int32_t myrtos_current_pid(void);
+int32_t ubiqos_msg_receive_tmo(ubiqos_msg_t *out, uint32_t ms);
+int32_t ubiqos_msg_reply(int32_t status);
+int32_t ubiqos_net_register(uint32_t stack, int32_t pid);
+int32_t ubiqos_current_pid(void);
 
 #define NSOCK    8
 #define NPENDING 4
@@ -44,14 +44,14 @@ static sock_t sk[NSOCK];
 
 // Where a connection stops. served counts messages the USB task answered at
 // all, which separates "httpd never asked" from "the stack never offered".
-uint32_t myrtos_lwipsock_served, myrtos_lwipsock_queued, myrtos_lwipsock_taken;
-uint32_t myrtos_lwipsock_recv, myrtos_lwipsock_sent;
+uint32_t ubiqos_lwipsock_served, ubiqos_lwipsock_queued, ubiqos_lwipsock_taken;
+uint32_t ubiqos_lwipsock_recv, ubiqos_lwipsock_sent;
 
-uint32_t myrtos_lwipsock_why;
-uint32_t myrtos_lwipsock_lastop, myrtos_lwipsock_lastreply;
+uint32_t ubiqos_lwipsock_why;
+uint32_t ubiqos_lwipsock_lastop, ubiqos_lwipsock_lastreply;
 
 // Callbacks lwIP actually made, which is the one thing not yet measured.
-uint32_t myrtos_lwipsock_oncalls, myrtos_lwipsock_onbytes;
+uint32_t ubiqos_lwipsock_oncalls, ubiqos_lwipsock_onbytes;
 
 static int alloc_sock(void)
 {
@@ -81,8 +81,8 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
     // Kept, not copied: a chain costs nothing to hold and the reader takes it
     // apart at its own pace. Acknowledging happens as it is read, so the window
     // closes when this end falls behind, which is what a window is for.
-    myrtos_lwipsock_oncalls++;
-    myrtos_lwipsock_onbytes += p->tot_len;
+    ubiqos_lwipsock_oncalls++;
+    ubiqos_lwipsock_onbytes += p->tot_len;
     if (sk[i].rx) pbuf_cat(sk[i].rx, p);
     else          sk[i].rx = p;
     (void)pcb;
@@ -115,7 +115,7 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
     tcp_recv(newpcb, on_recv);
     tcp_err(newpcb, on_err);
     sk[server].pending[sk[server].npending++] = (int8_t)i;
-    myrtos_lwipsock_queued++;
+    ubiqos_lwipsock_queued++;
     return ERR_OK;
 }
 
@@ -128,7 +128,7 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 //
 // Non-blocking like the rest of the file, and for the same reason -- lwIP is
 // NO_SYS and this is the USB task, which may not wait. The socket exists before
-// the connection does, and MYRTOS_SOCK_STATE is how the caller finds out:
+// the connection does, and UBIQOS_SOCK_STATE is how the caller finds out:
 // SYN_SENT while it is on its way, ESTABLISHED when it is there, CLOSED if it
 // failed.
 //
@@ -140,7 +140,7 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 static void start_connect(int i, const ip_addr_t *addr)
 {
     struct tcp_pcb *p = tcp_new();
-    if (!p) { sk[i].connecting = false; sk[i].gone = true; myrtos_lwipsock_why = 32; return; }
+    if (!p) { sk[i].connecting = false; sk[i].gone = true; ubiqos_lwipsock_why = 32; return; }
 
     sk[i].pcb = p;
     tcp_arg(p, (void *)(intptr_t)i);
@@ -148,21 +148,21 @@ static void start_connect(int i, const ip_addr_t *addr)
     tcp_err(p, on_err);
 
     // on_connected only reports; the state the caller polls is the pcb's own.
-    extern err_t myrtos_sock_on_connected(void *, struct tcp_pcb *, err_t);
-    if (tcp_connect(p, addr, sk[i].want_port, myrtos_sock_on_connected) != ERR_OK) {
+    extern err_t ubiqos_sock_on_connected(void *, struct tcp_pcb *, err_t);
+    if (tcp_connect(p, addr, sk[i].want_port, ubiqos_sock_on_connected) != ERR_OK) {
         sk[i].connecting = false;
         sk[i].gone = true;
-        myrtos_lwipsock_why = 33;
+        ubiqos_lwipsock_why = 33;
     }
 }
 
-err_t myrtos_sock_on_connected(void *arg, struct tcp_pcb *pcb, err_t err)
+err_t ubiqos_sock_on_connected(void *arg, struct tcp_pcb *pcb, err_t err)
 {
     int i = (int)(intptr_t)arg;
     (void)pcb;
     if (i < 0 || i >= NSOCK || !sk[i].used) return ERR_OK;
     sk[i].connecting = false;
-    if (err != ERR_OK) { sk[i].gone = true; myrtos_lwipsock_why = 31; }
+    if (err != ERR_OK) { sk[i].gone = true; ubiqos_lwipsock_why = 31; }
     return ERR_OK;
 }
 
@@ -174,16 +174,16 @@ static void on_resolved(const char *name, const ip_addr_t *addr, void *arg)
     (void)name;
     int i = (int)(intptr_t)arg;
     if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].connecting) return;
-    if (!addr) { sk[i].connecting = false; sk[i].gone = true; myrtos_lwipsock_why = 30; return; }
+    if (!addr) { sk[i].connecting = false; sk[i].gone = true; ubiqos_lwipsock_why = 30; return; }
     start_connect(i, addr);
 }
 
 static int32_t do_connect(const char *host, uint16_t port, int32_t owner)
 {
-    if (!port || !host[0]) { myrtos_lwipsock_why = 34; return -1; }
+    if (!port || !host[0]) { ubiqos_lwipsock_why = 34; return -1; }
 
     int i = alloc_sock();
-    if (i < 0) { myrtos_lwipsock_why = 10; return -1; }
+    if (i < 0) { ubiqos_lwipsock_why = 10; return -1; }
 
     sk[i].owner = owner;
     sk[i].want_port = port;
@@ -195,10 +195,10 @@ static int32_t do_connect(const char *host, uint16_t port, int32_t owner)
         start_connect(i, &addr);                  // dotted, or already known
     } else if (e != ERR_INPROGRESS) {
         free_sock(i);
-        myrtos_lwipsock_why = 35;
+        ubiqos_lwipsock_why = 35;
         return -1;
     }
-    return MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, i);
+    return UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, i);
 }
 
 // --- THE OPERATIONS -------------------------------------------------------
@@ -208,26 +208,26 @@ static int32_t do_listen(uint16_t port, int32_t owner)
     // Each refusal says which one it was: 10 the table, 11 no pcb, 12 the bind,
     // 13 the listen. "It would not listen" is not a diagnosis.
     int i = alloc_sock();
-    if (i < 0) { myrtos_lwipsock_why = 10; return -1; }
+    if (i < 0) { ubiqos_lwipsock_why = 10; return -1; }
 
     struct tcp_pcb *p = tcp_new();
-    if (!p) { myrtos_lwipsock_why = 11; free_sock(i); return -1; }
+    if (!p) { ubiqos_lwipsock_why = 11; free_sock(i); return -1; }
 
     err_t e = tcp_bind(p, IP_ANY_TYPE, port);
     if (e != ERR_OK) {
-        myrtos_lwipsock_why = 20u + (uint32_t)(-e);   // lwIP's own error, made visible
+        ubiqos_lwipsock_why = 20u + (uint32_t)(-e);   // lwIP's own error, made visible
         tcp_abort(p); free_sock(i); return -1;
     }
 
     struct tcp_pcb *l = tcp_listen(p);   // frees p and returns a smaller pcb
-    if (!l) { myrtos_lwipsock_why = 13; tcp_abort(p); free_sock(i); return -1; }
+    if (!l) { ubiqos_lwipsock_why = 13; tcp_abort(p); free_sock(i); return -1; }
 
     sk[i].pcb = l;
     sk[i].port = port;
     sk[i].owner = owner;
     tcp_arg(l, (void *)(intptr_t)i);
     tcp_accept(l, on_accept);
-    return MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, i);
+    return UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, i);
 }
 
 static int32_t do_accept(int i)
@@ -236,19 +236,19 @@ static int32_t do_accept(int i)
     int c = sk[i].pending[0];
     for (int k = 1; k < sk[i].npending; k++) sk[i].pending[k - 1] = sk[i].pending[k];
     sk[i].npending--;
-    myrtos_lwipsock_taken++;
-    return MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, c);
+    ubiqos_lwipsock_taken++;
+    return UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, c);
 }
 
 // Why a receive said -1, because "it failed" is not a diagnosis: 1 is a bad
 // index, 2 is a socket nobody owns, 3 is the peer having closed.
 static int32_t do_recv(int i, uint8_t *buf, uint32_t len)
 {
-    if (i < 0 || i >= NSOCK)  { myrtos_lwipsock_why = 1; return -1; }
-    if (!sk[i].used)          { myrtos_lwipsock_why = 2; return -1; }
+    if (i < 0 || i >= NSOCK)  { ubiqos_lwipsock_why = 1; return -1; }
+    if (!sk[i].used)          { ubiqos_lwipsock_why = 2; return -1; }
     if (!sk[i].rx) {
         if (!sk[i].gone) return 0;                // nothing yet is not an end
-        myrtos_lwipsock_why = 3;
+        ubiqos_lwipsock_why = 3;
         return -1;
     }
 
@@ -259,7 +259,7 @@ static int32_t do_recv(int i, uint8_t *buf, uint32_t len)
 
     // The window opens again only for what has actually been taken.
     if (sk[i].pcb) tcp_recved(sk[i].pcb, n);
-    myrtos_lwipsock_recv += n;
+    ubiqos_lwipsock_recv += n;
     return (int32_t)n;
 }
 
@@ -275,7 +275,7 @@ static int32_t do_send(int i, const uint8_t *buf, uint32_t len)
     // stack and lwIP keeps what it is given until it is acknowledged.
     if (tcp_write(sk[i].pcb, buf, n, TCP_WRITE_FLAG_COPY) != ERR_OK) return 0;
     tcp_output(sk[i].pcb);
-    myrtos_lwipsock_sent += n;
+    ubiqos_lwipsock_sent += n;
     return (int32_t)n;
 }
 
@@ -296,27 +296,27 @@ static int32_t do_close(int i)
 // a coincidence -- both come from the TCP state machine in RFC 793.
 static int32_t do_state(int i)
 {
-    if (i < 0 || i >= NSOCK || !sk[i].used) return MYRTOS_TCP_CLOSED;
+    if (i < 0 || i >= NSOCK || !sk[i].used) return UBIQOS_TCP_CLOSED;
     // Resolving a name is not a TCP state, but the caller's question is "may I
     // write yet", and the honest answer while a lookup is out is the same as
     // while the handshake is.
-    if (sk[i].connecting && !sk[i].pcb) return MYRTOS_TCP_SYN_SENT;
-    if (!sk[i].pcb) return MYRTOS_TCP_CLOSED;
+    if (sk[i].connecting && !sk[i].pcb) return UBIQOS_TCP_SYN_SENT;
+    if (!sk[i].pcb) return UBIQOS_TCP_CLOSED;
     return (int32_t)sk[i].pcb->state;
 }
 
 // --- THE SERVER -----------------------------------------------------------
 
-int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
+int32_t ubiqos_lwip_sock_handle(const ubiqos_wifi_sock_t *r, int32_t from)
 {
     int i = (int)r->arg;
     switch (r->op) {
-    case MYRTOS_SOCK_LISTEN: return do_listen((uint16_t)r->arg, from);
-    case MYRTOS_SOCK_ACCEPT: return do_accept(i);
-    case MYRTOS_SOCK_RECV:   return do_recv(i, r->buf, r->len);
-    case MYRTOS_SOCK_SEND:   return do_send(i, r->buf, r->len);
-    case MYRTOS_SOCK_CLOSE:  return do_close(i);
-    case MYRTOS_SOCK_CONNECT: {
+    case UBIQOS_SOCK_LISTEN: return do_listen((uint16_t)r->arg, from);
+    case UBIQOS_SOCK_ACCEPT: return do_accept(i);
+    case UBIQOS_SOCK_RECV:   return do_recv(i, r->buf, r->len);
+    case UBIQOS_SOCK_SEND:   return do_send(i, r->buf, r->len);
+    case UBIQOS_SOCK_CLOSE:  return do_close(i);
+    case UBIQOS_SOCK_CONNECT: {
         char name[64];
         uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;
         for (uint32_t k = 0; k < n; k++) name[k] = (char)r->buf[k];
@@ -325,38 +325,38 @@ int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
     }
     // Not a socket, and here for the reason everything else here is: this is
     // the one context lwIP may be touched from.
-    case MYRTOS_SOCK_PING: {
-        extern int32_t myrtos_ping_start(const char *host);
+    case UBIQOS_SOCK_PING: {
+        extern int32_t ubiqos_ping_start(const char *host);
         char name[64];
         uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;
         for (uint32_t k = 0; k < n; k++) name[k] = (char)r->buf[k];
         name[n] = 0;
-        return myrtos_ping_start(name);
+        return ubiqos_ping_start(name);
     }
-    case MYRTOS_SOCK_BROWSE: {
-        extern int32_t myrtos_mdns_browse(const char *service);
+    case UBIQOS_SOCK_BROWSE: {
+        extern int32_t ubiqos_mdns_browse(const char *service);
         char name[64];
         uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;
         for (uint32_t k = 0; k < n; k++) name[k] = (char)r->buf[k];
         name[n] = 0;
-        return myrtos_mdns_browse(name);
+        return ubiqos_mdns_browse(name);
     }
-    case MYRTOS_SOCK_FOUND: {
-        extern int32_t myrtos_mdns_state(uint32_t *addr_out);
-        extern uint32_t myrtos_mdns_found(uint32_t i, char *out, uint32_t cap);
-        if ((uint32_t)i == 0xffu) return myrtos_mdns_state(0);     // still asking?
-        return (int32_t)myrtos_mdns_found((uint32_t)i, (char *)r->buf, r->len);
+    case UBIQOS_SOCK_FOUND: {
+        extern int32_t ubiqos_mdns_state(uint32_t *addr_out);
+        extern uint32_t ubiqos_mdns_found(uint32_t i, char *out, uint32_t cap);
+        if ((uint32_t)i == 0xffu) return ubiqos_mdns_state(0);     // still asking?
+        return (int32_t)ubiqos_mdns_found((uint32_t)i, (char *)r->buf, r->len);
     }
-    case MYRTOS_SOCK_PINGST: {
-        extern void myrtos_ping_poll(uint32_t out[3]);
+    case UBIQOS_SOCK_PINGST: {
+        extern void ubiqos_ping_poll(uint32_t out[3]);
         if (r->len < 3 * sizeof(uint32_t)) return -1;
-        myrtos_ping_poll((uint32_t *)r->buf);
+        ubiqos_ping_poll((uint32_t *)r->buf);
         return 0;
     }
-    case MYRTOS_SOCK_STATE:  return do_state(i);
-    case MYRTOS_SOCK_OWNER:
+    case UBIQOS_SOCK_STATE:  return do_state(i);
+    case UBIQOS_SOCK_OWNER:
         return (i >= 0 && i < NSOCK && sk[i].used) ? sk[i].owner : -1;   // -2 is reaped
-    case MYRTOS_SOCK_PORT:
+    case UBIQOS_SOCK_PORT:
         return (i >= 0 && i < NSOCK && sk[i].used) ? sk[i].port : 0;
     default: return -1;
     }
@@ -368,7 +368,7 @@ int32_t myrtos_lwip_sock_handle(const myrtos_wifi_sock_t *r, int32_t from)
 // whole point: the reaper runs in kernel context with interrupts off, and
 // closing a socket means calling into lwIP, which may only be touched from the
 // task below. wifilib says the same thing about SPI, for the same reason.
-void myrtos_lwip_forget_pid(int32_t pid)
+void ubiqos_lwip_forget_pid(int32_t pid)
 {
     for (int i = 0; i < NSOCK; i++)
         if (sk[i].used && sk[i].owner == pid) sk[i].owner = OWNER_DEAD;
@@ -386,30 +386,30 @@ static void reap(void)
 
 // Called from the USB device task's loop, once per turn. Zero milliseconds, so
 // a turn with nothing waiting costs one look.
-void myrtos_lwip_serve(void)
+void ubiqos_lwip_serve(void)
 {
     reap();
 
-    myrtos_msg_t m;
-    int32_t from = myrtos_msg_receive_tmo(&m, 0);
+    ubiqos_msg_t m;
+    int32_t from = ubiqos_msg_receive_tmo(&m, 0);
     if (from < 0) return;
-    myrtos_lwipsock_served++;
-    if (m.type != MYRTOS_MSG_WIFI_SOCK) {
-        myrtos_lwipsock_why = 99;              // not a socket call at all
-        myrtos_msg_reply(-1);
+    ubiqos_lwipsock_served++;
+    if (m.type != UBIQOS_MSG_WIFI_SOCK) {
+        ubiqos_lwipsock_why = 99;              // not a socket call at all
+        ubiqos_msg_reply(-1);
         return;
     }
     // What was answered, and to which operation, because "httpd saw a refusal"
     // and "the server refused" are different claims and only one of them was
     // ever measured.
-    const myrtos_wifi_sock_t *r = (const myrtos_wifi_sock_t *)m.data;
-    int32_t rc = myrtos_lwip_sock_handle(r, from);
-    myrtos_lwipsock_lastop = r->op;
-    myrtos_lwipsock_lastreply = (uint32_t)rc;
-    myrtos_msg_reply(rc);
+    const ubiqos_wifi_sock_t *r = (const ubiqos_wifi_sock_t *)m.data;
+    int32_t rc = ubiqos_lwip_sock_handle(r, from);
+    ubiqos_lwipsock_lastop = r->op;
+    ubiqos_lwipsock_lastreply = (uint32_t)rc;
+    ubiqos_msg_reply(rc);
 }
 
-void myrtos_lwip_sock_init(void)
+void ubiqos_lwip_sock_init(void)
 {
-    myrtos_net_register(MYRTOS_NET_LWIP, myrtos_current_pid());
+    ubiqos_net_register(UBIQOS_NET_LWIP, ubiqos_current_pid());
 }

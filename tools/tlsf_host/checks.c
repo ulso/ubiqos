@@ -7,7 +7,7 @@
 // That second run is the whole point -- the host cannot show a fault in the
 // size arithmetic, because its block header is twice the size.
 
-// Aligned, as the kernel's own myrtos_heap is: the control block is cast
+// Aligned, as the kernel's own ubiqos_heap is: the control block is cast
 // straight onto the front of this, and a misaligned one traps on RISC-V. The
 // first qemu run of this harness hung for exactly that reason, which looks
 // identical to a hang because an unhandled trap with no vector loops for ever.
@@ -24,7 +24,7 @@ typedef struct alloc_hdr {
 static alloc_hdr_t *allocs;
 
 static void *wrap_alloc(tlsf_pool_t pool, uint32_t size) {
-    alloc_hdr_t *h = myrtos_tlsf_malloc(pool, size + sizeof(alloc_hdr_t));
+    alloc_hdr_t *h = ubiqos_tlsf_malloc(pool, size + sizeof(alloc_hdr_t));
     if (!h) return 0;
     h->size = size; h->magic = ALLOC_MAGIC; h->owner = 1;
     h->next = allocs; allocs = h;
@@ -40,7 +40,7 @@ static int wrap_free(tlsf_pool_t pool, void *ptr) {
     return -1;
 found:
     h->magic = 0;
-    myrtos_tlsf_free(pool, h);
+    ubiqos_tlsf_free(pool, h);
     return 0;
 }
 
@@ -53,18 +53,18 @@ int tlsf_checks(void) {
     out_str("  header is "); out_u32(sizeof(void*) * 8); out_str(" bit\n");
 
     out_str("  creating...\n");
-    tlsf_pool_t pool = myrtos_tlsf_create(arena, sizeof arena);
+    tlsf_pool_t pool = ubiqos_tlsf_create(arena, sizeof arena);
     if (!pool) { out_str("  create failed\n"); return 1; }
     out_str("  created\n");
 
-    unsigned long start = myrtos_tlsf_largest_free(pool);
+    unsigned long start = ubiqos_tlsf_largest_free(pool);
     out_str("  first walk done\n");
     line("largest free at the start:", start);
 
     void *a = wrap_alloc(pool, 1024);
-    unsigned long held = myrtos_tlsf_largest_free(pool);
+    unsigned long held = ubiqos_tlsf_largest_free(pool);
     int rc = wrap_free(pool, a);
-    unsigned long back = myrtos_tlsf_largest_free(pool);
+    unsigned long back = ubiqos_tlsf_largest_free(pool);
     void *b = wrap_alloc(pool, 1024);
 
     line("with 1024 held:", held);
@@ -102,7 +102,7 @@ int tlsf_checks(void) {
     for (int i = 0; i < 32; i++) if (hp[i]) { wrap_free(pool, hp[i]); freed++; }
 
     line("taken:", taken); line("freed:", freed); line("refused:", refused);
-    unsigned long end = myrtos_tlsf_largest_free(pool);
+    unsigned long end = ubiqos_tlsf_largest_free(pool);
     line("largest free at the end:", end);
     if (end != start) { out_str("  POOL SHRANK\n"); bad = 1; }
 

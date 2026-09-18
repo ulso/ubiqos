@@ -25,9 +25,9 @@
     "cmake.configureSettings": {
         "CMAKE_BUILD_TYPE": "Release"
     },
-    // These say Arm because MYRTOS_ARCH in CMakeLists.txt says Arm. The
+    // These say Arm because UBIQOS_ARCH in CMakeLists.txt says Arm. The
     // extension wrote them when this was a RISC-V project and does not know
-    // about MYRTOS_ARCH, so the two have to be kept in step by hand -- and when
+    // about UBIQOS_ARCH, so the two have to be kept in step by hand -- and when
     // they disagree the symptom is a RISC-V toolchain directory with an Arm
     // compiler name in it, which reads as a broken install rather than a stale
     // setting. They affect the integrated terminal; the configure gets its

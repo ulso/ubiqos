@@ -5,33 +5,33 @@
 # holding a wrong SDK path could not survive, and one of those cost an afternoon.
 #
 # One line is edited despite what the banner says: toolchainVersion is chosen
-# from MYRTOS_ARCH below rather than written in. The import set it to 15_2_Rel1
+# from UBIQOS_ARCH below rather than written in. The import set it to 15_2_Rel1
 # once, which is arm-none-eabi, and for a RISC-V build that cannot compile a
 # line. If an extension update ever writes it back, that is what to look for.
 
-# Which machine. -DMYRTOS_ARCH=arm builds for the RP2350's Cortex-M33 cores
+# Which machine. -DUBIQOS_ARCH=arm builds for the RP2350's Cortex-M33 cores
 # instead of its Hazard3 ones.
 #
 # It has to be decided here, before anything else, because the SDK's toolchain
 # and platform are settled at import and cannot be changed afterwards -- and
 # because pico-vscode.cmake reads the toolchain's NAME to guess the platform.
 # Everything further down that differs by machine follows from this one word.
-set(MYRTOS_ARCH arm CACHE STRING "riscv (Hazard3) or arm (Cortex-M33)")
-set_property(CACHE MYRTOS_ARCH PROPERTY STRINGS riscv arm)
+set(UBIQOS_ARCH arm CACHE STRING "riscv (Hazard3) or arm (Cortex-M33)")
+set_property(CACHE UBIQOS_ARCH PROPERTY STRINGS riscv arm)
 
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(myrtosToolchain RISCV_ZCB_RPI_2_2_0_3)
-    set(myrtosPlatform  rp2350-riscv)
-elseif(MYRTOS_ARCH STREQUAL "arm")
-    set(myrtosToolchain 15_2_Rel1)
-    set(myrtosPlatform  rp2350-arm-s)
+if(UBIQOS_ARCH STREQUAL "riscv")
+    set(ubiqosToolchain RISCV_ZCB_RPI_2_2_0_3)
+    set(ubiqosPlatform  rp2350-riscv)
+elseif(UBIQOS_ARCH STREQUAL "arm")
+    set(ubiqosToolchain 15_2_Rel1)
+    set(ubiqosPlatform  rp2350-arm-s)
 else()
-    message(FATAL_ERROR "MYRTOS_ARCH is '${MYRTOS_ARCH}'; it must be riscv or arm")
+    message(FATAL_ERROR "UBIQOS_ARCH is '${UBIQOS_ARCH}'; it must be riscv or arm")
 endif()
 
 # What a module is compiled and linked with -- a code model, a reserved
-# register, a linker that must not relax -- is in sdk/myrtos-sdk.cmake, together
-# with myrtos_add_module itself. It used to be here, and a module could
+# register, a linker that must not relax -- is in sdk/ubiqos-sdk.cmake, together
+# with ubiqos_add_module itself. It used to be here, and a module could
 # therefore only be built inside this tree. The include is further down, after
 # pico_sdk_init, because building a module needs the toolchain; nothing between
 # here and there uses any of it.
@@ -68,8 +68,8 @@ endif()
 # So the version above names the Arm toolchain literally, and the other machine
 # is selected here instead, where ordinary CMake rules apply. It has to be
 # before project(), and it is.
-if(NOT myrtosToolchain STREQUAL toolchainVersion)
-    set(PICO_TOOLCHAIN_PATH ${USERHOME}/.pico-sdk/toolchain/${myrtosToolchain})
+if(NOT ubiqosToolchain STREQUAL toolchainVersion)
+    set(PICO_TOOLCHAIN_PATH ${USERHOME}/.pico-sdk/toolchain/${ubiqosToolchain})
 endif()
 
 # picotoolVersion above is deliberately not sdkVersion: the SDK asks for the
@@ -78,7 +78,7 @@ endif()
 # does not exist and send the build off to compile picotool from source.
 
 # --- WHICH BOARD ----------------------------------------------------------
-# The machine myrtos is being built for, as its own dimension. It was four
+# The machine UbiqOS is being built for, as its own dimension. It was four
 # things before: PICO_BOARD here, plus pin numbers in kernel/main.c,
 # kernel/usbhost.c, kernel/video.c and kernel/pins.c. Four places that happened
 # to agree about one board, which is fine until there are two.
@@ -86,17 +86,17 @@ endif()
 # This selects the SDK's board (for its clocks, flash and PSRAM), and names a
 # header the kernel reads for everything else -- see kernel/board.h.
 #
-# MYRTOS_ARCH and MYRTOS_VIDEO stay separate on purpose: a board can run either
+# UBIQOS_ARCH and UBIQOS_VIDEO stay separate on purpose: a board can run either
 # architecture and, where it has the pins for both, either video mode. Only the
 # facts that FOLLOW from the board belong here.
-set(MYRTOS_BOARD fruit-jam CACHE STRING "which board to build for")
-set_property(CACHE MYRTOS_BOARD PROPERTY STRINGS fruit-jam ws43b)
+set(UBIQOS_BOARD fruit-jam CACHE STRING "which board to build for")
+set_property(CACHE UBIQOS_BOARD PROPERTY STRINGS fruit-jam ws43b)
 
-if(MYRTOS_BOARD STREQUAL "fruit-jam")
-    set(myrtosPicoBoard adafruit_fruit_jam)
-    set(myrtosBoardHeader "<boards/fruit-jam.h>")
-    set(myrtosBoardRadio ON)
-    set(myrtosBoardVideo chargen)     # or framebuffer; both exist here
+if(UBIQOS_BOARD STREQUAL "fruit-jam")
+    set(ubiqosPicoBoard adafruit_fruit_jam)
+    set(ubiqosBoardHeader "<boards/fruit-jam.h>")
+    set(ubiqosBoardRadio ON)
+    set(ubiqosBoardVideo chargen)     # or framebuffer; both exist here
     # The card's SDIO pins, as the SDK's adafruit_fruit_jam.h has them: clock 34,
     # command 35, data 36 to 39. Written down rather than inherited -- but from
     # the board, not from the driver. These lines once said 23, 24 and 19, "the
@@ -105,21 +105,21 @@ if(MYRTOS_BOARD STREQUAL "fruit-jam")
     # GP19-24 from 13 to 18 Sep 2026: it never found the card, and it drove
     # GP22 and GP23 -- the ESP32-C6's reset and strap -- so the WiFi was dead
     # after every boot too.
-    set(myrtosSdPins PICO_SD_CLK_PIN=34 PICO_SD_CMD_PIN=35 PICO_SD_DAT0_PIN=36)
-    set(myrtosBoardModules
+    set(ubiqosSdPins PICO_SD_CLK_PIN=34 PICO_SD_CMD_PIN=35 PICO_SD_DAT0_PIN=36)
+    set(ubiqosBoardModules
         fat32lib sdlib                # the SD card
         leddesc i2cdesc audiodesc adcdesc gpiodesc
         termdesc usbdesc kbddesc condesc acmdesc
         espdesc ehdesc)               # the radio
-elseif(MYRTOS_BOARD STREQUAL "ws43b")
+elseif(UBIQOS_BOARD STREQUAL "ws43b")
     # The SDK has no header for this one, so we carry ours -- see
     # boards/pico/. PICO_BOARD_HEADER_DIRS is how the SDK is told where to look.
-    set(myrtosPicoBoard waveshare_rp2350_touch_lcd_4_3b)
+    set(ubiqosPicoBoard waveshare_rp2350_touch_lcd_4_3b)
     set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/pico
         CACHE STRING "where to find board headers the SDK does not ship")
-    set(myrtosBoardHeader "<boards/ws43b.h>")
-    set(myrtosBoardRadio OFF)         # no ESP32-C6 on this board
-    set(myrtosBoardVideo rgb)         # the ST7262 panel, no console on it yet
+    set(ubiqosBoardHeader "<boards/ws43b.h>")
+    set(ubiqosBoardRadio OFF)         # no ESP32-C6 on this board
+    set(ubiqosBoardVideo rgb)         # the ST7262 panel, no console on it yet
     # The USB console and the panel's own. Every other descriptor names pins
     # this board uses for something else -- the panel has twenty of them -- and
     # a driver that configures the wrong pin is worse than an absent one.
@@ -138,25 +138,25 @@ elseif(MYRTOS_BOARD STREQUAL "ws43b")
     # pixels across two), the sd driver's own PIO is pio1 which the panel holds,
     # and both panel blocks have their GPIO window moved to 16 and cannot reach
     # these pins at all. The card is read over SPI here, which needs no PIO --
-    # except in a MYRTOS_NATIVE_USB=host build, below, which frees pio0.
-    set(myrtosSdPins PICO_SD_CLK_PIN=10 PICO_SD_CMD_PIN=11 PICO_SD_DAT0_PIN=12
-                     MYRTOS_SD_NO_SDIO=1 MYRTOS_SD_SPI_INDEX=1
-                     MYRTOS_SD_SCK_PIN=10 MYRTOS_SD_MOSI_PIN=11
-                     MYRTOS_SD_MISO_PIN=12 MYRTOS_SD_CS_PIN=15)
-    set(myrtosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch backlight
+    # except in a UBIQOS_NATIVE_USB=host build, below, which frees pio0.
+    set(ubiqosSdPins PICO_SD_CLK_PIN=10 PICO_SD_CMD_PIN=11 PICO_SD_DAT0_PIN=12
+                     UBIQOS_SD_NO_SDIO=1 UBIQOS_SD_SPI_INDEX=1
+                     UBIQOS_SD_SCK_PIN=10 UBIQOS_SD_MOSI_PIN=11
+                     UBIQOS_SD_MISO_PIN=12 UBIQOS_SD_CS_PIN=15)
+    set(ubiqosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch backlight
                            sdlib fat32lib)
 else()
-    message(FATAL_ERROR "MYRTOS_BOARD is '${MYRTOS_BOARD}'; there is a header for "
+    message(FATAL_ERROR "UBIQOS_BOARD is '${UBIQOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
 endif()
-message(STATUS "Board: ${MYRTOS_BOARD}")
+message(STATUS "Board: ${UBIQOS_BOARD}")
 
-set(PICO_BOARD ${myrtosPicoBoard} CACHE STRING "Board type")
+set(PICO_BOARD ${ubiqosPicoBoard} CACHE STRING "Board type")
 
-# Force the whole Pico SDK to the same machine MYRTOS_ARCH chose. The two must
+# Force the whole Pico SDK to the same machine UBIQOS_ARCH chose. The two must
 # agree: the SDK's own assembly, its interrupt handling and its crt0 are all
 # built from this.
-set(PICO_PLATFORM ${myrtosPlatform} CACHE STRING "Pico platform")
+set(PICO_PLATFORM ${ubiqosPlatform} CACHE STRING "Pico platform")
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -181,21 +181,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(pico_sdk_import.cmake)
 
-project(myrtos C CXX ASM)
+project(ubiqos C CXX ASM)
 
 pico_sdk_init()
 
 # ============================================================================
-# 1. BUILD THE OPERATING SYSTEM KERNEL (myrtos)
+# 1. BUILD THE OPERATING SYSTEM KERNEL (UbiqOS)
 # ============================================================================
 # The machine's own half of the kernel. On RISC-V the trap vector is one file
 # and the timer lives at the bottom of scheduler.c, where it reads the machine
 # timer directly; on ARM the vector is its own file and SysTick is another,
 # because neither is the same device.
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(MYRTOS_ARCH_KERNEL_SOURCES kernel/scheduler.S)
+if(UBIQOS_ARCH STREQUAL "riscv")
+    set(UBIQOS_ARCH_KERNEL_SOURCES kernel/scheduler.S)
 else()
-    set(MYRTOS_ARCH_KERNEL_SOURCES kernel/arm/scheduler.S kernel/arm/timer.c kernel/arm/stack.c)
+    set(UBIQOS_ARCH_KERNEL_SOURCES kernel/arm/scheduler.S kernel/arm/timer.c kernel/arm/stack.c)
 endif()
 # Which SDK the two copies below were taken from. If this and sdkVersion
 # disagree the build STOPS, and that is deliberate.
@@ -207,14 +207,14 @@ endif()
 # proceed does.
 #
 # Re-syncing is two diffs and a number. See lib/tinyusb-patched/README.md.
-set(myrtosPatchedFrom 2.3.1)
-if(NOT myrtosPatchedFrom STREQUAL sdkVersion)
+set(ubiqosPatchedFrom 2.3.1)
+if(NOT ubiqosPatchedFrom STREQUAL sdkVersion)
     message(FATAL_ERROR
-        "lib/tinyusb-patched holds copies of TinyUSB ${myrtosPatchedFrom} and "
+        "lib/tinyusb-patched holds copies of TinyUSB ${ubiqosPatchedFrom} and "
         "this build uses ${sdkVersion}.\n"
         "  Two files are patched: class/cdc/cdc_host.c and host/hub.c. Diff each "
         "against the new SDK, carry the change over -- each is one callback -- "
-        "and set myrtosPatchedFrom to ${sdkVersion}.\n"
+        "and set ubiqosPatchedFrom to ${sdkVersion}.\n"
         "  If upstream has fixed them, delete the copy, put the SDK's path back "
         "in the list below, and say so in lib/tinyusb-patched/README.md.\n"
         "  What is at stake: without these, an unplugged CDC device halts the "
@@ -239,46 +239,46 @@ endif()
 #
 # The file lists below keep their places in add_executable, so a device build
 # is the same image, byte for byte, as before this choice existed.
-set(MYRTOS_NATIVE_USB "device" CACHE STRING "the chip's own USB port: device or host")
-set_property(CACHE MYRTOS_NATIVE_USB PROPERTY STRINGS device host)
-if(MYRTOS_NATIVE_USB STREQUAL "device")
-    set(myrtosUsbDeviceSources kernel/usb_descriptors.c kernel/usbmsc.c)
+set(UBIQOS_NATIVE_USB "device" CACHE STRING "the chip's own USB port: device or host")
+set_property(CACHE UBIQOS_NATIVE_USB PROPERTY STRINGS device host)
+if(UBIQOS_NATIVE_USB STREQUAL "device")
+    set(ubiqosUsbDeviceSources kernel/usb_descriptors.c kernel/usbmsc.c)
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
     # as a submodule so the version is written down: the copy that was lying
     # around was eleven months old and missing an out-of-bounds memcpy fix and
     # the RP2350-E9 errata conditional.
-    set(myrtosUsbPioSources
+    set(ubiqosUsbPioSources
         lib/Pico-PIO-USB/src/pio_usb.c
         lib/Pico-PIO-USB/src/pio_usb_host.c
         lib/Pico-PIO-USB/src/pio_usb_device.c
         lib/Pico-PIO-USB/src/usb_crc.c)
     # The glue that drives TinyUSB's host from PIO rather than from the hardware
     # controller -- which is busy being our console.
-    set(myrtosUsbHcdSources
+    set(ubiqosUsbHcdSources
         ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c)
-    set(myrtosUsbLibrary tinyusb_device)
-elseif(MYRTOS_NATIVE_USB STREQUAL "host")
-    if(NOT MYRTOS_BOARD STREQUAL "ws43b")
-        message(FATAL_ERROR "MYRTOS_NATIVE_USB=host is for the ws43b board only")
+    set(ubiqosUsbLibrary tinyusb_device)
+elseif(UBIQOS_NATIVE_USB STREQUAL "host")
+    if(NOT UBIQOS_BOARD STREQUAL "ws43b")
+        message(FATAL_ERROR "UBIQOS_NATIVE_USB=host is for the ws43b board only")
     endif()
-    set(myrtosUsbDeviceSources)
-    set(myrtosUsbPioSources)
+    set(ubiqosUsbDeviceSources)
+    set(ubiqosUsbPioSources)
     # TinyUSB's own driver for the controller, and the half of the port it
     # shares with the device driver. Named here rather than by linking
     # tinyusb_host, which would bring the SDK's hub.c and cdc_host.c along with
-    # it -- and those are the two files myrtos carries patched copies of.
-    set(myrtosUsbHcdSources
+    # it -- and those are the two files UbiqOS carries patched copies of.
+    set(ubiqosUsbHcdSources
         ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/hcd_rp2040.c
         ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/rp2040_usb.c)
-    set(myrtosUsbLibrary tinyusb_common)
+    set(ubiqosUsbLibrary tinyusb_common)
     # And the card can have SDIO: pio0 is free without PIO-USB, and its window
     # starts at GPIO0, which reaches the card on 10 to 15.
-    list(REMOVE_ITEM myrtosSdPins MYRTOS_SD_NO_SDIO=1)
-    list(APPEND myrtosSdPins MYRTOS_SD_PIO_INDEX=0 MYRTOS_SD_PIO_GPIO_BASE=0)
+    list(REMOVE_ITEM ubiqosSdPins UBIQOS_SD_NO_SDIO=1)
+    list(APPEND ubiqosSdPins UBIQOS_SD_PIO_INDEX=0 UBIQOS_SD_PIO_GPIO_BASE=0)
 else()
-    message(FATAL_ERROR "MYRTOS_NATIVE_USB is '${MYRTOS_NATIVE_USB}'; it must be device or host")
+    message(FATAL_ERROR "UBIQOS_NATIVE_USB is '${UBIQOS_NATIVE_USB}'; it must be device or host")
 endif()
-message(STATUS "Native USB port: ${MYRTOS_NATIVE_USB}")
+message(STATUS "Native USB port: ${UBIQOS_NATIVE_USB}")
 
 
 add_executable(os_kernel 
@@ -297,8 +297,8 @@ add_executable(os_kernel
     kernel/moddir.c
     kernel/flashmod.c
     kernel/usbdev.c
-    ${myrtosUsbDeviceSources}
-    ${MYRTOS_ARCH_KERNEL_SOURCES}
+    ${ubiqosUsbDeviceSources}
+    ${UBIQOS_ARCH_KERNEL_SOURCES}
     kernel/pio/pioprobe.c
     kernel/usbhost.c
     # video.c, console.c and chargen.c are added with the video mode below.
@@ -310,8 +310,8 @@ add_executable(os_kernel
     kernel/font8x16.c
     kernel/font6x12.c
 
-    # PIO-USB, in a device build; see MYRTOS_NATIVE_USB above.
-    ${myrtosUsbPioSources}
+    # PIO-USB, in a device build; see UBIQOS_NATIVE_USB above.
+    ${ubiqosUsbPioSources}
 
     # TinyUSB's host side. The controller driver under it is the last line.
     ${PICO_SDK_PATH}/lib/tinyusb/src/host/usbh.c
@@ -324,14 +324,14 @@ add_executable(os_kernel
     # attached -- see lib/tinyusb-patched/README.md for the measurement and for
     # how to re-sync this after an SDK upgrade.
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/class/cdc/cdc_host.c
-    ${myrtosUsbHcdSources}
+    ${ubiqosUsbHcdSources}
 )
 
-if(MYRTOS_NATIVE_USB STREQUAL "host")
-    # MYRTOS_USB_NATIVE_HOST is what the kernel and tusb_config.h read. The
+if(UBIQOS_NATIVE_USB STREQUAL "host")
+    # UBIQOS_USB_NATIVE_HOST is what the kernel and tusb_config.h read. The
     # other is the SDK's: rp2040_usb.c does host-specific things under it, and
     # tinyusb_host would have defined it had it been linked.
-    target_compile_definitions(os_kernel PRIVATE MYRTOS_USB_NATIVE_HOST=1
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_USB_NATIVE_HOST=1
                                                  RP2040_USB_HOST_MODE=1)
 endif()
 
@@ -345,7 +345,7 @@ pico_set_binary_type(os_kernel copy_to_ram)
 pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.pio)
 
 # The SD card driver is not built into the kernel any more. It is the sdlib
-# module -- see the myrtos_add_module call for it further down, and the note at
+# module -- see the ubiqos_add_module call for it further down, and the note at
 # the top of kernel/sdlink.c.
 
 # Link against the Pico standard libraries and enable PSRAM support.
@@ -355,7 +355,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardware_uart hardware_gpio hardware_spi pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
     hardware_pwm
-    hardware_i2c hardware_adc ${myrtosUsbLibrary})
+    hardware_i2c hardware_adc ${ubiqosUsbLibrary})
 
 # TinyUSB looks for tusb_config.h on the include path.
 # What a kernel critical section masks, and it is BASEPRI by default.
@@ -376,13 +376,13 @@ target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardw
 # Which pins the card is on. The board block chose them; they are applied here
 # because third_party/pico_sd_card reads PICO_SD_* as compile definitions, and
 # modules/sdlib inherits the kernel's definitions wholesale.
-if(myrtosSdPins)
-    target_compile_definitions(os_kernel PRIVATE ${myrtosSdPins})
+if(ubiqosSdPins)
+    target_compile_definitions(os_kernel PRIVATE ${ubiqosSdPins})
 endif()
 
-set(MYRTOS_BASEPRI "0x80" CACHE STRING "priority value to mask down to; empty for PRIMASK")
-if(MYRTOS_BASEPRI)
-    target_compile_definitions(os_kernel PRIVATE MYRTOS_CRITICAL_BASEPRI=${MYRTOS_BASEPRI})
+set(UBIQOS_BASEPRI "0x80" CACHE STRING "priority value to mask down to; empty for PRIMASK")
+if(UBIQOS_BASEPRI)
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_CRITICAL_BASEPRI=${UBIQOS_BASEPRI})
 endif()
 
 # How the picture is stored, which is the largest memory decision in the system.
@@ -401,28 +401,28 @@ endif()
 # and is there a text console on it. `rgb` is a display with no console yet --
 # the panel scanning out while the character generator that will feed it is
 # still to come -- and `none` is neither.
-set(MYRTOS_VIDEO "${myrtosBoardVideo}" CACHE STRING "framebuffer, chargen, rgb, or none")
-set_property(CACHE MYRTOS_VIDEO PROPERTY STRINGS framebuffer chargen rgb none)
+set(UBIQOS_VIDEO "${ubiqosBoardVideo}" CACHE STRING "framebuffer, chargen, rgb, or none")
+set_property(CACHE UBIQOS_VIDEO PROPERTY STRINGS framebuffer chargen rgb none)
 
-set(myrtosHasVideo 1)
-set(myrtosHasConsole 1)
-if(MYRTOS_VIDEO STREQUAL "chargen")
-    target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1)
-elseif(MYRTOS_VIDEO STREQUAL "rgb")
-    # A parallel RGB panel with the character generator on it. MYRTOS_VIDEO_RGB
-    # picks the geometry -- see chargen.h -- and MYRTOS_VIDEO_CHARGEN is what
+set(ubiqosHasVideo 1)
+set(ubiqosHasConsole 1)
+if(UBIQOS_VIDEO STREQUAL "chargen")
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_CHARGEN=1)
+elseif(UBIQOS_VIDEO STREQUAL "rgb")
+    # A parallel RGB panel with the character generator on it. UBIQOS_VIDEO_RGB
+    # picks the geometry -- see chargen.h -- and UBIQOS_VIDEO_CHARGEN is what
     # tells console.c to draw in cells, and what puts font8x16 in SRAM where the
     # renderer reads it from an interrupt.
-    target_compile_definitions(os_kernel PRIVATE MYRTOS_VIDEO_CHARGEN=1 MYRTOS_VIDEO_RGB=1)
-elseif(MYRTOS_VIDEO STREQUAL "none")
-    set(myrtosHasVideo 0)
-    set(myrtosHasConsole 0)
-elseif(NOT MYRTOS_VIDEO STREQUAL "framebuffer")
-    message(FATAL_ERROR "MYRTOS_VIDEO is '${MYRTOS_VIDEO}'; it must be framebuffer, chargen, rgb or none")
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_CHARGEN=1 UBIQOS_VIDEO_RGB=1)
+elseif(UBIQOS_VIDEO STREQUAL "none")
+    set(ubiqosHasVideo 0)
+    set(ubiqosHasConsole 0)
+elseif(NOT UBIQOS_VIDEO STREQUAL "framebuffer")
+    message(FATAL_ERROR "UBIQOS_VIDEO is '${UBIQOS_VIDEO}'; it must be framebuffer, chargen, rgb or none")
 endif()
 target_compile_definitions(os_kernel PRIVATE
-    MYRTOS_HAS_VIDEO=${myrtosHasVideo} MYRTOS_HAS_CONSOLE=${myrtosHasConsole})
-message(STATUS "Video: ${MYRTOS_VIDEO}")
+    UBIQOS_HAS_VIDEO=${ubiqosHasVideo} UBIQOS_HAS_CONSOLE=${ubiqosHasConsole})
+message(STATUS "Video: ${UBIQOS_VIDEO}")
 
 # Added here rather than in the source list above, because which of them apply
 # is the question this block answers. chargen.c is built in both real modes: the
@@ -430,11 +430,11 @@ message(STATUS "Video: ${MYRTOS_VIDEO}")
 # The console's API is called from main.c, syscalls.c and io.c, so it cannot
 # simply vanish where there is none. console_none.c answers it honestly instead
 # -- see the note at the top of that file.
-if(NOT myrtosHasConsole)
+if(NOT ubiqosHasConsole)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console_none.c)
 endif()
 
-if(MYRTOS_VIDEO STREQUAL "rgb")
+if(UBIQOS_VIDEO STREQUAL "rgb")
     # The panel's own driver instead of video.c, and the same character
     # generator and console as the other display. kernel/pio/rgb.pio holds the
     # timing.
@@ -443,7 +443,7 @@ if(MYRTOS_VIDEO STREQUAL "rgb")
         ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console.c
         ${CMAKE_CURRENT_SOURCE_DIR}/kernel/chargen.c)
     pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/rgb.pio)
-elseif(myrtosHasVideo)
+elseif(ubiqosHasVideo)
     target_sources(os_kernel PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/kernel/video.c
         ${CMAKE_CURRENT_SOURCE_DIR}/kernel/console.c
@@ -455,13 +455,13 @@ endif()
 # does not enlarge it -- 9 Sep 2026 the character generator handed back 300 kB
 # and `free` went on reporting 10260 bytes until this number moved.
 #
-# It has to follow MYRTOS_VIDEO, because a framebuffer build has 28 kB of SRAM
+# It has to follow UBIQOS_VIDEO, because a framebuffer build has 28 kB of SRAM
 # to spare and a chargen build has 300, so "auto" resolves against the mode
 # rather than being cached as a number that stops being right when the mode
 # changes. Give it a number in kB to override.
-set(MYRTOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow MYRTOS_VIDEO")
-if(MYRTOS_HEAP_KB STREQUAL "auto")
-    if(NOT MYRTOS_VIDEO STREQUAL "chargen")
+set(UBIQOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow UBIQOS_VIDEO")
+if(UBIQOS_HEAP_KB STREQUAL "auto")
+    if(NOT UBIQOS_VIDEO STREQUAL "chargen")
         # 36 rather than 40 since 12 Sep 2026, and the four kilobytes bought
         # ninety-eight bytes. The riscv framebuffer build sat that far below a
         # 4 kB alignment boundary: the kernel grew by k_i2c_instance and one
@@ -471,7 +471,7 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # Worth writing down because the next change will do it again. The
         # number to watch is not how much was added but how close `end` is to
         # the next page -- and check_heap is what notices.
-        set(myrtosHeapKB 36)
+        set(ubiqosHeapKB 36)
     else()
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
@@ -508,56 +508,56 @@ if(MYRTOS_HEAP_KB STREQUAL "auto")
         # (kernel/lwipdhcpd.c, 1.3 kB of code on RISC-V): with it the riscv
         # chargen C heap was 2640 bytes and check_heap refused the link. The
         # Fruit Jam's `free` showed 58 kB of this pool unused at the time.
-        set(myrtosHeapKB 116)
+        set(ubiqosHeapKB 116)
     endif()
 else()
-    set(myrtosHeapKB ${MYRTOS_HEAP_KB})
+    set(ubiqosHeapKB ${UBIQOS_HEAP_KB})
 endif()
 # A plain number, not "N*1024": a bare product substituted into an expression
 # binds wrong, and `(x) % DMESG_SIZE` quietly became `(x) % 16 * 1024`.
-math(EXPR myrtosHeapBytes "${myrtosHeapKB} * 1024")
-target_compile_definitions(os_kernel PRIVATE MYRTOS_HEAP_SIZE=${myrtosHeapBytes})
-message(STATUS "Module pool: ${myrtosHeapKB} kB (MYRTOS_VIDEO=${MYRTOS_VIDEO})")
+math(EXPR ubiqosHeapBytes "${ubiqosHeapKB} * 1024")
+target_compile_definitions(os_kernel PRIVATE UBIQOS_HEAP_SIZE=${ubiqosHeapBytes})
+message(STATUS "Module pool: ${ubiqosHeapKB} kB (UBIQOS_VIDEO=${UBIQOS_VIDEO})")
 
 # The kernel log ring, on the same terms and for the same reason: 2 kB wrapped
 # before the shell came up, so the boot banner was gone before anyone could read
 # it. Whole boot plus room for what happens afterwards.
-set(MYRTOS_DMESG_KB "auto" CACHE STRING "kernel log ring in kB, or auto to follow MYRTOS_VIDEO")
-if(MYRTOS_DMESG_KB STREQUAL "auto")
-    if(MYRTOS_VIDEO STREQUAL "chargen")
-        set(myrtosDmesgKB 16)
+set(UBIQOS_DMESG_KB "auto" CACHE STRING "kernel log ring in kB, or auto to follow UBIQOS_VIDEO")
+if(UBIQOS_DMESG_KB STREQUAL "auto")
+    if(UBIQOS_VIDEO STREQUAL "chargen")
+        set(ubiqosDmesgKB 16)
     else()
-        set(myrtosDmesgKB 2)
+        set(ubiqosDmesgKB 2)
     endif()
 else()
-    set(myrtosDmesgKB ${MYRTOS_DMESG_KB})
+    set(ubiqosDmesgKB ${UBIQOS_DMESG_KB})
 endif()
-math(EXPR myrtosDmesgBytes "${myrtosDmesgKB} * 1024")
-target_compile_definitions(os_kernel PRIVATE DMESG_SIZE=${myrtosDmesgBytes})
-message(STATUS "Kernel log: ${myrtosDmesgKB} kB")
+math(EXPR ubiqosDmesgBytes "${ubiqosDmesgKB} * 1024")
+target_compile_definitions(os_kernel PRIVATE DMESG_SIZE=${ubiqosDmesgBytes})
+message(STATUS "Kernel log: ${ubiqosDmesgKB} kB")
 
 # lwIP, and it does not fit beside a framebuffer. That is not a limitation of
 # the build system, it is 307200 bytes: with the bitmap in SRAM the link
 # overflows RAM by about 40 kB however the pools are trimmed. So "auto" follows
-# MYRTOS_VIDEO the way the other sizes do, and the machine that wants a network
+# UBIQOS_VIDEO the way the other sizes do, and the machine that wants a network
 # is the one that gave up its framebuffer for it.
-set(MYRTOS_LWIP "auto" CACHE STRING "on, off, or auto to follow MYRTOS_VIDEO")
-if(MYRTOS_LWIP STREQUAL "auto")
-    if(MYRTOS_VIDEO STREQUAL "chargen")
-        set(myrtosLwip ON)
+set(UBIQOS_LWIP "auto" CACHE STRING "on, off, or auto to follow UBIQOS_VIDEO")
+if(UBIQOS_LWIP STREQUAL "auto")
+    if(UBIQOS_VIDEO STREQUAL "chargen")
+        set(ubiqosLwip ON)
     else()
-        set(myrtosLwip OFF)
+        set(ubiqosLwip OFF)
     endif()
 else()
-    set(myrtosLwip ${MYRTOS_LWIP})
+    set(ubiqosLwip ${UBIQOS_LWIP})
 endif()
-message(STATUS "lwIP: ${myrtosLwip}")
+message(STATUS "lwIP: ${ubiqosLwip}")
 # The only link lwIP has on a board without a radio is the USB cable, and a host
 # build has no cable to be a network on.
-if(myrtosLwip AND MYRTOS_NATIVE_USB STREQUAL "host")
-    message(FATAL_ERROR "lwIP needs the device side of the USB port; MYRTOS_NATIVE_USB=host has none")
+if(ubiqosLwip AND UBIQOS_NATIVE_USB STREQUAL "host")
+    message(FATAL_ERROR "lwIP needs the device side of the USB port; UBIQOS_NATIVE_USB=host has none")
 endif()
-if(myrtosLwip)
+if(ubiqosLwip)
     target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipnet.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipdhcpd.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipping.c
@@ -565,7 +565,7 @@ if(myrtosLwip)
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsntp.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/kernel/lwipsock.c)
     # The WiFi netif only where there is a radio behind it.
-    if(myrtosBoardRadio)
+    if(ubiqosBoardRadio)
         target_sources(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ehnet.c)
     endif()
     # The mDNS responder is lwIP's, built from here rather than by linking
@@ -576,12 +576,12 @@ if(myrtosLwip)
         ${CMAKE_CURRENT_SOURCE_DIR}/lib/lwip-patched/apps/mdns/mdns_out.c
         ${PICO_SDK_PATH}/lib/lwip/src/apps/mdns/mdns_domain.c)
     target_link_libraries(os_kernel pico_lwip pico_lwip_nosys)
-    target_compile_definitions(os_kernel PRIVATE MYRTOS_LWIP=1)
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_LWIP=1)
 endif()
 
 # The repository root is on the path so that <boards/...> resolves; the kernel
 # asks for its board through kernel/board.h and never by name.
-target_compile_definitions(os_kernel PRIVATE MYRTOS_BOARD_HEADER=${myrtosBoardHeader})
+target_compile_definitions(os_kernel PRIVATE UBIQOS_BOARD_HEADER=${ubiqosBoardHeader})
 
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/kernel
@@ -601,7 +601,7 @@ target_compile_options(os_kernel PRIVATE -Wall -O2)
 # happen once a second at the very most and are nowhere near any deadline, while
 # SRAM is the thing this machine is actually short of -- the kernel is linked
 # copy_to_ram, so every byte of code is a byte of RAM. -O3 spent 868 bytes on
-# myrtos_clock_stamp alone.
+# ubiqos_clock_stamp alone.
 set_source_files_properties(kernel/clock.c kernel/lwipsntp.c
     PROPERTIES COMPILE_OPTIONS "-Os")
 
@@ -625,11 +625,11 @@ pico_add_extra_outputs(os_kernel)
 # A trailing RT marks the module real-time: its code and its process memory
 # stay in SRAM instead of going to PSRAM. Anything whose timing matters wants
 # it -- the shell, and whatever reads a device that will not wait.
-# myrtos_add_module, and the per-machine flags a module is built with. Extracted
+# ubiqos_add_module, and the per-machine flags a module is built with. Extracted
 # so that a repository which is not this one can build a module against the same
 # knowledge -- and extracted rather than copied, so there is no second version
 # of it to go stale. Every module below is built by the SDK's function.
-include(${CMAKE_CURRENT_SOURCE_DIR}/sdk/myrtos-sdk.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/sdk/ubiqos-sdk.cmake)
 
 # --- The second toolchain -------------------------------------------------
 # Clang and lld, beside GCC rather than instead of it, chosen per module.
@@ -646,32 +646,32 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/sdk/myrtos-sdk.cmake)
 # custom commands rather than add_executable. They go through the same
 # check_module.py, the same objcopy and the same make_module.py, and land as the
 # same ${name}.mod -- nothing downstream can tell which compiler made them.
-find_program(MYRTOS_CLANG   clang   HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin)
-find_program(MYRTOS_CLANGXX clang++ HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin)
-find_program(MYRTOS_LLD     ld.lld  HINTS /opt/homebrew/bin /opt/homebrew/opt/lld/bin /usr/local/bin)
+find_program(UBIQOS_CLANG   clang   HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin)
+find_program(UBIQOS_CLANGXX clang++ HINTS /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin)
+find_program(UBIQOS_LLD     ld.lld  HINTS /opt/homebrew/bin /opt/homebrew/opt/lld/bin /usr/local/bin)
 
 # The architecture comes from whatever the SDK's toolchain file chose, so the
 # two compilers cannot drift apart. Clang may not know every extension GCC does,
 # which is why this is probed rather than assumed: a machine without clang, or
 # with one that cannot build for this target, quietly gets the GCC path instead
 # of a broken build.
-separate_arguments(MYRTOS_TARGET_ARCH NATIVE_COMMAND "${CMAKE_C_FLAGS}")
-set(MYRTOS_CLANG_OK FALSE)
+separate_arguments(UBIQOS_TARGET_ARCH NATIVE_COMMAND "${CMAKE_C_FLAGS}")
+set(UBIQOS_CLANG_OK FALSE)
 # The probe compiles for whichever machine this build is for, with the same
 # triple and the same flags the modules will use -- so it answers the question
 # actually being asked rather than a fixed one. It used to offer riscv32 and
 # nothing else, which is what made clang modules riscv-only.
-if(MYRTOS_CLANG AND MYRTOS_CLANGXX AND MYRTOS_LLD)
+if(UBIQOS_CLANG AND UBIQOS_CLANGXX AND UBIQOS_LLD)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c "int probe(void){return 0;}\n")
     execute_process(
-        COMMAND ${MYRTOS_CLANG} --target=${MYRTOS_LLVM_TRIPLE} ${MYRTOS_TARGET_ARCH}
-                ${MYRTOS_LLVM_CFLAGS} ${MYRTOS_MODULE_CFLAGS}
+        COMMAND ${UBIQOS_CLANG} --target=${UBIQOS_LLVM_TRIPLE} ${UBIQOS_TARGET_ARCH}
+                ${UBIQOS_LLVM_CFLAGS} ${UBIQOS_MODULE_CFLAGS}
                 -ffreestanding -nostdlib -c ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.c
                 -o ${CMAKE_CURRENT_BINARY_DIR}/clang_probe.o
         RESULT_VARIABLE probe_rc OUTPUT_QUIET ERROR_VARIABLE probe_err)
     if(probe_rc EQUAL 0)
-        set(MYRTOS_CLANG_OK TRUE)
-        message(STATUS "Clang module toolchain: ${MYRTOS_CLANG} + ${MYRTOS_LLD} (${MYRTOS_LLVM_TRIPLE})")
+        set(UBIQOS_CLANG_OK TRUE)
+        message(STATUS "Clang module toolchain: ${UBIQOS_CLANG} + ${UBIQOS_LLD} (${UBIQOS_LLVM_TRIPLE})")
     else()
         message(STATUS "Clang found but cannot build for this target; modules fall back to gcc")
         message(STATUS "  ${probe_err}")
@@ -687,16 +687,16 @@ endif()
 # and absolute addresses were once refused outright. The loader fixes them now,
 # so the compiler may generate the code it thinks is best and pay four bytes a
 # case for it on the card.
-set(MYRTOS_CLANG_C_FLAGS   -std=gnu23)
-set(MYRTOS_CLANG_CXX_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics
+set(UBIQOS_CLANG_C_FLAGS   -std=gnu23)
+set(UBIQOS_CLANG_CXX_FLAGS -fno-exceptions -fno-rtti -fno-threadsafe-statics
                            -fno-use-cxa-atexit)
 
-# Same signature and same RT / SINGLE options as myrtos_add_module. A module
+# Same signature and same RT / SINGLE options as ubiqos_add_module. A module
 # built this way is not different in kind; it was only compiled by the other
 # compiler.
-function(myrtos_add_clang_module name source)
-    if(NOT MYRTOS_CLANG_OK)
-        myrtos_add_module(${name} ${source} ${ARGN})
+function(ubiqos_add_clang_module name source)
+    if(NOT UBIQOS_CLANG_OK)
+        ubiqos_add_module(${name} ${source} ${ARGN})
         return()
     endif()
 
@@ -718,30 +718,30 @@ function(myrtos_add_clang_module name source)
     set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_clang)
     file(MAKE_DIRECTORY ${objdir})
     # The architecture's own sources come along, exactly as they do in
-    # myrtos_add_module: on ARM that is common/arm/tp.S, the two instructions
+    # ubiqos_add_module: on ARM that is common/arm/tp.S, the two instructions
     # that answer __aeabi_read_tp. A clang module without it links but cannot
     # read a thread-local.
     set(objs "")
-    foreach(src ${source} ${ARGN} ${MYRTOS_MODULE_ARCH_SOURCES})
+    foreach(src ${source} ${ARGN} ${UBIQOS_MODULE_ARCH_SOURCES})
         get_filename_component(base ${src} NAME_WE)
         get_filename_component(ext ${src} EXT)
         set(obj ${objdir}/${base}.o)
         if(ext STREQUAL ".cpp" OR ext STREQUAL ".cc" OR ext STREQUAL ".cxx")
-            set(cc ${MYRTOS_CLANGXX})
-            set(lang_flags ${MYRTOS_CLANG_CXX_FLAGS})
+            set(cc ${UBIQOS_CLANGXX})
+            set(lang_flags ${UBIQOS_CLANG_CXX_FLAGS})
         else()
-            set(cc ${MYRTOS_CLANG})
-            set(lang_flags ${MYRTOS_CLANG_C_FLAGS})
+            set(cc ${UBIQOS_CLANG})
+            set(lang_flags ${UBIQOS_CLANG_C_FLAGS})
         endif()
-        # An absolute path is left alone; MYRTOS_MODULE_ARCH_SOURCES gives one.
+        # An absolute path is left alone; UBIQOS_MODULE_ARCH_SOURCES gives one.
         set(srcpath ${CMAKE_CURRENT_SOURCE_DIR}/${src})
         if(IS_ABSOLUTE ${src})
             set(srcpath ${src})
         endif()
         add_custom_command(
             OUTPUT ${obj}
-            COMMAND ${cc} --target=${MYRTOS_LLVM_TRIPLE} ${MYRTOS_TARGET_ARCH}
-                    -fno-pic ${MYRTOS_MODULE_CFLAGS} ${MYRTOS_LLVM_CFLAGS}
+            COMMAND ${cc} --target=${UBIQOS_LLVM_TRIPLE} ${UBIQOS_TARGET_ARCH}
+                    -fno-pic ${UBIQOS_MODULE_CFLAGS} ${UBIQOS_LLVM_CFLAGS}
                     -fno-common -ffreestanding -nostdlib -O2
                     ${lang_flags} ${single_compile}
                     -c ${srcpath} -o ${obj}
@@ -751,11 +751,11 @@ function(myrtos_add_clang_module name source)
     endforeach()
 
     # lld needs no --no-warn-rwx-segments: it does not warn about them. -N and
-    # -e 0 mean what they mean for GNU ld -- see the note in myrtos_add_module.
+    # -e 0 mean what they mean for GNU ld -- see the note in ubiqos_add_module.
     set(elf ${objdir}/${name}.elf)
     add_custom_command(
         OUTPUT ${elf}
-        COMMAND ${MYRTOS_LLD} -m ${MYRTOS_LLVM_EMULATION} -N -e 0 --emit-relocs ${single_link} -o ${elf} ${objs}
+        COMMAND ${UBIQOS_LLD} -m ${UBIQOS_LLVM_EMULATION} -N -e 0 --emit-relocs ${single_link} -o ${elf} ${objs}
         DEPENDS ${objs}
         COMMENT "Linking ${name} with lld")
 
@@ -786,13 +786,13 @@ function(myrtos_add_clang_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos_abi.h
         COMMENT "Building module ${name}.mod (clang)")
 
     # Built, and therefore able to be resident. A module whose toolchain is
     # not on this machine never reaches here, and the flash image asks this
-    # list rather than assuming every name in MYRTOS_RESIDENT exists.
-    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
+    # list rather than assuming every name in UBIQOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY UBIQOS_BUILT_MODULES ${name})
 endfunction()
 
 # --- Rust, natively --------------------------------------------------------
@@ -800,30 +800,30 @@ endfunction()
 # clang rule already uses, and it wants the same three things -- no PIC,
 # literal pools instead of movw/movt, and r9 left alone for the thread pointer.
 #
-# The target is the machine's, taken from MYRTOS_LLVM_TRIPLE's neighbourhood
+# The target is the machine's, taken from UBIQOS_LLVM_TRIPLE's neighbourhood
 # rather than written in, so this cannot quietly become ARM-only the way the
 # clang rule did. rustup has to have the target installed; if it does not, the
 # module is skipped and said out loud, like every other optional toolchain here.
-find_program(MYRTOS_RUSTC rustc)
-set(MYRTOS_RUST_OK FALSE)
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(MYRTOS_RUST_TARGET riscv32imac-unknown-none-elf)
+find_program(UBIQOS_RUSTC rustc)
+set(UBIQOS_RUST_OK FALSE)
+if(UBIQOS_ARCH STREQUAL "riscv")
+    set(UBIQOS_RUST_TARGET riscv32imac-unknown-none-elf)
 else()
     # hf rather than the soft-float target because that is the one installed
     # here. Nothing crosses the module boundary as a float -- every syscall
     # argument is a uint32 -- so the difference does not reach the ABI.
-    set(MYRTOS_RUST_TARGET thumbv8m.main-none-eabihf)
+    set(UBIQOS_RUST_TARGET thumbv8m.main-none-eabihf)
 endif()
-if(MYRTOS_RUSTC AND MYRTOS_LLD)
-    execute_process(COMMAND ${MYRTOS_RUSTC} --print target-list
+if(UBIQOS_RUSTC AND UBIQOS_LLD)
+    execute_process(COMMAND ${UBIQOS_RUSTC} --print target-list
                     OUTPUT_VARIABLE rust_targets RESULT_VARIABLE rustc_rc OUTPUT_STRIP_TRAILING_WHITESPACE)
     execute_process(COMMAND rustup target list --installed
                     OUTPUT_VARIABLE rust_installed ERROR_QUIET)
-    if(rustc_rc EQUAL 0 AND rust_installed MATCHES "${MYRTOS_RUST_TARGET}")
-        set(MYRTOS_RUST_OK TRUE)
-        message(STATUS "Rust module toolchain: ${MYRTOS_RUSTC} (${MYRTOS_RUST_TARGET})")
+    if(rustc_rc EQUAL 0 AND rust_installed MATCHES "${UBIQOS_RUST_TARGET}")
+        set(UBIQOS_RUST_OK TRUE)
+        message(STATUS "Rust module toolchain: ${UBIQOS_RUSTC} (${UBIQOS_RUST_TARGET})")
     else()
-        message(STATUS "Rust target ${MYRTOS_RUST_TARGET} is not installed; Rust modules are skipped")
+        message(STATUS "Rust target ${UBIQOS_RUST_TARGET} is not installed; Rust modules are skipped")
     endif()
 else()
     message(STATUS "No rustc; Rust modules are skipped")
@@ -831,8 +831,8 @@ endif()
 
 # Same downstream as every other module: the same checker, the same objcopy,
 # the same packager, the same .mod.
-function(myrtos_add_rust_module name source)
-    if(NOT MYRTOS_RUST_OK)
+function(ubiqos_add_rust_module name source)
+    if(NOT UBIQOS_RUST_OK)
         return()
     endif()
 
@@ -849,7 +849,7 @@ function(myrtos_add_rust_module name source)
 
     add_custom_command(
         OUTPUT ${obj}
-        COMMAND ${MYRTOS_RUSTC} --target ${MYRTOS_RUST_TARGET}
+        COMMAND ${UBIQOS_RUSTC} --target ${UBIQOS_RUST_TARGET}
                 -C opt-level=2 -C panic=abort -C relocation-model=static
                 -C target-feature=+no-movt,+reserve-r9
                 --emit obj -o ${obj} ${CMAKE_CURRENT_SOURCE_DIR}/${source}
@@ -858,7 +858,7 @@ function(myrtos_add_rust_module name source)
 
     add_custom_command(
         OUTPUT ${elf}
-        COMMAND ${MYRTOS_LLD} -m ${MYRTOS_LLVM_EMULATION} -N -e 0 --emit-relocs -o ${elf} ${obj}
+        COMMAND ${UBIQOS_LLD} -m ${UBIQOS_LLVM_EMULATION} -N -e 0 --emit-relocs -o ${elf} ${obj}
         DEPENDS ${obj}
         COMMENT "Linking ${name} with lld")
 
@@ -884,10 +884,10 @@ function(myrtos_add_rust_module name source)
                 "${name}" ${elf} ${CMAKE_NM} module_main ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos_abi.h
         COMMENT "Building module ${name}.mod (rustc)")
 
-    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
+    set_property(GLOBAL APPEND PROPERTY UBIQOS_BUILT_MODULES ${name})
 endfunction()
 
 # --- The third toolchain --------------------------------------------------
@@ -902,7 +902,7 @@ endfunction()
 # Everything downstream is the same. A D module goes through the same
 # check_module.py, the same objcopy and the same make_module.py, and lands as
 # the same ${name}.mod.
-find_program(MYRTOS_LDC ldc2 HINTS /opt/homebrew/bin /usr/local/bin)
+find_program(UBIQOS_LDC ldc2 HINTS /opt/homebrew/bin /usr/local/bin)
 
 # -betterC is what makes D usable here: no druntime, no garbage collector, no
 # exceptions, no ModuleInfo. What survives is the part worth having -- slices,
@@ -925,8 +925,8 @@ find_program(MYRTOS_LDC ldc2 HINTS /opt/homebrew/bin /usr/local/bin)
 # carry across: local-exec gives R_ARM_TLS_LE32, which is an offset from the
 # thread pointer and is on check_module.py's allowed list for the same reason
 # TPREL is.
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(MYRTOS_LDC_ARCH -mtriple=riscv32-unknown-elf -mattr=+m,+a,+c,+zba,+zbb,+zbs
+if(UBIQOS_ARCH STREQUAL "riscv")
+    set(UBIQOS_LDC_ARCH -mtriple=riscv32-unknown-elf -mattr=+m,+a,+c,+zba,+zbb,+zbs
                         --code-model=medium)
 else()
     # +no-movt because LLVM otherwise materialises an absolute address as a
@@ -936,24 +936,24 @@ else()
     # address goes in a literal pool instead: one plain word in .text, one
     # R_ARM_ABS32, and the loader has handled that since the day it was
     # written. It is also what gcc does for every C module here.
-    set(MYRTOS_LDC_ARCH -mtriple=thumbv8m.main-none-eabi -mcpu=cortex-m33
+    set(UBIQOS_LDC_ARCH -mtriple=thumbv8m.main-none-eabi -mcpu=cortex-m33
                         -mattr=+no-movt)
 endif()
-set(MYRTOS_LDC_FLAGS -betterC -Oz --relocation-model=static
+set(UBIQOS_LDC_FLAGS -betterC -Oz --relocation-model=static
                      --fthread-model=local-exec)
 
-set(MYRTOS_LDC_OK FALSE)
-if(MYRTOS_LDC)
+set(UBIQOS_LDC_OK FALSE)
+if(UBIQOS_LDC)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.d
          "module ldc_probe;\nextern(C) int probe() @nogc nothrow { return 0; }\n")
     execute_process(
-        COMMAND ${MYRTOS_LDC} -c ${MYRTOS_LDC_FLAGS} ${MYRTOS_LDC_ARCH}
+        COMMAND ${UBIQOS_LDC} -c ${UBIQOS_LDC_FLAGS} ${UBIQOS_LDC_ARCH}
                 ${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.d
                 -of=${CMAKE_CURRENT_BINARY_DIR}/ldc_probe.o
         RESULT_VARIABLE dprobe_rc OUTPUT_QUIET ERROR_VARIABLE dprobe_err)
     if(dprobe_rc EQUAL 0)
-        set(MYRTOS_LDC_OK TRUE)
-        message(STATUS "D module toolchain: ${MYRTOS_LDC}")
+        set(UBIQOS_LDC_OK TRUE)
+        message(STATUS "D module toolchain: ${UBIQOS_LDC}")
     else()
         message(STATUS "ldc2 found but cannot build for this target; D modules skipped")
         message(STATUS "  ${dprobe_err}")
@@ -962,12 +962,12 @@ else()
     message(STATUS "No ldc2 found; D modules skipped")
 endif()
 
-# Same signature and same RT / SINGLE options as myrtos_add_module. Unlike the
+# Same signature and same RT / SINGLE options as ubiqos_add_module. Unlike the
 # clang one this cannot fall back to another compiler -- there is no gcc that
 # reads D -- so a machine without ldc2 gets no module rather than a broken
 # build, and says so at configure time.
-function(myrtos_add_d_module name source)
-    if(NOT MYRTOS_LDC_OK)
+function(ubiqos_add_d_module name source)
+    if(NOT UBIQOS_LDC_OK)
         message(STATUS "Skipping D module ${name}: no usable ldc2")
         return()
     endif()
@@ -988,20 +988,20 @@ function(myrtos_add_d_module name source)
     set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_d)
     file(MAKE_DIRECTORY ${objdir})
 
-    # Every D source of the module in one ldc2 invocation, with common/myrtos.d
+    # Every D source of the module in one ldc2 invocation, with common/ubiqos.d
     # among them, and --singleobj so it comes out as one object.
     #
     # Importing a D module is not linking against it: an import brings in the
     # declarations, and the definitions only exist if that file was compiled
-    # too. common/myrtos.d also carries memset, memcpy and __assert, which LDC
+    # too. common/ubiqos.d also carries memset, memcpy and __assert, which LDC
     # emits calls to and a hosted target would take from a C library.
     set(dsrcs "")
     # The architecture's own sources come along, exactly as they do in
-    # myrtos_add_module: on ARM that is common/arm/tp.S, the two instructions
+    # ubiqos_add_module: on ARM that is common/arm/tp.S, the two instructions
     # that answer __aeabi_read_tp. A clang module without it links but cannot
     # read a thread-local.
     set(objs "")
-    foreach(src ${source} ${ARGN} ${MYRTOS_MODULE_ARCH_SOURCES})
+    foreach(src ${source} ${ARGN} ${UBIQOS_MODULE_ARCH_SOURCES})
         get_filename_component(ext ${src} EXT)
         if(ext STREQUAL ".d")
             list(APPEND dsrcs ${CMAKE_CURRENT_SOURCE_DIR}/${src})
@@ -1011,10 +1011,10 @@ function(myrtos_add_d_module name source)
         set(dobj ${objdir}/${name}_d.o)
         add_custom_command(
             OUTPUT ${dobj}
-            COMMAND ${MYRTOS_LDC} -c --singleobj ${MYRTOS_LDC_FLAGS} ${MYRTOS_LDC_ARCH}
+            COMMAND ${UBIQOS_LDC} -c --singleobj ${UBIQOS_LDC_FLAGS} ${UBIQOS_LDC_ARCH}
                     -I${CMAKE_CURRENT_SOURCE_DIR}/common
-                    ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.d ${dsrcs} -of=${dobj}
-            DEPENDS ${dsrcs} ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.d
+                    ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos.d ${dsrcs} -of=${dobj}
+            DEPENDS ${dsrcs} ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos.d
             COMMENT "Compiling ${name} with ldc2")
         list(APPEND objs ${dobj})
     endif()
@@ -1031,7 +1031,7 @@ function(myrtos_add_d_module name source)
             # A C file alongside, on the same terms as any other module's.
             add_custom_command(
                 OUTPUT ${obj}
-                COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH}
+                COMMAND ${CMAKE_C_COMPILER} ${UBIQOS_TARGET_ARCH}
                         -fno-pic -mcmodel=medany -fno-common -ffreestanding
                         -nostdlib -O2 -c ${CMAKE_CURRENT_SOURCE_DIR}/${src} -o ${obj}
                 DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
@@ -1040,7 +1040,7 @@ function(myrtos_add_d_module name source)
         list(APPEND objs ${obj})
     endforeach()
 
-    # GNU ld through the compiler driver, exactly as myrtos_add_module links.
+    # GNU ld through the compiler driver, exactly as ubiqos_add_module links.
     # -N so the writable sections are not page-aligned: without it .tbss lands a
     # page past the code and objcopy pads the gap, which is four kilobytes of
     # zeroes in every module with a thread-local -- and in D that is every
@@ -1048,10 +1048,10 @@ function(myrtos_add_d_module name source)
     set(elf ${objdir}/${name}.elf)
     add_custom_command(
         OUTPUT ${elf}
-        COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH} -nostdlib
-                ${MYRTOS_MODULE_LDFLAGS} -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
+        COMMAND ${CMAKE_C_COMPILER} ${UBIQOS_TARGET_ARCH} -nostdlib
+                ${UBIQOS_MODULE_LDFLAGS} -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
                 -Wl,--emit-relocs ${single_link} ${objs}
-                ${MYRTOS_MODULE_ARCH_SOURCES} -o ${elf}
+                ${UBIQOS_MODULE_ARCH_SOURCES} -o ${elf}
         DEPENDS ${objs}
         COMMENT "Linking ${name} (D)")
 
@@ -1082,13 +1082,13 @@ function(myrtos_add_d_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos_abi.h
         COMMENT "Building module ${name}.mod (D)")
 
     # Built, and therefore able to be resident. A module whose toolchain is
     # not on this machine never reaches here, and the flash image asks this
-    # list rather than assuming every name in MYRTOS_RESIDENT exists.
-    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
+    # list rather than assuming every name in UBIQOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY UBIQOS_BUILT_MODULES ${name})
 endfunction()
 
 # --- ZIG MODULES ----------------------------------------------------------
@@ -1106,7 +1106,7 @@ endfunction()
 #
 # ReleaseSmall rather than ReleaseFast: it strips, and it keeps the panic
 # handler from dragging in formatting machinery that has nowhere to print.
-find_program(MYRTOS_ZIG zig HINTS /opt/homebrew/bin /usr/local/bin)
+find_program(UBIQOS_ZIG zig HINTS /opt/homebrew/bin /usr/local/bin)
 
 # -mcmodel=medium is -mcmodel=medany: without it Zig addresses a global with
 # R_RISCV_HI20/LO12_I, an absolute address, and check_module.py refuses the
@@ -1117,8 +1117,8 @@ find_program(MYRTOS_ZIG zig HINTS /opt/homebrew/bin /usr/local/bin)
 # literal pool, so the absolute address is a plain word in .text that the
 # loader relocates. It goes with the target rather than with the shared flags,
 # because passing it there would simply be rejected.
-if(MYRTOS_ARCH STREQUAL "riscv")
-    set(MYRTOS_ZIG_ARCH -target riscv32-freestanding
+if(UBIQOS_ARCH STREQUAL "riscv")
+    set(UBIQOS_ZIG_ARCH -target riscv32-freestanding
                         -mcpu=generic_rv32+m+a+c+zba+zbb+zbs
                         -mcmodel=medium)
 else()
@@ -1126,24 +1126,24 @@ else()
     # function on this target, and an entry saying a function cannot be unwound
     # still names a personality routine that does not exist here. On this side
     # only, so RISC-V modules come out byte for byte as they did.
-    set(MYRTOS_ZIG_ARCH -target thumb-freestanding-eabi -mcpu=cortex_m33
+    set(UBIQOS_ZIG_ARCH -target thumb-freestanding-eabi -mcpu=cortex_m33
                         -fno-unwind-tables)
 endif()
-set(MYRTOS_ZIG_FLAGS -OReleaseSmall -fno-PIC -fno-PIE
+set(UBIQOS_ZIG_FLAGS -OReleaseSmall -fno-PIC -fno-PIE
                      -fno-stack-check -fno-stack-protector)
 
-set(MYRTOS_ZIG_OK FALSE)
-if(MYRTOS_ZIG)
+set(UBIQOS_ZIG_OK FALSE)
+if(UBIQOS_ZIG)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/zig_probe.zig
          "export fn probe() u32 { return 0; }\n")
     execute_process(
-        COMMAND ${MYRTOS_ZIG} build-obj ${MYRTOS_ZIG_ARCH} ${MYRTOS_ZIG_FLAGS}
+        COMMAND ${UBIQOS_ZIG} build-obj ${UBIQOS_ZIG_ARCH} ${UBIQOS_ZIG_FLAGS}
                 -femit-bin=${CMAKE_CURRENT_BINARY_DIR}/zig_probe.o
                 ${CMAKE_CURRENT_BINARY_DIR}/zig_probe.zig
         RESULT_VARIABLE zprobe_rc OUTPUT_QUIET ERROR_VARIABLE zprobe_err)
     if(zprobe_rc EQUAL 0)
-        set(MYRTOS_ZIG_OK TRUE)
-        message(STATUS "Zig module toolchain: ${MYRTOS_ZIG}")
+        set(UBIQOS_ZIG_OK TRUE)
+        message(STATUS "Zig module toolchain: ${UBIQOS_ZIG}")
     else()
         message(STATUS "zig found but cannot build for this target; Zig modules skipped")
         message(STATUS "  ${zprobe_err}")
@@ -1153,8 +1153,8 @@ else()
 endif()
 
 # Same signature and the same RT / SINGLE options as the others.
-function(myrtos_add_zig_module name source)
-    if(NOT MYRTOS_ZIG_OK)
+function(ubiqos_add_zig_module name source)
+    if(NOT UBIQOS_ZIG_OK)
         message(STATUS "Skipping Zig module ${name}: no usable zig")
         return()
     endif()
@@ -1175,19 +1175,19 @@ function(myrtos_add_zig_module name source)
     set(objdir ${CMAKE_CURRENT_BINARY_DIR}/${name}_zig)
     file(MAKE_DIRECTORY ${objdir})
 
-    # common/myrtos.zig is reached as the module "myrtos", so a source says
-    # @import("myrtos") and not a path -- the same shape D's `import myrtos`
+    # common/ubiqos.zig is reached as the module "ubiqos", so a source says
+    # @import("ubiqos") and not a path -- the same shape D's `import ubiqos`
     # has. One zig invocation produces one object; Zig follows the imports.
     set(zobj ${objdir}/${name}.o)
     add_custom_command(
         OUTPUT ${zobj}
-        COMMAND ${MYRTOS_ZIG} build-obj ${MYRTOS_ZIG_ARCH} ${MYRTOS_ZIG_FLAGS}
-                --dep myrtos
+        COMMAND ${UBIQOS_ZIG} build-obj ${UBIQOS_ZIG_ARCH} ${UBIQOS_ZIG_FLAGS}
+                --dep ubiqos
                 -Mroot=${CMAKE_CURRENT_SOURCE_DIR}/${source}
-                -Mmyrtos=${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.zig
+                -Mubiqos=${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos.zig
                 -femit-bin=${zobj}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${source}
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos.zig
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos.zig
         COMMENT "Compiling ${name} with zig")
 
     # -N so the writable sections are not page-aligned: without it .tbss lands a
@@ -1196,10 +1196,10 @@ function(myrtos_add_zig_module name source)
     set(elf ${objdir}/${name}.elf)
     add_custom_command(
         OUTPUT ${elf}
-        COMMAND ${CMAKE_C_COMPILER} ${MYRTOS_TARGET_ARCH} -nostdlib
-                ${MYRTOS_MODULE_LDFLAGS} -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
+        COMMAND ${CMAKE_C_COMPILER} ${UBIQOS_TARGET_ARCH} -nostdlib
+                ${UBIQOS_MODULE_LDFLAGS} -Wl,-N -Wl,-e,0 -Wl,--no-warn-rwx-segments
                 -Wl,--emit-relocs ${single_link} ${zobj}
-                ${MYRTOS_MODULE_ARCH_SOURCES} -o ${elf}
+                ${UBIQOS_MODULE_ARCH_SOURCES} -o ${elf}
         DEPENDS ${zobj}
         COMMENT "Linking ${name} (Zig)")
 
@@ -1230,21 +1230,21 @@ function(myrtos_add_zig_module name source)
                 ${rt_flag}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos_abi.h
         COMMENT "Building module ${name}.mod (Zig)")
 
     # Built, and therefore able to be resident. A module whose toolchain is
     # not on this machine never reaches here, and the flash image asks this
-    # list rather than assuming every name in MYRTOS_RESIDENT exists.
-    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
+    # list rather than assuming every name in UBIQOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY UBIQOS_BUILT_MODULES ${name})
 endfunction()
 
 # A data module has no entry point: it IS its bytes.
-function(myrtos_add_data_module name source)
+function(ubiqos_add_data_module name source)
     add_executable(${name}_app ${source})
     target_compile_options(${name}_app PRIVATE
-        -fno-pic ${MYRTOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2)
-    target_link_options(${name}_app PRIVATE -nostdlib ${MYRTOS_MODULE_LDFLAGS} -Wl,-e,0
+        -fno-pic ${UBIQOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2)
+    target_link_options(${name}_app PRIVATE -nostdlib ${UBIQOS_MODULE_LDFLAGS} -Wl,-e,0
                         -Wl,--no-warn-rwx-segments)
 
     add_custom_command(TARGET ${name}_app POST_BUILD
@@ -1271,32 +1271,32 @@ function(myrtos_add_data_module name source)
                 "${name}" --data
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/common/myrtos_abi.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos_abi.h
         COMMENT "Building data module ${name}.mod")
 
     # Built, and therefore able to be resident. A module whose toolchain is
     # not on this machine never reaches here, and the flash image asks this
-    # list rather than assuming every name in MYRTOS_RESIDENT exists.
-    set_property(GLOBAL APPEND PROPERTY MYRTOS_BUILT_MODULES ${name})
+    # list rather than assuming every name in UBIQOS_RESIDENT exists.
+    set_property(GLOBAL APPEND PROPERTY UBIQOS_BUILT_MODULES ${name})
 endfunction()
 
-myrtos_add_module(counter modules/counter/counter.c)
-myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
-myrtos_add_clang_module(vtdemo modules/vtdemo/vtdemo.cpp)
-myrtos_add_d_module(dhello modules/dhello/dhello.d)
-myrtos_add_module(armtest modules/armtest/armtest.c)
-myrtos_add_module(usbdisk modules/usbdisk/usbdisk.c)
-myrtos_add_module(reboot modules/reboot/reboot.c)
-myrtos_add_module(lsmod modules/lsmod/lsmod.c)
-myrtos_add_module(free modules/freemem/free.c)
-myrtos_add_module(usbstat modules/usbstat/usbstat.c)
-myrtos_add_module(vidstat modules/vidstat/vidstat.c)
-myrtos_add_module(backlight modules/backlight/backlight.c)
-myrtos_add_module(screenshot modules/screenshot/screenshot.c)
-myrtos_add_module(pecho modules/pecho/pecho.c)
-myrtos_add_zig_module(zhello modules/zhello/zhello.zig)
-myrtos_add_module(echo modules/echo/echo.c)
-myrtos_add_module(usbecho modules/usbecho/usbecho.c)
+ubiqos_add_module(counter modules/counter/counter.c)
+ubiqos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
+ubiqos_add_clang_module(vtdemo modules/vtdemo/vtdemo.cpp)
+ubiqos_add_d_module(dhello modules/dhello/dhello.d)
+ubiqos_add_module(armtest modules/armtest/armtest.c)
+ubiqos_add_module(usbdisk modules/usbdisk/usbdisk.c)
+ubiqos_add_module(reboot modules/reboot/reboot.c)
+ubiqos_add_module(lsmod modules/lsmod/lsmod.c)
+ubiqos_add_module(free modules/freemem/free.c)
+ubiqos_add_module(usbstat modules/usbstat/usbstat.c)
+ubiqos_add_module(vidstat modules/vidstat/vidstat.c)
+ubiqos_add_module(backlight modules/backlight/backlight.c)
+ubiqos_add_module(screenshot modules/screenshot/screenshot.c)
+ubiqos_add_module(pecho modules/pecho/pecho.c)
+ubiqos_add_zig_module(zhello modules/zhello/zhello.zig)
+ubiqos_add_module(echo modules/echo/echo.c)
+ubiqos_add_module(usbecho modules/usbecho/usbecho.c)
 # Not RT, and it never should have been. A real-time module's memory comes out
 # of the SRAM pool, and two shells at four kilobytes each -- plus the one the
 # startup script needs -- were most of that pool. On 4 Sep 2026 the pool ran out
@@ -1307,30 +1307,30 @@ myrtos_add_module(usbecho modules/usbecho/usbecho.c)
 # PSRAM with ls and cat and everything else that is merely a program. spinrt and
 # keys stay RT, because measuring a scheduler and reading raw keystrokes are
 # what the flag is for.
-myrtos_add_module(sh modules/sh/sh.c)
-myrtos_add_module(ls modules/ls/ls.c)
-myrtos_add_module(cat modules/cat/cat.c)
-myrtos_add_module(head modules/head/head.c)
-myrtos_add_module(more modules/more/more.c)
-myrtos_add_module(tlsftest modules/tlsftest/tlsftest.c)
-myrtos_add_module(libctest modules/libctest/libctest.c)
+ubiqos_add_module(sh modules/sh/sh.c)
+ubiqos_add_module(ls modules/ls/ls.c)
+ubiqos_add_module(cat modules/cat/cat.c)
+ubiqos_add_module(head modules/head/head.c)
+ubiqos_add_module(more modules/more/more.c)
+ubiqos_add_module(tlsftest modules/tlsftest/tlsftest.c)
+ubiqos_add_module(libctest modules/libctest/libctest.c)
 
 # The same ground covered by the other library: qsort, bsearch, strdup and a
 # real fopen, none of which the header-only subset has.
-myrtos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
+ubiqos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 
 # The first library module: code the kernel calls rather than runs. It was
 # kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
-myrtos_add_module(httpd modules/httpd/httpd.c)
-myrtos_add_module(mv modules/mv/mv.c)
-myrtos_add_module(leds modules/leds/leds.c)
-myrtos_add_module(sockstat modules/sockstat/sockstat.c)
-myrtos_add_rust_module(rhello modules/rhello/rhello.rs)
+ubiqos_add_module(httpd modules/httpd/httpd.c)
+ubiqos_add_module(mv modules/mv/mv.c)
+ubiqos_add_module(leds modules/leds/leds.c)
+ubiqos_add_module(sockstat modules/sockstat/sockstat.c)
+ubiqos_add_rust_module(rhello modules/rhello/rhello.rs)
 # --- THE NINA RADIO, RETIRED 10 SEPTEMBER 2026 ------------------------------
 #
 # The ESP32-C6 ran NINA firmware until that day and carried its own TCP/IP
 # stack: the host asked it to open sockets rather than running a stack of its
-# own. It runs ESP-Hosted now -- it is a radio and myrtos does the networking,
+# own. It runs ESP-Hosted now -- it is a radio and UbiqOS does the networking,
 # through modules/ehspi and kernel/ehnet.c -- and the WiFiNINA protocol is not
 # something that chip can answer any more. `wifi` reported "handshake never
 # moved" from the moment the new firmware went in, which is the honest answer
@@ -1338,11 +1338,11 @@ myrtos_add_rust_module(rhello modules/rhello/rhello.rs)
 #
 # Left here commented rather than deleted, because the sources are still in the
 # tree and this is what it takes to have them back: uncomment these two lines
-# and the two names in MYRTOS_RESIDENT below, and flash NINA to the C6 with
+# and the two names in UBIQOS_RESIDENT below, and flash NINA to the C6 with
 # Adafruit's SerialESPPassthrough UF2. docs/esp-hosted/README.md has that
-# route; it does not involve myrtos at all.
-#myrtos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
-myrtos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
+# route; it does not involve UbiqOS at all.
+#ubiqos_add_module(wifilib modules/wifilib/wifilib.c LIBRARY)
+ubiqos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
 
 # The SD card driver, kernel/sdcard.c until 7 Sep 2026, with the vendored SDIO
 # driver from pico-extras alongside it. Together they were 11.6 kB of a kernel
@@ -1356,7 +1356,7 @@ myrtos_add_module(fat32lib modules/fat32lib/fat32lib.c LIBRARY)
 #
 # printf.c comes along because it only ever existed for this driver's error
 # paths -- it went where its one caller went.
-myrtos_add_module(sdlib modules/sdlib/sdlib.c LIBRARY
+ubiqos_add_module(sdlib modules/sdlib/sdlib.c LIBRARY
                   modules/sdlib/sdk_shim.c
                   modules/sdlib/printf.c
                   third_party/pico_sd_card/sd_card.c)
@@ -1366,7 +1366,7 @@ target_compile_definitions(sdlib_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 pico_generate_pio_header(sdlib_app ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.pio)
 
-# The serial terminal driver, the first MYRTOS_TYPE_DRIVER module. It was the
+# The serial terminal driver, the first UBIQOS_TYPE_DRIVER module. It was the
 # first driver in kernel/io.c and the note above it said for weeks that lifting
 # it out was the next step. Like sdlib it compiles against the SDK's headers --
 # uart_putc_raw is inline and comes along -- and takes uart_init from the table.
@@ -1376,50 +1376,50 @@ pico_generate_pio_header(sdlib_app ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_
 # point. termdesc has said "uart" since it was written and did not change.
 # The five RGB LEDs. PIO2, because PIO0 is the USB host and PIO1 is the SD card
 # -- the first thing on this board to want the RP2350's third block.
-myrtos_add_module(neopixel modules/neopixel/neopixel.c DRIVER)
+ubiqos_add_module(neopixel modules/neopixel/neopixel.c DRIVER)
 target_include_directories(neopixel_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(neopixel_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 pico_generate_pio_header(neopixel_app ${CMAKE_CURRENT_SOURCE_DIR}/modules/neopixel/ws2812.pio)
-myrtos_add_data_module(leddesc modules/neopixel/led_desc.c)
+ubiqos_add_data_module(leddesc modules/neopixel/led_desc.c)
 
 # The I2C bus, on the pins the Stemma QT connector uses.
-myrtos_add_module(i2cbus modules/i2cbus/i2cbus.c DRIVER)
+ubiqos_add_module(i2cbus modules/i2cbus/i2cbus.c DRIVER)
 target_include_directories(i2cbus_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(i2cbus_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
-myrtos_add_data_module(i2cdesc modules/i2cbus/i2c_desc.c)
+ubiqos_add_data_module(i2cdesc modules/i2cbus/i2c_desc.c)
 
 # The touch screen on the Waveshare panel. The chip is in the driver and the
 # board is in the descriptor, which is what lets the same gt911.c serve a panel
 # wired differently.
-myrtos_add_module(gt911 modules/gt911/gt911.c DRIVER)
+ubiqos_add_module(gt911 modules/gt911/gt911.c DRIVER)
 target_include_directories(gt911_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(gt911_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
-myrtos_add_data_module(touchdesc modules/gt911/touch_desc.c)
-myrtos_add_module(touch modules/touchcmd/touch.c)
-myrtos_add_module(i2c modules/i2c/i2c.c)
-myrtos_add_module(tone modules/tone/tone.c)
-myrtos_add_module(volume modules/volume/volume.c)
-myrtos_add_module(play modules/play/play.c)
-myrtos_add_module(adc modules/adcread/adcread.c)
-myrtos_add_module(gpio modules/gpiocmd/gpiocmd.c)
-myrtos_add_module(crit modules/crit/crit.c)
+ubiqos_add_data_module(touchdesc modules/gt911/touch_desc.c)
+ubiqos_add_module(touch modules/touchcmd/touch.c)
+ubiqos_add_module(i2c modules/i2c/i2c.c)
+ubiqos_add_module(tone modules/tone/tone.c)
+ubiqos_add_module(volume modules/volume/volume.c)
+ubiqos_add_module(play modules/play/play.c)
+ubiqos_add_module(adc modules/adcread/adcread.c)
+ubiqos_add_module(gpio modules/gpiocmd/gpiocmd.c)
+ubiqos_add_module(crit modules/crit/crit.c)
 
 # I2S out. PIO2 state machine 1 -- the neopixel driver has 0, and a block has
 # four state machines and thirty-two instruction slots between them.
-myrtos_add_module(i2sout modules/audio/audio.c DRIVER)
-myrtos_add_module(gpiodev modules/gpio/gpio.c DRIVER)
+ubiqos_add_module(i2sout modules/audio/audio.c DRIVER)
+ubiqos_add_module(gpiodev modules/gpio/gpio.c DRIVER)
 target_include_directories(gpiodev_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(gpiodev_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
-myrtos_add_data_module(gpiodesc modules/gpio/gpio_desc.c)
-myrtos_add_module(adcdev modules/adc/adc.c DRIVER)
+ubiqos_add_data_module(gpiodesc modules/gpio/gpio_desc.c)
+ubiqos_add_module(adcdev modules/adc/adc.c DRIVER)
 target_include_directories(adcdev_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(adcdev_app PRIVATE
@@ -1429,10 +1429,10 @@ target_include_directories(i2sout_app PRIVATE
 target_compile_definitions(i2sout_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 pico_generate_pio_header(i2sout_app ${CMAKE_CURRENT_SOURCE_DIR}/modules/audio/audio_i2s.pio)
-myrtos_add_data_module(audiodesc modules/audio/audio_desc.c)
-myrtos_add_data_module(adcdesc modules/adc/adc_desc.c)
+ubiqos_add_data_module(audiodesc modules/audio/audio_desc.c)
+ubiqos_add_data_module(adcdesc modules/adc/adc_desc.c)
 
-myrtos_add_module(uart modules/uart/uart.c DRIVER)
+ubiqos_add_module(uart modules/uart/uart.c DRIVER)
 target_include_directories(uart_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(uart_app PRIVATE
@@ -1441,57 +1441,57 @@ target_compile_definitions(uart_app PRIVATE
 # The wire to the ESP32-C6, which is UART1 on GP8/GP9 plus its reset and its
 # download strap. Not the uart driver with other pins: that one is send-only
 # and turns \n into \r\n, and a flash image is not text.
-myrtos_add_module(esplink modules/esplink/esplink.c DRIVER)
+ubiqos_add_module(esplink modules/esplink/esplink.c DRIVER)
 target_include_directories(esplink_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(esplink_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
-myrtos_add_data_module(espdesc modules/esplink/esp_desc.c)
-myrtos_add_module(espflash modules/espflash/espflash.c)
+ubiqos_add_data_module(espdesc modules/esplink/esp_desc.c)
+ubiqos_add_module(espflash modules/espflash/espflash.c)
 
 # ESP-Hosted's SPI transport. The four pins WiFiNINA used, plus the two the
 # co-processor drives to say when it may be clocked and whether it has
 # anything to say.
-myrtos_add_module(ehspi modules/ehspi/ehspi.c DRIVER)
+ubiqos_add_module(ehspi modules/ehspi/ehspi.c DRIVER)
 target_include_directories(ehspi_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,INCLUDE_DIRECTORIES>)
 target_compile_definitions(ehspi_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
-myrtos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
-myrtos_add_module(ehstat modules/ehstat/ehstat.c)
-myrtos_add_module(ping modules/ping/ping.c)
-myrtos_add_module(browse modules/browse/browse.c)
-myrtos_add_module(ehrpc modules/ehrpc/ehrpc.c)
+ubiqos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
+ubiqos_add_module(ehstat modules/ehstat/ehstat.c)
+ubiqos_add_module(ping modules/ping/ping.c)
+ubiqos_add_module(browse modules/browse/browse.c)
+ubiqos_add_module(ehrpc modules/ehrpc/ehrpc.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
-    PROPERTIES COMPILE_DEFINITIONS "printf=myrtos_printf")
+    PROPERTIES COMPILE_DEFINITIONS "printf=ubiqos_printf")
 
 # Atto, an emacs in two thousand lines of public-domain C, built as an ordinary
 # module. See modules/atto/README.md for what a C program needs to get here.
-file(GLOB MYRTOS_ATTO_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/modules/atto/upstream/*.c)
-myrtos_add_module(atto modules/atto/compat.c
-                  ${MYRTOS_ATTO_SOURCES}
+file(GLOB UBIQOS_ATTO_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/modules/atto/upstream/*.c)
+ubiqos_add_module(atto modules/atto/compat.c
+                  ${UBIQOS_ATTO_SOURCES}
                   ${CMAKE_CURRENT_SOURCE_DIR}/modules/wasm/examples/curses/curses.c
                   NEWLIB)
 target_include_directories(atto_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/wasm/examples/curses)
 target_compile_options(atto_app PRIVATE -std=gnu17 -funsigned-char)
-myrtos_add_module(rm modules/rm/rm.c)
-myrtos_add_module(cp modules/cp/cp.c)
-myrtos_add_module(write modules/write/write.c)
-myrtos_add_module(fill modules/fill/fill.c)
-myrtos_add_module(sleep modules/sleep/sleep.c)
-myrtos_add_module(spin modules/spin/spin.c)
-myrtos_add_module(spinrt modules/spin/spin.c RT)
-myrtos_add_module(nice modules/nice/nice.c)
-myrtos_add_module(ps modules/ps/ps.c)
-myrtos_add_module(mkdir modules/mkdir/mkdir.c)
-myrtos_add_module(hibouair modules/hibouair/hibouair.c)
+ubiqos_add_module(rm modules/rm/rm.c)
+ubiqos_add_module(cp modules/cp/cp.c)
+ubiqos_add_module(write modules/write/write.c)
+ubiqos_add_module(fill modules/fill/fill.c)
+ubiqos_add_module(sleep modules/sleep/sleep.c)
+ubiqos_add_module(spin modules/spin/spin.c)
+ubiqos_add_module(spinrt modules/spin/spin.c RT)
+ubiqos_add_module(nice modules/nice/nice.c)
+ubiqos_add_module(ps modules/ps/ps.c)
+ubiqos_add_module(mkdir modules/mkdir/mkdir.c)
+ubiqos_add_module(hibouair modules/hibouair/hibouair.c)
 
 # The WebAssembly host. SINGLE because wasm3's interpreter is tables of function
 # pointers and a shareable module may not hold one; at a fixed address in PSRAM
 # they are correct, and newlib may be linked as it stands. See modules/wasm.
-myrtos_add_module(wasm modules/wasm/wasm.c
+ubiqos_add_module(wasm modules/wasm/wasm.c
     modules/wasm/newlib_glue.c
     modules/wasm/wasi.c
     third_party/wasm3/m3_bind.c
@@ -1538,7 +1538,7 @@ target_compile_definitions(wasm_app PRIVATE d_m3PreferStaticAlloc=1
 # # one of it; see docs/lwip. Two files of lwIP carry a local change for position
 # # independence, and the port -- lwipopts.h, arch/cc.h, sys_arch.c and a small
 # # string library, since a module is linked -nostdlib -- lives with the module.
-myrtos_add_module(lwipd modules/lwipd/lwipd.c
+ubiqos_add_module(lwipd modules/lwipd/lwipd.c
     modules/lwipd/sys_arch.c
     modules/lwipd/mini_string.c
     modules/lwipd/mini_libc.c
@@ -1579,27 +1579,27 @@ target_include_directories(lwipd_app PRIVATE
 #
 
 # Retired with the NINA firmware -- see the note beside wifilib above.
-#myrtos_add_module(wifi modules/wifi/wifi.c)
-myrtos_add_module(pwd modules/pwd/pwd.c)
-myrtos_add_module(date modules/date/date.c)
-myrtos_add_module(fetch modules/fetch/fetch.c)
-myrtos_add_module(rmdir modules/rmdir/rmdir.c)
-myrtos_add_module(mount modules/mount/mount.c)
-myrtos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
-myrtos_add_module(msgcli modules/msgcli/msgcli.c)
-myrtos_add_module(font modules/font/font.c)
-myrtos_add_module(color modules/color/color.c)
-myrtos_add_module(kill modules/kill/kill.c)
-myrtos_add_module(cu modules/cu/cu.c)
-myrtos_add_module(keys modules/keys/keys.c RT)
-myrtos_add_module(memtest modules/memtest/memtest.c)
-myrtos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
-myrtos_add_module(bootsel modules/bootsel/bootsel.c)
-myrtos_add_data_module(termdesc modules/term_desc/term_desc.c)
-myrtos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
-myrtos_add_data_module(kbddesc modules/kbd_desc/kbd_desc.c)
-myrtos_add_data_module(condesc modules/con_desc/con_desc.c)
-myrtos_add_data_module(acmdesc modules/acm_desc/acm_desc.c)
+#ubiqos_add_module(wifi modules/wifi/wifi.c)
+ubiqos_add_module(pwd modules/pwd/pwd.c)
+ubiqos_add_module(date modules/date/date.c)
+ubiqos_add_module(fetch modules/fetch/fetch.c)
+ubiqos_add_module(rmdir modules/rmdir/rmdir.c)
+ubiqos_add_module(mount modules/mount/mount.c)
+ubiqos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
+ubiqos_add_module(msgcli modules/msgcli/msgcli.c)
+ubiqos_add_module(font modules/font/font.c)
+ubiqos_add_module(color modules/color/color.c)
+ubiqos_add_module(kill modules/kill/kill.c)
+ubiqos_add_module(cu modules/cu/cu.c)
+ubiqos_add_module(keys modules/keys/keys.c RT)
+ubiqos_add_module(memtest modules/memtest/memtest.c)
+ubiqos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
+ubiqos_add_module(bootsel modules/bootsel/bootsel.c)
+ubiqos_add_data_module(termdesc modules/term_desc/term_desc.c)
+ubiqos_add_data_module(usbdesc modules/usb_desc/usb_desc.c)
+ubiqos_add_data_module(kbddesc modules/kbd_desc/kbd_desc.c)
+ubiqos_add_data_module(condesc modules/con_desc/con_desc.c)
+ubiqos_add_data_module(acmdesc modules/acm_desc/acm_desc.c)
 
 add_custom_target(modules ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/counter.mod
@@ -1668,7 +1668,7 @@ add_custom_target(modules ALL
 # wasm is resident again only while the fault is being chased -- it crashes the
 # board when run, see the note in modules/wasm/wasm.c. Take it out before
 # leaving the machine in a state anyone else will type at.
-set(MYRTOS_RESIDENT
+set(UBIQOS_RESIDENT
     vidstat
     screenshot
     cxxdemo
@@ -1756,20 +1756,20 @@ set(MYRTOS_RESIDENT
     # because several of them would drive the wrong pins on the other one --
     # i2cdesc is GP20/21, which on the Waveshare panel are DE and VSYNC, and
     # leddesc and audiodesc sit on its data lines. Chosen where the board is.
-    ${myrtosBoardModules}
+    ${ubiqosBoardModules}
 )
 # What is resident is the intersection of what was asked for and what exists.
 #
-# MYRTOS_RESIDENT names modules; whether a module is built depends on whether
+# UBIQOS_RESIDENT names modules; whether a module is built depends on whether
 # its toolchain is on this machine. Asking for one that was skipped used to end
 # in "missing and no known rule to make it", which says nothing about ldc2 not
 # being installed -- and it would have said that on a RISC-V machine without
 # ldc2 just as readily as on ARM. Names are dropped here, and said out loud.
-get_property(myrtos_built GLOBAL PROPERTY MYRTOS_BUILT_MODULES)
+get_property(ubiqos_built GLOBAL PROPERTY UBIQOS_BUILT_MODULES)
 set(resident_mods "")
 set(resident_absent "")
-foreach(m ${MYRTOS_RESIDENT})
-    if(m IN_LIST myrtos_built)
+foreach(m ${UBIQOS_RESIDENT})
+    if(m IN_LIST ubiqos_built)
         list(APPEND resident_mods ${CMAKE_CURRENT_BINARY_DIR}/${m}.mod)
     else()
         list(APPEND resident_absent ${m})
@@ -1796,18 +1796,18 @@ add_dependencies(flashimage modules)
 # block carries its own target address, so both fit in one file with a gap in
 # the middle and the bootrom puts each block where it says.
 #
-# myrtos.uf2 is the system. An application built elsewhere against the SDK has
-# its own image at MYRTOS_FLASH_APP_BASE and its own UF2, and tools/combine_uf2
+# ubiqos.uf2 is the system. An application built elsewhere against the SDK has
+# its own image at UBIQOS_FLASH_APP_BASE and its own UF2, and tools/combine_uf2
 # .py takes that and this and makes the one file a product is shipped as -- or
 # the application's alone, when only the application has changed.
 #
 # The address is read out of the header rather than written again here: there is
-# one place MYRTOS_FLASH_MODULE_BASE is defined and the kernel is it.
-file(STRINGS kernel/flashmod.h myrtosFlashBaseLine
-     REGEX "define[ \t]+MYRTOS_FLASH_MODULE_BASE")
-string(REGEX MATCH "0x[0-9a-fA-F]+" myrtosFlashBase "${myrtosFlashBaseLine}")
-if(NOT myrtosFlashBase)
-    message(FATAL_ERROR "MYRTOS_FLASH_MODULE_BASE is not in kernel/flashmod.h "
+# one place UBIQOS_FLASH_MODULE_BASE is defined and the kernel is it.
+file(STRINGS kernel/flashmod.h ubiqosFlashBaseLine
+     REGEX "define[ \t]+UBIQOS_FLASH_MODULE_BASE")
+string(REGEX MATCH "0x[0-9a-fA-F]+" ubiqosFlashBase "${ubiqosFlashBaseLine}")
+if(NOT ubiqosFlashBase)
+    message(FATAL_ERROR "UBIQOS_FLASH_MODULE_BASE is not in kernel/flashmod.h "
                         "in a form this can read")
 endif()
 
@@ -1815,24 +1815,24 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
     COMMAND $<TARGET_FILE:picotool> uf2 convert --quiet
             ${CMAKE_CURRENT_BINARY_DIR}/modules.bin -t bin
-            -o ${myrtosFlashBase}
+            -o ${ubiqosFlashBase}
             ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
-            --family ${MYRTOS_UF2_FAMILY}
+            --family ${UBIQOS_UF2_FAMILY}
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/modules.bin
-    COMMENT "Wrapping the module image for ${myrtosFlashBase}")
+    COMMENT "Wrapping the module image for ${ubiqosFlashBase}")
 
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/myrtos.uf2
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ubiqos.uf2
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine_uf2.py
-            ${CMAKE_CURRENT_BINARY_DIR}/myrtos.uf2
+            ${CMAKE_CURRENT_BINARY_DIR}/ubiqos.uf2
             ${CMAKE_CURRENT_BINARY_DIR}/os_kernel.uf2
             ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2 os_kernel
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/combine_uf2.py
-    COMMENT "Combining the kernel and the module image into myrtos.uf2")
+    COMMENT "Combining the kernel and the module image into ubiqos.uf2")
 
 add_custom_target(productimage ALL
-                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/myrtos.uf2)
+                  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ubiqos.uf2)
 
 # The C library's heap is whatever is left of SRAM once this copy_to_ram build
 # has been laid down, and nothing in the toolchain complains when that is
@@ -1840,7 +1840,7 @@ add_custom_target(productimage ALL
 # not overlap, which zero bytes of heap satisfies. The kernel then panics during
 # pre-init, before the console exists to say so.
 #
-# So the build says it instead. See the note above MYRTOS_HEAP_SIZE in main.c.
+# So the build says it instead. See the note above UBIQOS_HEAP_SIZE in main.c.
 add_custom_command(TARGET os_kernel POST_BUILD
     COMMAND ${CMAKE_COMMAND}
             -DELF=$<TARGET_FILE:os_kernel>

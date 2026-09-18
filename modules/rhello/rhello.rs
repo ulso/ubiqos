@@ -1,4 +1,4 @@
-// A myrtos module in Rust, natively.
+// A UbiqOS module in Rust, natively.
 //
 // Rust reaches this machine three ways now: as wasm through the wasm host, as
 // a native module like this one, and not at all through Embassy -- see the
@@ -24,24 +24,24 @@ use core::arch::global_asm;
 
 // The syscall, and it has to be assembly rather than inline asm.
 //
-// myrtos puts the call number in r7 -- where Linux's ARM EABI has always put it
+// UbiqOS puts the call number in r7 -- where Linux's ARM EABI has always put it
 // -- and rustc refuses r7 as an inline-asm operand: it reserves it as the frame
 // pointer on thumb targets and says so outright. That is not a flag away, so
 // the stub is written out, which is what common/arm/tp.S already does for the
 // thread pointer in C modules.
 //
-// AAPCS puts the four arguments in r0 to r3; myrtos wants the number in r7 and
+// AAPCS puts the four arguments in r0 to r3; UbiqOS wants the number in r7 and
 // the arguments in r0 to r2, so they shuffle down by one. r7 is saved and
 // restored because it belongs to the caller.
 // One per machine, because the stub is the one part of this that cannot be
-// written once. Both put the call number where myrtos wants it and shuffle the
+// written once. Both put the call number where UbiqOS wants it and shuffle the
 // arguments down by one, which is the whole of the difference between the C
 // calling convention and this system call.
 #[cfg(target_arch = "arm")]
 global_asm!(
-    ".global myrtos_syscall",
+    ".global ubiqos_syscall",
     ".thumb_func",
-    "myrtos_syscall:",
+    "ubiqos_syscall:",
     "   push {{r7, lr}}",
     "   mov r7, r0",
     "   mov r0, r1",
@@ -55,8 +55,8 @@ global_asm!(
 // number goes in a7 the way Linux has always put it.
 #[cfg(target_arch = "riscv32")]
 global_asm!(
-    ".global myrtos_syscall",
-    "myrtos_syscall:",
+    ".global ubiqos_syscall",
+    "ubiqos_syscall:",
     "   mv a7, a0",
     "   mv a0, a1",
     "   mv a1, a2",
@@ -66,11 +66,11 @@ global_asm!(
 );
 
 unsafe extern "C" {
-    fn myrtos_syscall(id: u32, a: u32, b: u32, c: u32) -> i32;
+    fn ubiqos_syscall(id: u32, a: u32, b: u32, c: u32) -> i32;
 }
 
 unsafe fn syscall(id: u32, a: u32, b: u32, c: u32) -> i32 {
-    unsafe { myrtos_syscall(id, a, b, c) }
+    unsafe { ubiqos_syscall(id, a, b, c) }
 }
 
 const SYS_WRITE: u32 = 4;
@@ -96,7 +96,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // DMA and interrupts; embassy-time binds a hardware timer; embassy-executor
 // wakes tasks from interrupt context; embassy-net is a TCP/IP stack.
 //
-// A myrtos module has none of that and is not supposed to: it has no
+// A UbiqOS module has none of that and is not supposed to: it has no
 // peripheral access, no interrupts of its own, and no need of a TCP/IP stack
 // because the ESP32-C6 carries one. So the pico-io-bridge web server's 1300
 // lines of http.rs cannot come across -- every I/O call in it is an

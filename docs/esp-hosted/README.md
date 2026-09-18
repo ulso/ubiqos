@@ -57,8 +57,8 @@ esptool sees.
 5. On the host, esptool with `--before no_reset --after no_reset -c esp32c6`,
    because steps 1 to 3 have already done what its own reset sequence would.
 
-Adafruit's own recovery route is the same shape and does not involve myrtos at
-all: their `SerialESPPassthrough` UF2 over BOOTSEL, esptool, then flash myrtos
+Adafruit's own recovery route is the same shape and does not involve UbiqOS at
+all: their `SerialESPPassthrough` UF2 over BOOTSEL, esptool, then flash UbiqOS
 back. That is the way back if the passthrough here is what breaks.
 
 ## What the transport can be
@@ -197,7 +197,7 @@ The handler follows the same rule as modules/adc's: above the kernel's
 threshold, so a trap with interrupts off cannot cost bytes, and touching
 nothing but its own ring. There is no lock because there is nothing to lock --
 the handler writes the head, the reader writes the tail, and each reads the
-other's word. `MYRTOS_SS_ESP_STATS` reports what was dropped, so a log with
+other's word. `UBIQOS_SS_ESP_STATS` reports what was dropped, so a log with
 holes says so rather than looking merely short.
 
 ## The transport is up
@@ -247,7 +247,7 @@ The second time the sleep was unconditional and it still wedged, because
 `K->sleep_ms` is the SDK's and BUSY-WAITS. A kernel thread that spins never
 reaches the scheduler; it is only preempted where it makes a system call.
 `wifilib.c:98`: *"seconds of spinning is exactly what froze the machine when
-sleep_ms was used instead of myrtos_sleep"*.
+sleep_ms was used instead of ubiqos_sleep"*.
 
 Both times the way back was the BOOTSEL button. Both times lwIP over USB kept
 answering ping, because the USB task sits above 21 -- which is worth knowing:
@@ -267,8 +267,8 @@ guess.
 ### An interrupt on handshake would buy nothing
 
 That was written here as "the next improvement", and it was wrong about this
-kernel. There is no way to wake a thread from an interrupt in myrtos, and that
-is a design decision rather than a gap. `myrtos_wake_readers`
+kernel. There is no way to wake a thread from an interrupt in UbiqOS, and that
+is a design decision rather than a gap. `ubiqos_wake_readers`
 (kernel/scheduler.c:932) runs from the TIMER TICK and polls every blocked
 process's device:
 
@@ -336,7 +336,7 @@ other reasons long before it matters.
 
 ## The control plane answers
 
-    myrtos:/> ehrpc mode
+    ubiqos:/> ehrpc mode
     mode 0  (off),  the chip answered 12289 -- the radio is not initialised
 
 12289 is 0x3001, the first of the WiFi driver's own error codes, and it is the
@@ -393,17 +393,17 @@ layer, and none of it would fit in sixty kilobytes.
 
 `/dev/eh` answers `readable`, and a read of a device with nothing in it WAITS.
 `ehrpc` read blind in a loop, and a process parked for ever on an answer that
-was not coming took the console with it. It asks `myrtos_readable` first now,
+was not coming took the console with it. It asks `ubiqos_readable` first now,
 as `espflash` does of `/dev/esp` -- and that was found by bisecting rather than
 by guessing, which is why the guess about the send path never had to be made.
 
 ## The radio comes up
 
-    myrtos:/> ehrpc up
+    ubiqos:/> ehrpc up
     starting the radio ... ok
     station mode       ... ok
     start              ... ok
-    myrtos:/> ehrpc mode
+    ubiqos:/> ehrpc mode
     mode 1  (station),  the chip answered 0 -- ok
 
 `WifiInit`, `SetMode` and `WifiStart`, each an `esp_wifi_*` call running on the
@@ -460,8 +460,8 @@ turn. The queue is the boundary between the two, and it is the only one.
 
 The frames do not travel through `read` and `write`: those already carry the
 control plane, and a driver module serves exactly one device. So the data plane
-is `getstat`/`setstat` -- `MYRTOS_SS_EH_RX` takes the next frame and answers
-its length, `MYRTOS_SS_EH_TX` queues one to send.
+is `getstat`/`setstat` -- `UBIQOS_SS_EH_RX` takes the next frame and answers
+its length, `UBIQOS_SS_EH_TX` queues one to send.
 
 The draining is bounded at eight frames a turn. A burst of broadcast traffic is
 not a reason to stop answering USB for as long as it lasts, and what is left
@@ -486,7 +486,7 @@ an interface that had never been started, and the answer to that was silence
 rather than an error -- which reads exactly like a link that has stopped
 working.
 
-    myrtos:/> ehrpc up
+    ubiqos:/> ehrpc up
     starting the radio ... ok
     station mode       ... ok
     start              ... ok
@@ -500,7 +500,7 @@ working.
     6 packets transmitted, 6 packets received, 0.0% packet loss
 
 DHCP took an address from the house router and the board answers on it, over
-esp-hosted, into myrtos's own lwIP. The rebuild is usable.
+esp-hosted, into UbiqOS's own lwIP. The rebuild is usable.
 
 ### Power save was most of the latency, and not all of it
 
@@ -525,9 +525,9 @@ nobody offering us a turn -- and it is not going to be guessed at a third time.
 ### A host reset takes the radio with it
 
 `ehrpc mac` was written to save retyping a password after a reboot: nothing in
-myrtos touches the chip's EN pin, so its association ought to outlive a host
+UbiqOS touches the chip's EN pin, so its association ought to outlive a host
 reset. **It does not.** The co-processor watches the host, tears the radio down
-when it restarts, and re-announces itself; after a myrtos reboot it answers
+when it restarts, and re-announces itself; after a UbiqOS reboot it answers
 "the radio is not initialised".
 
 Which makes the `/sd/config.txt` path matter far more than it looked. It is not
@@ -562,7 +562,7 @@ it worked arrives later as an event.
 So the driver asks now -- `WifiStaGetApInfo`, which is the direct question and
 answers with an error until there is an access point to name:
 
-    myrtos:/> ehrpc connect nosuchnetwork
+    ubiqos:/> ehrpc connect nosuchnetwork
     password:
     joining...........
     it did not join -- the console log says why
@@ -580,7 +580,7 @@ and going out:
 So the handshake is low nearly three turns in four when we have something to
 send -- and it does not matter, because the co-processor offers a turn within
 a millisecond anyway. Inbound costs a tick more, since the USB task drains the
-queue on its own turn. Call it three milliseconds of myrtos, measured.
+queue on its own turn. Call it three milliseconds of UbiqOS, measured.
 
 Against the same router, from the same Mac:
 
@@ -666,12 +666,12 @@ router of 192.168.68.1, and a stack cannot invent those -- they come from the
 server. And a capture on the host settles the second:
 
     DHCP-Message (53): Discover
-    Hostname (12), length 6: "myrtos"
+    Hostname (12), length 6: "ubiqos"
     ...
     DHCP-Message (53): Request
     Requested-IP (50): 192.168.68.54
     Server-ID (54):    192.168.68.1
-    Hostname (12), length 6: "myrtos"
+    Hostname (12), length 6: "ubiqos"
 
 The name goes out in both, from the right MAC, and the address asked for is the
 address given. That is a correct exchange from a client that says what it is
@@ -679,7 +679,7 @@ called, so what remains is the app's own choice about what to list, and there
 is nothing on this side left to fix.
 
 Worth having proved rather than assumed: two of the three explanations were
-about myrtos, and both were wrong.
+about UbiqOS, and both were wrong.
 
 ## The hundred milliseconds are not ours
 
@@ -697,7 +697,7 @@ It is not the transport, and this is measured rather than argued:
 
 The co-processor is armed and offering a turn essentially every millisecond,
 and an outbound frame leaves in under one. Inbound costs one more tick. Call it
-three milliseconds of myrtos in a 103 ms round trip.
+three milliseconds of UbiqOS in a 103 ms round trip.
 
 An earlier reading of these counters said "blocked on 178 turns out of 216",
 and that was a ratio of two numbers that are not comparable: both only count
@@ -735,7 +735,7 @@ the two spare lines full-duplex SPI asks for.
 ## The way back
 
 Adafruit's `SerialESPPassthrough.ino.uf2`, from the AirLift page linked above.
-It goes on over BOOTSEL and does not involve myrtos at all, so it is still the
-way back when it is myrtos's own passthrough that is broken. It is deliberately
+It goes on over BOOTSEL and does not involve UbiqOS at all, so it is still the
+way back when it is UbiqOS's own passthrough that is broken. It is deliberately
 NOT committed here -- it is 185 kB of somebody else's binary and .gitignore
 says so -- and lives in tools/ on the development machine.

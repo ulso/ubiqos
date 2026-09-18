@@ -83,7 +83,7 @@ int endwin(void)
     return OK;
 }
 
-// The myrtos console hands over each key as it is pressed and echoes nothing,
+// The UbiqOS console hands over each key as it is pressed and echoes nothing,
 // which is what raw() and noecho() are asking for. There is nothing to do.
 int raw(void)    { return OK; }
 int noraw(void)  { return OK; }

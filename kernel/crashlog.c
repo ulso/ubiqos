@@ -23,12 +23,12 @@
 // "why did it stop" was thrown away with it.
 //
 // Uninitialised RAM keeps its contents across a warm reset, so the crash is
-// still there at the next boot and myrtos_crash_report puts it in the log. A
+// still there at the next boot and ubiqos_crash_report puts it in the log. A
 // power cycle still loses it, and that is the honest limit.
-__uninitialized_ram(myrtos_crash_t) myrtos_crash;
+__uninitialized_ram(ubiqos_crash_t) ubiqos_crash;
 
-uint32_t myrtos_asserts_seen;
-uint32_t myrtos_assert_last;
+uint32_t ubiqos_asserts_seen;
+uint32_t ubiqos_assert_last;
 
 void panic(const char *fmt, ...);   // the real one, reached through --wrap
 
@@ -39,49 +39,49 @@ void __real_panic(const char *fmt, ...);
 // would otherwise erase the first, and the first is the one that says why. What
 // the probe read before this rule was "breakpoint at _exit": true, useless, and
 // exactly as far as an hour with the register dump had already got.
-void myrtos_crash_note (uint32_t kind, uint32_t a, uint32_t b, uint32_t c)
+void ubiqos_crash_note (uint32_t kind, uint32_t a, uint32_t b, uint32_t c)
 {
-    if (myrtos_crash.magic == MYRTOS_CRASH_MAGIC) return;
-    myrtos_crash.kind = kind;
-    myrtos_crash.a = a;
-    myrtos_crash.b = b;
-    myrtos_crash.c = c;
-    myrtos_crash.magic = MYRTOS_CRASH_MAGIC;   // last, so a half-written one is not believed
+    if (ubiqos_crash.magic == UBIQOS_CRASH_MAGIC) return;
+    ubiqos_crash.kind = kind;
+    ubiqos_crash.a = a;
+    ubiqos_crash.b = b;
+    ubiqos_crash.c = c;
+    ubiqos_crash.magic = UBIQOS_CRASH_MAGIC;   // last, so a half-written one is not believed
 }
 
 void __wrap_panic (const char *fmt, ...)
 {
-    myrtos_crash_note (MYRTOS_CRASH_PANIC, (uint32_t)fmt, (uint32_t)__builtin_return_address (0), 0);
+    ubiqos_crash_note (UBIQOS_CRASH_PANIC, (uint32_t)fmt, (uint32_t)__builtin_return_address (0), 0);
     __real_panic ("%s", fmt ? fmt : "(no message)");
 }
 
 
 // Said once, at the next boot, and then forgotten. A crash that is reported
 // every time from then on is a crash nobody reads after the second boot.
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
 
-void myrtos_crash_report(void)
+void ubiqos_crash_report(void)
 {
-    if (myrtos_crash.magic != MYRTOS_CRASH_MAGIC) return;
+    if (ubiqos_crash.magic != UBIQOS_CRASH_MAGIC) return;
 
-    myrtos_print("crash: the last run ended in ");
-    switch (myrtos_crash.kind) {
-    case MYRTOS_CRASH_PANIC:  myrtos_print("a panic"); break;
-    case MYRTOS_CRASH_TRAP:   myrtos_print("a trap"); break;
-    case MYRTOS_CRASH_ASSERT: myrtos_print("an assert"); break;
-    default:                  myrtos_print("something unnamed"); break;
+    ubiqos_print("crash: the last run ended in ");
+    switch (ubiqos_crash.kind) {
+    case UBIQOS_CRASH_PANIC:  ubiqos_print("a panic"); break;
+    case UBIQOS_CRASH_TRAP:   ubiqos_print("a trap"); break;
+    case UBIQOS_CRASH_ASSERT: ubiqos_print("an assert"); break;
+    default:                  ubiqos_print("something unnamed"); break;
     }
 
     // The three words raw, because what they mean depends on the kind and a
     // wrong label is worse than a number. crashlog.h says which is which.
-    myrtos_print(" -- ");
-    myrtos_print_u32(myrtos_crash.a);
-    myrtos_print(" ");
-    myrtos_print_u32(myrtos_crash.b);
-    myrtos_print(" ");
-    myrtos_print_u32(myrtos_crash.c);
-    myrtos_print("\n");
+    ubiqos_print(" -- ");
+    ubiqos_print_u32(ubiqos_crash.a);
+    ubiqos_print(" ");
+    ubiqos_print_u32(ubiqos_crash.b);
+    ubiqos_print(" ");
+    ubiqos_print_u32(ubiqos_crash.c);
+    ubiqos_print("\n");
 
-    myrtos_crash.magic = 0;
+    ubiqos_crash.magic = 0;
 }

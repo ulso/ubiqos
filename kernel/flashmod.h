@@ -1,13 +1,13 @@
-#ifndef MYRTOS_FLASHMOD_H
-#define MYRTOS_FLASHMOD_H
+#ifndef UBIQOS_FLASHMOD_H
+#define UBIQOS_FLASHMOD_H
 
-#include "../common/modules.h"   // myrtos_module_header_t
+#include "../common/modules.h"   // ubiqos_module_header_t
 
 #include <stdint.h>
 
 // Two module regions in flash, because there can be two repositories.
 //
-// The system image is myrtos's own: the kernel ends just past 24 kB, so
+// The system image is UbiqOS's own: the kernel ends just past 24 kB, so
 // starting a megabyte in leaves it ample room to grow, and the seven megabytes
 // after that are the shell, the commands and the descriptors.
 //
@@ -19,20 +19,20 @@
 //
 // A region ends where the next begins, which is what keeps an oversized system
 // image from quietly swallowing the application's half.
-#define MYRTOS_FLASH_MODULE_BASE 0x10100000u
-#define MYRTOS_FLASH_APP_BASE    0x10800000u
-#define MYRTOS_FLASH_END         0x11000000u
+#define UBIQOS_FLASH_MODULE_BASE 0x10100000u
+#define UBIQOS_FLASH_APP_BASE    0x10800000u
+#define UBIQOS_FLASH_END         0x11000000u
 
 // Scan the flash region for module headers and register what is found as
 // resident modules. They run where they lie and are never copied -- exactly
 // what OS-9 did with ROM modules, and the reason a module system needs no
 // filesystem to find code.
-uint32_t myrtos_flash_scan(void);
+uint32_t ubiqos_flash_scan(void);
 
 // The image is its own directory: a module is found where it lies, by walking
 // the sync words. Nothing has to be registered in advance, so the size of the
 // module directory does not bound how many modules the system may have.
-const myrtos_module_header_t *myrtos_flash_nth(uint32_t index, char *name_out);
-const myrtos_module_header_t *myrtos_flash_lookup(const char *name);
+const ubiqos_module_header_t *ubiqos_flash_nth(uint32_t index, char *name_out);
+const ubiqos_module_header_t *ubiqos_flash_lookup(const char *name);
 
 #endif

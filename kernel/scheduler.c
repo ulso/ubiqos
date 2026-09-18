@@ -7,7 +7,7 @@
 #include "io.h"
 #include "moddir.h"
 
-#define MAX_PROCESSES MYRTOS_MAX_PROCESSES
+#define MAX_PROCESSES UBIQOS_MAX_PROCESSES
 #define KERNEL_PID    0     // The kernel is itself a process, always runnable.
 
 // A process that is waiting is not runnable. Until this existed, waiting meant
@@ -26,7 +26,7 @@ typedef enum {
 
     // Killed, but a server still holds a pointer into its memory. It is gone as
     // far as scheduling and waiting are concerned; what is left is the block,
-    // and that goes when the reply comes. See myrtos_process_kill.
+    // and that goes when the reply comes. See ubiqos_process_kill.
     PROC_STATE_ZOMBIE
 } proc_state_t;
 
@@ -34,7 +34,7 @@ typedef struct {
     uint32_t pid;
     proc_state_t state;
     uintptr_t entry_point;
-    const myrtos_module_header_t *module;   // shared code, one copy for all
+    const ubiqos_module_header_t *module;   // shared code, one copy for all
     void* mem_base;           // bottom of the allocation, private per process
     void* code_base;          // a relocated copy of the module, if it needed one
     void* data_base;          // where the module's own state may start
@@ -59,12 +59,12 @@ typedef struct {
     int32_t  msg_tail;
     int32_t  msg_serving;     // the most recent sender received, -1 when none
     int32_t  msg_dest;        // WAIT_REPLY: the server this sender is waiting on
-    myrtos_msg_t msg;         // WAIT_REPLY: what this sender is offering
-    myrtos_msg_t *msg_out;    // WAIT_RECV: where the message is to be delivered
+    ubiqos_msg_t msg;         // WAIT_REPLY: what this sender is offering
+    ubiqos_msg_t *msg_out;    // WAIT_RECV: where the message is to be delivered
 
     // Ctrl-C, for a process that asked to hear about it rather than be ended by
     // it. Zero means it did not ask and the key kills, which is what every
-    // command here wants. See myrtos_intr_request.
+    // command here wants. See ubiqos_intr_request.
     uint32_t intr_pulse;      // the pulse type to send, 0 for none
     int32_t  intr_deadline;   // tick to kill at once asked, -1 when not asked
 
@@ -92,15 +92,15 @@ typedef struct alloc_hdr {
 
 #define ALLOC_MAGIC 0x4d454d21u   // "MEM!"
 
-tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m);
-tlsf_pool_t myrtos_pool_of_address(void *p);
+tlsf_pool_t ubiqos_pool_for(const ubiqos_module_header_t *m);
+tlsf_pool_t ubiqos_pool_of_address(void *p);
 
 // The second pool. SRAM holds what has timing constraints -- module code runs
 // from there, and so do stacks -- while PSRAM takes what is merely large.
 // Eight megabytes against seventy kilobytes of headroom is not a close call for
 // a framebuffer, but it sits on QSPI behind the XIP cache, so what goes there
 // must not care when it arrives.
-tlsf_pool_t myrtos_bulk_pool;
+tlsf_pool_t ubiqos_bulk_pool;
 
 static pcb_t process_table[MAX_PROCESSES];
 static int32_t current_pid = KERNEL_PID;
@@ -115,12 +115,12 @@ static int32_t current_pid = KERNEL_PID;
 // to the back of its own queue, so equals share. Nothing shares across levels,
 // which is the point of a priority scheduler and also its sharp edge -- a busy
 // process starves everything below it for as long as it runs.
-#define MYRTOS_PRIO_LEVELS  32
-#define MYRTOS_PRIO_IDLE    0
-#define MYRTOS_PRIO_DEFAULT 16
+#define UBIQOS_PRIO_LEVELS  32
+#define UBIQOS_PRIO_IDLE    0
+#define UBIQOS_PRIO_DEFAULT 16
 
-static int32_t  ready_head[MYRTOS_PRIO_LEVELS];
-static int32_t  ready_tail[MYRTOS_PRIO_LEVELS];
+static int32_t  ready_head[UBIQOS_PRIO_LEVELS];
+static int32_t  ready_tail[UBIQOS_PRIO_LEVELS];
 static uint32_t ready_bitmap;
 
 static void ready_enqueue(int32_t pid) {
@@ -182,27 +182,27 @@ static int32_t sleep_head = -1;
 // Not static: the machine's own header lays out a starting frame and needs it.
 // gp addresses the kernel's small data on RISC-V, so a process without it
 // cannot call into the kernel at all.
-uint32_t myrtos_kernel_gp;
+uint32_t ubiqos_kernel_gp;
 static uint32_t kernel_tp;
 
-extern tlsf_pool_t myrtos_mem_pool;
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-void myrtos_print_hex(uint32_t v);
+extern tlsf_pool_t ubiqos_mem_pool;
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+void ubiqos_print_hex(uint32_t v);
 
 #define SYS_EXIT 2u
 
 // Where a process returns when its module_main is done. It cannot return to
 // the kernel -- it has no such call chain -- so it asks to be terminated
 // instead.
-static void myrtos_process_return(void) {
+static void ubiqos_process_return(void) {
     // The same call any module makes, through the same stub -- which knows
     // which instruction its machine traps with, so this does not have to.
-    myrtos_syscall(SYS_EXIT, 0, 0, 0);
+    ubiqos_syscall(SYS_EXIT, 0, 0, 0);
     for (;;) { __asm__ volatile("wfi"); }
 }
 
-void myrtos_scheduler_init(void) {
+void ubiqos_scheduler_init(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         process_table[i].pid = i;
         process_table[i].state = PROC_STATE_FREE;
@@ -212,17 +212,17 @@ void myrtos_scheduler_init(void) {
         process_table[i].recv_timed = false;
         process_table[i].next_ready = -1;
         process_table[i].allocs = NULL;
-        process_table[i].priority = MYRTOS_PRIO_DEFAULT;
+        process_table[i].priority = UBIQOS_PRIO_DEFAULT;
     }
     sleep_head = -1;
-    for (int p = 0; p < MYRTOS_PRIO_LEVELS; p++) { ready_head[p] = -1; ready_tail[p] = -1; }
+    for (int p = 0; p < UBIQOS_PRIO_LEVELS; p++) { ready_head[p] = -1; ready_tail[p] = -1; }
     ready_bitmap = 0;
     // The kernel is pid 0. Its context is filled in at the first trap, since
     // it is already running on its own stack.
     // The idle process sits alone at the bottom. It never blocks, so once it is
     // running or queued the bitmap is never empty and picking the next process
     // needs no special case for "nobody is ready".
-    process_table[KERNEL_PID].priority = MYRTOS_PRIO_IDLE;
+    process_table[KERNEL_PID].priority = UBIQOS_PRIO_IDLE;
     process_table[KERNEL_PID].state = PROC_STATE_RUNNING;
     current_pid = KERNEL_PID;
     // What the kernel is running with, so that a process can be given the same.
@@ -231,10 +231,10 @@ void myrtos_scheduler_init(void) {
     // r9 at -- so both stay zero there, which is what a process with no data
     // area of its own should see.
 #ifdef __riscv
-    __asm__ volatile("mv %0, gp" : "=r"(myrtos_kernel_gp));
+    __asm__ volatile("mv %0, gp" : "=r"(ubiqos_kernel_gp));
     __asm__ volatile("mv %0, tp" : "=r"(kernel_tp));
 #endif
-    myrtos_print("Real-time process scheduler initialized.\n");
+    ubiqos_print("Real-time process scheduler initialized.\n");
 }
 
 // A process that runs kernel code. It has no module and no arguments, only a
@@ -245,23 +245,23 @@ void myrtos_scheduler_init(void) {
 // untenable once priorities arrived. TinyUSB's received data only reaches its
 // FIFO when tud_task runs, so anything busy above the idle process silenced the
 // console in both directions -- not merely its output.
-int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority) {
+int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority) {
     int32_t slot = -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {
         if (process_table[i].state == PROC_STATE_FREE) { slot = i; break; }
     }
     if (slot < 0) return -1;
 
-    void *mem = myrtos_tlsf_malloc(myrtos_mem_pool, stack_bytes);
+    void *mem = ubiqos_tlsf_malloc(ubiqos_mem_pool, stack_bytes);
     if (!mem) return -1;
 
     uintptr_t stack_top = ((uintptr_t)mem + stack_bytes) & ~(uintptr_t)15;
-    myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
-    for (uint32_t i = 0; i < sizeof(myrtos_frame_t) / 4; i++) ((uint32_t*)frame)[i] = 0;
+    ubiqos_frame_t *frame = (ubiqos_frame_t*)(stack_top - sizeof(ubiqos_frame_t));
+    for (uint32_t i = 0; i < sizeof(ubiqos_frame_t) / 4; i++) ((uint32_t*)frame)[i] = 0;
     // A kernel thread takes no arguments and has no data area of its own, so it
     // is given the kernel's own thread pointer.
-    myrtos_frame_start(frame, (uintptr_t)entry,
-                       (uintptr_t)myrtos_process_return, 0, 0, kernel_tp);
+    ubiqos_frame_start(frame, (uintptr_t)entry,
+                       (uintptr_t)ubiqos_process_return, 0, 0, kernel_tp);
 
     process_table[slot].entry_point = frame->pc;
     process_table[slot].module   = NULL;      // nothing to unlink when it ends
@@ -322,7 +322,7 @@ static void reloc_put32(uint8_t *p, uint32_t v)
     p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
 }
 
-static void relocate_image(uint8_t *image, const myrtos_module_header_t *src)
+static void relocate_image(uint8_t *image, const ubiqos_module_header_t *src)
 {
     const uint8_t *table = (const uint8_t*)src + src->reloc_offset;
     uint32_t base = (uint32_t)(uintptr_t)image;
@@ -368,12 +368,12 @@ static void relocate_image(uint8_t *image, const myrtos_module_header_t *src)
 // back separately, because it is what has to be freed and it is not the address
 // anything runs at.
 //
-// Factored out of myrtos_process_create for the library loader, which needs
+// Factored out of ubiqos_process_create for the library loader, which needs
 // exactly this and no process: a library is code the kernel calls, so it is
 // copied, zeroed and relocated the same way and then simply not started.
-uint8_t *myrtos_module_relocated_copy(const myrtos_module_header_t *m, void **owned_out)
+uint8_t *ubiqos_module_relocated_copy(const ubiqos_module_header_t *m, void **owned_out)
 {
-    uint32_t image = myrtos_module_image_size(m);
+    uint32_t image = ubiqos_module_image_size(m);
     uint32_t total = image + m->bss_size;
 
     // Sixteen bytes, and the allocator is not why.
@@ -384,7 +384,7 @@ uint8_t *myrtos_module_relocated_copy(const myrtos_module_header_t *m, void **ow
     // loaded at, half a megabyte aligned, that was free. From an allocator it is
     // not: an eight-byte load against a copy that landed four-past-eight is a
     // misaligned access, and Hazard3 does not fix those up, it traps.
-    void *raw = myrtos_tlsf_malloc(myrtos_pool_for(m), total + 15);
+    void *raw = ubiqos_tlsf_malloc(ubiqos_pool_for(m), total + 15);
     if (!raw) return 0;
     uint8_t *aligned = (uint8_t*)(((uintptr_t)raw + 15) & ~(uintptr_t)15);
 
@@ -406,45 +406,45 @@ uint8_t *myrtos_module_relocated_copy(const myrtos_module_header_t *m, void **ow
 }
 
 
-int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
+int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr,
                               const char *args) {
     // A module without the re-entrant attribute has writable data that every
     // instance would share, so there may only be one. OS-9 said the same thing
     // with the same bit. A service that owns hardware, or a protocol stack with
     // tables of its own, is one of these by nature -- and forcing its globals
     // into per-process storage would be ceremony for a process there is one of.
-    if (module_ptr && !((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT)) {
+    if (module_ptr && !((module_ptr->attr_rev >> 8) & UBIQOS_ATTR_REENTRANT)) {
         for (int i = 1; i < MAX_PROCESSES; i++) {
             if (process_table[i].state == PROC_STATE_FREE) continue;
             if (process_table[i].module != module_ptr) continue;
-            myrtos_print("  refused: ");
-            myrtos_print((const char*)((uintptr_t)module_ptr + module_ptr->name_offset));
-            myrtos_print(" is not re-entrant and is already running\n");
+            ubiqos_print("  refused: ");
+            ubiqos_print((const char*)((uintptr_t)module_ptr + module_ptr->name_offset));
+            ubiqos_print(" is not re-entrant and is already running\n");
             return -2;      // distinct from -1, so a shell can say which it was
         }
     }
 
-    const myrtos_module_header_t *run = module_ptr;
+    const ubiqos_module_header_t *run = module_ptr;
 
     int32_t slot = -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {      // 0 is the kernel
         if (process_table[i].state == PROC_STATE_FREE) { slot = i; break; }
     }
     if (slot < 0) {
-        myrtos_print("Error: process table full.\n");
+        ubiqos_print("Error: process table full.\n");
         return -1;
     }
 
     // One contiguous area: data at the bottom, stack downwards from the top.
     uint32_t bytes = module_ptr->mem_size;
-    void *mem = myrtos_tlsf_malloc(myrtos_pool_for(module_ptr), bytes);
+    void *mem = ubiqos_tlsf_malloc(ubiqos_pool_for(module_ptr), bytes);
     if (!mem) {
-        myrtos_print("Error: failed to allocate process memory.\n");
+        ubiqos_print("Error: failed to allocate process memory.\n");
         return -1;
     }
 
     // A module is copied when it cannot run where it lies, and the module says
-    // so itself: MYRTOS_ATTR_PRIVATE is set at build time for anything with
+    // so itself: UBIQOS_ATTR_PRIVATE is set at build time for anything with
     // writable data, addresses to fix, or a .bss to zero. A module with none of
     // those runs straight out of flash and costs no memory at all, which is
     // most of them.
@@ -453,21 +453,21 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // thing and the modules are a few kilobytes; sharing one relocated copy
     // needs a reference count on something whose lifetime is not the process's,
     // and that is worth having only once the cost shows up somewhere.
-    bool reentrant = ((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_REENTRANT) != 0;
-    bool needs_copy = ((module_ptr->attr_rev >> 8) & MYRTOS_ATTR_PRIVATE) != 0;
+    bool reentrant = ((module_ptr->attr_rev >> 8) & UBIQOS_ATTR_REENTRANT) != 0;
+    bool needs_copy = ((module_ptr->attr_rev >> 8) & UBIQOS_ATTR_PRIVATE) != 0;
     void *code_copy = 0;
     if (!reentrant || needs_copy) {
         code_copy = 0;
-        uint8_t *aligned = myrtos_module_relocated_copy(module_ptr, &code_copy);
+        uint8_t *aligned = ubiqos_module_relocated_copy(module_ptr, &code_copy);
         if (!aligned) {
-            myrtos_print("Error: failed to allocate room to relocate a module.\n");
-            myrtos_tlsf_free(myrtos_pool_for(module_ptr), mem);
+            ubiqos_print("Error: failed to allocate room to relocate a module.\n");
+            ubiqos_tlsf_free(ubiqos_pool_for(module_ptr), mem);
             return -1;
         }
 
         // run is the aligned copy; code_base keeps the allocation itself, which
         // is what has to be given back.
-        run = (const myrtos_module_header_t*)aligned;
+        run = (const ubiqos_module_header_t*)aligned;
     }
 
     // The command line at the bottom of the process's own area, followed by an
@@ -523,17 +523,17 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // and the linker assigned every variable an offset within it. The module's
     // initial values are copied in and the rest zeroed -- the same job OS-9's
     // loader did with a module's data section. Whatever follows is the area
-    // myrtos_data_area hands out for raw use.
+    // ubiqos_data_area hands out for raw use.
     //
-    // MYRTOS_TLS_TCB_BYTES is what the machine's ABI reserves ahead of the
+    // UBIQOS_TLS_TCB_BYTES is what the machine's ABI reserves ahead of the
     // variables. RISC-V reserves nothing; ARM reserves eight for a thread
     // control block, and the linker resolves every local-exec reference to
     // eight plus the offset. The thread pointer is the base either way -- only
     // where the data sits inside the block differs.
     uintptr_t tls_base = ((uintptr_t)&argv[argc + 1] + 3) & ~(uintptr_t)3;
-    uint8_t *tls_data = (uint8_t*)tls_base + MYRTOS_TLS_TCB_BYTES;
+    uint8_t *tls_data = (uint8_t*)tls_base + UBIQOS_TLS_TCB_BYTES;
 
-    for (uint32_t i = 0; i < MYRTOS_TLS_TCB_BYTES; i++) ((uint8_t*)tls_base)[i] = 0;
+    for (uint32_t i = 0; i < UBIQOS_TLS_TCB_BYTES; i++) ((uint8_t*)tls_base)[i] = 0;
 
     const uint8_t *tls_src = module_ptr->tls_init
         ? (const uint8_t*)module_ptr + module_ptr->tls_offset : 0;
@@ -541,12 +541,12 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
         tls_data[i] = (tls_src && i < module_ptr->tls_init) ? tls_src[i] : 0;
     }
 
-    uintptr_t data_base = (tls_base + MYRTOS_TLS_TCB_BYTES
+    uintptr_t data_base = (tls_base + UBIQOS_TLS_TCB_BYTES
                                     + module_ptr->tls_total + 3) & ~(uintptr_t)3;
 
     uintptr_t stack_top = ((uintptr_t)mem + bytes) & ~(uintptr_t)15;
-    myrtos_frame_t *frame = (myrtos_frame_t*)(stack_top - sizeof(myrtos_frame_t));
-    for (uint32_t i = 0; i < sizeof(myrtos_frame_t) / 4; i++) {
+    ubiqos_frame_t *frame = (ubiqos_frame_t*)(stack_top - sizeof(ubiqos_frame_t));
+    for (uint32_t i = 0; i < sizeof(ubiqos_frame_t) / 4; i++) {
         ((uint32_t*)frame)[i] = 0;
     }
     // When the scheduler picks the process, the vector restores these values
@@ -562,8 +562,8 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     //
     // It is the thread-local block and not the raw area: the offsets the linker
     // baked into the code all count from here.
-    myrtos_frame_start(frame, (uintptr_t)run + run->exec_offset,
-                       (uintptr_t)myrtos_process_return,
+    ubiqos_frame_start(frame, (uintptr_t)run + run->exec_offset,
+                       (uintptr_t)ubiqos_process_return,
                        (uint32_t)argc,                     // main(int argc, ...)
                        (uint32_t)(uintptr_t)argv,          //     ..., char **argv)
                        (uint32_t)tls_base);
@@ -576,7 +576,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // rather than what is safe. A module that wants a lot asks for a bigger
     // mem_size; nothing here can tell how deep its calls will go.
     process_table[slot].data_base = (void*)data_base;
-    process_table[slot].data_size = (uint32_t)(stack_top - sizeof(myrtos_frame_t)
+    process_table[slot].data_size = (uint32_t)(stack_top - sizeof(ubiqos_frame_t)
                                                - data_base);
     process_table[slot].mem_size = bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
@@ -596,7 +596,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     // level -- inheriting that would leave the shell below everything.
     process_table[slot].allocs = NULL;
     // A slot is reused, so these are set rather than assumed. The first version
-    // put them in myrtos_kernel_thread by mistake and left process_create alone,
+    // put them in ubiqos_kernel_thread by mistake and left process_create alone,
     // and a fresh slot's zero deadline read as "already asked" -- so Ctrl-C
     // killed a process that had asked to be told about it, silently and every
     // time.
@@ -604,7 +604,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
     process_table[slot].intr_deadline = -1;
 
     process_table[slot].priority = (current_pid == KERNEL_PID)
-                                 ? MYRTOS_PRIO_DEFAULT
+                                 ? UBIQOS_PRIO_DEFAULT
                                  : process_table[current_pid].priority;
     process_table[slot].state = PROC_STATE_READY;
     ready_enqueue(slot);
@@ -620,7 +620,7 @@ int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr,
 
 // Called from the trap handler. Saves the interrupted process's stack and
 // returns the one to take over -- round robin over everything runnable.
-uint32_t myrtos_switch(uint32_t current_sp) {
+uint32_t ubiqos_switch(uint32_t current_sp) {
     process_table[current_pid].saved_sp = current_sp;
     if (process_table[current_pid].state == PROC_STATE_RUNNING) {
         process_table[current_pid].state = PROC_STATE_READY;
@@ -638,9 +638,9 @@ uint32_t myrtos_switch(uint32_t current_sp) {
     return process_table[next].saved_sp;
 }
 
-int32_t myrtos_current_pid(void) { return current_pid; }
+int32_t ubiqos_current_pid(void) { return current_pid; }
 
-uint32_t myrtos_process_get_args(char *buf, uint32_t len) {
+uint32_t ubiqos_process_get_args(char *buf, uint32_t len) {
     const char *src = process_table[current_pid].args;
     if (!src || !len) return 0;
     uint32_t i = 0;
@@ -652,7 +652,7 @@ uint32_t myrtos_process_get_args(char *buf, uint32_t len) {
 // Report one slot. The state numbers are the ABI's, not the enum's: the enum is
 // the kernel's business and free to change, and a module built against an older
 // header should not start naming the wrong states if it does.
-int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
+int32_t ubiqos_process_info(uint32_t slot, ubiqos_psinfo_t *out) {
     if (slot >= MAX_PROCESSES) return -1;
     const pcb_t *p = &process_table[slot];
     if (p->state == PROC_STATE_FREE) return -1;
@@ -661,16 +661,16 @@ int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
     out->priority = p->priority;
     out->mem_size = p->mem_size;
     switch (p->state) {
-        case PROC_STATE_READY:      out->state = MYRTOS_PS_READY; break;
-        case PROC_STATE_RUNNING:    out->state = MYRTOS_PS_RUNNING; break;
-        case PROC_STATE_WAIT_READ:  out->state = MYRTOS_PS_WAIT_READ; break;
-        case PROC_STATE_WAIT_WRITE: out->state = MYRTOS_PS_WAIT_WRITE; break;
-        case PROC_STATE_WAIT_CHILD: out->state = MYRTOS_PS_WAIT_CHILD; break;
-        case PROC_STATE_SLEEPING:   out->state = MYRTOS_PS_SLEEPING; break;
-        case PROC_STATE_WAIT_RECV:  out->state = MYRTOS_PS_WAIT_RECV; break;
-        case PROC_STATE_WAIT_REPLY: out->state = MYRTOS_PS_WAIT_REPLY; break;
-        case PROC_STATE_ZOMBIE:     out->state = MYRTOS_PS_ZOMBIE; break;
-        default:                    out->state = MYRTOS_PS_FREE; break;
+        case PROC_STATE_READY:      out->state = UBIQOS_PS_READY; break;
+        case PROC_STATE_RUNNING:    out->state = UBIQOS_PS_RUNNING; break;
+        case PROC_STATE_WAIT_READ:  out->state = UBIQOS_PS_WAIT_READ; break;
+        case PROC_STATE_WAIT_WRITE: out->state = UBIQOS_PS_WAIT_WRITE; break;
+        case PROC_STATE_WAIT_CHILD: out->state = UBIQOS_PS_WAIT_CHILD; break;
+        case PROC_STATE_SLEEPING:   out->state = UBIQOS_PS_SLEEPING; break;
+        case PROC_STATE_WAIT_RECV:  out->state = UBIQOS_PS_WAIT_RECV; break;
+        case PROC_STATE_WAIT_REPLY: out->state = UBIQOS_PS_WAIT_REPLY; break;
+        case PROC_STATE_ZOMBIE:     out->state = UBIQOS_PS_ZOMBIE; break;
+        default:                    out->state = UBIQOS_PS_FREE; break;
     }
 
     const char *name = "(kernel)";      // a kernel thread has no module
@@ -681,7 +681,7 @@ int32_t myrtos_process_info(uint32_t slot, myrtos_psinfo_t *out) {
     return 0;
 }
 
-uint32_t myrtos_process_count(void) {
+uint32_t ubiqos_process_count(void) {
     uint32_t n = 0;
     for (int i = 0; i < MAX_PROCESSES; i++)
         if (process_table[i].state != PROC_STATE_FREE) n++;
@@ -727,29 +727,29 @@ static void sleep_remove(int32_t pid) {
 // A process changes its own urgency. Returns what it was, so a utility can put
 // it back. Nothing is requeued: the caller is running, hence in no queue, and it
 // is enqueued at its new priority the next time it gives up the processor.
-uint32_t myrtos_set_priority(uint32_t prio) {
-    if (current_pid == KERNEL_PID) return MYRTOS_PRIO_IDLE;   // idle stays idle
+uint32_t ubiqos_set_priority(uint32_t prio) {
+    if (current_pid == KERNEL_PID) return UBIQOS_PRIO_IDLE;   // idle stays idle
     uint32_t was = process_table[current_pid].priority;
 
     // Zero belongs to the idle process and cannot be taken, which makes it a
     // free sentinel for asking without changing. It also closes the hole where
     // a process could demote itself to the idle level and compete with the loop
     // that keeps USB alive.
-    if (prio == MYRTOS_PRIO_IDLE) return was;
+    if (prio == UBIQOS_PRIO_IDLE) return was;
 
-    if (prio >= MYRTOS_PRIO_LEVELS) prio = MYRTOS_PRIO_LEVELS - 1;
+    if (prio >= UBIQOS_PRIO_LEVELS) prio = UBIQOS_PRIO_LEVELS - 1;
     process_table[current_pid].priority = prio;
     return was;
 }
 
-void myrtos_sleep_begin(uint32_t ticks) {
+void ubiqos_sleep_begin(uint32_t ticks) {
     process_table[current_pid].state = PROC_STATE_SLEEPING;
     sleep_insert(current_pid, ticks);
 }
 
 // One decrement per tick, however many are asleep. Several can come due at
 // once: a zero delta means "at the same moment as the one ahead of me".
-void myrtos_sleep_tick(void) {
+void ubiqos_sleep_tick(void) {
     if (sleep_head < 0) return;
     if (process_table[sleep_head].sleep_delta > 0) process_table[sleep_head].sleep_delta--;
 
@@ -764,8 +764,8 @@ void myrtos_sleep_tick(void) {
         if (process_table[pid].recv_timed) {
             process_table[pid].recv_timed = false;
             process_table[pid].msg_out = 0;
-            ((myrtos_frame_t*)(uintptr_t)process_table[pid].saved_sp)->a0 =
-                (uint32_t)MYRTOS_RECV_TIMEOUT;
+            ((ubiqos_frame_t*)(uintptr_t)process_table[pid].saved_sp)->a0 =
+                (uint32_t)UBIQOS_RECV_TIMEOUT;
         }
         process_table[pid].state = PROC_STATE_READY;
         ready_enqueue(pid);
@@ -791,7 +791,7 @@ static bool alloc_unlink(int32_t pid, alloc_hdr_t *h) {
 
 static void *alloc_from(tlsf_pool_t pool, uint32_t size) {
     if (!size || !pool || current_pid == KERNEL_PID) return NULL;
-    alloc_hdr_t *h = myrtos_tlsf_malloc(pool, size + sizeof(alloc_hdr_t));
+    alloc_hdr_t *h = ubiqos_tlsf_malloc(pool, size + sizeof(alloc_hdr_t));
     if (!h) return NULL;
     h->size = size;
     h->magic = ALLOC_MAGIC;
@@ -799,33 +799,33 @@ static void *alloc_from(tlsf_pool_t pool, uint32_t size) {
     return (void*)(h + 1);
 }
 
-void *myrtos_mem_alloc(uint32_t size) {
-    return alloc_from(myrtos_mem_pool, size);
+void *ubiqos_mem_alloc(uint32_t size) {
+    return alloc_from(ubiqos_mem_pool, size);
 }
 
 // Deliberately a separate call rather than a flag. The choice is not about how
 // much memory is wanted but about what it is for: this says "large, and I do
 // not mind waiting". Falls back to SRAM when there is no PSRAM, so a module
 // asking for it still works on a board without any.
-void *myrtos_mem_alloc_bulk(uint32_t size) {
-    void *p = alloc_from(myrtos_bulk_pool, size);
-    return p ? p : alloc_from(myrtos_mem_pool, size);
+void *ubiqos_mem_alloc_bulk(uint32_t size) {
+    void *p = alloc_from(ubiqos_bulk_pool, size);
+    return p ? p : alloc_from(ubiqos_mem_pool, size);
 }
 
 // Where a module's memory comes from. A real-time module keeps everything in
 // SRAM: its stack is touched by every call, and its code -- when it was copied
 // from the card rather than left in flash -- executes from wherever it landed.
 // Anything else can live in PSRAM, which is plentiful and slow.
-tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m) {
-    bool rt = m && ((m->attr_rev >> 8) & MYRTOS_ATTR_REALTIME);
-    return (rt || !myrtos_bulk_pool) ? myrtos_mem_pool : myrtos_bulk_pool;
+tlsf_pool_t ubiqos_pool_for(const ubiqos_module_header_t *m) {
+    bool rt = m && ((m->attr_rev >> 8) & UBIQOS_ATTR_REALTIME);
+    return (rt || !ubiqos_bulk_pool) ? ubiqos_mem_pool : ubiqos_bulk_pool;
 }
 
 // Which pool a block came from is decided by where it is, so the header does
 // not have to carry it -- but by ASKING the pool, not by comparing against the
 // memory map.
 //
-// This read "address >= MYRTOS_PSRAM_BASE" and was wrong for every block it
+// This read "address >= UBIQOS_PSRAM_BASE" and was wrong for every block it
 // ever saw. PSRAM is at 0x11000000 and SRAM at 0x20000000, so every SRAM
 // address is above the PSRAM base: each free of SRAM put the block into the
 // PSRAM pool's free lists. SRAM never came back, and the bulk pool was left
@@ -833,48 +833,48 @@ tlsf_pool_t myrtos_pool_for(const myrtos_module_header_t *m) {
 // handed out.
 //
 // It hid because of the order at startup. The kernel's own heap self-test runs
-// before myrtos_bulk_pool_init, so myrtos_bulk_pool is still null there, the
+// before ubiqos_bulk_pool_init, so ubiqos_bulk_pool is still null there, the
 // guard falls through to the right pool, and the test reports "fully
 // reclaimed". Everything after that boot moment was wrong.
-tlsf_pool_t myrtos_pool_of_address(void *p) {
-    if (myrtos_bulk_pool && myrtos_tlsf_owns(myrtos_bulk_pool, p)) return myrtos_bulk_pool;
-    return myrtos_mem_pool;
+tlsf_pool_t ubiqos_pool_of_address(void *p) {
+    if (ubiqos_bulk_pool && ubiqos_tlsf_owns(ubiqos_bulk_pool, p)) return ubiqos_bulk_pool;
+    return ubiqos_mem_pool;
 }
-static tlsf_pool_t pool_of(void *p) { return myrtos_pool_of_address(p); }
+static tlsf_pool_t pool_of(void *p) { return ubiqos_pool_of_address(p); }
 
 // Refuses anything this process does not own. Without the check a module could
 // free the kernel's own module copies by passing any pointer it liked.
-int32_t myrtos_mem_free(void *ptr) {
+int32_t ubiqos_mem_free(void *ptr) {
     if (!ptr) return 0;
     alloc_hdr_t *h = ((alloc_hdr_t*)ptr) - 1;
     if (h->magic != ALLOC_MAGIC) return -1;
     if (h->owner != (uint32_t)current_pid) return -1;
     if (!alloc_unlink(current_pid, h)) return -1;
     h->magic = 0;
-    myrtos_tlsf_free(pool_of(h), h);
+    ubiqos_tlsf_free(pool_of(h), h);
     return 0;
 }
 
 // Grow or shrink. Allocate, copy, release: TLSF could sometimes extend a block
 // where the neighbour is free, but ours has no path for it and the shortcut is
 // worth nothing until something actually leans on realloc.
-void *myrtos_mem_realloc(void *ptr, uint32_t size) {
-    if (!ptr) return myrtos_mem_alloc(size);
+void *ubiqos_mem_realloc(void *ptr, uint32_t size) {
+    if (!ptr) return ubiqos_mem_alloc(size);
     alloc_hdr_t *h = ((alloc_hdr_t*)ptr) - 1;
     if (h->magic != ALLOC_MAGIC || h->owner != (uint32_t)current_pid) return NULL;
-    if (!size) { myrtos_mem_free(ptr); return NULL; }
+    if (!size) { ubiqos_mem_free(ptr); return NULL; }
 
-    void *fresh = myrtos_mem_alloc(size);
+    void *fresh = ubiqos_mem_alloc(size);
     if (!fresh) return NULL;                    // the old block is left intact
     uint32_t keep = h->size < size ? h->size : size;
     for (uint32_t i = 0; i < keep; i++) ((uint8_t*)fresh)[i] = ((uint8_t*)ptr)[i];
-    myrtos_mem_free(ptr);
+    ubiqos_mem_free(ptr);
     return fresh;
 }
 
 // Hand a block to another process. Nothing calls this yet; it is the operation
 // message passing is built from, and the reason the owner is a field.
-int32_t myrtos_mem_hand_over(void *ptr, int32_t to_pid) {
+int32_t ubiqos_mem_hand_over(void *ptr, int32_t to_pid) {
     if (!ptr || to_pid < 0 || to_pid >= MAX_PROCESSES) return -1;
     if (process_table[to_pid].state == PROC_STATE_FREE) return -1;
     alloc_hdr_t *h = ((alloc_hdr_t*)ptr) - 1;
@@ -886,19 +886,19 @@ int32_t myrtos_mem_hand_over(void *ptr, int32_t to_pid) {
 
 // Where this process may keep state that a static variable cannot hold. Named
 // apart from the ABI's inline wrapper, which the kernel also has in scope.
-void *myrtos_process_data_area(uint32_t *size_out) {
+void *ubiqos_process_data_area(uint32_t *size_out) {
     if (size_out) *size_out = process_table[current_pid].data_size;
     return process_table[current_pid].data_base;
 }
 
 // Block the running process. It is not made ready again here -- something else
 // has to notice that what it waits for has happened.
-void myrtos_block_on_read(int32_t path) {
+void ubiqos_block_on_read(int32_t path) {
     process_table[current_pid].state = PROC_STATE_WAIT_READ;
     process_table[current_pid].wait_path = path;
 }
 
-void myrtos_block_on_write(int32_t path) {
+void ubiqos_block_on_write(int32_t path) {
     process_table[current_pid].state = PROC_STATE_WAIT_WRITE;
     process_table[current_pid].wait_path = path;
 }
@@ -906,7 +906,7 @@ void myrtos_block_on_write(int32_t path) {
 // Wait for a process to exit. False means there is nothing to wait for, either
 // because the pid is out of range or because it has already finished -- the
 // caller then carries on rather than blocking forever.
-bool myrtos_block_on_child(int32_t pid) {
+bool ubiqos_block_on_child(int32_t pid) {
     if (pid <= 0 || pid >= MAX_PROCESSES) return false;
     if (process_table[pid].state == PROC_STATE_FREE) return false;
     process_table[current_pid].state = PROC_STATE_WAIT_CHILD;
@@ -914,7 +914,7 @@ bool myrtos_block_on_child(int32_t pid) {
     return true;
 }
 
-#define MYRTOS_MAX_ARMS 8
+#define UBIQOS_MAX_ARMS 8
 
 typedef struct {
     int32_t  pid;
@@ -922,19 +922,19 @@ typedef struct {
     uint32_t type;
 } arm_t;
 
-static arm_t arms[MYRTOS_MAX_ARMS];
+static arm_t arms[UBIQOS_MAX_ARMS];
 
 static int32_t pulse_deliver(int32_t dest, int32_t from, uint32_t type, uint32_t value);
 
 // Called from the timer tick. A device driver knows whether it has anything
 // waiting; asking it once per millisecond costs the kernel a few comparisons and
 // costs the blocked process nothing at all.
-void myrtos_wake_readers(void) {
+void ubiqos_wake_readers(void) {
     for (int i = 1; i < MAX_PROCESSES; i++) {
         if (process_table[i].state == PROC_STATE_WAIT_READ) {
-            if (!myrtos_io_readable(process_table[i].wait_path, i)) continue;
+            if (!ubiqos_io_readable(process_table[i].wait_path, i)) continue;
         } else if (process_table[i].state == PROC_STATE_WAIT_WRITE) {
-            if (!myrtos_io_writable(process_table[i].wait_path, i)) continue;
+            if (!ubiqos_io_writable(process_table[i].wait_path, i)) continue;
         } else {
             continue;
         }
@@ -946,13 +946,13 @@ void myrtos_wake_readers(void) {
     // because a watcher is not blocked on the descriptor -- it is off doing
     // something else, or waiting in receive for whichever of several things
     // happens first, which is the entire point of arming.
-    for (int i = 0; i < MYRTOS_MAX_ARMS; i++) {
+    for (int i = 0; i < UBIQOS_MAX_ARMS; i++) {
         if (!arms[i].pid) continue;
         if (process_table[arms[i].pid].state == PROC_STATE_FREE) {
             arms[i].pid = 0;
             continue;
         }
-        if (!myrtos_io_readable(arms[i].path, arms[i].pid)) continue;
+        if (!ubiqos_io_readable(arms[i].path, arms[i].pid)) continue;
         pulse_deliver(arms[i].pid, 0, arms[i].type, (uint32_t)arms[i].path);
         arms[i].pid = 0;                        // one shot; ask again for more
     }
@@ -972,7 +972,7 @@ static void reap(uint32_t pid);
 //
 // A pulse is a message small enough to copy: a type and a value, no pointer and
 // no reply. Sending one never blocks and never waits for anything, which is the
-// whole point -- it is what myrtos_send deliberately is not.
+// whole point -- it is what ubiqos_send deliberately is not.
 //
 // The two exist side by side because they pay for different things. A send
 // blocks so that the receiver may read the sender's own memory without copying
@@ -986,7 +986,7 @@ static void reap(uint32_t pid);
 // process can fill it and starve the rest, which is a real objection -- but a
 // pulse may be refused, unlike a message that a blocked sender is waiting on,
 // so the failure is visible to whoever caused it rather than silent.
-#define MYRTOS_MAX_PULSES 24
+#define UBIQOS_MAX_PULSES 24
 
 typedef struct {
     int32_t  dest;
@@ -995,10 +995,10 @@ typedef struct {
     uint32_t value;
 } pulse_t;
 
-static pulse_t pulses[MYRTOS_MAX_PULSES];
+static pulse_t pulses[UBIQOS_MAX_PULSES];
 static uint32_t pulse_count;
 
-static void pulse_into(myrtos_msg_t *out, int32_t from, uint32_t type, uint32_t value) {
+static void pulse_into(ubiqos_msg_t *out, int32_t from, uint32_t type, uint32_t value) {
     out->type   = type;
     out->len    = value;      // the value rides in len; a pulse has no buffer
     out->data   = 0;
@@ -1006,7 +1006,7 @@ static void pulse_into(myrtos_msg_t *out, int32_t from, uint32_t type, uint32_t 
 }
 
 // Take the oldest pulse addressed to this process, if there is one.
-static bool pulse_take(int32_t pid, myrtos_msg_t *out) {
+static bool pulse_take(int32_t pid, ubiqos_msg_t *out) {
     for (uint32_t i = 0; i < pulse_count; i++) {
         if (pulses[i].dest != pid) continue;
         pulse_into(out, pulses[i].from, pulses[i].type, pulses[i].value);
@@ -1019,7 +1019,7 @@ static bool pulse_take(int32_t pid, myrtos_msg_t *out) {
 
 // Non-blocking, and it may be refused. -1 means the destination is not there or
 // the ring is full; the sender decides whether that matters.
-// No interrupt guard, for the same reason myrtos_msg_send has none: this runs
+// No interrupt guard, for the same reason ubiqos_msg_send has none: this runs
 // inside a trap, and a trap runs with mstatus.MIE clear. The day something wants
 // to send a pulse from an interrupt handler -- which is exactly what a device
 // arming a reader would want -- that stops being true and this needs one.
@@ -1038,13 +1038,13 @@ static int32_t pulse_deliver(int32_t dest, int32_t from, uint32_t type, uint32_t
         d->msg_out = 0;
         // Zero, not a pid: a pulse is not replied to, and replying to zero
         // fails. QNX says the same thing with the same number.
-        ((myrtos_frame_t*)(uintptr_t)d->saved_sp)->a0 = 0;
+        ((ubiqos_frame_t*)(uintptr_t)d->saved_sp)->a0 = 0;
         d->state = PROC_STATE_READY;
         ready_enqueue(dest);
         return 0;
     }
 
-    if (pulse_count >= MYRTOS_MAX_PULSES) return -1;
+    if (pulse_count >= UBIQOS_MAX_PULSES) return -1;
     pulses[pulse_count].dest  = dest;
     pulses[pulse_count].from  = from;
     pulses[pulse_count].type  = type;
@@ -1071,14 +1071,14 @@ static int32_t pulse_deliver(int32_t dest, int32_t from, uint32_t type, uint32_t
 // dies on the key with no change. The deadline means a process that does not go
 // is killed anyway, because Ctrl-C must always work in the end. And a second
 // Ctrl-C kills at once, which is what a person does when the first did nothing.
-#define MYRTOS_INTR_GRACE_TICKS 500
+#define UBIQOS_INTR_GRACE_TICKS 500
 
-extern volatile uint32_t myrtos_ticks;
-int32_t myrtos_process_kill(int32_t pid);
+extern volatile uint32_t ubiqos_ticks;
+int32_t ubiqos_process_kill(int32_t pid);
 
-// Named apart from the ABI's myrtos_catch_intr, which is an inline this file
+// Named apart from the ABI's ubiqos_catch_intr, which is an inline this file
 // also sees through modules.h.
-int32_t myrtos_intr_catch(uint32_t type) {
+int32_t ubiqos_intr_catch(uint32_t type) {
     if (current_pid <= 0) return -1;
     process_table[current_pid].intr_pulse = type;
     return 0;
@@ -1087,7 +1087,7 @@ int32_t myrtos_intr_catch(uint32_t type) {
 // True when the process was told and should be given its grace. False when it
 // must be killed -- because it never asked, or because it was asked already and
 // this is the second press.
-bool myrtos_intr_request(int32_t pid) {
+bool ubiqos_intr_request(int32_t pid) {
     if (pid <= 0 || pid >= MAX_PROCESSES) return false;
     pcb_t *p = &process_table[pid];
     if (p->state == PROC_STATE_FREE) return false;
@@ -1096,7 +1096,7 @@ bool myrtos_intr_request(int32_t pid) {
 
     // Never zero: zero is what an uninitialised slot holds, and this must not
     // be mistaken for one.
-    uint32_t at = myrtos_ticks + MYRTOS_INTR_GRACE_TICKS;
+    uint32_t at = ubiqos_ticks + UBIQOS_INTR_GRACE_TICKS;
     p->intr_deadline = (int32_t)(at ? at : 1u);
     pulse_deliver(pid, 0, p->intr_pulse, 0);          // from the kernel, as arming does
     return true;
@@ -1105,24 +1105,24 @@ bool myrtos_intr_request(int32_t pid) {
 // Called from the tick. A process that was asked and stayed is ended.
 //
 // intr_pulse is tested first and that is not belt and braces. A kernel thread is
-// not built by myrtos_process_create, so its fields keep the zeroes the static
+// not built by ubiqos_process_create, so its fields keep the zeroes the static
 // table was born with -- and a deadline of zero is in the past. The first
 // version tested the deadline alone and killed the USB thread, the filesystem
 // server and everything else on the very first tick, half a second after the
 // board came up. Only a process that asked can have a deadline that means
 // anything.
-void myrtos_intr_tick(void) {
+void ubiqos_intr_tick(void) {
     for (int i = 1; i < MAX_PROCESSES; i++) {
         pcb_t *p = &process_table[i];
         if (p->state == PROC_STATE_FREE) continue;
         if (!p->intr_pulse || p->intr_deadline <= 0) continue;
-        if ((int32_t)(myrtos_ticks - (uint32_t)p->intr_deadline) < 0) continue;
+        if ((int32_t)(ubiqos_ticks - (uint32_t)p->intr_deadline) < 0) continue;
         p->intr_deadline = -1;
-        myrtos_process_kill(i);
+        ubiqos_process_kill(i);
     }
 }
 
-int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
+int32_t ubiqos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
     return pulse_deliver(dest, (int32_t)current_pid, type, value);
 }
 
@@ -1134,7 +1134,7 @@ int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
 //
 // It rides on the loop below, which the timer already runs once a millisecond
 // to wake blocked readers. No driver knows anything about this: the same
-// myrtos_io_readable that decides whether a sleeping reader may run decides
+// ubiqos_io_readable that decides whether a sleeping reader may run decides
 // whether a watcher gets its pulse.
 //
 // One shot, as ionotify is. It fires once and disarms, so a device that stays
@@ -1146,9 +1146,9 @@ int32_t myrtos_pulse_send(int32_t dest, uint32_t type, uint32_t value) {
 // which one woke.
 // type 0 cancels. Arming the same descriptor twice replaces the first, so a
 // program cannot accumulate watches it has forgotten about.
-int32_t myrtos_arm_read(int32_t path, uint32_t type) {
+int32_t ubiqos_arm_read(int32_t path, uint32_t type) {
     int32_t free_slot = -1;
-    for (int i = 0; i < MYRTOS_MAX_ARMS; i++) {
+    for (int i = 0; i < UBIQOS_MAX_ARMS; i++) {
         if (arms[i].pid == (int32_t)current_pid && arms[i].path == path) {
             if (type == 0) { arms[i].pid = 0; return 0; }
             arms[i].type = type;
@@ -1168,9 +1168,9 @@ int32_t myrtos_arm_read(int32_t path, uint32_t type) {
 // arming several sources and caring only about whichever speaks first: the
 // moment the first pulse arrives, the rest are of no interest, and each would
 // otherwise fire one stray pulse into a receive that is no longer expecting it.
-int32_t myrtos_disarm_reads(void) {
+int32_t ubiqos_disarm_reads(void) {
     int32_t n = 0;
-    for (int i = 0; i < MYRTOS_MAX_ARMS; i++)
+    for (int i = 0; i < UBIQOS_MAX_ARMS; i++)
         if (arms[i].pid == (int32_t)current_pid) { arms[i].pid = 0; n++; }
 
     // And the ones that have already gone off. Dropping the watches alone was
@@ -1195,7 +1195,7 @@ int32_t myrtos_disarm_reads(void) {
 }
 
 static void arms_drop_for(int32_t pid) {
-    for (int i = 0; i < MYRTOS_MAX_ARMS; i++)
+    for (int i = 0; i < UBIQOS_MAX_ARMS; i++)
         if (arms[i].pid == pid) arms[i].pid = 0;
 }
 
@@ -1211,7 +1211,7 @@ static void pulse_drop_for(int32_t pid) {
 }
 
 // True when the sender has been queued and must now block.
-bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
+bool ubiqos_msg_send(int32_t dest, const ubiqos_msg_t *m) {
     if (dest <= 0 || dest >= MAX_PROCESSES || !m) return false;
     pcb_t *d = &process_table[dest];
     if (d->state == PROC_STATE_FREE) return false;
@@ -1235,7 +1235,7 @@ bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
         *d->msg_out = me->msg;
         d->msg_out = 0;
         d->msg_serving = (int32_t)current_pid;
-        ((myrtos_frame_t*)(uintptr_t)d->saved_sp)->a0 = (uint32_t)current_pid;
+        ((ubiqos_frame_t*)(uintptr_t)d->saved_sp)->a0 = (uint32_t)current_pid;
         d->state = PROC_STATE_READY;
         ready_enqueue(dest);
     } else {
@@ -1249,16 +1249,16 @@ bool myrtos_msg_send(int32_t dest, const myrtos_msg_t *m) {
 
 // The sender's pid, or -1 when the caller has been put to sleep waiting.
 // Wait for a message, for at most `ms` milliseconds. Zero polls and never
-// blocks; MYRTOS_TIMEOUT_FOREVER is the old behaviour and is what
-// myrtos_msg_receive asks for.
+// blocks; UBIQOS_TIMEOUT_FOREVER is the old behaviour and is what
+// ubiqos_msg_receive asks for.
 //
-// The deadline is the ordinary sleep list -- the same one myrtos_sleep uses --
+// The deadline is the ordinary sleep list -- the same one ubiqos_sleep uses --
 // so a receiver with a timeout is queued in two places at once and whichever
 // happens first cancels the other. reap already unlinks a dying process from
 // the sleep list, so nothing more is needed there.
-int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms) {
+int32_t ubiqos_msg_receive_tmo(ubiqos_msg_t *out, uint32_t ms) {
     // A second request may be taken before the first is answered: a server that
-    // has to wait for something puts the sender aside with myrtos_reply_to and
+    // has to wait for something puts the sender aside with ubiqos_reply_to and
     // goes on serving. msg_serving is merely the most recent, for the simple
     // servers that answer before they ask again.
     pcb_t *me = &process_table[current_pid];
@@ -1278,22 +1278,22 @@ int32_t myrtos_msg_receive_tmo(myrtos_msg_t *out, uint32_t ms) {
     }
     if (pulse_take((int32_t)current_pid, out)) return 0;   // 0: do not reply
 
-    if (ms == 0) return MYRTOS_RECV_TIMEOUT;   // a poll, which never blocks
+    if (ms == 0) return UBIQOS_RECV_TIMEOUT;   // a poll, which never blocks
 
     me->msg_out = out;
     me->state = PROC_STATE_WAIT_RECV;
-    if (ms != MYRTOS_TIMEOUT_FOREVER) {
+    if (ms != UBIQOS_TIMEOUT_FOREVER) {
         sleep_insert((int32_t)current_pid, ms);
         me->recv_timed = true;
     }
     return -1;
 }
 
-int32_t myrtos_msg_receive(myrtos_msg_t *out) {
-    return myrtos_msg_receive_tmo(out, MYRTOS_TIMEOUT_FOREVER);
+int32_t ubiqos_msg_receive(ubiqos_msg_t *out) {
+    return ubiqos_msg_receive_tmo(out, UBIQOS_TIMEOUT_FOREVER);
 }
 
-int32_t myrtos_msg_reply(int32_t status) {
+int32_t ubiqos_msg_reply(int32_t status) {
     pcb_t *me = &process_table[current_pid];
     int32_t s = me->msg_serving;
     if (s < 0) return -1;
@@ -1302,7 +1302,7 @@ int32_t myrtos_msg_reply(int32_t status) {
     // is the moment its memory stops being ours to write to.
     if (process_table[s].state == PROC_STATE_ZOMBIE) { reap((uint32_t)s); return 0; }
     if (process_table[s].state == PROC_STATE_WAIT_REPLY) {
-        ((myrtos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)status;
+        ((ubiqos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)status;
         process_table[s].state = PROC_STATE_READY;
         ready_enqueue(s);
     }
@@ -1313,7 +1313,7 @@ int32_t myrtos_msg_reply(int32_t status) {
 // anyone having written a pid down.
 // Answer a particular sender. Refuses one that is not blocked waiting on this
 // process, so a server cannot release somebody else's client.
-int32_t myrtos_msg_reply_to(int32_t pid, int32_t status) {
+int32_t ubiqos_msg_reply_to(int32_t pid, int32_t status) {
     if (pid <= 0 || pid >= MAX_PROCESSES) return -1;
     pcb_t *p = &process_table[pid];
     if (p->state == PROC_STATE_ZOMBIE) {        // killed while we held it
@@ -1328,13 +1328,13 @@ int32_t myrtos_msg_reply_to(int32_t pid, int32_t status) {
     if (process_table[current_pid].msg_serving == pid)
         process_table[current_pid].msg_serving = -1;
     p->msg_dest = -1;
-    ((myrtos_frame_t*)(uintptr_t)p->saved_sp)->a0 = (uint32_t)status;
+    ((ubiqos_frame_t*)(uintptr_t)p->saved_sp)->a0 = (uint32_t)status;
     p->state = PROC_STATE_READY;
     ready_enqueue(pid);
     return 0;
 }
 
-int32_t myrtos_find_pid(const char *name) {
+int32_t ubiqos_find_pid(const char *name) {
     if (!name) return -1;
     for (int i = 1; i < MAX_PROCESSES; i++) {
         const pcb_t *p = &process_table[i];
@@ -1357,7 +1357,7 @@ static void msg_unlink_all(int32_t pid) {
         int32_t next = process_table[s].msg_next;
         process_table[s].msg_next = -1;
         if (process_table[s].state == PROC_STATE_WAIT_REPLY) {
-            ((myrtos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)-1;
+            ((ubiqos_frame_t*)(uintptr_t)process_table[s].saved_sp)->a0 = (uint32_t)-1;
             process_table[s].state = PROC_STATE_READY;
             ready_enqueue(s);
         }
@@ -1371,7 +1371,7 @@ static void msg_unlink_all(int32_t pid) {
         if (process_table[i].state != PROC_STATE_WAIT_REPLY) continue;
         if (process_table[i].msg_dest != pid) continue;
         process_table[i].msg_dest = -1;
-        ((myrtos_frame_t*)(uintptr_t)process_table[i].saved_sp)->a0 = (uint32_t)-1;
+        ((ubiqos_frame_t*)(uintptr_t)process_table[i].saved_sp)->a0 = (uint32_t)-1;
         process_table[i].state = PROC_STATE_READY;
         ready_enqueue(i);
     }
@@ -1380,7 +1380,7 @@ static void msg_unlink_all(int32_t pid) {
         int32_t v = p->msg_serving;
         p->msg_serving = -1;
         if (process_table[v].state == PROC_STATE_WAIT_REPLY) {
-            ((myrtos_frame_t*)(uintptr_t)process_table[v].saved_sp)->a0 = (uint32_t)-1;
+            ((ubiqos_frame_t*)(uintptr_t)process_table[v].saved_sp)->a0 = (uint32_t)-1;
             process_table[v].state = PROC_STATE_READY;
             ready_enqueue(v);
         }
@@ -1388,16 +1388,16 @@ static void msg_unlink_all(int32_t pid) {
 }
 
 // The current directory, and how a child comes to share its parent's.
-const char *myrtos_cwd_get(void) { return process_table[current_pid].cwd; }
+const char *ubiqos_cwd_get(void) { return process_table[current_pid].cwd; }
 
 // The same, for another process. The filesystem server resolves a client's
 // relative path and so needs the client's directory, not its own.
-const char *myrtos_cwd_of(int32_t pid) {
+const char *ubiqos_cwd_of(int32_t pid) {
     if (pid < 0 || pid >= MAX_PROCESSES) return "/";
     return process_table[pid].cwd;
 }
 
-bool myrtos_cwd_set_of(int32_t pid, const char *abs) {
+bool ubiqos_cwd_set_of(int32_t pid, const char *abs) {
     if (pid < 0 || pid >= MAX_PROCESSES) return false;
     char *dst = process_table[pid].cwd;
     uint32_t max = sizeof(process_table[0].cwd), i = 0;
@@ -1407,7 +1407,7 @@ bool myrtos_cwd_set_of(int32_t pid, const char *abs) {
     return true;
 }
 
-void myrtos_cwd_inherit(int32_t parent, int32_t child) {
+void ubiqos_cwd_inherit(int32_t parent, int32_t child) {
     if (parent < 0 || parent >= MAX_PROCESSES) return;
     if (child  < 0 || child  >= MAX_PROCESSES) return;
     uint32_t i = 0;
@@ -1418,7 +1418,7 @@ void myrtos_cwd_inherit(int32_t parent, int32_t child) {
     process_table[child].cwd[i] = 0;
 }
 
-bool myrtos_cwd_set(const char *abs) {
+bool ubiqos_cwd_set(const char *abs) {
     char *dst = process_table[current_pid].cwd;
     uint32_t max = sizeof(process_table[0].cwd);
     uint32_t i = 0;
@@ -1447,26 +1447,26 @@ static void reap(uint32_t pid) {
     msg_unlink_all((int32_t)pid);               // release anyone waiting on us
     pulse_drop_for((int32_t)pid);               // nobody is waiting on these
     arms_drop_for((int32_t)pid);                // and no one to tell any more
-    myrtos_io_close_all(pid);
+    ubiqos_io_close_all(pid);
     // And on the coprocessor, where a listening socket keeps its port. Marks
     // only -- see the note in wifilink.c for why it cannot close them here.
-    { extern void myrtos_wifi_forget_pid(int32_t pid); myrtos_wifi_forget_pid((int32_t)pid); }
-#if MYRTOS_LWIP
-    { extern void myrtos_lwip_forget_pid(int32_t pid); myrtos_lwip_forget_pid((int32_t)pid); }
+    { extern void ubiqos_wifi_forget_pid(int32_t pid); ubiqos_wifi_forget_pid((int32_t)pid); }
+#if UBIQOS_LWIP
+    { extern void ubiqos_lwip_forget_pid(int32_t pid); ubiqos_lwip_forget_pid((int32_t)pid); }
 #endif
     if (process_table[pid].module) {            // a kernel thread has none
-        myrtos_moddir_unlink(process_table[pid].module);
+        ubiqos_moddir_unlink(process_table[pid].module);
     }
     // Everything this process was given goes back, whether it freed it or not.
     alloc_hdr_t *h = process_table[pid].allocs;
     while (h) { alloc_hdr_t *next = h->next; h->magic = 0;
-                myrtos_tlsf_free(pool_of(h), h); h = next; }
+                ubiqos_tlsf_free(pool_of(h), h); h = next; }
     process_table[pid].allocs = NULL;
 
-    myrtos_tlsf_free(pool_of(process_table[pid].mem_base),
+    ubiqos_tlsf_free(pool_of(process_table[pid].mem_base),
                      process_table[pid].mem_base);
     if (process_table[pid].code_base) {
-        myrtos_tlsf_free(pool_of(process_table[pid].code_base),
+        ubiqos_tlsf_free(pool_of(process_table[pid].code_base),
                          process_table[pid].code_base);
         process_table[pid].code_base = NULL;
     }
@@ -1476,7 +1476,7 @@ static void reap(uint32_t pid) {
     wake_waiters(pid);
 }
 
-void myrtos_process_exit(void) {
+void ubiqos_process_exit(void) {
     if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
     reap(current_pid);
 }
@@ -1492,7 +1492,7 @@ void myrtos_process_exit(void) {
 // So it stops being a process immediately, which is what the person who typed
 // ctrl-C asked for, and is not taken apart until the reply arrives. Everything
 // that would look at it -- the scheduler, wait, a later reply -- can tell.
-int32_t myrtos_process_kill(int32_t pid) {
+int32_t ubiqos_process_kill(int32_t pid) {
     if (pid <= 0 || pid >= MAX_PROCESSES) return -1;
     pcb_t *p = &process_table[pid];
     if (p->state == PROC_STATE_FREE || p->state == PROC_STATE_ZOMBIE) return -1;
@@ -1549,18 +1549,18 @@ static void mtimecmp_write(uint64_t value) {
     MTIMECMP_HI = (uint32_t)(value >> 32);
 }
 
-void myrtos_timer_rearm(void) {
+void ubiqos_timer_rearm(void) {
     mtimecmp_write(mtime_read() + timer_interval);
 }
 
-void myrtos_timer_init(uint32_t interval_ticks) {
+void ubiqos_timer_init(uint32_t interval_ticks) {
     timer_interval = interval_ticks;
     MTIME_CTRL |= 1u;
-    myrtos_timer_rearm();
+    ubiqos_timer_rearm();
     __asm__ volatile("csrs mie, %0" : : "r"(MIE_MTIE));
     __asm__ volatile("csrs mstatus, %0" : : "r"(MSTATUS_MIE));
 }
 
-uint64_t myrtos_timer_now(void) { return mtime_read(); }
+uint64_t ubiqos_timer_now(void) { return mtime_read(); }
 
 #endif   // __riscv

@@ -1,5 +1,5 @@
-#ifndef MYRTOS_ARM_TRAP_H
-#define MYRTOS_ARM_TRAP_H
+#ifndef UBIQOS_ARM_TRAP_H
+#define UBIQOS_ARM_TRAP_H
 
 #include <stdint.h>
 
@@ -35,9 +35,9 @@ typedef struct {
     uint32_t lr;                 // the interrupted code's own return address
     uint32_t pc;                 // where it resumes: mepc's opposite number
     uint32_t xpsr;
-} myrtos_frame_t;
+} ubiqos_frame_t;
 
-_Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S");
+_Static_assert(sizeof(ubiqos_frame_t) == 72, "the frame must match scheduler.S");
 
 // IPSR exception numbers, which is what cause holds here.
 #define ARM_EXC_HARDFAULT   3u
@@ -48,10 +48,10 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 // What happened, asked in the way the shared code asks it. There is no
 // interrupt bit to test: the number says which, and anything at or above 16 is
 // a peripheral interrupt.
-#define MYRTOS_TRAP_IS_INTERRUPT(f)  ((f)->cause >= ARM_EXC_PENDSV)
-#define MYRTOS_TRAP_IS_TIMER(f)      ((f)->cause == ARM_EXC_SYSTICK)
-#define MYRTOS_CAUSE_IS_SYSCALL(c)   ((c) == ARM_EXC_SVCALL)
-#define MYRTOS_TRAP_IS_SYSCALL(f)    MYRTOS_CAUSE_IS_SYSCALL((f)->cause)
+#define UBIQOS_TRAP_IS_INTERRUPT(f)  ((f)->cause >= ARM_EXC_PENDSV)
+#define UBIQOS_TRAP_IS_TIMER(f)      ((f)->cause == ARM_EXC_SYSTICK)
+#define UBIQOS_CAUSE_IS_SYSCALL(c)   ((c) == ARM_EXC_SVCALL)
+#define UBIQOS_TRAP_IS_SYSCALL(f)    UBIQOS_CAUSE_IS_SYSCALL((f)->cause)
 
 // A breakpoint is not a cause of its own here. With no debugger attached bkpt
 // raises a debug monitor exception that nobody has enabled, so it escalates --
@@ -63,7 +63,7 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 // that caused it, and a second fault inside the fault handler is a lockup.
 #define ARM_SCB_HFSR  (*(volatile uint32_t *)0xE000ED2Cu)
 #define ARM_HFSR_DEBUGEVT  0x80000000u
-#define MYRTOS_TRAP_IS_BREAKPOINT(f) ((f)->cause == ARM_EXC_HARDFAULT && \
+#define UBIQOS_TRAP_IS_BREAKPOINT(f) ((f)->cause == ARM_EXC_HARDFAULT && \
                                       (ARM_SCB_HFSR & ARM_HFSR_DEBUGEVT) != 0)
 
 // Past the call, and back onto it.
@@ -72,8 +72,8 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 // mepc points at the ecall and has to be stepped over. Going back is two bytes,
 // because svc has only a sixteen-bit form -- where ecall has only a
 // thirty-two-bit one. The asymmetry is the whole reason these are macros.
-#define MYRTOS_TRAP_SKIP(f)  ((void)0)
-#define MYRTOS_TRAP_REDO(f)  ((f)->pc -= 2)
+#define UBIQOS_TRAP_SKIP(f)  ((void)0)
+#define UBIQOS_TRAP_REDO(f)  ((f)->pc -= 2)
 
 // The address that faulted. RISC-V hands it over in the frame as mtval; here it
 // stays in a peripheral register until someone asks, so asking is what this is.
@@ -92,7 +92,7 @@ _Static_assert(sizeof(myrtos_frame_t) == 72, "the frame must match scheduler.S")
 #define ARM_CFSR_MMARVALID  (1u << 7)
 #define ARM_CFSR_BFARVALID  (1u << 15)
 
-static inline uint32_t myrtos_arm_fault_address(void)
+static inline uint32_t ubiqos_arm_fault_address(void)
 {
     uint32_t cfsr = ARM_SCB_CFSR;
     if (cfsr & ARM_CFSR_BFARVALID) return ARM_SCB_BFAR;
@@ -100,13 +100,13 @@ static inline uint32_t myrtos_arm_fault_address(void)
     return cfsr;
 }
 
-#define MYRTOS_TRAP_FAULT(f)  ((void)(f), myrtos_arm_fault_address())
+#define UBIQOS_TRAP_FAULT(f)  ((void)(f), ubiqos_arm_fault_address())
 
 // Past the breakpoint. Two bytes always: bkpt has no wide form, where RISC-V
 // has to read the instruction to find out which ebreak it was. The sticky bit
 // in HFSR is written back to clear it, or the next real HardFault would look
 // like another assertion and be stepped over into whatever follows.
-#define MYRTOS_TRAP_STEP_BREAKPOINT(f) do { \
+#define UBIQOS_TRAP_STEP_BREAKPOINT(f) do { \
         ARM_SCB_HFSR = ARM_HFSR_DEBUGEVT; \
         (f)->pc += 2u; \
     } while (0)
@@ -153,9 +153,9 @@ static inline uint32_t myrtos_arm_fault_address(void)
 //
 // Nothing uses the eight bytes. They are the ABI's, and the price of them is
 // eight bytes per process.
-#define MYRTOS_TLS_TCB_BYTES  8u
+#define UBIQOS_TLS_TCB_BYTES  8u
 
-static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
+static inline void ubiqos_frame_start(ubiqos_frame_t *f, uintptr_t entry,
                                       uintptr_t ret, uint32_t a0, uint32_t a1,
                                       uint32_t tls)
 {
@@ -172,6 +172,6 @@ static inline void myrtos_frame_start(myrtos_frame_t *f, uintptr_t entry,
 // over the stack it is standing on, and MSP moves to an interrupt stack of its
 // own. Why that second half is not optional is written out in kernel/arm/stack.c,
 // where the interrupt stack lives.
-void myrtos_arch_become_process(void);
+void ubiqos_arch_become_process(void);
 
 #endif

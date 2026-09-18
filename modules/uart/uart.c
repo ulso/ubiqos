@@ -8,7 +8,7 @@
 // named had to be one the kernel was built with. Now it does not.
 //
 // Everything about the device is unchanged. /dev/term is registered from the
-// same descriptor, by the same myrtos_io_add_descriptor, through the same
+// same descriptor, by the same ubiqos_io_add_descriptor, through the same
 // vtable. What changed is where the vtable comes from.
 //
 // Like sdlib, this compiles against the SDK's headers -- the UART register
@@ -16,11 +16,11 @@
 // function it needs, uart_init, from the kernel's table.
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 static uart_inst_t *term_uart;
 static uint32_t term_tx_pin;
 
@@ -37,8 +37,8 @@ static void print_hex(uint32_t v)
 
 static int32_t term_configure(const void *config, uint32_t size)
 {
-    if (size < sizeof(myrtos_uart_config_t)) return -1;
-    const myrtos_uart_config_t *c = (const myrtos_uart_config_t*)config;
+    if (size < sizeof(ubiqos_uart_config_t)) return -1;
+    const ubiqos_uart_config_t *c = (const ubiqos_uart_config_t*)config;
 
     term_uart = (c->uart_base == 0x40070000u) ? uart0 : uart1;
     term_tx_pin = c->tx_pin;
@@ -89,15 +89,15 @@ static int32_t term_read(uint8_t *buf, uint32_t len)
     return 0;
 }
 
-static bool uart_init_module(const myrtos_kernel_api_t *api)
+static bool uart_init_module(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = uart_init_module,
     .ops = {

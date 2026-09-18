@@ -9,8 +9,8 @@
 // Anything else is copied through, which is honest -- a format this does not
 // know shows up as itself rather than as silence or a crash.
 //
-// Collected and handed over through myrtos_print, not a character at a time
-// through myrtos_putc. putc reaches the screen and the UART but not the kernel
+// Collected and handed over through ubiqos_print, not a character at a time
+// through ubiqos_putc. putc reaches the screen and the UART but not the kernel
 // log, and the Waveshare board has no UART and, with an application on its
 // panel, no visible console either -- so all that reached /var/dmesg of
 // "sd: gave up waiting for a DMA channel to finish (sm 1 at 2)" was the one
@@ -20,7 +20,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 
 static char out_buf[96];
 static uint32_t out_len;
@@ -28,7 +28,7 @@ static uint32_t out_len;
 static void out_flush(void) {
     if (!out_len) return;
     out_buf[out_len] = 0;
-    myrtos_print(out_buf);
+    ubiqos_print(out_buf);
     out_len = 0;
 }
 
@@ -50,7 +50,7 @@ static void put_u32(uint32_t v, uint32_t base, uint32_t width, char pad) {
     while (n) out(buf[--n]);
 }
 
-void myrtos_printf(const char *fmt, ...) {
+void ubiqos_printf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
 

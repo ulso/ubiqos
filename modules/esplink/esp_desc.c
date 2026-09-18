@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // Device descriptor for the wire to the ESP32-C6. No code -- the module is
 // just these bytes.
@@ -9,8 +9,8 @@
 // the parsing.
 
 typedef struct {
-    myrtos_descriptor_t desc;
-    myrtos_esp_config_t esp;
+    ubiqos_descriptor_t desc;
+    ubiqos_esp_config_t esp;
 } esp_descriptor_t;
 
 __attribute__((section(".rodata.descriptor"), used))
@@ -18,10 +18,10 @@ const esp_descriptor_t esp_descriptor = {
     .desc = {
         .device_name   = "esp",
         .driver_name   = "esplink",
-        .device_class  = MYRTOS_CLASS_CHAR,
+        .device_class  = UBIQOS_CLASS_CHAR,
         .reserved      = 0,
-        .config_offset = sizeof(myrtos_descriptor_t),
-        .config_size   = sizeof(myrtos_esp_config_t),
+        .config_offset = sizeof(ubiqos_descriptor_t),
+        .config_size   = sizeof(ubiqos_esp_config_t),
     },
     .esp = {
         .uart_base = 0x40078000u,   // UART1

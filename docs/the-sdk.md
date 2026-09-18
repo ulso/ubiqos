@@ -1,6 +1,6 @@
 # Building a module outside this tree
 
-Everything a module needs is in [`sdk/myrtos-sdk.cmake`](../sdk/myrtos-sdk.cmake),
+Everything a module needs is in [`sdk/ubiqos-sdk.cmake`](../sdk/ubiqos-sdk.cmake),
 and [`sdk/example`](../sdk/example) is a working application that uses it.
 
 It is **extracted, not copied**. This repository's own `CMakeLists.txt` includes
@@ -9,7 +9,7 @@ what is in the SDK were wrong, every module in this tree would be wrong with it.
 
 ## What it gives you
 
-`myrtos_add_module(<name> <source>...)` with the trailing words the in-tree
+`ubiqos_add_module(<name> <source>...)` with the trailing words the in-tree
 modules use -- `RT`, `SINGLE`, `NEWLIB`, `LIBRARY`, `DRIVER`, `AUTOSTART` -- and everything
 that makes a module loadable at an address nobody knew at compile time:
 
@@ -27,17 +27,17 @@ comes up, after the card's `/sd/startup` if there is one, with the console for
 output. A product has to work with no card in the slot, so what it runs cannot
 be written only on the card.
 
-`myrtos_app_image(<name> <module>...)` concatenates modules into an image for
+`ubiqos_app_image(<name> <module>...)` concatenates modules into an image for
 the application region and wraps it as a UF2.
 
-`#include <myrtos_abi.h>` works, with no path: the SDK puts `common/` on the
+`#include <ubiqos_abi.h>` works, with no path: the SDK puts `common/` on the
 include path. The modules in this tree reach the same file by a relative path
 and are unaffected.
 
 ## The two regions
 
-The system's modules are at `MYRTOS_FLASH_MODULE_BASE` and an application's at
-`MYRTOS_FLASH_APP_BASE`, seven megabytes apart, both in
+The system's modules are at `UBIQOS_FLASH_MODULE_BASE` and an application's at
+`UBIQOS_FLASH_APP_BASE`, seven megabytes apart, both in
 [`kernel/flashmod.h`](../kernel/flashmod.h) -- which is where the SDK and the
 build read them from, so the address is written down once.
 
@@ -50,11 +50,11 @@ the system underneath it.
 
 ## Shipping
 
-Each build produces `myrtos.uf2`: the kernel and the system's modules in one
+Each build produces `ubiqos.uf2`: the kernel and the system's modules in one
 file, at two addresses with a gap between them, because a UF2 block carries its
 own target address.
 
-    python3 tools/combine_uf2.py product.uf2 myrtos.uf2 app.uf2
+    python3 tools/combine_uf2.py product.uf2 ubiqos.uf2 app.uf2
 
 makes the one file a product ships as. `app.uf2` on its own updates the
 application and touches nothing else. Combining an Arm build with a RISC-V one

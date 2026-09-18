@@ -1,7 +1,7 @@
 // The WASI calls a wasm program actually reaches for, and no more.
 //
-// The choice this represents: a program could be given myrtos-shaped imports
-// and would then need myrtos-shaped glue in whatever language wrote it. Given
+// The choice this represents: a program could be given ubiqos-shaped imports
+// and would then need ubiqos-shaped glue in whatever language wrote it. Given
 // WASI instead, an ordinary Rust program's println!, a Go program's
 // fmt.Println and a C program's printf work unchanged, because that is what
 // their standard libraries call underneath.
@@ -12,11 +12,11 @@
 // find out what is actually used.
 //
 // The fit is better than it sounds: WASI speaks in file descriptors, which is
-// what myrtos speaks. fd_write is myrtos_write. When path_open arrives it will
-// be myrtos_io_open, and /dev/acm -- the BleuIO -- is reachable through it like
+// what UbiqOS speaks. fd_write is ubiqos_write. When path_open arrives it will
+// be ubiqos_io_open, and /dev/acm -- the BleuIO -- is reachable through it like
 // any other name.
 
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "wasm3.h"
 #include "m3_env.h"
 
@@ -82,7 +82,7 @@ m3ApiRawFunction(wasi_fd_write)
         void *p = m3ApiOffsetToPtr(off);
         m3ApiCheckMem(p, len);
 
-        int32_t n = myrtos_write((int32_t)fd, p, len);
+        int32_t n = ubiqos_write((int32_t)fd, p, len);
         if (n < 0) m3ApiReturn(WASI_EBADF);
         total += (uint32_t)n;
     }
@@ -98,7 +98,7 @@ m3ApiRawFunction(wasi_fd_write)
 // way to find out how big the console is -- Atto drew thirty lines of eighty
 // columns on a screen of forty by a hundred and six, because that is what the
 // shim had been told to assume. The size goes where a program already looks for
-// it: LINES and COLUMNS. Nothing about that is particular to myrtos, which is
+// it: LINES and COLUMNS. Nothing about that is particular to UbiqOS, which is
 // the point.
 #define WASI_ENV_COUNT 3
 
@@ -133,9 +133,9 @@ static uint32_t wasi_env_put(uint32_t at, const char *key, uint32_t value)
 // program and the grid changes with it.
 static void wasi_env_prepare(void)
 {
-    myrtos_confont_t f;
+    ubiqos_confont_t f;
     uint32_t rows = 30, cols = 80;
-    if (myrtos_console_font_info(-1, &f) >= 0) { rows = f.rows; cols = f.cols; }
+    if (ubiqos_console_font_info(-1, &f) >= 0) { rows = f.rows; cols = f.cols; }
 
     // Where the guest starts from. wasi-libc begins at the preopen root and has
     // no way to be told otherwise, so a program that means to honour the
@@ -144,7 +144,7 @@ static void wasi_env_prepare(void)
     // cwd was, and saving under a bare name fails.
     char cwd[48];
     cwd[0] = '/'; cwd[1] = 0;
-    myrtos_getcwd(cwd, sizeof cwd);
+    ubiqos_getcwd(cwd, sizeof cwd);
     if (!cwd[0]) { cwd[0] = '/'; cwd[1] = 0; }
 
     uint32_t at = 0;
@@ -203,7 +203,7 @@ m3ApiRawFunction(wasi_proc_exit)
 // WASI opens a path relative to a preopened directory: a runtime asks
 // fd_prestat_get about descriptors from 3 upwards until one says EBADF, and
 // resolves every path against what it found. So one preopen is offered, and it
-// is "/" -- the whole myrtos namespace. A program then opens /sd/notes.txt and
+// is "/" -- the whole UbiqOS namespace. A program then opens /sd/notes.txt and
 // /dev/acm by the same call, which is the point: to a wasm program the BleuIO
 // is a file, and so is an FTDI dongle the day its driver registers one.
 #define WASI_PREOPEN_FD    3
@@ -213,7 +213,7 @@ m3ApiRawFunction(wasi_proc_exit)
 #define WASI_ENOTDIR  54
 #define WASI_EINVAL   28
 
-// The flags WASI states, and what myrtos calls the same things.
+// The flags WASI states, and what UbiqOS calls the same things.
 #define WASI_O_CREAT     0x0001
 #define WASI_O_DIRECTORY 0x0002
 #define WASI_O_EXCL      0x0004
@@ -224,7 +224,7 @@ m3ApiRawFunction(wasi_proc_exit)
 
 // What each descriptor was opened as. fd_filestat_get is asked how long a file
 // is and has only a number to go on, while the only thing here that can answer
-// -- myrtos_fs_stat -- wants a name. So the name is kept when it is known.
+// -- ubiqos_fs_stat -- wants a name. So the name is kept when it is known.
 // Sixteen is more open files than a wasm program has any business holding.
 #define WASI_MAX_TRACKED 16
 
@@ -302,7 +302,7 @@ void wasi_sweep_doomed(void)
 {
     for (int i = 0; i < WASI_MAX_TRACKED; i++)
         if (wasi_paths[i].fd && wasi_paths[i].doomed) {
-            myrtos_fs_remove(wasi_paths[i].name);
+            ubiqos_fs_remove(wasi_paths[i].name);
             wasi_paths[i].fd = 0;
         }
 }
@@ -352,14 +352,14 @@ m3ApiRawFunction(wasi_fd_prestat_dir_name)
 // where the host has no way to set it, so the host decides here instead. That
 // is why this is not left to each program: it cannot be.
 //
-// The rule is exact rather than a guess, because myrtos's root holds volumes
+// The rule is exact rather than a guess, because UbiqOS's root holds volumes
 // and nothing else. The first component of an absolute path is always a volume
 // name, so if it is one the path is absolute. If it is not, there is no such
 // thing at the root and the path can only mean the directory the process is
 // standing in -- which is what a shell would have decided.
 static bool wasi_first_is_volume(const char *path, uint32_t len)
 {
-    char vol[MYRTOS_DIRNAME_MAX + 1];
+    char vol[UBIQOS_DIRNAME_MAX + 1];
     uint32_t n = 0;
     vol[n++] = '/';
     for (uint32_t i = 0; i < len && path[i] != '/'; i++) {
@@ -370,8 +370,8 @@ static bool wasi_first_is_volume(const char *path, uint32_t len)
     if (n == 1) return true;               // the root itself
 
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(vol, &size);
-    return attr >= 0 && (attr & MYRTOS_ATTR_DIRECTORY);
+    int32_t attr = ubiqos_fs_stat(vol, &size);
+    return attr >= 0 && (attr & UBIQOS_ATTR_DIRECTORY);
 }
 
 static bool wasi_path_name(const char *path, uint32_t len, char *out, uint32_t cap)
@@ -394,9 +394,9 @@ static bool wasi_path_name(const char *path, uint32_t len, char *out, uint32_t c
     }
 
     if (!wasi_first_is_volume(path, len)) {
-        char cwd[MYRTOS_DIRNAME_MAX + 1];
+        char cwd[UBIQOS_DIRNAME_MAX + 1];
         cwd[0] = 0;
-        myrtos_getcwd(cwd, sizeof cwd);
+        ubiqos_getcwd(cwd, sizeof cwd);
         if (cwd[0] && !(cwd[0] == '/' && !cwd[1])) {
             uint32_t n = 0;
             while (cwd[n]) { if (n >= cap - 1) return false; out[n] = cwd[n]; n++; }
@@ -440,27 +440,27 @@ m3ApiRawFunction(wasi_path_open)
     if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
 
     // A directory is opened too, because a program that completes a filename
-    // has to read one. myrtos has no directory-open of its own -- a directory is
+    // has to read one. UbiqOS has no directory-open of its own -- a directory is
     // a thing you list, not a thing you hold -- so /dev/null stands in as the
     // handle and the remembered name does the work. The descriptor is a real
     // one, which is what matters: fd_close closes it like any other, and nothing
     // downstream has to know it is special.
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(name, &size);
-    if (attr >= 0 && (attr & MYRTOS_ATTR_DIRECTORY)) {
-        int32_t dfd = myrtos_open("/dev/null");
+    int32_t attr = ubiqos_fs_stat(name, &size);
+    if (attr >= 0 && (attr & UBIQOS_ATTR_DIRECTORY)) {
+        int32_t dfd = ubiqos_open("/dev/null");
         if (dfd < 0) m3ApiReturn(WASI_EBADF);
         wasi_remember_kind(dfd, name, true);
         m3ApiWriteMem32(out_fd, (uint32_t)dfd);
         m3ApiReturn(WASI_OK);
     }
 
-    uint32_t flags = (rights_base & WASI_RIGHT_FD_WRITE) ? MYRTOS_O_RDWR : MYRTOS_O_RDONLY;
-    if (oflags  & WASI_O_CREAT)      flags |= MYRTOS_O_CREAT;
-    if (oflags  & WASI_O_TRUNC)      flags |= MYRTOS_O_TRUNC;
-    if (fdflags & WASI_FDFLAG_APPEND) flags |= MYRTOS_O_APPEND;
+    uint32_t flags = (rights_base & WASI_RIGHT_FD_WRITE) ? UBIQOS_O_RDWR : UBIQOS_O_RDONLY;
+    if (oflags  & WASI_O_CREAT)      flags |= UBIQOS_O_CREAT;
+    if (oflags  & WASI_O_TRUNC)      flags |= UBIQOS_O_TRUNC;
+    if (fdflags & WASI_FDFLAG_APPEND) flags |= UBIQOS_O_APPEND;
 
-    int32_t fd = myrtos_open_flags(name, flags);
+    int32_t fd = ubiqos_open_flags(name, flags);
     if (fd < 0) m3ApiReturn(WASI_ENOENT);
 
     wasi_remember(fd, name);
@@ -487,7 +487,7 @@ m3ApiRawFunction(wasi_fd_read)
         void *p = m3ApiOffsetToPtr(off);
         m3ApiCheckMem(p, len);
 
-        int32_t n = myrtos_read((int32_t)fd, p, len);
+        int32_t n = ubiqos_read((int32_t)fd, p, len);
         if (n < 0) m3ApiReturn(WASI_EBADF);
         total += (uint32_t)n;
         if ((uint32_t)n < len) break;         // short read is the end of it
@@ -515,8 +515,8 @@ m3ApiRawFunction(wasi_fd_close)
     }
 
     wasi_forget((int32_t)fd);
-    int32_t r = myrtos_close((int32_t)fd);
-    if (victim[0]) myrtos_fs_remove(victim);
+    int32_t r = ubiqos_close((int32_t)fd);
+    if (victim[0]) ubiqos_fs_remove(victim);
     m3ApiReturn(r < 0 ? WASI_EBADF : WASI_OK);
 }
 
@@ -528,7 +528,7 @@ m3ApiRawFunction(wasi_fd_seek)
     m3ApiGetArg     (uint32_t  , whence)
     m3ApiGetArgMem  (uint64_t *, out_pos)
 
-    int32_t pos = myrtos_seek((int32_t)fd, (int32_t)offset, (int32_t)whence);
+    int32_t pos = ubiqos_seek((int32_t)fd, (int32_t)offset, (int32_t)whence);
     if (pos < 0) m3ApiReturn(WASI_EBADF);
 
     m3ApiCheckMem(out_pos, sizeof(uint64_t));
@@ -570,7 +570,7 @@ m3ApiRawFunction(wasi_fd_filestat_get)
     // for a stream that is the truth rather than a failure.
     uint32_t size = 0;
     const char *name = wasi_name_of((int32_t)fd);
-    if (name) myrtos_fs_stat(name, &size);
+    if (name) ubiqos_fs_stat(name, &size);
 
     // { dev u64, ino u64, filetype u8, nlink u64, size u64, ... }
     buf[16] = 4;                       // regular file
@@ -596,7 +596,7 @@ m3ApiRawFunction(wasi_clock_time_get)
     m3ApiCheckMem(out, sizeof(uint64_t));
     (void)id; (void)precision;
 
-    wasi_put64((uint8_t *)out, (uint64_t)myrtos_ticks_now() * 1000000ull);
+    wasi_put64((uint8_t *)out, (uint64_t)ubiqos_ticks_now() * 1000000ull);
     m3ApiReturn(WASI_OK);
 }
 
@@ -653,7 +653,7 @@ m3ApiRawFunction(wasi_poll_oneoff)
         uint64_t timeout = wasi_get64(sub + 24);
         uint16_t flags   = m3ApiReadMem16(sub + 40);
         if (flags & 1u) {                                     // absolute, so subtract now
-            uint64_t now = (uint64_t)myrtos_ticks_now() * 1000000ull;
+            uint64_t now = (uint64_t)ubiqos_ticks_now() * 1000000ull;
             timeout = (timeout > now) ? timeout - now : 0;
         }
         if (!have_clock || timeout < wait_ns) wait_ns = timeout;
@@ -665,7 +665,7 @@ m3ApiRawFunction(wasi_poll_oneoff)
         uint32_t ms = (uint32_t)(wait_ns / 1000000ull);
         // Anything under a millisecond still yields: a program asking for a
         // pause wants the processor to go elsewhere, however short the pause.
-        myrtos_sleep(ms ? ms : 1);
+        ubiqos_sleep(ms ? ms : 1);
     }
 
     // One event per subscription, all of them reporting success. Zero the whole
@@ -774,7 +774,7 @@ m3ApiRawFunction(wasi_random_get)
 
     uint32_t done = 0;
     while (done < len) {
-        int32_t n = myrtos_random(buf + done, len - done);
+        int32_t n = ubiqos_random(buf + done, len - done);
         if (n <= 0) m3ApiReturn(WASI_EINVAL);
         done += (uint32_t)n;
     }
@@ -784,7 +784,7 @@ m3ApiRawFunction(wasi_random_get)
 // --- BY NAME RATHER THAN BY DESCRIPTOR ------------------------------------
 // A program that manages files rather than merely reading them needs these:
 // Atto stats a file before opening it and unlinks the temporary one it makes
-// for completion. Both go to the same myrtos calls the fd versions use; the
+// for completion. Both go to the same UbiqOS calls the fd versions use; the
 // only new work is putting the path back together, which path_open already
 // does the same way -- the name arrives without a terminator and relative to
 // the preopen, so the leading slash is added here.
@@ -806,12 +806,12 @@ m3ApiRawFunction(wasi_path_filestat_get)
     if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
 
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(name, &size);
+    int32_t attr = ubiqos_fs_stat(name, &size);
     if (attr < 0) m3ApiReturn(WASI_ENOENT);
 
     for (uint32_t i = 0; i < 64; i++) buf[i] = 0;
     // { dev u64, ino u64, filetype u8, nlink u64, size u64, ... }
-    buf[16] = (attr & MYRTOS_ATTR_DIRECTORY) ? 3 : 4;   // directory, else regular
+    buf[16] = (attr & UBIQOS_ATTR_DIRECTORY) ? 3 : 4;   // directory, else regular
     wasi_put64(buf + 32, (uint64_t)size);
     m3ApiReturn(WASI_OK);
 }
@@ -829,7 +829,7 @@ m3ApiRawFunction(wasi_path_unlink_file)
     char name[80];
     if (!wasi_path_name(path, path_len, name, sizeof name)) m3ApiReturn(WASI_EINVAL);
     if (wasi_doom(name)) m3ApiReturn(WASI_OK);
-    if (myrtos_fs_remove(name) < 0) m3ApiReturn(WASI_ENOENT);
+    if (ubiqos_fs_remove(name) < 0) m3ApiReturn(WASI_ENOENT);
     m3ApiReturn(WASI_OK);
 }
 
@@ -850,7 +850,7 @@ m3ApiRawFunction(wasi_fd_fdstat_set_flags)
 // The call a filename completion needs, and the last thing that stood between
 // Atto's TAB and a list of names.
 //
-// The cookie is the entry number, which is exactly what myrtos_fs_dir_at wants,
+// The cookie is the entry number, which is exactly what ubiqos_fs_dir_at wants,
 // so the two agree without any bookkeeping in between. Each entry is a
 // twenty-four byte header and then the name, packed one after another; a header
 // that does not fit is simply not written, and a caller that gets less than it
@@ -905,15 +905,15 @@ m3ApiRawFunction(wasi_fd_readdir)
     uint32_t index = (uint32_t)cookie;
 
     for (;;) {
-        char raw[MYRTOS_DIRNAME_MAX], name[MYRTOS_DIRNAME_MAX + 2];
+        char raw[UBIQOS_DIRNAME_MAX], name[UBIQOS_DIRNAME_MAX + 2];
         uint32_t size = 0;
-        int32_t attr = myrtos_fs_dir_at(dir, index, raw, &size);
+        int32_t attr = ubiqos_fs_dir_at(dir, index, raw, &size);
         if (attr < 0) break;
         // The kernel hands back what FAT stores and a guest needs a name it can
-        // pass straight back to open(). The rule is in common/myrtos_abi.h,
+        // pass straight back to open(). The rule is in common/ubiqos_abi.h,
         // because ls, readdir and this must all expand it the same way; it was
         // copied here once and that was one copy too many.
-        myrtos_pretty_name(raw, name);
+        ubiqos_pretty_name(raw, name);
 
         uint32_t namlen = 0;
         while (name[namlen]) namlen++;
@@ -924,7 +924,7 @@ m3ApiRawFunction(wasi_fd_readdir)
         wasi_put64(e, (uint64_t)(index + 1));                 // the next cookie
         wasi_put64(e + 8, wasi_inode(dir, name));
         wasi_put32(e + 16, namlen);
-        e[20] = (attr & MYRTOS_ATTR_DIRECTORY) ? 3 : 4;
+        e[20] = (attr & UBIQOS_ATTR_DIRECTORY) ? 3 : 4;
         used += WASI_DIRENT_SIZE;
 
         // A name that does not fit is still counted: the caller sees a short

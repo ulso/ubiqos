@@ -36,8 +36,8 @@ extern "C" {
 // board where pio1 is somebody else's that is five places to be wrong in. One
 // number now, pio1 unless the build says otherwise. The block's GPIO window is
 // the caller's to set, as before.
-#ifndef MYRTOS_SD_PIO_INDEX
-#define MYRTOS_SD_PIO_INDEX 1
+#ifndef UBIQOS_SD_PIO_INDEX
+#define UBIQOS_SD_PIO_INDEX 1
 #endif
 
 // todo for now

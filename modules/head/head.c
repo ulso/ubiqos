@@ -1,4 +1,4 @@
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // head -- the first few lines of a file.
 //
@@ -6,16 +6,16 @@
 //     head /sd/docs/readme.txt
 //     head /sd/big.txt 4096      -- from that byte onwards
 //
-// Written against myrtos_stdio.h, so it is also the answer to "can ordinary C
+// Written against ubiqos_stdio.h, so it is also the answer to "can ordinary C
 // be built here": fopen, fgets, fseek, ftell, ferror and fclose, with nothing
-// myrtos-shaped in it but the include and the entry point's name.
+// ubiqos-shaped in it but the include and the entry point's name.
 
 // The one line a C library would have owed us: errno and the stream table.
-MYRTOS_LIBC_DEFINE
+UBIQOS_LIBC_DEFINE
 
 // Stdio's buffer comes from PSRAM, but the line buffer here is on the stack,
 // and eight kilobytes is what makes room for both.
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_MEM_SIZE(8192);
 
 #define LINES 10
 
@@ -27,7 +27,7 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: head FILE [OFFSET]\n\nThe first lines of a file, starting OFFSET bytes in if given.\n")) return;
 
     uint32_t skip = 0;

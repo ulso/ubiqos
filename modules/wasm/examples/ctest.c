@@ -1,5 +1,5 @@
 // Proof that a plain C program, built with clang against wasi-libc, reaches
-// myrtos files through WASI. No argv: args_get is not implemented on the board.
+// UbiqOS files through WASI. No argv: args_get is not implemented on the board.
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>

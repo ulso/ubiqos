@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // nice -- runs a command at a given priority.
 //
@@ -20,12 +20,12 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: nice PRIORITY COMMAND [ARGS...]\n\nRuns a command at another priority. 0 is idle, 31 the most urgent.\n")) return;
 
     uint32_t prio;
     if (argc < 3 || !parse_u32(argv[1], &prio)) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: nice PRIORITY COMMAND [ARGS...]\n");
+        ubiqos_write_str(UBIQOS_STDERR, "usage: nice PRIORITY COMMAND [ARGS...]\n");
         return;
     }
 
@@ -39,17 +39,17 @@ void module_main(int argc, char **argv) {
     }
     args[n] = 0;
 
-    myrtos_setprio(prio);
+    ubiqos_setprio(prio);
 
-    int32_t pid = myrtos_exec(argv[2], args);
+    int32_t pid = ubiqos_exec(argv[2], args);
     if (pid < 0) {
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "nice: ");
-        myrtos_line_str(&l, argv[2]);
-        myrtos_line_str(&l, ": no such module\n");
-        myrtos_line_flush(MYRTOS_STDERR, &l);
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "nice: ");
+        ubiqos_line_str(&l, argv[2]);
+        ubiqos_line_str(&l, ": no such module\n");
+        ubiqos_line_flush(UBIQOS_STDERR, &l);
         return;
     }
-    myrtos_wait(pid);
+    ubiqos_wait(pid);
 }

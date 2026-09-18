@@ -1,7 +1,7 @@
 {
     "configurations": [
         {
-            "name": "myrtos",
+            "name": "ubiqos",
             // The compile database rather than a hand-kept list of include
             // paths. It has the exact flags each file was built with -- every
             // -I, every -D -- and cannot drift out of step with the build,
@@ -24,17 +24,17 @@
             ],
             // ARCH_RISCV=1 used to be here too and is gone rather than
             // flipped: nothing in this codebase reads it. The architecture is
-            // MYRTOS_ARCH_HERE in common/myrtos_abi.h, which the compiler sets
+            // UBIQOS_ARCH_HERE in common/ubiqos_abi.h, which the compiler sets
             // from the real flags -- and for any file the build knows about,
             // compileCommands above wins over these defines anyway. They matter
             // for headers and for files not yet in the build.
             //
-            // Arm, because MYRTOS_ARCH in CMakeLists.txt is Arm. This said
+            // Arm, because UBIQOS_ARCH in CMakeLists.txt is Arm. This said
             // RISC-V, correctly, while the project was RISC-V-first; the
             // architecture decides a different set of builtin macros, so
             // leaving it behind means IntelliSense reads the code as a machine
             // nobody is building for. It has to be changed by hand alongside
-            // MYRTOS_ARCH -- the extension does not know that variable exists.
+            // UBIQOS_ARCH -- the extension does not know that variable exists.
             "compilerPath": "${env:HOME}/.pico-sdk/toolchain/15_2_Rel1/bin/arm-none-eabi-gcc",
             "cStandard": "c11",
             "cppStandard": "c++17",

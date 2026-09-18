@@ -45,16 +45,16 @@
 // drivers against one chip, which no amount of pin ownership would make sane.
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/modules.h"   // myrtos_sleep, which yields
+#include "../../common/modules.h"   // ubiqos_sleep, which yields
 #include "hardware/spi.h"
 #include "hardware/structs/spi.h"
 #include "hardware/gpio.h"
 #include "hardware/dma.h"
 #include "hardware/structs/dma.h"
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 
-#define MYRTOS_PRIO_EH 21          // just under the filesystem, just over a shell
+#define UBIQOS_PRIO_EH 21          // just under the filesystem, just over a shell
 
 // Not a choice: it is the size the co-processor arms its slave for.
 #define EH_BUF 1600u
@@ -197,7 +197,7 @@ static bool in_flight;
 static uint32_t started_us;
 static uint32_t cpu_us;   // what transact_start spent, added to in finish
 
-static myrtos_eh_stats_t stats;
+static ubiqos_eh_stats_t stats;
 static volatile bool running;
 
 // --- THE WIRE ---------------------------------------------------------------
@@ -420,7 +420,7 @@ static void eh_thread(void)
     build_dummy();
 
     for (;;) {
-        // myrtos_sleep, NOT K->sleep_ms, and the sleep is first with no path
+        // ubiqos_sleep, NOT K->sleep_ms, and the sleep is first with no path
         // around it. This wedged the board twice in one afternoon and both
         // times for a reason modules/wifilib already had written down.
         //
@@ -434,13 +434,13 @@ static void eh_thread(void)
         // that spins never reaches the scheduler: it is only preempted where
         // it makes a system call. wifilib.c:98 says so in as many words --
         // "seconds of spinning is exactly what froze the machine when
-        // sleep_ms was used instead of myrtos_sleep" -- and I had read that
+        // sleep_ms was used instead of ubiqos_sleep" -- and I had read that
         // file the same morning, for the pin numbers.
         //
         // One transaction per tick is 1600 bytes a millisecond, which is 1.6
         // megabytes a second and more than this link will ever carry. There is
         // nothing to buy by going faster and a working machine to lose.
-        myrtos_sleep(1);
+        ubiqos_sleep(1);
 
         // A transfer already going is finished before another is thought
         // about. It costs a tick to notice, which is the same tick this loop
@@ -571,7 +571,7 @@ static void eh_thread(void)
 // It also makes the difference between a board that joins its network at boot
 // and one that needs somebody at the keyboard. That turned out to matter more
 // than it looked: the co-processor watches the host and tears its radio down
-// when the host restarts, so a myrtos reboot leaves the radio uninitialised
+// when the host restarts, so a UbiqOS reboot leaves the radio uninitialised
 // however long it had been connected.
 //
 // This runs in a thread of its own. esp_wifi_init alone takes several seconds
@@ -602,7 +602,7 @@ static void eh_thread(void)
 static int32_t eh_write(const uint8_t *buf, uint32_t len);
 static int32_t eh_read(uint8_t *buf, uint32_t len);
 
-static volatile uint32_t join_state;            // MYRTOS_SS_EH_JOINED's answer
+static volatile uint32_t join_state;            // UBIQOS_SS_EH_JOINED's answer
 static char join_creds[100];
 static volatile bool join_wanted;
 static bool join_running;
@@ -660,14 +660,14 @@ static int32_t rpc(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
     out[w++] = TLV_DATA; out[w++] = (uint8_t)n; out[w++] = (uint8_t)(n >> 8);
     for (uint32_t i = 0; i < n; i++) out[w++] = inner[i];
 
-    while (tx_pending) myrtos_sleep(2);         // one control frame at a time
+    while (tx_pending) ubiqos_sleep(2);         // one control frame at a time
     if (eh_write(out, w) < 0) return -1;
 
     // Read until the answer to THIS question arrives. The chip pushes events
     // on the same interface whenever they happen, and one of them is as likely
     // to land in the middle of a request as not.
     for (uint32_t waited = 0; waited < ms; waited += 5) {
-        if (inbox_tail == inbox_head) { myrtos_sleep(5); continue; }
+        if (inbox_tail == inbox_head) { ubiqos_sleep(5); continue; }
 
         static uint8_t rsp[512];
         int32_t got = eh_read(rsp, sizeof(rsp));
@@ -741,7 +741,7 @@ static bool rpc_ok(const char *what, uint32_t msg_id, const uint8_t *body,
 static void join_thread(void)
 {
     for (;;) {
-        while (!join_wanted) myrtos_sleep(50);
+        while (!join_wanted) ubiqos_sleep(50);
         join_wanted = false;
 
         static uint8_t body[400];
@@ -833,7 +833,7 @@ static void join_thread(void)
         {
             bool associated = false;
             for (int tries = 0; tries < 40 && !associated; tries++) {
-                myrtos_sleep(500);
+                ubiqos_sleep(500);
                 if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) associated = true;
             }
             if (!associated) {
@@ -865,8 +865,8 @@ static void join_thread(void)
 
 static int32_t eh_configure(const void *config, uint32_t size)
 {
-    if (size < sizeof(myrtos_ehspi_config_t)) return -1;
-    const myrtos_ehspi_config_t *c = (const myrtos_ehspi_config_t*)config;
+    if (size < sizeof(ubiqos_ehspi_config_t)) return -1;
+    const ubiqos_ehspi_config_t *c = (const ubiqos_ehspi_config_t*)config;
 
     pin_sck  = c->sck_pin;  pin_mosi = c->mosi_pin;
     pin_miso = c->miso_pin; pin_cs   = c->cs_pin;
@@ -884,9 +884,9 @@ static int32_t eh_configure(const void *config, uint32_t size)
     hw->cr0 |= SPI_SSPCR0_SPO_BITS | SPI_SSPCR0_SPH_BITS;
     hw->cr1 |= SPI_SSPCR1_SSE_BITS;
 
-    K->gpio_set_function(pin_sck,  MYRTOS_GPIO_FUNC_SPI);
-    K->gpio_set_function(pin_mosi, MYRTOS_GPIO_FUNC_SPI);
-    K->gpio_set_function(pin_miso, MYRTOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(pin_sck,  UBIQOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(pin_mosi, UBIQOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(pin_miso, UBIQOS_GPIO_FUNC_SPI);
 
     // Chip select by hand, as the NINA driver did on these same pins: the
     // hardware's own select drops between bytes and this slave wants one long
@@ -930,7 +930,7 @@ static int32_t eh_configure(const void *config, uint32_t size)
         return -1;
     }
 
-    if (K->kernel_thread(eh_thread, 2048, MYRTOS_PRIO_EH) < 0) {
+    if (K->kernel_thread(eh_thread, 2048, UBIQOS_PRIO_EH) < 0) {
         K->print("eh: could not start the transport thread\n");
         return -1;
     }
@@ -993,7 +993,7 @@ static int32_t eh_readable(void) { return inbox_tail != inbox_head ? 1 : 0; }
 
 static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
 {
-    if (code == MYRTOS_SS_EH_RX) {
+    if (code == UBIQOS_SS_EH_RX) {
         if (netbox_tail == netbox_head) return 0;          // nothing waiting
         const uint8_t *slot = netbox + netbox_tail * EH_BUF;
         uint32_t have = netbox_used[netbox_tail];
@@ -1004,20 +1004,20 @@ static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
         return (int32_t)have;
     }
 
-    if (code == MYRTOS_SS_EH_JOINED) {
+    if (code == UBIQOS_SS_EH_JOINED) {
         if (len < sizeof(uint32_t)) return -1;
         *(uint32_t*)data = join_state;
         return 0;
     }
 
-    if (code == MYRTOS_SS_EH_MAC) {
+    if (code == UBIQOS_SS_EH_MAC) {
         if (len < 6 || !sta_mac_known) return -1;
         uint8_t *out = (uint8_t*)data;
         for (int i = 0; i < 6; i++) out[i] = sta_mac[i];
         return 0;
     }
 
-    if (code != MYRTOS_SS_EH_STATS || len < sizeof(myrtos_eh_stats_t)) return -1;
+    if (code != UBIQOS_SS_EH_STATS || len < sizeof(ubiqos_eh_stats_t)) return -1;
     // Byte by byte, and not a struct assignment. The compiler turns that into
     // a call to memcpy, and a module links no C library -- the failure is a
     // dangerous relocation at link time, which at least says so early.
@@ -1029,7 +1029,7 @@ static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
 
 static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
 {
-    if (code == MYRTOS_SS_EH_MAC) {
+    if (code == UBIQOS_SS_EH_MAC) {
         if (len < 6) return -1;
         const uint8_t *in = (const uint8_t*)data;
         for (int i = 0; i < 6; i++) sta_mac[i] = in[i];
@@ -1037,7 +1037,7 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         return 0;
     }
 
-    if (code == MYRTOS_SS_EH_JOIN) {
+    if (code == UBIQOS_SS_EH_JOIN) {
         if (len < 3 || len > sizeof(join_creds)) return -1;
         if (join_state == 1) return -1;                    // already trying
         const char *in = (const char*)data;
@@ -1047,7 +1047,7 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         // The thread is made the first time somebody asks, not at boot: a
         // machine that never joins a network should not carry a stack for it.
         if (!join_running) {
-            if (K->kernel_thread(join_thread, 3072, MYRTOS_PRIO_EH) < 0) {
+            if (K->kernel_thread(join_thread, 3072, UBIQOS_PRIO_EH) < 0) {
                 K->print("wifi: could not start the join thread\n");
                 return -1;
             }
@@ -1065,7 +1065,7 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         return 0;
     }
 
-    if (code == MYRTOS_SS_EH_TX) {
+    if (code == UBIQOS_SS_EH_TX) {
         uint32_t next = (nettx_head + 1u) % NET_TX_SLOTS;
         if (next == nettx_tail) { nettx_refused++; return -1; }   // genuinely full
         if (len + HDR_V1 > EH_BUF) return -1;
@@ -1087,15 +1087,15 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
     return -1;
 }
 
-static bool eh_init_module(const myrtos_kernel_api_t *api)
+static bool eh_init_module(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = eh_init_module,
     .ops = {

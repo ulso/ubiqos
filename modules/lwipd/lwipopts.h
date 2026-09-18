@@ -1,11 +1,11 @@
-// lwIP configuration for myrtos.
+// lwIP configuration for UbiqOS.
 //
 // NO_SYS: there are no lwIP threads and no mailboxes. The stack runs inside one
-// myrtos process which owns it entirely, calls sys_check_timeouts periodically,
+// UbiqOS process which owns it entirely, calls sys_check_timeouts periodically,
 // and answers clients by message. That is why the module is declared SINGLE --
 // lwIP's tables are globals, and there is exactly one of it.
-#ifndef MYRTOS_LWIPOPTS_H
-#define MYRTOS_LWIPOPTS_H
+#ifndef UBIQOS_LWIPOPTS_H
+#define UBIQOS_LWIPOPTS_H
 
 #include <stdint.h>
 
@@ -39,8 +39,8 @@
 #define LWIP_NETIF_EXT_STATUS_CALLBACK 1
 #define MEMP_NUM_UDP_PCB            8
 
-uint32_t myrtos_lwip_rand(void);
-#define LWIP_RAND()                 myrtos_lwip_rand()
+uint32_t ubiqos_lwip_rand(void);
+#define LWIP_RAND()                 ubiqos_lwip_rand()
 
 // Diagnostics go nowhere for now: a module has no printf, and routing lwIP's
 // through the write syscall would put network chatter in the middle of whatever

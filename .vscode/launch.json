@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Myrtos (J-Link, RISC-V)",
+            "name": "UbiqOS (J-Link, RISC-V)",
             "type": "cortex-debug",
             "request": "launch",
             "cwd": "${workspaceFolder}",
@@ -29,7 +29,7 @@
             "serverArgs": [
                 "-speed", "4000"
             ],
-            "runToEntryPoint": "myrtos_kernel_main",
+            "runToEntryPoint": "ubiqos_kernel_main",
             "showDevDebugOutput": "none"
         }
     ]

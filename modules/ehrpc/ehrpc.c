@@ -1,6 +1,6 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
-MYRTOS_MEM_SIZE(16384);
+UBIQOS_MEM_SIZE(16384);
 
 // ehrpc -- ask the ESP32-C6 a question on the control plane.
 //
@@ -166,7 +166,7 @@ static void on_mode(uint32_t field, uint32_t wire, uint32_t v,
     if (field == 2) { m->resp = v; m->seen |= 2u; }
 }
 
-static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
+static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
 static bool is(const char *a, const char *b) {
     while (*a && *b) { if (*a != *b) return false; a++; b++; }
@@ -252,8 +252,8 @@ static uint32_t call(int32_t dev, uint32_t msg_id,
     // happened the first time: WifiInit answered after its two seconds were
     // up, and the next command reported the mode as "type 2, id 534".
     uint8_t drop[512];
-    while (myrtos_readable(dev) > 0) {
-        if (myrtos_read(dev, drop, sizeof(drop)) <= 0) break;
+    while (ubiqos_readable(dev) > 0) {
+        if (ubiqos_read(dev, drop, sizeof(drop)) <= 0) break;
     }
 
     uint8_t inner[256];
@@ -266,7 +266,7 @@ static uint32_t call(int32_t dev, uint32_t msg_id,
     uint8_t req[320];
     uint32_t wn = wrap(req, inner, n);
 
-    if (myrtos_write(dev, req, wn) < 0) return 0xfffffffeu;
+    if (ubiqos_write(dev, req, wn) < 0) return 0xfffffffeu;
 
     // Keep reading until the answer to THIS question arrives.
     //
@@ -277,9 +277,9 @@ static uint32_t call(int32_t dev, uint32_t msg_id,
     // being enough the moment the radio was doing something.
     uint8_t rsp[512];
     for (uint32_t waited = 0; waited < ms; waited += 5) {
-        if (myrtos_readable(dev) <= 0) { myrtos_sleep(5); continue; }
+        if (ubiqos_readable(dev) <= 0) { ubiqos_sleep(5); continue; }
 
-        int32_t got = myrtos_read(dev, rsp, sizeof(rsp));
+        int32_t got = ubiqos_read(dev, rsp, sizeof(rsp));
         if (got <= 0) continue;
 
         uint32_t blen = 0;
@@ -317,12 +317,12 @@ static void do_mode(int32_t dev) {
     mode_t_ m = { 0, 0, 0 };
     walk(payload, plen, on_mode, &m);
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "mode ");
-    myrtos_line_u32(&l, m.mode);
-    myrtos_line_str(&l, "  (");
-    myrtos_line_str(&l, m.mode == 0 ? "off" : m.mode == 1 ? "station"
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "mode ");
+    ubiqos_line_u32(&l, m.mode);
+    ubiqos_line_str(&l, "  (");
+    ubiqos_line_str(&l, m.mode == 0 ? "off" : m.mode == 1 ? "station"
                       : m.mode == 2 ? "access point" : m.mode == 3 ? "both"
                       : "something else");
     // m.resp, not the value call() returned. call() reads field 1 as the
@@ -330,23 +330,23 @@ static void do_mode(int32_t dev) {
     // Start, Connect all answer int32 resp = 1 -- but a getter puts the value
     // it was asked for there and its result at field 2. Printing call()'s
     // answer here said "the chip answered 1" when 1 was the mode.
-    myrtos_line_str(&l, "),  the chip answered ");
-    myrtos_line_u32(&l, m.resp);
+    ubiqos_line_str(&l, "),  the chip answered ");
+    ubiqos_line_u32(&l, m.resp);
     const char *name = err_name(m.resp);
-    if (name) { myrtos_line_str(&l, " -- "); myrtos_line_str(&l, name); }
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    if (name) { ubiqos_line_str(&l, " -- "); ubiqos_line_str(&l, name); }
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 // Whatever the chip has said on the control plane and nobody has taken. The
 // difference between reading the answer and arguing about the encoder.
 static void do_peek(int32_t dev) {
-    if (myrtos_readable(dev) <= 0) {
+    if (ubiqos_readable(dev) <= 0) {
         say("nothing waiting on the control plane\r\n");
         return;
     }
     uint8_t rsp[256];
-    int32_t got = myrtos_read(dev, rsp, sizeof(rsp));
+    int32_t got = ubiqos_read(dev, rsp, sizeof(rsp));
     if (got <= 0) { say("it went away between asking and reading\r\n"); return; }
 
     uint32_t blen = 0;
@@ -354,32 +354,32 @@ static void do_peek(int32_t dev) {
     envelope_t e = { 0, 0, 0, 0, 0 };
     if (b) walk(b, blen, on_outer, &e);
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_u32(&l, (uint32_t)got);
-    myrtos_line_str(&l, " bytes:  type ");
-    myrtos_line_u32(&l, e.msg_type);
-    myrtos_line_str(&l, ", id ");
-    myrtos_line_u32(&l, e.msg_id);
-    myrtos_line_str(&l, ", uid ");
-    myrtos_line_u32(&l, e.uid);
-    myrtos_line_str(&l, ", payload ");
-    myrtos_line_u32(&l, e.payload_len);
-    myrtos_line_str(&l, "\r\n ");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_u32(&l, (uint32_t)got);
+    ubiqos_line_str(&l, " bytes:  type ");
+    ubiqos_line_u32(&l, e.msg_type);
+    ubiqos_line_str(&l, ", id ");
+    ubiqos_line_u32(&l, e.msg_id);
+    ubiqos_line_str(&l, ", uid ");
+    ubiqos_line_u32(&l, e.uid);
+    ubiqos_line_str(&l, ", payload ");
+    ubiqos_line_u32(&l, e.payload_len);
+    ubiqos_line_str(&l, "\r\n ");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
-    myrtos_line_reset(&l);
+    ubiqos_line_reset(&l);
     for (int32_t i = 0; i < got; i++) {
-        myrtos_line_str(&l, " ");
-        myrtos_line_hex_byte(&l, rsp[i]);
+        ubiqos_line_str(&l, " ");
+        ubiqos_line_hex_byte(&l, rsp[i]);
         if ((i % 16) == 15) {
-            myrtos_line_str(&l, "\r\n");
-            myrtos_line_flush(MYRTOS_STDOUT, &l);
-            myrtos_line_reset(&l);
+            ubiqos_line_str(&l, "\r\n");
+            ubiqos_line_flush(UBIQOS_STDOUT, &l);
+            ubiqos_line_reset(&l);
         }
     }
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 // Bring the radio up and join a network.
@@ -415,10 +415,10 @@ static void do_connect(int32_t dev, const char *ssid) {
     creds[n++] = 0;
     uint32_t pass_at = n;
 
-    myrtos_write_str(MYRTOS_STDOUT, "password: ");
+    ubiqos_write_str(UBIQOS_STDOUT, "password: ");
     for (;;) {
         uint8_t ch;
-        if (myrtos_read(MYRTOS_STDIN, &ch, 1) <= 0) continue;
+        if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
         if (ch == '\r' || ch == '\n') break;
         if (ch == 3) { n = pass_at; break; }              // ctrl-C: forget it
         if (ch == 8 || ch == 127) { if (n > pass_at) n--; continue; }
@@ -427,22 +427,22 @@ static void do_connect(int32_t dev, const char *ssid) {
         if (ch >= ' ' && n < sizeof(creds) - 2) creds[n++] = (char)ch;
     }
     creds[n++] = 0;
-    myrtos_write_str(MYRTOS_STDOUT, "\r\n");
+    ubiqos_write_str(UBIQOS_STDOUT, "\r\n");
 
     if (n == pass_at + 1) { say("nothing typed\r\n"); return; }
 
-    int32_t r = myrtos_setstat(dev, MYRTOS_SS_EH_JOIN, creds, n);
+    int32_t r = ubiqos_setstat(dev, UBIQOS_SS_EH_JOIN, creds, n);
     for (uint32_t i = 0; i < sizeof(creds); i++) creds[i] = 0;
     if (r < 0) { say("the driver would not take it\r\n"); return; }
 
     say("joining");
     for (int waited = 0; waited < 400; waited++) {
         uint32_t state = 0;
-        myrtos_getstat(dev, MYRTOS_SS_EH_JOINED, &state, sizeof(state));
+        ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof(state));
         if (state == 2) { say("\r\njoined\r\n"); return; }
         if (state == 3) { say("\r\nit did not join -- the console log says why\r\n"); return; }
         if ((waited % 20) == 0) say(".");
-        myrtos_sleep(100);
+        ubiqos_sleep(100);
     }
     say("\r\nstill trying after forty seconds\r\n");
 }
@@ -472,16 +472,16 @@ static void do_ps(int32_t dev) {
     ps_t m = { 0, 0 };
     walk(payload, plen, on_ps, &m);
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "power save ");
-    myrtos_line_u32(&l, m.type);
-    myrtos_line_str(&l, "  (");
-    myrtos_line_str(&l, m.type == 0 ? "off -- the radio stays awake"
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "power save ");
+    ubiqos_line_u32(&l, m.type);
+    ubiqos_line_str(&l, "  (");
+    ubiqos_line_str(&l, m.type == 0 ? "off -- the radio stays awake"
                       : m.type == 1 ? "minimum modem sleep: it wakes on beacons"
                       : m.type == 2 ? "maximum modem sleep" : "something else");
-    myrtos_line_str(&l, ")\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_str(&l, ")\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 // How strong the signal is, which is the one fact about the radio that no
@@ -501,19 +501,19 @@ static void do_rssi(int32_t dev) {
     // unsigned prints 4294967230 and means nothing to anybody.
     int32_t dbm = (int32_t)m.type;
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "signal -");
-    myrtos_line_u32(&l, (uint32_t)(-dbm));
-    myrtos_line_str(&l, " dBm  (");
-    myrtos_line_str(&l, dbm > -50 ? "excellent" : dbm > -60 ? "good"
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "signal -");
+    ubiqos_line_u32(&l, (uint32_t)(-dbm));
+    ubiqos_line_str(&l, " dBm  (");
+    ubiqos_line_str(&l, dbm > -50 ? "excellent" : dbm > -60 ? "good"
                       : dbm > -70 ? "fair" : dbm > -80 ? "weak" : "very weak");
-    myrtos_line_str(&l, ")\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_str(&l, ")\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: ehrpc mode | peek | connect <ssid>\n\n"
             "Asks the ESP32-C6 a question on ESP-Hosted's control plane.\n\n"
             "  mode    which WiFi mode the radio is in\n"
@@ -535,12 +535,12 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    int32_t dev = myrtos_open("/dev/eh");
+    int32_t dev = ubiqos_open("/dev/eh");
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
     if (mode)      do_mode(dev);
     else if (ps)   do_ps(dev);
     else if (rssi) do_rssi(dev);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
-    myrtos_close(dev);
+    ubiqos_close(dev);
 }

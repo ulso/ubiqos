@@ -5,7 +5,7 @@
 // are better stated with their source than copied. Each is from the board's own
 // documentation or its schematic.
 //
-// myrtos's own view of the same board is boards/ws43b.h. This file is only what
+// UbiqOS's own view of the same board is boards/ws43b.h. This file is only what
 // the SDK asks for -- clocks, flash, PSRAM and the default peripherals.
 #ifndef _BOARDS_WAVESHARE_RP2350_TOUCH_LCD_4_3B_H
 #define _BOARDS_WAVESHARE_RP2350_TOUCH_LCD_4_3B_H
@@ -30,7 +30,7 @@
 #define PICO_PSRAM_SIZE_BYTES (2 * 1024 * 1024)
 
 // The pads marked RX and TX. On this board they are the only broken-out pins,
-// which is why myrtos uses them for a PIO USB host instead -- see
+// which is why UbiqOS uses them for a PIO USB host instead -- see
 // boards/ws43b.h, where there is deliberately no diagnostic UART as a result.
 #define PICO_DEFAULT_UART 0
 #define PICO_DEFAULT_UART_TX_PIN 0

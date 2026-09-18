@@ -28,9 +28,9 @@
 #include "lwip/netif.h"
 #include "lwip/ip_addr.h"
 #include "lwip/ip.h"          // ip_current_netif, inside a recv callback
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 uint64_t time_us_64(void);
 
 #define MDNS_PORT 5353u
@@ -52,7 +52,7 @@ static struct {
     uint32_t rank;                      // and how good it is -- see address_rank
     bool     got_addr;
 
-    char     found[MYRTOS_MDNS_MAX][64];   // PTR: what answered
+    char     found[UBIQOS_MDNS_MAX][64];   // PTR: what answered
     uint32_t nfound;
 } q;
 
@@ -200,7 +200,7 @@ static void on_reply(void *arg, struct udp_pcb *p, struct pbuf *buf,
 
         if (q.qtype == QTYPE_PTR && type == QTYPE_PTR) {
             if (!same_name(name, q.want)) continue;
-            if (q.nfound >= MYRTOS_MDNS_MAX) continue;
+            if (q.nfound >= UBIQOS_MDNS_MAX) continue;
             read_name(msg, len, rd, inst, sizeof(inst));
             for (uint32_t k = 0; k < q.nfound; k++)
                 if (same_name(q.found[k], inst)) goto next;   // a repeat
@@ -296,11 +296,11 @@ static int32_t start(const char *name, uint16_t qtype)
     return 0;
 }
 
-int32_t myrtos_mdns_resolve(const char *name) { return start(name, QTYPE_A); }
-int32_t myrtos_mdns_browse(const char *service) { return start(service, QTYPE_PTR); }
+int32_t ubiqos_mdns_resolve(const char *name) { return start(name, QTYPE_A); }
+int32_t ubiqos_mdns_browse(const char *service) { return start(service, QTYPE_PTR); }
 
 // 0 still asking, 1 an answer, -1 nobody said anything in time.
-int32_t myrtos_mdns_state(uint32_t *addr_out)
+int32_t ubiqos_mdns_state(uint32_t *addr_out)
 {
     // A first-rate answer ends the question at once; a second-rate one waits a
     // moment in case something better is on its way, and is then taken.
@@ -322,7 +322,7 @@ int32_t myrtos_mdns_state(uint32_t *addr_out)
     return 0;
 }
 
-uint32_t myrtos_mdns_found(uint32_t i, char *out, uint32_t cap)
+uint32_t ubiqos_mdns_found(uint32_t i, char *out, uint32_t cap)
 {
     if (i >= q.nfound) return 0;
     uint32_t n = 0;

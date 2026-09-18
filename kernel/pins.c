@@ -17,12 +17,12 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 #include "board.h"
 
-#define MYRTOS_PINS MYRTOS_PIN_COUNT
+#define UBIQOS_PINS UBIQOS_PIN_COUNT
 
-static const char *owner[MYRTOS_PINS];
+static const char *owner[UBIQOS_PINS];
 
 // What this board fixes in hardware, claimed at boot so that nothing has to
 // discover it the hard way. Taken from the board header rather than from
@@ -38,10 +38,10 @@ static const char *owner[MYRTOS_PINS];
 // pin changed under them -- what a pin is CALLED on the board is a different
 // fact and lives in the gpio driver, which is what prints it.
 static const struct { uint8_t pin; const char *who; } board_fixed[] = {
-    MYRTOS_BOARD_FIXED_PINS
+    UBIQOS_BOARD_FIXED_PINS
 };
 
-void myrtos_pins_init(void)
+void ubiqos_pins_init(void)
 {
     for (uint32_t i = 0; i < sizeof board_fixed / sizeof board_fixed[0]; i++)
         owner[board_fixed[i].pin] = board_fixed[i].who;
@@ -49,22 +49,22 @@ void myrtos_pins_init(void)
 
 // The name is not copied. Callers pass a string literal or something that
 // lives as long as the machine, which every driver's own name does.
-int32_t myrtos_pin_claim(uint32_t pin, const char *who)
+int32_t ubiqos_pin_claim(uint32_t pin, const char *who)
 {
-    if (pin >= MYRTOS_PINS || !who) return -1;
+    if (pin >= UBIQOS_PINS || !who) return -1;
     if (owner[pin]) return -1;
     owner[pin] = who;
     return 0;
 }
 
-int32_t myrtos_pin_release(uint32_t pin)
+int32_t ubiqos_pin_release(uint32_t pin)
 {
-    if (pin >= MYRTOS_PINS) return -1;
+    if (pin >= UBIQOS_PINS) return -1;
     owner[pin] = 0;
     return 0;
 }
 
-const char *myrtos_pin_owner(uint32_t pin)
+const char *ubiqos_pin_owner(uint32_t pin)
 {
-    return pin < MYRTOS_PINS ? owner[pin] : "out of range";
+    return pin < UBIQOS_PINS ? owner[pin] : "out of range";
 }

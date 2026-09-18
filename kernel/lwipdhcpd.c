@@ -35,7 +35,7 @@
 #include "lwip/ip_addr.h"
 #include "lwip/netif.h"
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 
 #define SERVER_PORT 67
 #define CLIENT_PORT 68
@@ -60,7 +60,7 @@ static struct udp_pcb *pcb;
 static struct netif *cable;
 static uint32_t board, client;        // host byte order
 
-uint32_t myrtos_dhcpd_offers, myrtos_dhcpd_acks, myrtos_dhcpd_naks;
+uint32_t ubiqos_dhcpd_offers, ubiqos_dhcpd_acks, ubiqos_dhcpd_naks;
 
 static void put32(uint8_t *p, uint32_t v)
 {
@@ -141,7 +141,7 @@ static void on_request(void *arg, struct udp_pcb *u, struct pbuf *p,
     switch (t[0]) {
     case DISCOVER:
         reply(m, OFFER, true);
-        myrtos_dhcpd_offers++;
+        ubiqos_dhcpd_offers++;
         break;
     case REQUEST: {
         // Answering somebody else's offer: not ours to say anything about.
@@ -149,9 +149,9 @@ static void on_request(void *arg, struct udp_pcb *u, struct pbuf *p,
         if (sid && len == 4 && get32(sid) != board) return;
         const uint8_t *want = option(m + OPTIONS, n - OPTIONS, 50, &len);
         const uint32_t asked = (want && len == 4) ? get32(want) : get32(m + CIADDR);
-        if (asked && asked != client) { reply(m, NAK, false); myrtos_dhcpd_naks++; break; }
+        if (asked && asked != client) { reply(m, NAK, false); ubiqos_dhcpd_naks++; break; }
         reply(m, ACK, true);
-        myrtos_dhcpd_acks++;
+        ubiqos_dhcpd_acks++;
         break;
     }
     case INFORM:
@@ -163,19 +163,19 @@ static void on_request(void *arg, struct udp_pcb *u, struct pbuf *p,
 }
 
 // Started once, with the cable's interface. Its address is already set.
-void myrtos_dhcpd_start(struct netif *n, uint32_t board_address)
+void ubiqos_dhcpd_start(struct netif *n, uint32_t board_address)
 {
     if (pcb) return;
     cable = n;
     board = board_address;
     client = board_address + 1u;
     pcb = udp_new();
-    if (!pcb) { myrtos_print("net: no room for the DHCP server\n"); return; }
+    if (!pcb) { ubiqos_print("net: no room for the DHCP server\n"); return; }
     udp_bind_netif(pcb, n);
     if (udp_bind(pcb, IP4_ADDR_ANY, SERVER_PORT) != ERR_OK) {
         udp_remove(pcb);
         pcb = 0;
-        myrtos_print("net: the DHCP server could not have port 67\n");
+        ubiqos_print("net: the DHCP server could not have port 67\n");
         return;
     }
     udp_recv(pcb, on_request, 0);

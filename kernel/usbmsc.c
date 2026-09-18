@@ -24,9 +24,9 @@
 #include "sdcard.h"
 #include "fat32.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-void myrtos_print_hex(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+void ubiqos_print_hex(uint32_t v);
 
 static bool     host_has_it;
 static uint32_t total_blocks;
@@ -47,40 +47,40 @@ static uint32_t blocks_read, blocks_written, read_calls;
 static uint32_t saw_prevent, saw_allow, saw_sync, saw_other;
 static uint8_t  other_ops[8];
 
-bool myrtos_msc_host_has_card(void) { return host_has_it; }
+bool ubiqos_msc_host_has_card(void) { return host_has_it; }
 
 // Give the card to the host. The caller has already taken the volume out of
 // the table; this only starts saying yes to the host's enquiries.
-bool myrtos_msc_hand_over(void) {
+bool ubiqos_msc_hand_over(void) {
     if (host_has_it) return true;
-    if (!myrtos_fat_extent(0, &total_blocks) || !total_blocks) return false;
+    if (!ubiqos_fat_extent(0, &total_blocks) || !total_blocks) return false;
     host_has_it = true;
     return true;
 }
 
 // Take it back, whether the host ejected it or the user asked.
-void myrtos_msc_take_back(void) {
+void ubiqos_msc_take_back(void) {
     if (host_has_it) {
-        myrtos_print("USB disk: the host read ");
-        myrtos_print_u32(blocks_read);
-        myrtos_print(" sectors in ");
-        myrtos_print_u32(read_calls);
-        myrtos_print(" calls and wrote ");
-        myrtos_print_u32(blocks_written);
-        myrtos_print("\n");
-        myrtos_print("USB disk: prevent ");
-        myrtos_print_u32(saw_prevent);
-        myrtos_print(", allow ");
-        myrtos_print_u32(saw_allow);
-        myrtos_print(", sync ");
-        myrtos_print_u32(saw_sync);
-        myrtos_print(", other ");
-        myrtos_print_u32(saw_other);
+        ubiqos_print("USB disk: the host read ");
+        ubiqos_print_u32(blocks_read);
+        ubiqos_print(" sectors in ");
+        ubiqos_print_u32(read_calls);
+        ubiqos_print(" calls and wrote ");
+        ubiqos_print_u32(blocks_written);
+        ubiqos_print("\n");
+        ubiqos_print("USB disk: prevent ");
+        ubiqos_print_u32(saw_prevent);
+        ubiqos_print(", allow ");
+        ubiqos_print_u32(saw_allow);
+        ubiqos_print(", sync ");
+        ubiqos_print_u32(saw_sync);
+        ubiqos_print(", other ");
+        ubiqos_print_u32(saw_other);
         for (uint32_t i = 0; i < saw_other && i < 8; i++) {
-            myrtos_print(" ");
-            myrtos_print_hex(other_ops[i]);
+            ubiqos_print(" ");
+            ubiqos_print_hex(other_ops[i]);
         }
-        myrtos_print("\n");
+        ubiqos_print("\n");
     }
     host_has_it = false;
     total_blocks = 0;
@@ -93,7 +93,7 @@ void myrtos_msc_take_back(void) {
 void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8],
                         uint8_t product_id[16], uint8_t product_rev[4]) {
     (void)lun;
-    const char v[] = "myrtos  ";
+    const char v[] = "UbiqOS  ";
     const char p[] = "SD card         ";
     const char r[] = "1.0 ";
     for (int i = 0; i < 8;  i++) vendor_id[i]   = (uint8_t)v[i];
@@ -125,8 +125,8 @@ bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition,
                            bool start, bool load_eject) {
     (void)lun; (void)power_condition;
     if (load_eject && !start) {
-        myrtos_print("USB disk: the host ejected the card\n");
-        myrtos_msc_take_back();
+        ubiqos_print("USB disk: the host ejected the card\n");
+        ubiqos_msc_take_back();
     }
     return true;
 }
@@ -143,7 +143,7 @@ int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
     static uint8_t sector[512] __attribute__((aligned(4)));
     uint32_t done = 0;
     while (done < bufsize) {
-        if (!myrtos_sd_read_block(lba + (offset + done) / 512, sector)) return -1;
+        if (!ubiqos_sd_read_block(lba + (offset + done) / 512, sector)) return -1;
         blocks_read++;
         uint32_t at = (offset + done) % 512;
         uint32_t n  = 512 - at;
@@ -166,7 +166,7 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset,
     if (offset || (bufsize % 512)) return -1;
 
     for (uint32_t i = 0; i < bufsize / 512; i++) {
-        if (!myrtos_sd_write_block(lba + i, buffer + i * 512)) return -1;
+        if (!ubiqos_sd_write_block(lba + i, buffer + i * 512)) return -1;
         blocks_written++;
     }
     return (int32_t)bufsize;

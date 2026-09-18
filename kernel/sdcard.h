@@ -1,5 +1,5 @@
-#ifndef MYRTOS_SDCARD_H
-#define MYRTOS_SDCARD_H
+#ifndef UBIQOS_SDCARD_H
+#define UBIQOS_SDCARD_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -14,23 +14,23 @@
 // module, and kernel/sdlink.c links it and keeps these names. See the note at
 // the top of sdlink.c for why.
 
-bool    myrtos_sd_init(void);
-bool    myrtos_sd_read_block(uint32_t lba, uint8_t *buf);
+bool    ubiqos_sd_init(void);
+bool    ubiqos_sd_read_block(uint32_t lba, uint8_t *buf);
 
 // Write one 512-byte block. The card is polled until it releases the bus, so a
 // caller that gets true can issue the next command straight away.
-bool myrtos_sd_write_block(uint32_t lba, const uint8_t *buf);
-// myrtos_sd_present was here. GP33 is not connected on this board -- see the
+bool ubiqos_sd_write_block(uint32_t lba, const uint8_t *buf);
+// ubiqos_sd_present was here. GP33 is not connected on this board -- see the
 // note at SD_DETECT_PIN in modules/sdlib/sdlib.c.
 
 // Four-bit SDIO, asked for rather than assumed -- see the note in sdlib.c.
-bool    myrtos_sd_try_sdio(void);
-bool    myrtos_sd_is_sdio(void);
+bool    ubiqos_sd_try_sdio(void);
+bool    ubiqos_sd_is_sdio(void);
 
 // True once the card has stopped answering. Cleared by mounting it again.
-bool    myrtos_sd_failed(void);
+bool    ubiqos_sd_failed(void);
 
 // The card has gone. Refuse both buses until something mounts again, and when
 // it does, start from CMD0 rather than from what the last card was doing.
-void    myrtos_sd_forget(void);
+void    ubiqos_sd_forget(void);
 #endif

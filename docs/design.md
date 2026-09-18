@@ -1,4 +1,4 @@
-# myrtos, the design
+# UbiqOS, the design
 
 This was the README until September 2026, and it is the long account of why
 the system is built the way it is: the module format, the display, the
@@ -102,7 +102,7 @@ route in use.
 A module is a file with a header — no ELF, and no loader that relocates it. It
 runs where it lies: straight out of flash without being copied, or from a copy
 on the heap when it came from the card. The header is defined in
-[`common/myrtos_abi.h`](../common/myrtos_abi.h) and states, among other things, how
+[`common/ubiqos_abi.h`](../common/ubiqos_abi.h) and states, among other things, how
 much RAM the process needs: the data area grows from the bottom and the stack
 from the top of the same block.
 
@@ -126,7 +126,7 @@ host sources by path, so pointing two of them at our copies is the whole
 mechanism — there is no patch step and nothing to apply.
 
 Which means there is something to forget, so **the build refuses to configure**
-when `sdkVersion` and `myrtosPatchedFrom` disagree. It is not a warning: a stale
+when `sdkVersion` and `ubiqosPatchedFrom` disagree. It is not a warning: a stale
 copy is not a build error and not a wrong pixel, it is two fixes quietly gone,
 and the board hangs on an unplugged USB device exactly as it did before a day
 was spent finding out why.
@@ -155,20 +155,20 @@ loading, at an address that tells you nothing.
 Put the source under `modules/` and register it in `CMakeLists.txt`:
 
 ```cmake
-myrtos_add_module(mine modules/mine/mine.c)
+ubiqos_add_module(mine modules/mine/mine.c)
 ```
 
 A module starts at `module_main`, which receives the command line:
 
 ```c
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 void module_main(int argc, char **argv) {
-    myrtos_line_t line;
-    myrtos_line_reset(&line);
-    for (int i = 1; i < argc; i++) myrtos_line_str(&line, argv[i]);
-    myrtos_line_str(&line, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &line);
+    ubiqos_line_t line;
+    ubiqos_line_reset(&line);
+    for (int i = 1; i < argc; i++) ubiqos_line_str(&line, argv[i]);
+    ubiqos_line_str(&line, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &line);
 }
 ```
 
@@ -180,7 +180,7 @@ allocation, and nothing to free.
 ## Getting modules into the system
 
 **Resident in flash.** This is where the system lives. The build concatenates
-`MYRTOS_RESIDENT` from `CMakeLists.txt` into an image and it goes into the
+`UBIQOS_RESIDENT` from `CMakeLists.txt` into an image and it goes into the
 module region, `0x10100000`–`0x11000000`. There is no directory there: the
 kernel searches for the sync word, exactly as OS-9 did with ROM — the module
 *is* its own directory entry.
@@ -191,9 +191,9 @@ picotool load build/modules.bin -t bin -o 0x10100000
 
 The filename comes before `-t` and `-o`; picotool rejects them the other way
 round. The image is written whole, so a module is added by adding it to
-`MYRTOS_RESIDENT` and loading the image again, never by loading one module.
+`UBIQOS_RESIDENT` and loading the image again, never by loading one module.
 
-The build also produces `myrtos.uf2`, which is the kernel and that image in one
+The build also produces `ubiqos.uf2`, which is the kernel and that image in one
 file -- two addresses a megabyte apart, which one UF2 can hold because every
 block carries its own target address. There is a second module region at
 `0x10800000` for an application built elsewhere; `tools/combine_uf2.py` folds
@@ -211,7 +211,7 @@ using it. Flash modules work the same way and always have: they are never
 copied at all, since the code runs where it lies.
 
 Flash is searched first, so a module that exists in both places comes from
-flash and the card copy is never read. Take it out of `MYRTOS_RESIDENT` if the
+flash and the card copy is never read. Take it out of `UBIQOS_RESIDENT` if the
 card version is the one being worked on.
 
 ### Getting files onto the card without moving it
@@ -220,11 +220,11 @@ card version is the one being worked on.
 can be copied straight onto it.
 
 ```bash
-usbdisk                              # on the board: the card appears as MYRTOS
+usbdisk                              # on the board: the card appears as UBIQOS
 ```
 ```bash
-cp build/dhello.mod /Volumes/MYRTOS/DHELLO.MOD    # on the host
-diskutil eject /Volumes/MYRTOS                    # or eject in Finder
+cp build/dhello.mod /Volumes/UBIQOS/DHELLO.MOD    # on the host
+diskutil eject /Volumes/UBIQOS                    # or eject in Finder
 ```
 ```bash
 usbdisk off                          # on the board: take it back
@@ -249,8 +249,8 @@ re-read.
 to none:
 
 ```bash
-touch /Volumes/MYRTOS/.metadata_never_index
-mkdir -p /Volumes/MYRTOS/.fseventsd && touch /Volumes/MYRTOS/.fseventsd/no_log
+touch /Volumes/UBIQOS/.metadata_never_index
+mkdir -p /Volumes/UBIQOS/.fseventsd && touch /Volumes/UBIQOS/.fseventsd/no_log
 ```
 
 Measured: the first mount of a card without those read 15920 sectors — eight
@@ -280,7 +280,7 @@ other end of the cable to the Mac — a BLE dongle, a modem, a sensor. It is a
 character device like the others, so `cu acm` is all it takes:
 
 ```
-myrtos:/> cu acm ATI
+ubiqos:/> cu acm ATI
 connected; ctrl-C to stop
 ATI
 Smart Sensor Devices AB
@@ -343,10 +343,10 @@ Two fonts, both Terminus, both drawn by hand on their own grid rather than
 scaled from each other:
 
 ```
-myrtos> font
+ubiqos> font
 * 8x16, 80 by 30
   6x12, 106 by 40
-myrtos> font 6x12
+ubiqos> font 6x12
 ```
 
 Switching clears the screen -- eighty columns do not reflow into a hundred and
@@ -360,7 +360,7 @@ the 520 kB of SRAM, and the kernel is linked `copy_to_ram`, so its code, its
 480000, which does not fit at any clock. The glyph tables are the reason
 `.flashdata` appears in the generated font files: six kilobytes that would
 otherwise be copied into RAM for no reason, since nothing writes flash while
-myrtos is running.
+UbiqOS is running.
 
 The way up is therefore fewer bits per pixel rather than more SRAM. The HSTX
 expander takes each colour channel out of a bit field of a width it is told, and
@@ -408,8 +408,8 @@ bytes, so a program that reads a line needs one idea of how to edit it.
 
 A program changes colour by writing the codes; there is nothing to open and no
 call to make, and everything written after one comes out in the new colour.
-The ABI has `myrtos_line_colour` for building the escape into the same
-`myrtos_line_t` as the text, which matters for the same reason the line buffer
+The ABI has `ubiqos_line_colour` for building the escape into the same
+`ubiqos_line_t` as the text, which matters for the same reason the line buffer
 exists at all: a write is atomic and a pair of them is not, so a colour set in
 one write and the text printed in the next colours whatever another process
 printed in between. `color` is the command, and its source is the example.
@@ -421,7 +421,7 @@ report into the keyboard queue, because the console's input is the keyboard.
 ## The shell
 
 ```
-myrtos> help
+ubiqos> help
 Type a module name to run it. Built in:
   help     this text
   lsmod    list modules
@@ -595,7 +595,7 @@ pointed at the one thing they had in common.
 **46875 and not 48000**, because 48 kHz with `DOSR=128` needs a 49.152 MHz
 master clock, and that family cannot be divided out of a 12 MHz crystal at all.
 That is precisely why the board leaves MCLK unconnected in the first place.
-Nothing has to care: `/dev/audio` answers `MYRTOS_SS_RATE` and `play` resamples
+Nothing has to care: `/dev/audio` answers `UBIQOS_SS_RATE` and `play` resamples
 to whatever it says. The PIO divider comes out at exactly 40 as well.
 
 **DOSR must be a multiple of eight.** Interpolation filter A upsamples by eight
@@ -628,9 +628,9 @@ configures itself, so the table says what is true of this boot rather than what
 is true of the board.
 
 ```
-myrtos:/> gpio 44 out
+ubiqos:/> gpio 44 out
 gpio: GP44 belongs to term
-myrtos:/> gpio 24 out
+ubiqos:/> gpio 24 out
 gpio: GP24 belongs to audio
 ```
 
@@ -642,16 +642,16 @@ It works in both directions. Take GP40 with `gpio` and the ADC is refused when
 it is started, with a message saying to go and look:
 
 ```
-myrtos:/> gpio 40 out
-myrtos:/> adc 1
+ubiqos:/> gpio 40 out
+ubiqos:/> adc 1
 adc: refused -- one of GP40-43 belongs to something else. Try 'gpio'.
 ```
 
 ### Waiting for a button
 
 ```
-myrtos:/> gpio 4 up
-myrtos:/> gpio watch 4
+ubiqos:/> gpio 4 up
+ubiqos:/> gpio watch 4
 watching GP4, ctrl-C to stop
 GP4 pressed at 102756 ms
 GP4 released at 104050 ms
@@ -707,7 +707,7 @@ that the hardware asks for every 125 microseconds:
 | kernel masks with | worst gap | conversions missed |
 |---|---|---|
 | `PRIMASK` (the default) | 555 us | 20 |
-| `BASEPRI` 0x80 (`-DMYRTOS_BASEPRI=0x80`) | **127 us** | **0** |
+| `BASEPRI` 0x80 (`-DUBIQOS_BASEPRI=0x80`) | **127 us** | **0** |
 
 **Confirmed from outside.** `adc -p 6` gives the handler a pin to toggle, so an
 oscilloscope on GP6 sees a square wave whose half-period is the handler's
@@ -742,12 +742,12 @@ negotiable.**
 
 Concretely, from such a handler:
 
-- **No system calls.** Not `myrtos_write`, not `myrtos_read`, not `myrtos_open`,
-  not `myrtos_sleep`. A system call is a trap, and traps here are how the kernel
+- **No system calls.** Not `ubiqos_write`, not `ubiqos_read`, not `ubiqos_open`,
+  not `ubiqos_sleep`. A system call is a trap, and traps here are how the kernel
   is entered from a thread -- taking one from inside an interrupt is not a
   smaller version of that, it is a different thing entirely.
-- **No messages.** `myrtos_send`, `myrtos_receive`, `myrtos_reply` and
-  `myrtos_pulse` all walk the process table.
+- **No messages.** `ubiqos_send`, `ubiqos_receive`, `ubiqos_reply` and
+  `ubiqos_pulse` all walk the process table.
 - **No allocation.** `mem_alloc`, `driver_alloc` and `free` walk the allocator's
   own structures, which is very likely what the kernel was doing when it was
   interrupted.
@@ -933,8 +933,8 @@ of reading three bytes of somebody's stack ever after.
 
 ```c
 uint32_t v = 40;
-myrtos_setstat(fd, MYRTOS_SS_VOLUME, &v, sizeof v);
-myrtos_getstat(fd, MYRTOS_SS_RATE, &v, sizeof v);   /* 48000 */
+ubiqos_setstat(fd, UBIQOS_SS_VOLUME, &v, sizeof v);
+ubiqos_getstat(fd, UBIQOS_SS_RATE, &v, sizeof v);   /* 48000 */
 ```
 
 Codes below `0x100` mean the same on every device that answers them at all;

@@ -1,4 +1,4 @@
-// dhello -- the first myrtos module written in D.
+// dhello -- the first UbiqOS module written in D.
 //
 // It exists to prove the toolchain, so it uses the three things that could go
 // wrong and nothing else: the trap (write), the command line (args), and a
@@ -15,7 +15,7 @@
 // nothing to remember.
 module dhello;
 
-import myrtos;
+import ubiqos;
 
 @nogc: nothrow:
 
@@ -24,7 +24,7 @@ import myrtos;
 uint calls;
 
 // argc and argv, exactly as a C module receives them -- the kernel builds the
-// vector and enters here. (myrtos.args() exists too, but it stops at the first
+// vector and enters here. (ubiqos.args() exists too, but it stops at the first
 // NUL, and by the time a module runs the kernel has split the argument string
 // in place to build argv. It gives the first word and nothing after it.)
 extern(C) void module_main(int argc, char** argv) {

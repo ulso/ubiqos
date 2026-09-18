@@ -1,5 +1,5 @@
-#ifndef MYRTOS_CRITICAL_H
-#define MYRTOS_CRITICAL_H
+#ifndef UBIQOS_CRITICAL_H
+#define UBIQOS_CRITICAL_H
 
 #include <stdint.h>
 #include "hardware/sync.h"
@@ -17,10 +17,10 @@
 // PRIMASK on Arm and mstatus.MIE on RISC-V, through the SDK's own helpers. The
 // interesting part is the switch below.
 
-typedef uint32_t myrtos_critical_t;
+typedef uint32_t ubiqos_critical_t;
 
 // --- BASEPRI, WHICH IS OFF ------------------------------------------------
-// Define MYRTOS_CRITICAL_BASEPRI to a priority VALUE to mask down to, and
+// Define UBIQOS_CRITICAL_BASEPRI to a priority VALUE to mask down to, and
 // interrupts more urgent than it are never masked by the kernel at all --
 // ARMv8-M has BASEPRI where ARMv6-M has only the hammer.
 //
@@ -33,7 +33,7 @@ typedef uint32_t myrtos_critical_t;
 // Where things sit here: every peripheral takes PICO_DEFAULT_IRQ_PRIORITY,
 // which is 0x80, and the scheduler was deliberately put at the bottom, 0xF0 --
 // see kernel/arm/stack.c for why. So 0x00 to 0x70 is empty, and
-// MYRTOS_CRITICAL_BASEPRI 0x80 would leave all of it unmasked while masking
+// UBIQOS_CRITICAL_BASEPRI 0x80 would leave all of it unmasked while masking
 // everything that exists today.
 //
 // THE RULE THAT DOES NOT SHOW IN THE CODE. A handler above the threshold runs
@@ -45,25 +45,25 @@ typedef uint32_t myrtos_critical_t;
 // same. Breaking it gives corruption that looks like anything but its cause.
 //
 // ON BY DEFAULT since the ADC driver, which was the first thing to want it.
-// CMakeLists.txt sets MYRTOS_BASEPRI to 0x80; setting it empty goes back to
+// CMakeLists.txt sets UBIQOS_BASEPRI to 0x80; setting it empty goes back to
 // PRIMASK. Measured against a deliberately long critical section, a handler at
 // 0x40 saw 127 microseconds of worst-case latency where PRIMASK gave it 555 --
 // `crit 500 20` then `adc -i` is the whole experiment.
 //
 // The rule above is written out for driver authors beside irq_install in
-// common/myrtos_abi.h and in docs/design.md, because this file is not one they
+// common/ubiqos_abi.h and in docs/design.md, because this file is not one they
 // read.
-#if defined(MYRTOS_CRITICAL_BASEPRI) && (defined(__arm__) || defined(__thumb__))
+#if defined(UBIQOS_CRITICAL_BASEPRI) && (defined(__arm__) || defined(__thumb__))
 
-static inline myrtos_critical_t myrtos_critical_enter(void)
+static inline ubiqos_critical_t ubiqos_critical_enter(void)
 {
-    myrtos_critical_t saved;
+    ubiqos_critical_t saved;
     __asm__ volatile ("mrs %0, basepri" : "=r"(saved));
-    __asm__ volatile ("msr basepri, %0" :: "r"((uint32_t)MYRTOS_CRITICAL_BASEPRI) : "memory");
+    __asm__ volatile ("msr basepri, %0" :: "r"((uint32_t)UBIQOS_CRITICAL_BASEPRI) : "memory");
     return saved;
 }
 
-static inline void myrtos_critical_exit(myrtos_critical_t saved)
+static inline void ubiqos_critical_exit(ubiqos_critical_t saved)
 {
     __asm__ volatile ("msr basepri, %0" :: "r"(saved) : "memory");
 }
@@ -74,12 +74,12 @@ static inline void myrtos_critical_exit(myrtos_critical_t saved)
 // masks everything but NMI and HardFault; on RISC-V it is mstatus.MIE, which
 // masks everything full stop. The SDK's helpers rather than our own assembly,
 // so that this path is provably the code that was here before.
-static inline myrtos_critical_t myrtos_critical_enter(void)
+static inline ubiqos_critical_t ubiqos_critical_enter(void)
 {
     return save_and_disable_interrupts();
 }
 
-static inline void myrtos_critical_exit(myrtos_critical_t saved)
+static inline void ubiqos_critical_exit(ubiqos_critical_t saved)
 {
     restore_interrupts(saved);
 }

@@ -1,6 +1,6 @@
 #include <stdint.h>
 extern "C" {
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 }
 
 // A class with no virtual functions: member functions are ordinary functions
@@ -8,10 +8,10 @@ extern "C" {
 // static constructors.
 class Terminal {
 public:
-    explicit Terminal(const char *device) : path_(myrtos_open(device)) {}
+    explicit Terminal(const char *device) : path_(ubiqos_open(device)) {}
     bool ok() const { return path_ >= 0; }
-    void write(const char *s) const { myrtos_write_str(path_, s); }
-    void close() const { myrtos_close(path_); }
+    void write(const char *s) const { ubiqos_write_str(path_, s); }
+    void close() const { ubiqos_close(path_); }
 private:
     int32_t path_;
 };
@@ -47,14 +47,14 @@ extern "C" {
 __attribute__((used)) static const char *say_first(void)  { return "[reltab 0] shared, in .rodata\n"; }
 __attribute__((used)) static const char *say_second(void) { return "[reltab 1] shared, in .rodata\n"; }
 }
-MYRTOS_RELTAB_BEGIN(emitters);
-MYRTOS_RELTAB_ENTRY(emitters, say_first);
-MYRTOS_RELTAB_ENTRY(emitters, say_second);
-MYRTOS_RELTAB_END();
+UBIQOS_RELTAB_BEGIN(emitters);
+UBIQOS_RELTAB_ENTRY(emitters, say_first);
+UBIQOS_RELTAB_ENTRY(emitters, say_second);
+UBIQOS_RELTAB_END();
 
 extern "C" void module_main(void) {
     Terminal term("term");
-    if (!term.ok()) { myrtos_exit(); return; }
+    if (!term.ok()) { ubiqos_exit(); return; }
 
     term.write("\n[c++] classes, templates and RAII, no vtables\n");
 
@@ -64,7 +64,7 @@ extern "C" void module_main(void) {
 
     // The shared variant: the table sits const in .rodata and carries offsets
     // rather than addresses, so every process uses the same copy.
-    term.write(MYRTOS_RELTAB_CALL(emitters, 1, const char *(*)(void))());
+    term.write(UBIQOS_RELTAB_CALL(emitters, 1, const char *(*)(void))());
 
     // And the stack-built one, which works but gives each process its own copy.
     Emitter table[2] = {

@@ -16,47 +16,47 @@
 #include "hardware/psram.h"
 #include "pico/time.h"
 
-void myrtos_pio_probe(void);
-void myrtos_video_init(void);
-void myrtos_video_testcard(void);
-void myrtos_usbhost_init(void);
+void ubiqos_pio_probe(void);
+void ubiqos_video_init(void);
+void ubiqos_video_testcard(void);
+void ubiqos_usbhost_init(void);
 #include "usbdev.h"
 #include "video.h"
 
-// --- MYRTOS KONSTANTER ---
-#define MYRTOS_SYNC_CODE 0x0509000B
+// --- UBIQOS KONSTANTER ---
+#define UBIQOS_SYNC_CODE 0x0509000B
 
 // --- HARDWARE MAPPING AND PRINT HELPERS ---
 // Fruit Jam, RP2350B. The SDK's PICO_DEFAULT_UART for this board is UART1 on
 // GP8/GP9, but those go to the on-board ESP32-C6 rather than to any header.
 // Diagnostics therefore go on UART0 TX / GP44, the same choice made in
 // pico-io-fruit-jam, so the same cable works.
-// MYRTOS_UART and MYRTOS_UART_TX_PIN come from the board header.
-// MYRTOS_UART_TX_PIN comes from the board header; see kernel/board.h.
+// UBIQOS_UART and UBIQOS_UART_TX_PIN come from the board header.
+// UBIQOS_UART_TX_PIN comes from the board header; see kernel/board.h.
 #include "board.h"
-#define MYRTOS_UART_BAUD   115200
+#define UBIQOS_UART_BAUD   115200
 
 // A board without a diagnostic UART has none because its only broken-out pins
 // are doing something else -- see boards/ws43b.h. It has to be an absence at
-// build time rather than a peripheral left alone: myrtos_putc WAITS on the
+// build time rather than a peripheral left alone: ubiqos_putc WAITS on the
 // UART, so an uninitialised one hangs the kernel on its first line.
-#if MYRTOS_HAS_DIAG_UART
-void myrtos_uart_init(void) {
-    uart_init(MYRTOS_UART, MYRTOS_UART_BAUD);
-    gpio_set_function(MYRTOS_UART_TX_PIN, UART_FUNCSEL_NUM(MYRTOS_UART, MYRTOS_UART_TX_PIN));
+#if UBIQOS_HAS_DIAG_UART
+void ubiqos_uart_init(void) {
+    uart_init(UBIQOS_UART, UBIQOS_UART_BAUD);
+    gpio_set_function(UBIQOS_UART_TX_PIN, UART_FUNCSEL_NUM(UBIQOS_UART, UBIQOS_UART_TX_PIN));
 }
-#define MYRTOS_UART_PUT(c) uart_putc_raw(MYRTOS_UART, (c))
+#define UBIQOS_UART_PUT(c) uart_putc_raw(UBIQOS_UART, (c))
 #else
-void myrtos_uart_init(void) { }
-#define MYRTOS_UART_PUT(c) ((void)(c))
+void ubiqos_uart_init(void) { }
+#define UBIQOS_UART_PUT(c) ((void)(c))
 #endif
 
-void myrtos_putc(char c) {
+void ubiqos_putc(char c) {
     // Every line the system prints goes through here -- the kernel's own output
     // and every module's write syscall alike -- so hooking the screen on at this
     // one point puts all of it on the display without touching a single caller.
-    myrtos_console_putc(c);
-    MYRTOS_UART_PUT(c);
+    ubiqos_console_putc(c);
+    UBIQOS_UART_PUT(c);
 }
 
 // The kernel does not print from inside a trap, so interrupts are on here and a
@@ -73,8 +73,8 @@ void myrtos_putc(char c) {
 // and the running system is what has messages nobody was watching for.
 // The boot log does not fit in two kilobytes: it wrapped before the shell was
 // up, so `more /var/dmesg` never showed the "System: ARM 32-bit" banner that is
-// printed first of all. Like MYRTOS_HEAP_SIZE this comes from CMake and follows
-// MYRTOS_VIDEO, because a framebuffer build has no room to spare and a chargen
+// printed first of all. Like UBIQOS_HEAP_SIZE this comes from CMake and follows
+// UBIQOS_VIDEO, because a framebuffer build has no room to spare and a chargen
 // build has 300 kB.
 #ifndef DMESG_SIZE
 #define DMESG_SIZE 2048
@@ -103,21 +103,21 @@ static void dmesg_write(const char *p, uint32_t n) {
 // How much there is, and one byte of it. Reading is by position rather than by
 // stream so that /var/dmesg can be an ordinary file: two readers do not
 // interfere, and cat can be run twice.
-uint32_t myrtos_dmesg_size(void) {
+uint32_t ubiqos_dmesg_size(void) {
     return dmesg_wrapped ? DMESG_SIZE : dmesg_head;
 }
 
-int32_t myrtos_dmesg_at(uint32_t offset) {
-    uint32_t n = myrtos_dmesg_size();
+int32_t ubiqos_dmesg_at(uint32_t offset) {
+    uint32_t n = ubiqos_dmesg_size();
     if (offset >= n) return -1;
     uint32_t start = dmesg_wrapped ? dmesg_head : 0;
     return (uint8_t)dmesg_buf[(start + offset) % DMESG_SIZE];
 }
 
-void myrtos_print(const char *s) {
+void ubiqos_print(const char *s) {
     // This used to hold interrupts off for the whole string, so a kernel line
     // could not be interleaved with a module's. The cost turned out to be
-    // unaffordable: myrtos_putc waits on the UART, and forty characters at
+    // unaffordable: ubiqos_putc waits on the UART, and forty characters at
     // 115200 baud is three and a half milliseconds -- a hundred scanlines, and
     // the display's DMA chain dies the first time it starves.
     //
@@ -149,12 +149,12 @@ void myrtos_print(const char *s) {
             for (uint32_t i = 0; i < n; i++) line[i] = run[i];
             line[n] = '\r';
             line[n + 1] = '\n';
-            myrtos_console_write(line, n + 2);
+            ubiqos_console_write(line, n + 2);
         } else {
             // A line too long for the buffer goes as it always did. It can be
             // split, and one that long is a hexdump rather than a sentence.
-            if (n)  myrtos_console_write(run, n);
-            if (nl) myrtos_console_write("\r\n", 2);
+            if (n)  ubiqos_console_write(run, n);
+            if (nl) ubiqos_console_write("\r\n", 2);
         }
 
         // dmesg takes the same line in one piece. An earlier version of this
@@ -175,47 +175,47 @@ void myrtos_print(const char *s) {
         // the console and dmesg both have the line whole -- and holding
         // interrupts off for 115200-baud characters would cost more than the
         // tidiness is worth.
-        for (uint32_t i = 0; i < n; i++) MYRTOS_UART_PUT(run[i]);
+        for (uint32_t i = 0; i < n; i++) UBIQOS_UART_PUT(run[i]);
         if (nl) {
-            MYRTOS_UART_PUT('\r');
-            MYRTOS_UART_PUT('\n');
+            UBIQOS_UART_PUT('\r');
+            UBIQOS_UART_PUT('\n');
             s++;
         }
     }
 }
 
-void myrtos_print_u32(uint32_t v);
+void ubiqos_print_u32(uint32_t v);
 
-void myrtos_print_hex(uint32_t v) {
+void ubiqos_print_hex(uint32_t v) {
     const char *d = "0123456789ABCDEF";
     char buf[9];
     for (int i = 7; i >= 0; i--) { buf[i] = d[v & 15]; v >>= 4; }
     buf[8] = 0;
-    myrtos_print(buf);
+    ubiqos_print(buf);
 }
 
-void myrtos_print_u32(uint32_t v) {
+void ubiqos_print_u32(uint32_t v) {
     char buf[11];
     int i = 10;
     buf[i] = 0;
     if (!v) buf[--i] = '0';
     while (v) { buf[--i] = '0' + (v % 10); v /= 10; }
-    myrtos_print(&buf[i]);
+    ubiqos_print(&buf[i]);
 }
 
 // How much PSRAM the board turned out to have. Zero on a board without any,
 // and the second pool is simply not created.
-extern tlsf_pool_t myrtos_bulk_pool;
+extern tlsf_pool_t ubiqos_bulk_pool;
 static uint32_t psram_bytes;
-uint32_t myrtos_psram_bytes(void) { return psram_bytes; }
+uint32_t ubiqos_psram_bytes(void) { return psram_bytes; }
 
 // The second pool covers the whole PSRAM window. Nothing that matters for
 // timing goes here -- module code runs from SRAM and so do the stacks -- but a
 // framebuffer or a file buffer has no business eating the seventy kilobytes
 // that were left.
-static void myrtos_bulk_pool_init(void) {
+static void ubiqos_bulk_pool_init(void) {
     if (!psram_is_available()) {
-        myrtos_print("PSRAM: none found; bulk allocations fall back to SRAM\n");
+        ubiqos_print("PSRAM: none found; bulk allocations fall back to SRAM\n");
         return;
     }
     psram_bytes = (uint32_t)psram_get_size();
@@ -232,12 +232,12 @@ static void myrtos_bulk_pool_init(void) {
     // through the whole region and read every word back, both ends included,
     // before this line changed.
     uint32_t pool_bytes = psram_bytes;
-    myrtos_bulk_pool = myrtos_tlsf_create((void*)MYRTOS_PSRAM_BASE, pool_bytes);
-    myrtos_print("PSRAM: ");
-    myrtos_print_u32(psram_bytes / 1024);
-    myrtos_print(" kB at 0x");
-    myrtos_print_hex(MYRTOS_PSRAM_BASE);
-    myrtos_print(myrtos_bulk_pool ? ", second pool ready\n" : ", pool refused\n");
+    ubiqos_bulk_pool = ubiqos_tlsf_create((void*)UBIQOS_PSRAM_BASE, pool_bytes);
+    ubiqos_print("PSRAM: ");
+    ubiqos_print_u32(psram_bytes / 1024);
+    ubiqos_print(" kB at 0x");
+    ubiqos_print_hex(UBIQOS_PSRAM_BASE);
+    ubiqos_print(ubiqos_bulk_pool ? ", second pool ready\n" : ", pool refused\n");
 }
 
 // --- MEMORY MANAGEMENT (TLSF) ---
@@ -333,18 +333,18 @@ static void myrtos_bulk_pool_init(void) {
 // allocated instead of declared: DMA cannot reach PSRAM, so sdlib asks the
 // kernel for 1168 bytes of control blocks and a 512-byte bounce buffer at init.
 //
-// The size itself now comes from CMake, because it has to follow MYRTOS_VIDEO:
+// The size itself now comes from CMake, because it has to follow UBIQOS_VIDEO:
 // a framebuffer build has some 28 kB of SRAM left over and a chargen build has
-// 300, and one number cannot be right for both. See MYRTOS_HEAP_KB.
-#ifndef MYRTOS_HEAP_SIZE
-#define MYRTOS_HEAP_SIZE (40 * 1024)
+// 300, and one number cannot be right for both. See UBIQOS_HEAP_KB.
+#ifndef UBIQOS_HEAP_SIZE
+#define UBIQOS_HEAP_SIZE (40 * 1024)
 #endif
-uint8_t myrtos_heap[MYRTOS_HEAP_SIZE] __attribute__((aligned(4)));
-tlsf_pool_t myrtos_mem_pool;
+uint8_t ubiqos_heap[UBIQOS_HEAP_SIZE] __attribute__((aligned(4)));
+tlsf_pool_t ubiqos_mem_pool;
 
 // Validate the header before anything in it is trusted.
-bool verify_myrtos_header(myrtos_module_header_t *header) {
-    if (header->sync_code != MYRTOS_SYNC_CODE) {
+bool verify_ubiqos_header(ubiqos_module_header_t *header) {
+    if (header->sync_code != UBIQOS_SYNC_CODE) {
         return false;
     }
 
@@ -353,12 +353,12 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
     // otherwise it looks like a broken checksum, which sends debugging the wrong
     // way.
     uint8_t abi = (uint8_t)(header->attr_rev & 0xff);
-    if (abi != MYRTOS_ABI_VERSION) {
-        myrtos_print("  module built for ABI version ");
-        myrtos_print_u32(abi);
-        myrtos_print(", this kernel speaks ");
-        myrtos_print_u32(MYRTOS_ABI_VERSION);
-        myrtos_print("\n");
+    if (abi != UBIQOS_ABI_VERSION) {
+        ubiqos_print("  module built for ABI version ");
+        ubiqos_print_u32(abi);
+        ubiqos_print(", this kernel speaks ");
+        ubiqos_print_u32(UBIQOS_ABI_VERSION);
+        ubiqos_print("\n");
         return false;
     }
 
@@ -367,14 +367,14 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
     // kernel, so the first instruction would be the first sign -- and it would
     // arrive with nothing to connect it to its cause. A data module has no
     // instructions and is not asked.
-    if ((header->type_lang >> 8) != MYRTOS_TYPE_DATA) {
-        uint32_t arch = MYRTOS_ARCH_OF(header->type_lang);
-        if (arch != MYRTOS_ARCH_HERE) {
-            myrtos_print("  module is for machine ");
-            myrtos_print_u32(arch);
-            myrtos_print(", this kernel runs ");
-            myrtos_print_u32(MYRTOS_ARCH_HERE);
-            myrtos_print("\n");
+    if ((header->type_lang >> 8) != UBIQOS_TYPE_DATA) {
+        uint32_t arch = UBIQOS_ARCH_OF(header->type_lang);
+        if (arch != UBIQOS_ARCH_HERE) {
+            ubiqos_print("  module is for machine ");
+            ubiqos_print_u32(arch);
+            ubiqos_print(", this kernel runs ");
+            ubiqos_print_u32(UBIQOS_ARCH_HERE);
+            ubiqos_print("\n");
             return false;
         }
     }
@@ -393,14 +393,14 @@ bool verify_myrtos_header(myrtos_module_header_t *header) {
 }
 
 // --- THE SYSTEM'S ENTRY POINT ---
-void myrtos_kernel_main(void) {
-    myrtos_print("\n========================================\n");
-    myrtos_print("      MYRTOS KERNEL v0.1 STARTING       \n");
-    myrtos_print("========================================\n");
+void ubiqos_kernel_main(void) {
+    ubiqos_print("\n========================================\n");
+    ubiqos_print("      UBIQOS KERNEL v0.1 STARTING       \n");
+    ubiqos_print("========================================\n");
 #ifdef __riscv
-    myrtos_print("System: RISC-V 32-bit (Hazard3)\n");
+    ubiqos_print("System: RISC-V 32-bit (Hazard3)\n");
 #else
-    myrtos_print("System: ARM 32-bit (Cortex-M33)\n");
+    ubiqos_print("System: ARM 32-bit (Cortex-M33)\n");
 #endif
 
     // Why the machine started. Asked because an evening went into guessing it:
@@ -413,32 +413,32 @@ void myrtos_kernel_main(void) {
     // own reboot command, and the glitch detector is its own kind of news.
     {
         uint32_t why = *(volatile uint32_t *)(0x40100000u + 0x2cu);
-        myrtos_print("Reset: ");
-        if (why & 0x00010000u) myrtos_print("power-on ");
-        if (why & 0x00020000u) myrtos_print("BROWN-OUT ");
-        if (why & 0x00040000u) myrtos_print("run-pin ");
-        if (why & 0x04000000u) myrtos_print("GLITCH-DETECTED ");
-        if (why & 0x00080000u) myrtos_print("debug-port ");
-        if (why & 0x01800000u) myrtos_print("watchdog ");
-        if (why & 0x10000000u) myrtos_print("watchdog-psm ");
-        if (!(why & 0x1FCF0000u)) myrtos_print("none of the recorded causes ");
-        myrtos_print("(chip_reset ");
-        myrtos_print_u32(why);
-        myrtos_print(")\n");
+        ubiqos_print("Reset: ");
+        if (why & 0x00010000u) ubiqos_print("power-on ");
+        if (why & 0x00020000u) ubiqos_print("BROWN-OUT ");
+        if (why & 0x00040000u) ubiqos_print("run-pin ");
+        if (why & 0x04000000u) ubiqos_print("GLITCH-DETECTED ");
+        if (why & 0x00080000u) ubiqos_print("debug-port ");
+        if (why & 0x01800000u) ubiqos_print("watchdog ");
+        if (why & 0x10000000u) ubiqos_print("watchdog-psm ");
+        if (!(why & 0x1FCF0000u)) ubiqos_print("none of the recorded causes ");
+        ubiqos_print("(chip_reset ");
+        ubiqos_print_u32(why);
+        ubiqos_print(")\n");
     }
     
     // 1. Initiera TLSF-minnespoolen
-    myrtos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");
-    myrtos_mem_pool = myrtos_tlsf_create(myrtos_heap, MYRTOS_HEAP_SIZE);
+    ubiqos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");
+    ubiqos_mem_pool = ubiqos_tlsf_create(ubiqos_heap, UBIQOS_HEAP_SIZE);
     
-    if (myrtos_mem_pool) {
-        myrtos_print("🎉 Success: Memory engine active!\n");
+    if (ubiqos_mem_pool) {
+        ubiqos_print("🎉 Success: Memory engine active!\n");
     } else {
-        myrtos_print("❌ Error: Memory engine failed to initialize.\n");
+        ubiqos_print("❌ Error: Memory engine failed to initialize.\n");
     }
 
     // 2. Enable the trap vector for system calls (from scheduler.S)
-    extern void myrtos_trap_vector(void);
+    extern void ubiqos_trap_vector(void);
     // mtvec is left alone: the SDK's crt0 has already pointed it at its vector
     // table, and our handlers replaced the weak entries at link time. Taking it
     // over made our timer work, but the SDK's interrupt registration stopped
@@ -447,30 +447,30 @@ void myrtos_kernel_main(void) {
     // an order that requires both forward and backward coalescing: the middle
     // first, so it has two busy neighbours, then the first and last the last.
     {
-        size_t before = myrtos_tlsf_largest_free(myrtos_mem_pool);
-        void *a = myrtos_tlsf_malloc(myrtos_mem_pool, 8192);
-        void *b = myrtos_tlsf_malloc(myrtos_mem_pool, 8192);
-        void *c = myrtos_tlsf_malloc(myrtos_mem_pool, 8192);
-        myrtos_tlsf_free(myrtos_mem_pool, b);
-        myrtos_tlsf_free(myrtos_mem_pool, a);
-        myrtos_tlsf_free(myrtos_mem_pool, c);
-        size_t after = myrtos_tlsf_largest_free(myrtos_mem_pool);
+        size_t before = ubiqos_tlsf_largest_free(ubiqos_mem_pool);
+        void *a = ubiqos_tlsf_malloc(ubiqos_mem_pool, 8192);
+        void *b = ubiqos_tlsf_malloc(ubiqos_mem_pool, 8192);
+        void *c = ubiqos_tlsf_malloc(ubiqos_mem_pool, 8192);
+        ubiqos_tlsf_free(ubiqos_mem_pool, b);
+        ubiqos_tlsf_free(ubiqos_mem_pool, a);
+        ubiqos_tlsf_free(ubiqos_mem_pool, c);
+        size_t after = ubiqos_tlsf_largest_free(ubiqos_mem_pool);
 
-        myrtos_print("Heap coalescing: largest free block ");
-        myrtos_print_u32((uint32_t)before);
-        myrtos_print(" -> ");
-        myrtos_print_u32((uint32_t)after);
-        myrtos_print(after == before ? " (fully reclaimed)\n" : " (FRAGMENTED)\n");
+        ubiqos_print("Heap coalescing: largest free block ");
+        ubiqos_print_u32((uint32_t)before);
+        ubiqos_print(" -> ");
+        ubiqos_print_u32((uint32_t)after);
+        ubiqos_print(after == before ? " (fully reclaimed)\n" : " (FRAGMENTED)\n");
     }
 
-    myrtos_print("Trap handlers installed in the SDK vector table.\n");
+    ubiqos_print("Trap handlers installed in the SDK vector table.\n");
 
     // Become the idle process before anything can trap -- before interrupts are
     // switched on, and before the self-test below makes the first system call.
     // On RISC-V this is nothing; on ARM it is what puts the kernel on the stack
     // pointer the trap vector reads, and the vector cannot work until it has
     // happened. See the trap.h for whichever machine this is.
-    myrtos_arch_become_process();
+    ubiqos_arch_become_process();
 
     // Interrupts must be enabled globally before USB starts; individual sources
     // are enabled by whoever needs them. The timer would otherwise do it later.
@@ -484,21 +484,21 @@ void myrtos_kernel_main(void) {
     __asm__ volatile("cpsie i" ::: "memory");
 #endif
 
-    myrtos_usb_init();
+    ubiqos_usb_init();
 
     // Prove the trap path before anything relies on it. If we get back here the
     // vector has saved, the handler has run, the saved pc has moved past the
     // call and the return has taken -- the whole chain in one call. Neither
     // half of that sentence names a machine any more, and neither does the
     // test: the cause is asked what it was rather than compared with a number.
-    extern volatile uint32_t myrtos_trap_count;
-    extern volatile uint32_t myrtos_last_cause;
-    uint32_t before = myrtos_trap_count;
-    myrtos_syscall(SYS_NULL, 0, 0, 0);
-    if (myrtos_trap_count == before + 1 && MYRTOS_CAUSE_IS_SYSCALL(myrtos_last_cause)) {
-        myrtos_print("Trap vector self-test passed: ecall taken and resumed.\n");
+    extern volatile uint32_t ubiqos_trap_count;
+    extern volatile uint32_t ubiqos_last_cause;
+    uint32_t before = ubiqos_trap_count;
+    ubiqos_syscall(SYS_NULL, 0, 0, 0);
+    if (ubiqos_trap_count == before + 1 && UBIQOS_CAUSE_IS_SYSCALL(ubiqos_last_cause)) {
+        ubiqos_print("Trap vector self-test passed: ecall taken and resumed.\n");
     } else {
-        myrtos_print("Trap vector self-test FAILED.\n");
+        ubiqos_print("Trap vector self-test FAILED.\n");
     }
 
     // 3. Find the module. Under QEMU, -device loader put it at 0x80500000; on
@@ -511,58 +511,58 @@ void myrtos_kernel_main(void) {
     // LINKING the module rather than copying it: the code is shared, only the
     // data area is private. That is OS-9's F$Link, and the reason the system
     // fitted in 64 kB.
-    extern void myrtos_scheduler_init(void);
-    extern int32_t myrtos_process_create(const myrtos_module_header_t *module_ptr, const char *args);
-    extern void myrtos_timer_init(uint32_t);
+    extern void ubiqos_scheduler_init(void);
+    extern int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr, const char *args);
+    extern void ubiqos_timer_init(uint32_t);
 
-    myrtos_scheduler_init();
+    ubiqos_scheduler_init();
     // Before any descriptor is added, so that a driver claiming a pin in its
     // configure finds the board's own fixed functions already there.
-    myrtos_pins_init();
+    ubiqos_pins_init();
 
     // Before anything else has a chance to fill the log: if the last run ended
     // badly, that is the first thing anybody wants to read.
-    { extern void myrtos_crash_report(void); myrtos_crash_report(); }
-    myrtos_io_init();
+    { extern void ubiqos_crash_report(void); ubiqos_crash_report(); }
+    ubiqos_io_init();
     // Before any volume can be added, and before the first path is resolved.
     // /dev exists from here on, so the root is never empty.
-    { extern void myrtos_vfs_init(void); myrtos_vfs_init(); }
+    { extern void ubiqos_vfs_init(void); ubiqos_vfs_init(); }
     // /var needs no memory: the ring is already full of what has been said.
-    { extern void myrtos_varfs_init(void); myrtos_varfs_init(); }
-    myrtos_moddir_init();
+    { extern void ubiqos_varfs_init(void); ubiqos_varfs_init(); }
+    ubiqos_moddir_init();
 
     // Flash first: resident modules run where they lie and cost no heap. The
     // card may add to them, and a module of the same name there is registered
     // alongside -- whichever was registered first wins the lookup.
-    myrtos_bulk_pool_init();
+    ubiqos_bulk_pool_init();
     // After the bulk pool, not with the other volumes: /tmp puts its files in
     // PSRAM, and there is no PSRAM to put them in until now.
-    { extern void myrtos_tmpfs_init(void); myrtos_tmpfs_init(); }
-    myrtos_pio_probe();
+    { extern void ubiqos_tmpfs_init(void); ubiqos_tmpfs_init(); }
+    ubiqos_pio_probe();
     // The network device's MAC, from the chip's own unique id, so that two of
     // these boards on one desk do not answer to the same address.
     {
-        extern void myrtos_usb_net_id(const uint8_t *unique, uint32_t n);
+        extern void ubiqos_usb_net_id(const uint8_t *unique, uint32_t n);
         pico_unique_board_id_t id;
         pico_get_unique_board_id(&id);
-        myrtos_usb_net_id(id.id, sizeof id.id);
+        ubiqos_usb_net_id(id.id, sizeof id.id);
     }
 
     // The key queue first, and unconditionally: anything reading a console
-    // reads it, host or no host. See myrtos_usbhost_queue_init.
-    { extern void myrtos_usbhost_queue_init(void); myrtos_usbhost_queue_init(); }
+    // reads it, host or no host. See ubiqos_usbhost_queue_init.
+    { extern void ubiqos_usbhost_queue_init(void); ubiqos_usbhost_queue_init(); }
 
     // Step 5 turns this on for the Waveshare board, once its PIO USB host has
     // been tried. Until then the pads are wired and unasked.
-#if MYRTOS_HAS_PIO_USB_HOST || MYRTOS_USB_NATIVE_HOST
-    myrtos_usbhost_init();
+#if UBIQOS_HAS_PIO_USB_HOST || UBIQOS_USB_NATIVE_HOST
+    ubiqos_usbhost_init();
 #endif
     // And then the host itself, on the other core. Its interrupts belong to
     // whichever core enables them, so tuh_init runs over there rather than
     // here -- see core1_main in usbhost.c. The same whether the host is PIO or
     // the chip's own controller.
-#if MYRTOS_HAS_PIO_USB_HOST || MYRTOS_USB_NATIVE_HOST
-    { extern void myrtos_usbhost_start_core1(void); myrtos_usbhost_start_core1(); }
+#if UBIQOS_HAS_PIO_USB_HOST || UBIQOS_USB_NATIVE_HOST
+    { extern void ubiqos_usbhost_start_core1(void); ubiqos_usbhost_start_core1(); }
 #endif
 
     // After the USB host, and not by preference. Pico-PIO-USB claims DMA
@@ -573,13 +573,13 @@ void myrtos_kernel_main(void) {
     // quiet at once and it looked like the clock change had broken everything.
     // A board with no video driver yet builds without video.c, chargen.c and
     // console.c alike -- console.c draws through one of the two and has no
-    // meaning without them. MYRTOS_VIDEO=none is that build; see the Waveshare
+    // meaning without them. UBIQOS_VIDEO=none is that build; see the Waveshare
     // board, whose panel is RGB behind an ST7262 and nothing like DVI.
-#if MYRTOS_HAS_VIDEO
-    myrtos_video_init();
+#if UBIQOS_HAS_VIDEO
+    ubiqos_video_init();
 #endif
-#if MYRTOS_HAS_CONSOLE
-    myrtos_console_init();
+#if UBIQOS_HAS_CONSOLE
+    ubiqos_console_init();
 #endif
 
     // Everything printed before this point went to the UART and to dmesg, and
@@ -588,38 +588,38 @@ void myrtos_kernel_main(void) {
     // scrolling back could never reach it because it was never on the screen.
     //
     // So replay the log into the console now that there is one. It goes through
-    // myrtos_console_write rather than myrtos_print, which is what keeps it out
+    // ubiqos_console_write rather than ubiqos_print, which is what keeps it out
     // of dmesg and stops the ring being copied into itself.
     {
-        uint32_t n = myrtos_dmesg_size();
+        uint32_t n = ubiqos_dmesg_size();
         char line[128];
         uint32_t k = 0;
         for (uint32_t i = 0; i < n; i++) {
-            int32_t c = myrtos_dmesg_at(i);
+            int32_t c = ubiqos_dmesg_at(i);
             if (c < 0) break;
             line[k++] = (char)c;
-            if (k == sizeof(line) || c == '\n') { myrtos_console_write(line, k); k = 0; }
+            if (k == sizeof(line) || c == '\n') { ubiqos_console_write(line, k); k = 0; }
         }
-        if (k) myrtos_console_write(line, k);
+        if (k) ubiqos_console_write(line, k);
     }
-#if MYRTOS_HAS_CONSOLE
-    myrtos_console_start_server();
+#if UBIQOS_HAS_CONSOLE
+    ubiqos_console_start_server();
 #endif
-    extern void myrtos_fs_start_server(void);
-    myrtos_fs_start_server();
+    extern void ubiqos_fs_start_server(void);
+    ubiqos_fs_start_server();
 
     // After the console and the servers, so that a chip which is not there says
     // so on a screen that exists rather than taking the boot down with it.
     // Only where there is a radio to probe. A board without one has no
     // ESP-Hosted at all and lwIP is then only ever the USB cable.
-#if MYRTOS_HAS_ESP_HOSTED
-    extern void myrtos_wifi_probe(void);
-    myrtos_wifi_probe();
+#if UBIQOS_HAS_ESP_HOSTED
+    extern void ubiqos_wifi_probe(void);
+    ubiqos_wifi_probe();
 #endif
-    extern void myrtos_wifi_start_server(void);
-    myrtos_wifi_start_server();
+    extern void ubiqos_wifi_start_server(void);
+    ubiqos_wifi_start_server();
 
-    myrtos_flash_scan();
+    ubiqos_flash_scan();
 
     // The card is not touched here, and that is the point. It must be asked for
     // SDIO before anything speaks SPI to it -- a card latches into SPI mode the
@@ -646,61 +646,61 @@ void myrtos_kernel_main(void) {
 
     // Descriptors first: the devices must exist before any process tries to
     // open them. A data module has no entry point and is not started.
-    const uint32_t nmodules = myrtos_moddir_count();   // a walk of flash; ask once
+    const uint32_t nmodules = ubiqos_moddir_count();   // a walk of flash; ask once
     for (uint32_t i = 0; i < nmodules; i++) {
-        const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
-        if ((e->header->type_lang >> 8) != MYRTOS_TYPE_DATA) continue;
-        myrtos_print("Descriptor ");
-        myrtos_print(e->name);
-        myrtos_print("\n");
-        myrtos_io_add_descriptor(
-            (const myrtos_descriptor_t*)((const uint8_t*)e->header + sizeof(myrtos_module_header_t)));
+        const ubiqos_module_entry_t *e = ubiqos_moddir_entry(i);
+        if ((e->header->type_lang >> 8) != UBIQOS_TYPE_DATA) continue;
+        ubiqos_print("Descriptor ");
+        ubiqos_print(e->name);
+        ubiqos_print("\n");
+        ubiqos_io_add_descriptor(
+            (const ubiqos_descriptor_t*)((const uint8_t*)e->header + sizeof(ubiqos_module_header_t)));
     }
 
     // With no descriptors there are no devices, and then no module can print
     // anything. The kernel falls back on the device it already uses for its own
     // diagnostics, so the system never goes mute merely because the card is
     // missing a descriptor.
-    if (!myrtos_io_device_count()) {
-        myrtos_print("No descriptors found; registering the built-in console.\n");
+    if (!ubiqos_io_device_count()) {
+        ubiqos_print("No descriptors found; registering the built-in console.\n");
         static const struct {
-            myrtos_descriptor_t desc;
-            myrtos_uart_config_t uart;
+            ubiqos_descriptor_t desc;
+            ubiqos_uart_config_t uart;
         } fallback = {
             .desc = { .device_name = "term", .driver_name = "uart",
-                      .device_class = MYRTOS_CLASS_CHAR, .reserved = 0,
-                      .config_offset = sizeof(myrtos_descriptor_t),
-                      .config_size = sizeof(myrtos_uart_config_t) },
+                      .device_class = UBIQOS_CLASS_CHAR, .reserved = 0,
+                      .config_offset = sizeof(ubiqos_descriptor_t),
+                      .config_size = sizeof(ubiqos_uart_config_t) },
             .uart = { .uart_base = 0x40070000u, .tx_pin = 44,
                       .rx_pin = 0xffffffffu, .baud_rate = 115200 },
         };
-        myrtos_io_add_descriptor(&fallback.desc);
+        ubiqos_io_add_descriptor(&fallback.desc);
     }
 
     // If there is a shell only that is started, and it starts the rest on
     // demand. Starting everything at boot was a demonstration, not a system.
     // Started before the shell, so the console is being serviced by the time
     // anything can type at it.
-    myrtos_usb_start_task();
+    ubiqos_usb_start_task();
 
     uint32_t started = 0;
-    const char *shell = myrtos_moddir_match("sh");
+    const char *shell = ubiqos_moddir_match("sh");
     if (shell) {
-        const myrtos_module_header_t *m = myrtos_moddir_link(shell);
-        int32_t pid = m ? myrtos_process_create(m, "") : -1;
+        const ubiqos_module_header_t *m = ubiqos_moddir_link(shell);
+        int32_t pid = m ? ubiqos_process_create(m, "") : -1;
         if (pid >= 0) {
             // Give the shell its standard paths. Everything it starts
             // inherits them, so a utility neither opens nor knows any device.
             const char *console = "usb";
-            if (myrtos_io_open_as(console, pid, MYRTOS_STDIN) < 0) {
+            if (ubiqos_io_open_as(console, pid, UBIQOS_STDIN) < 0) {
                 console = "term";
-                myrtos_io_open_as(console, pid, MYRTOS_STDIN);
+                ubiqos_io_open_as(console, pid, UBIQOS_STDIN);
             }
-            myrtos_io_open_as(console, pid, MYRTOS_STDOUT);
-            myrtos_io_open_as(console, pid, MYRTOS_STDERR);
-            myrtos_print("Shell started on '");
-            myrtos_print(console);
-            myrtos_print("'; nothing else runs until asked.\n");
+            ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
+            ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
+            ubiqos_print("Shell started on '");
+            ubiqos_print(console);
+            ubiqos_print("'; nothing else runs until asked.\n");
             started = 1;
         }
 
@@ -708,14 +708,14 @@ void myrtos_kernel_main(void) {
         // keyboard are both there. Two shells, two sets of paths, one system:
         // the serial line keeps working while the board also stands on its own
         // with nothing attached but a monitor and a keyboard.
-        if (myrtos_io_has_device("con")) {
-            const myrtos_module_header_t *m2 = myrtos_moddir_link(shell);
-            int32_t pid2 = m2 ? myrtos_process_create(m2, "") : -1;
+        if (ubiqos_io_has_device("con")) {
+            const ubiqos_module_header_t *m2 = ubiqos_moddir_link(shell);
+            int32_t pid2 = m2 ? ubiqos_process_create(m2, "") : -1;
             if (pid2 >= 0) {
-                myrtos_io_open_as("con", pid2, MYRTOS_STDIN);
-                myrtos_io_open_as("con", pid2, MYRTOS_STDOUT);
-                myrtos_io_open_as("con", pid2, MYRTOS_STDERR);
-                myrtos_print("Shell started on 'con' as well.\n");
+                ubiqos_io_open_as("con", pid2, UBIQOS_STDIN);
+                ubiqos_io_open_as("con", pid2, UBIQOS_STDOUT);
+                ubiqos_io_open_as("con", pid2, UBIQOS_STDERR);
+                ubiqos_print("Shell started on 'con' as well.\n");
             }
         }
     }
@@ -723,27 +723,27 @@ void myrtos_kernel_main(void) {
     // With no shell, start the first runnable module so the system still shows
     // a sign of life. Only the first: !started ends the loop as soon as one
     // takes, and a board with no shell is being diagnosed, not used.
-    const uint32_t nmods = myrtos_moddir_count();
+    const uint32_t nmods = ubiqos_moddir_count();
     for (uint32_t i = 0; !started && i < nmods; i++) {
-        const myrtos_module_entry_t *e = myrtos_moddir_entry(i);
-        if ((e->header->type_lang >> 8) == MYRTOS_TYPE_DATA) continue;
-        myrtos_print("Starting ");
-        myrtos_print(e->name);
-        myrtos_print("\n");
-        const myrtos_module_header_t *m = myrtos_moddir_link(e->name);
-        if (m && myrtos_process_create(m, "") >= 0) started++;
+        const ubiqos_module_entry_t *e = ubiqos_moddir_entry(i);
+        if ((e->header->type_lang >> 8) == UBIQOS_TYPE_DATA) continue;
+        ubiqos_print("Starting ");
+        ubiqos_print(e->name);
+        ubiqos_print("\n");
+        const ubiqos_module_header_t *m = ubiqos_moddir_link(e->name);
+        if (m && ubiqos_process_create(m, "") >= 0) started++;
 
     }
 
     if (started) {
-        myrtos_print_u32(started);
-        myrtos_print(" process(es) ready. Enabling pre-emption, 1 ms quantum...\n");
+        ubiqos_print_u32(started);
+        ubiqos_print(" process(es) ready. Enabling pre-emption, 1 ms quantum...\n");
 
-        myrtos_timer_init(1000);
+        ubiqos_timer_init(1000);
     } else {
-        myrtos_print("Nothing to run.\n");
+        ubiqos_print("Nothing to run.\n");
     }
-    myrtos_print("Kernel is now the idle process.\n");
+    ubiqos_print("Kernel is now the idle process.\n");
     while (1) {
         // Nothing. USB is serviced by its own process, not here: doing it in the
         // idle process meant anything busy at a higher priority silenced the
@@ -760,7 +760,7 @@ void myrtos_kernel_main(void) {
 // rom_func_lookup, which the SDK implements for RISC-V as well as Arm, so this
 // works from the Hazard3 core -- the BOOTSEL button and this end up in the same
 // place.
-void myrtos_reboot_bootsel(void) {
+void ubiqos_reboot_bootsel(void) {
     reset_usb_boot(0, 0);
 }
 
@@ -769,7 +769,7 @@ void myrtos_reboot_bootsel(void) {
 // means an ordinary boot: the bootrom runs, the image is copied to RAM again,
 // and everything comes up as it does from power-on -- except the card, which
 // does not lose power and so stays latched into whatever bus it was using.
-void myrtos_reboot_machine(void) {
+void ubiqos_reboot_machine(void) {
     watchdog_reboot(0, 0, 0);
     for (;;) { }                // it does not come back; this is for the compiler
 }
@@ -793,7 +793,7 @@ int main(void) {
     // last clocked at the rate it is specified for.
     set_sys_clock_khz(120000, true);
 
-    myrtos_uart_init();
-    myrtos_kernel_main();
+    ubiqos_uart_init();
+    ubiqos_kernel_main();
     return 0;
 }

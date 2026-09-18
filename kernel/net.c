@@ -9,18 +9,18 @@
 // stack in the high byte, so the dispatcher looks up a pid and strips the byte
 // before passing the index on; a stack never learns that another exists.
 #include <stdint.h>
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 
-int32_t myrtos_wifi_server_pid(void);
+int32_t ubiqos_wifi_server_pid(void);
 
-static int32_t net_pid[MYRTOS_NET_STACKS];
+static int32_t net_pid[UBIQOS_NET_STACKS];
 
 // A stack says it is ready by registering. NINA is not in this table: it was
 // here first and its pid is asked for directly, so that a build with no lwIP
 // has nothing to arrange.
-int32_t myrtos_net_register(uint32_t stack, int32_t pid)
+int32_t ubiqos_net_register(uint32_t stack, int32_t pid)
 {
-    if (stack >= MYRTOS_NET_STACKS || stack == MYRTOS_NET_NINA) return -1;
+    if (stack >= UBIQOS_NET_STACKS || stack == UBIQOS_NET_NINA) return -1;
     net_pid[stack] = pid;
     return 0;
 }
@@ -28,9 +28,9 @@ int32_t myrtos_net_register(uint32_t stack, int32_t pid)
 // -1 when nothing serves that stack, which is what a program asking for lwIP
 // on a machine without it should get: a refusal, not a silent fallback onto a
 // different network.
-int32_t myrtos_net_pid(uint32_t stack)
+int32_t ubiqos_net_pid(uint32_t stack)
 {
-    if (stack == MYRTOS_NET_NINA) return myrtos_wifi_server_pid();
-    if (stack >= MYRTOS_NET_STACKS) return -1;
+    if (stack == UBIQOS_NET_NINA) return ubiqos_wifi_server_pid();
+    if (stack >= UBIQOS_NET_STACKS) return -1;
     return net_pid[stack] ? net_pid[stack] : -1;
 }

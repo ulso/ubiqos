@@ -10,17 +10,17 @@
 // A read gives every pin's input level, two 32-bit words with the low pins
 // first, so a caller can look at everything at once. Setting a pin up and
 // driving it are setstats, because they are commands and not data -- see
-// MYRTOS_SS_GPIO_MODE beside them in the ABI.
+// UBIQOS_SS_GPIO_MODE beside them in the ABI.
 //
 // This driver takes no interrupt and holds no state the kernel cares about.
 // It is the ordinary kind.
 
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/structs/io_bank0.h"
 #include "hardware/timer.h"
 #include "hardware/regs/intctrl.h"
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 static bool ready;
 
 // Which pins this driver has taken, so that it can give them back and so that
@@ -43,7 +43,7 @@ static uint64_t mine;
 
 #define EVENTS 32u
 
-static volatile myrtos_gpio_event_t ring[EVENTS];
+static volatile ubiqos_gpio_event_t ring[EVENTS];
 static volatile uint32_t head, tail;      // head is the handler's, tail the reader's
 static volatile uint32_t dropped;
 static volatile uint32_t calls;
@@ -95,8 +95,8 @@ static int32_t gpio_read(uint8_t *buf, uint32_t len)
 {
     if (!ready) return -1;
     uint32_t n = 0;
-    while (len - n >= sizeof(myrtos_gpio_event_t) && tail != head) {
-        myrtos_gpio_event_t e = ring[tail];
+    while (len - n >= sizeof(ubiqos_gpio_event_t) && tail != head) {
+        ubiqos_gpio_event_t e = ring[tail];
         tail = (tail + 1u) % EVENTS;
         for (uint32_t i = 0; i < sizeof e; i++) buf[n + i] = ((const uint8_t *)&e)[i];
         n += sizeof e;
@@ -110,7 +110,7 @@ static int32_t gpio_readable(void)
 {
     if (!ready) return 0;
     uint32_t pending = (head - tail) % EVENTS;
-    return (int32_t)(pending * sizeof(myrtos_gpio_event_t));
+    return (int32_t)(pending * sizeof(ubiqos_gpio_event_t));
 }
 
 // What the pins are called on this board, which is not the same question as
@@ -140,7 +140,7 @@ static const char *board_label(uint32_t pin)
 
 static int32_t gpio_getstat(uint32_t code, void *data, uint32_t len)
 {
-    if (code == MYRTOS_SS_GPIO_DEBUG) {
+    if (code == UBIQOS_SS_GPIO_DEBUG) {
         if (!data || len != 24u) return -1;
         uint32_t *o = (uint32_t *)data;
         o[0] = io_bank0_hw->proc0_irq_ctrl.inte[0];
@@ -151,7 +151,7 @@ static int32_t gpio_getstat(uint32_t code, void *data, uint32_t len)
         o[5] = dropped;
         return 0;
     }
-    if (code == MYRTOS_SS_GPIO_LEVELS) {
+    if (code == UBIQOS_SS_GPIO_LEVELS) {
         if (!data || len != 8u) return -1;
         uint64_t all = 0;
         for (uint32_t p = 0; p < 48u; p++)
@@ -159,9 +159,9 @@ static int32_t gpio_getstat(uint32_t code, void *data, uint32_t len)
         *(uint64_t *)data = all;
         return 0;
     }
-    if (code != MYRTOS_SS_GPIO_OWNER || !data || len != sizeof(myrtos_gpio_owner_t))
+    if (code != UBIQOS_SS_GPIO_OWNER || !data || len != sizeof(ubiqos_gpio_owner_t))
         return -1;
-    myrtos_gpio_owner_t *o = (myrtos_gpio_owner_t *)data;
+    ubiqos_gpio_owner_t *o = (ubiqos_gpio_owner_t *)data;
     if (o->pin >= 48u) return -1;
     // The owner if there is one, otherwise what the board calls the pin, in
     // brackets so a reader can tell the two apart at a glance.
@@ -178,15 +178,15 @@ static int32_t gpio_getstat(uint32_t code, void *data, uint32_t len)
     return 0;
 }
 
-static int32_t gpio_watch(const myrtos_gpio_watch_t *w)
+static int32_t gpio_watch(const ubiqos_gpio_watch_t *w)
 {
     if (w->pin >= 48u) return -1;
     uint64_t bit = 1ull << w->pin;
     uint32_t reg = w->pin / 8u, shift = (w->pin % 8u) * 4u;
     // EDGE_LOW is bit 2 of the pin's nibble and EDGE_HIGH bit 3, which is why
     // the handler tests 0x8 to tell a rise from a fall.
-    uint32_t mask = ((w->edges & MYRTOS_GPIO_FALL) ? 4u : 0u)
-                  | ((w->edges & MYRTOS_GPIO_RISE) ? 8u : 0u);
+    uint32_t mask = ((w->edges & UBIQOS_GPIO_FALL) ? 4u : 0u)
+                  | ((w->edges & UBIQOS_GPIO_RISE) ? 8u : 0u);
 
     if (!w->edges) {
         io_bank0_hw->proc0_irq_ctrl.inte[reg] &= ~(0xcu << shift);
@@ -222,20 +222,20 @@ static int32_t gpio_setstat(uint32_t code, const void *data, uint32_t len)
 {
     if (!ready || !data) return -1;
 
-    if (code == MYRTOS_SS_GPIO_WATCH) {
-        if (len != sizeof(myrtos_gpio_watch_t)) return -1;
-        return gpio_watch((const myrtos_gpio_watch_t *)data);
+    if (code == UBIQOS_SS_GPIO_WATCH) {
+        if (len != sizeof(ubiqos_gpio_watch_t)) return -1;
+        return gpio_watch((const ubiqos_gpio_watch_t *)data);
     }
 
-    if (len != sizeof(myrtos_gpio_t)) return -1;
-    const myrtos_gpio_t *g = (const myrtos_gpio_t *)data;
+    if (len != sizeof(ubiqos_gpio_t)) return -1;
+    const ubiqos_gpio_t *g = (const ubiqos_gpio_t *)data;
     if (g->pin >= 48u) return -1;
     uint64_t bit = 1ull << g->pin;
 
-    if (code == MYRTOS_SS_GPIO_MODE) {
-        if (g->value == MYRTOS_PIN_RELEASE) {
+    if (code == UBIQOS_SS_GPIO_MODE) {
+        if (g->value == UBIQOS_PIN_RELEASE) {
             if (!(mine & bit)) return -1;
-            myrtos_gpio_watch_t off = { g->pin, 0, 0 };
+            ubiqos_gpio_watch_t off = { g->pin, 0, 0 };
             gpio_watch(&off);
             K->gpio_set_dir(g->pin, false);
             K->gpio_set_pulls(g->pin, false, false);
@@ -252,20 +252,20 @@ static int32_t gpio_setstat(uint32_t code, const void *data, uint32_t len)
             K->gpio_init(g->pin);
         }
         switch (g->value) {
-        case MYRTOS_PIN_IN:
+        case UBIQOS_PIN_IN:
             K->gpio_set_dir(g->pin, false); K->gpio_set_pulls(g->pin, false, false); return 0;
-        case MYRTOS_PIN_IN_PULLUP:
+        case UBIQOS_PIN_IN_PULLUP:
             K->gpio_set_dir(g->pin, false); K->gpio_set_pulls(g->pin, true, false); return 0;
-        case MYRTOS_PIN_IN_PULLDN:
+        case UBIQOS_PIN_IN_PULLDN:
             K->gpio_set_dir(g->pin, false); K->gpio_set_pulls(g->pin, false, true); return 0;
-        case MYRTOS_PIN_OUT:
+        case UBIQOS_PIN_OUT:
             K->gpio_set_dir(g->pin, true); return 0;
         default:
             return -1;
         }
     }
 
-    if (code == MYRTOS_SS_GPIO_LEVEL) {
+    if (code == UBIQOS_SS_GPIO_LEVEL) {
         // Only a pin this driver holds. Driving one it does not own would be
         // exactly the accident the registry exists to prevent.
         if (!(mine & bit)) return -1;
@@ -275,15 +275,15 @@ static int32_t gpio_setstat(uint32_t code, const void *data, uint32_t len)
     return -1;
 }
 
-static bool gpio_init_mod(const myrtos_kernel_api_t *api)
+static bool gpio_init_mod(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = gpio_init_mod,
     .ops = {

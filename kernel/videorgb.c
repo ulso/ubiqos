@@ -27,16 +27,16 @@
 #include "pico/time.h"
 #include "rgb.pio.h"
 
-void myrtos_print(const char *s);
-uint32_t myrtos_psram_bytes(void);
-void myrtos_print_u32(uint32_t v);
+void ubiqos_print(const char *s);
+uint32_t ubiqos_psram_bytes(void);
+void ubiqos_print_u32(uint32_t v);
 
 #include "chargen.h"
-#include "../common/myrtos_abi.h"
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
+#include "../common/ubiqos_abi.h"
 
-#define RGB_W MYRTOS_H_ACTIVE
-#define RGB_H MYRTOS_V_ACTIVE
+#define RGB_W UBIQOS_H_ACTIVE
+#define RGB_H UBIQOS_V_ACTIVE
 
 // One character row to a band, which is what makes the arithmetic disappear:
 // the renderer is handed a cell row and fills it, and the interrupt rate is one
@@ -45,7 +45,7 @@ void myrtos_print_u32(uint32_t v);
 // 16 lines x 800 pixels x two bytes is 25 kB, and there are two so that one can
 // be drawn while the other is read. 51 kB of SRAM, against the 768 kB a whole
 // framebuffer would want and the QMI contention it would cost.
-#define BAND_LINES  MYRTOS_CELL_H
+#define BAND_LINES  UBIQOS_CELL_H
 #define BAND_PIXELS (RGB_W * BAND_LINES)
 
 // Sync on one PIO block, pixels on another. Two of the chip's three, which
@@ -71,18 +71,18 @@ static uint32_t band_row[2];        // which row each band holds, for the check 
 // band drawn late is a band of the previous frame shown twice, which is a
 // flicker rather than a fault -- but it is the number to look at if the picture
 // ever tears, and counting it costs nothing.
-uint32_t myrtos_video_pumps, myrtos_video_late;
+uint32_t ubiqos_video_pumps, ubiqos_video_late;
 
 // --- the scene -------------------------------------------------------------
 //
 // An application's screen, as a list the interrupt reads rather than code it
-// calls. See myrtos_draw_item_t: a callback would put module code in flash on
+// calls. See ubiqos_draw_item_t: a callback would put module code in flash on
 // the path of an interrupt, which is the one thing the QMI forbids.
 //
 // Set and cleared from a thread, read from the interrupt. The count is written
 // last when a scene is set and first when it is cleared, so the interrupt never
 // sees a count that outlives its list.
-static const myrtos_draw_item_t *scene;
+static const ubiqos_draw_item_t *scene;
 static volatile uint32_t scene_count;
 
 // The costliest band since vidstat last asked, and which row it was. The worst
@@ -116,7 +116,7 @@ static inline void note_band(uint32_t row, uint32_t us)
 // executing PSRAM code while the interrupt read PSRAM data.
 //
 // So the check is here rather than in a comment somebody has to remember.
-// myrtos_alloc gives SRAM and myrtos_alloc_bulk gives PSRAM; a scene wants the
+// ubiqos_alloc gives SRAM and ubiqos_alloc_bulk gives PSRAM; a scene wants the
 // first. A refusal is a message, and a stalled bus is not.
 //
 // Both ends of the window, because SRAM is at 0x20000000 and PSRAM at
@@ -125,11 +125,11 @@ static inline void note_band(uint32_t row, uint32_t us)
 static bool in_psram(const void *p)
 {
     const uintptr_t a = (uintptr_t)p;
-    const uint32_t n = myrtos_psram_bytes();
-    return n && a >= MYRTOS_PSRAM_BASE && a < (uintptr_t)MYRTOS_PSRAM_BASE + n;
+    const uint32_t n = ubiqos_psram_bytes();
+    return n && a >= UBIQOS_PSRAM_BASE && a < (uintptr_t)UBIQOS_PSRAM_BASE + n;
 }
 
-int32_t myrtos_video_set_scene(const myrtos_draw_item_t *items, uint32_t count)
+int32_t ubiqos_video_set_scene(const ubiqos_draw_item_t *items, uint32_t count)
 {
     if (!items || !count) { scene_count = 0; scene = 0; return 0; }
 
@@ -137,9 +137,9 @@ int32_t myrtos_video_set_scene(const myrtos_draw_item_t *items, uint32_t count)
     for (uint32_t i = 0; i < count; i++) {
         // A kind this kernel does not know would be drawn as whatever the last
         // branch below is, out of an array of the wrong size. Refused instead.
-        if (items[i].kind > MYRTOS_DRAW_PLOT_LINE) return -1;
-        if (items[i].kind >= MYRTOS_DRAW_PLOT_FILL && items[i].h > 255u) return -1;
-        if (items[i].kind != MYRTOS_DRAW_RECT && in_psram(items[i].data)) return -1;
+        if (items[i].kind > UBIQOS_DRAW_PLOT_LINE) return -1;
+        if (items[i].kind >= UBIQOS_DRAW_PLOT_FILL && items[i].h > 255u) return -1;
+        if (items[i].kind != UBIQOS_DRAW_RECT && in_psram(items[i].data)) return -1;
     }
 
     scene_count = 0;
@@ -173,17 +173,17 @@ static inline void fill_span(uint16_t *p, uint32_t n, uint16_t colour)
 }
 
 // One item, clipped to the band. y0 is the band's first screen line.
-static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
+static void draw_item_into(const ubiqos_draw_item_t *it, uint32_t y0,
                            uint32_t lines, uint16_t *base)
 {
     int32_t x0 = it->x, y = it->y;
     const uint32_t text_scale = it->w ? (it->w > 8u ? 8u : it->w) : 1u;
     int32_t x1, y1;
-    if (it->kind == MYRTOS_DRAW_TEXT) {
+    if (it->kind == UBIQOS_DRAW_TEXT) {
         uint32_t n = 0;
         for (const char *t = (const char *)it->data; t && *t; t++) n++;
         x1 = x0 + (int32_t)(n * 8u * text_scale);
-        y1 = y + (int32_t)(MYRTOS_CELL_H * text_scale);
+        y1 = y + (int32_t)(UBIQOS_CELL_H * text_scale);
     } else {
         x1 = x0 + (int32_t)it->w;
         y1 = y + (int32_t)it->h;
@@ -213,7 +213,7 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
     // multiplied out the row again for every column. The disassembly showed it:
     // twenty instructions a column around a four-instruction store, and a curve
     // line that cost 245 us for two thousand pixels.
-    if (it->kind == MYRTOS_DRAW_PLOT_FILL || it->kind == MYRTOS_DRAW_PLOT_LINE) {
+    if (it->kind == UBIQOS_DRAW_PLOT_FILL || it->kind == UBIQOS_DRAW_PLOT_LINE) {
         const int32_t ix = it->x, iy = it->y;
         const uint16_t colour = it->colour;
         const uint32_t pair = (uint32_t)colour * 0x00010001u;
@@ -248,7 +248,7 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
                 }                                                                 \
             } while (0)
 
-        if (it->kind == MYRTOS_DRAW_PLOT_FILL) {
+        if (it->kind == UBIQOS_DRAW_PLOT_FILL) {
             // The row from which every column in reach is lit. Below it the
             // band is a flat run of the fill colour, and fill_span does that
             // two pixels a word; only above it do columns differ.
@@ -261,14 +261,14 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
             int32_t all = first;
             for (int32_t c = c0; c < c1; c++) {
                 const int32_t t = top[c];
-                if (t == (int32_t)MYRTOS_PLOT_NONE) { all = last; break; }
+                if (t == (int32_t)UBIQOS_PLOT_NONE) { all = last; break; }
                 if (t > all) all = t;
             }
             if (all > last) all = last;
 
             for (int32_t c = c0; c < c1; c++) {
                 const int32_t t = top[c];
-                if (t == (int32_t)MYRTOS_PLOT_NONE) continue;
+                if (t == (int32_t)UBIQOS_PLOT_NONE) continue;
                 const int32_t from = t < first ? first : t;
                 if (from >= all) continue;
                 PLOT_COLUMN(c, from, all);
@@ -281,9 +281,9 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
             // connected stroke up and down.
             for (int32_t c = c0; c < c1; c++) {
                 const int32_t t = top[c];
-                if (t == (int32_t)MYRTOS_PLOT_NONE) continue;
+                if (t == (int32_t)UBIQOS_PLOT_NONE) continue;
                 int32_t prev = c ? top[c - 1] : t;
-                if (prev == (int32_t)MYRTOS_PLOT_NONE) prev = t;
+                if (prev == (int32_t)UBIQOS_PLOT_NONE) prev = t;
                 int32_t from = prev < t ? prev : t;
                 int32_t to   = (prev < t ? t : prev) + 2;      // exclusive
                 if (from < first) from = first;
@@ -299,13 +299,13 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
     for (int32_t sy = y; sy < y1; sy++) {
         uint16_t *row = base + (uint32_t)(sy - (int32_t)y0) * RGB_W;
 
-        if (it->kind == MYRTOS_DRAW_RECT) {
+        if (it->kind == UBIQOS_DRAW_RECT) {
             fill_span(row + x0, (uint32_t)(x1 - x0), it->colour);
             continue;
         }
 
         const int32_t line = sy - it->y;
-        if (it->kind == MYRTOS_DRAW_MASK) {
+        if (it->kind == UBIQOS_DRAW_MASK) {
             // One bit a pixel, the top bit leftmost, rows byte-aligned.
             //
             // A byte at a time, and an EMPTY byte skips eight pixels without
@@ -328,13 +328,13 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
                 for (int32_t k = bit; sx < end; sx++, k++)
                     if (b & (uint8_t)(0x80u >> k)) row[sx] = it->colour;
             }
-        } else if (it->kind == MYRTOS_DRAW_TEXT) {
+        } else if (it->kind == UBIQOS_DRAW_TEXT) {
             // The console's font, scaled by whole numbers. Each character is
             // eight wide and sixteen tall before scaling, so the row of the
             // glyph is the band line divided by the scale.
             const uint32_t scale = it->w ? (it->w > 8u ? 8u : it->w) : 1u;
             const uint32_t gy = (uint32_t)line / scale;
-            if (gy >= MYRTOS_CELL_H) continue;
+            if (gy >= UBIQOS_CELL_H) continue;
 
             const char *str = (const char *)it->data;
             for (uint32_t c = 0; str[c]; c++) {
@@ -342,7 +342,7 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
                 if (cx >= x1) break;
                 if (cx + (int32_t)(8u * scale) <= x0) continue;
 
-                const uint32_t bits = myrtos_chargen_glyph_row(str[c], gy);
+                const uint32_t bits = ubiqos_chargen_glyph_row(str[c], gy);
                 if (!bits) continue;
                 for (uint32_t b = 0; b < 8u; b++) {
                     if (!(bits & (0x80u >> b))) continue;
@@ -358,7 +358,7 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
             // and the console agree about what colour four means.
             const uint8_t *px = (const uint8_t *)it->data + (uint32_t)line * it->w;
             for (int32_t sx = x0; sx < x1; sx++)
-                row[sx] = myrtos_chargen_colour(px[sx - it->x]);
+                row[sx] = ubiqos_chargen_colour(px[sx - it->x]);
         }
     }
 }
@@ -366,9 +366,9 @@ static void draw_item_into(const myrtos_draw_item_t *it, uint32_t y0,
 // One line of one item, which is draw_item with a band one line tall. Written
 // as its own name because peek_line means something different from the pump and
 // the two should not be read as the same call.
-static void draw_item_line(const myrtos_draw_item_t *it, uint32_t y, uint16_t *out)
+static void draw_item_line(const ubiqos_draw_item_t *it, uint32_t y, uint16_t *out)
 {
-    myrtos_draw_item_t one_line = *it;
+    ubiqos_draw_item_t one_line = *it;
     draw_item_into(&one_line, y, 1u, out);
 }
 
@@ -376,7 +376,7 @@ static void draw_band(uint32_t which, uint32_t row)
 {
     const uint32_t n = scene_count;
     if (n) {
-        const uint32_t y0 = row * MYRTOS_CELL_H;
+        const uint32_t y0 = row * UBIQOS_CELL_H;
         uint16_t *base = band[which];
 
         // Drawing starts at the LAST rectangle that covers the whole band,
@@ -391,8 +391,8 @@ static void draw_band(uint32_t which, uint32_t row)
         uint32_t start = 0;
         bool covered = false;
         for (uint32_t i = n; i-- > 0; ) {
-            const myrtos_draw_item_t *it = &scene[i];
-            if (it->kind == MYRTOS_DRAW_RECT &&
+            const ubiqos_draw_item_t *it = &scene[i];
+            if (it->kind == UBIQOS_DRAW_RECT &&
                 it->x <= 0 &&
                 it->x + (int32_t)it->w >= (int32_t)RGB_W &&
                 it->y <= (int32_t)y0 &&
@@ -406,10 +406,10 @@ static void draw_band(uint32_t which, uint32_t row)
         uint32_t then = time_us_32();
         if (!covered) fill_span(base, BAND_PIXELS, 0);
         uint32_t now = time_us_32();
-        band_kind_us[MYRTOS_DRAW_RECT] += now - then;
+        band_kind_us[UBIQOS_DRAW_RECT] += now - then;
 
         for (uint32_t i = start; i < n; i++) {
-            const uint32_t kind = scene[i].kind <= MYRTOS_DRAW_PLOT_LINE ? scene[i].kind : 0u;
+            const uint32_t kind = scene[i].kind <= UBIQOS_DRAW_PLOT_LINE ? scene[i].kind : 0u;
             then = now;
             draw_item_into(&scene[i], y0, BAND_LINES, base);
             now = time_us_32();
@@ -417,9 +417,9 @@ static void draw_band(uint32_t which, uint32_t row)
         }
     } else {
         for (uint32_t k = 0; k < 6; k++) band_kind_us[k] = 0;
-        myrtos_chargen_band16(row * MYRTOS_CELL_H, band[which]);
+        ubiqos_chargen_band16(row * UBIQOS_CELL_H, band[which]);
     }
-    myrtos_video_pumps++;
+    ubiqos_video_pumps++;
 }
 
 #define BL_WRAP 1000u
@@ -427,10 +427,10 @@ static void draw_band(uint32_t which, uint32_t row)
 // Nought is dark and a hundred is as bright as the panel goes. The level is
 // inverted because the backlight is active low -- see the note below, which is
 // the only place that fact is written down anywhere.
-int32_t myrtos_video_backlight(uint32_t percent)
+int32_t ubiqos_video_backlight(uint32_t percent)
 {
     if (percent > 100u) percent = 100u;
-    pwm_set_gpio_level(MYRTOS_LCD_BL_PIN,
+    pwm_set_gpio_level(UBIQOS_LCD_BL_PIN,
                        (uint16_t)(BL_WRAP / 100u * (100u - percent)));
     return (int32_t)percent;
 }
@@ -440,15 +440,15 @@ int32_t myrtos_video_backlight(uint32_t percent)
 // is not what this step is about.
 static void panel_wake(void)
 {
-    gpio_init(MYRTOS_LCD_EN_PIN);
-    gpio_set_dir(MYRTOS_LCD_EN_PIN, GPIO_OUT);
-    gpio_put(MYRTOS_LCD_EN_PIN, 1);
+    gpio_init(UBIQOS_LCD_EN_PIN);
+    gpio_set_dir(UBIQOS_LCD_EN_PIN, GPIO_OUT);
+    gpio_put(UBIQOS_LCD_EN_PIN, 1);
 
-    gpio_init(MYRTOS_LCD_RST_PIN);
-    gpio_set_dir(MYRTOS_LCD_RST_PIN, GPIO_OUT);
-    gpio_put(MYRTOS_LCD_RST_PIN, 0);
+    gpio_init(UBIQOS_LCD_RST_PIN);
+    gpio_set_dir(UBIQOS_LCD_RST_PIN, GPIO_OUT);
+    gpio_put(UBIQOS_LCD_RST_PIN, 0);
     sleep_ms(20);
-    gpio_put(MYRTOS_LCD_RST_PIN, 1);
+    gpio_put(UBIQOS_LCD_RST_PIN, 1);
     sleep_ms(200);                      // Waveshare's own wait, and generous
 
     // THE BACKLIGHT IS ACTIVE LOW, and this pin driven high is what "the panel
@@ -466,14 +466,14 @@ static void panel_wake(void)
     //
     // The slice runs at about 1.2 kHz -- above flicker, below the range where a
     // backlight driver starts to whine.
-    gpio_set_function(MYRTOS_LCD_BL_PIN, GPIO_FUNC_PWM);
+    gpio_set_function(UBIQOS_LCD_BL_PIN, GPIO_FUNC_PWM);
     {
         pwm_config c = pwm_get_default_config();
         pwm_config_set_clkdiv_int(&c, 100);
         pwm_config_set_wrap(&c, BL_WRAP);
-        pwm_init(pwm_gpio_to_slice_num(MYRTOS_LCD_BL_PIN), &c, true);
+        pwm_init(pwm_gpio_to_slice_num(UBIQOS_LCD_BL_PIN), &c, true);
     }
-    myrtos_video_backlight(MYRTOS_BACKLIGHT_DEFAULT);
+    ubiqos_video_backlight(UBIQOS_BACKLIGHT_DEFAULT);
 }
 
 // pio_sm_init refuses a configuration its block's GPIO base cannot reach, and
@@ -483,9 +483,9 @@ static void panel_wake(void)
 static bool sm_start(PIO pio, uint sm, uint off, pio_sm_config *c, const char *what)
 {
     if (pio_sm_init(pio, sm, off, c) == PICO_OK) return true;
-    myrtos_print("lcd: the ");
-    myrtos_print(what);
-    myrtos_print(" state machine would not take its pins\n");
+    ubiqos_print("lcd: the ");
+    ubiqos_print(what);
+    ubiqos_print(" state machine would not take its pins\n");
     return false;
 }
 
@@ -524,7 +524,7 @@ static void service_bands(void)
 
         // Two rows ahead: this band will be read again after the other one, so
         // it must hold the row after the row now going out.
-        const uint32_t row = (next_row + 1u) % MYRTOS_CELL_ROWS;
+        const uint32_t row = (next_row + 1u) % UBIQOS_CELL_ROWS;
         const uint32_t d0 = time_us_32();
         draw_band(i, row);
         note_band(row, time_us_32() - d0);
@@ -556,7 +556,7 @@ static void on_band_done(void)
 // scene with a chart took 2482 us, switching tabs -- lets a channel finish twice
 // and be counted once. From then on every band was drawn as the row above the
 // one the beam was on, and the picture stood sixteen lines down for good; a
-// second loss made it thirty-two. Nothing noticed, because myrtos_video_late was
+// second loss made it thirty-two. Nothing noticed, because ubiqos_video_late was
 // declared and never incremented.
 //
 // So the count is checked once a frame, at the one place its answer is known.
@@ -598,21 +598,21 @@ static void on_frame_start(void)
             return;
         }
         // Both are still: nothing reads either until the first line.
-        myrtos_video_late++;
+        ubiqos_video_late++;
         draw_band(going, 0);
         band_row[going] = 0;
         draw_band(other, 1);
         band_row[other] = 1;
         next_row = 1;
     } else {
-        const uint32_t last = MYRTOS_CELL_ROWS - 1u;
+        const uint32_t last = UBIQOS_CELL_ROWS - 1u;
         if (band_row[going] == last && band_row[other] == 0u && next_row == 0u) {
             pump_account(t0);
             return;
         }
         // The last band is going out and is left alone, whatever it holds; the
         // one to follow it is made row 0 of the next frame.
-        myrtos_video_late++;
+        ubiqos_video_late++;
         draw_band(other, 0);
         band_row[other] = 0;
         next_row = 0;
@@ -643,7 +643,7 @@ static void dma_setup(uint data_sm)
     // already taken makes the order the two cores arrive in stop mattering: if
     // core 1 got there first the channel is its own, and we must neither claim
     // nor release what we do not hold.
-    const bool reserve_for_pio_usb = MYRTOS_HAS_PIO_USB_HOST &&
+    const bool reserve_for_pio_usb = UBIQOS_HAS_PIO_USB_HOST &&
                                      !dma_channel_is_claimed(PIO_USB_DMA_TX_CHANNEL);
     if (reserve_for_pio_usb) dma_channel_claim(PIO_USB_DMA_TX_CHANNEL);
     ch[0] = dma_claim_unused_channel(true);
@@ -674,7 +674,7 @@ static void dma_setup(uint data_sm)
     // The ordering follows from who has slack. A band is 717 microseconds of
     // it; a USB frame, due every millisecond, has none. So this sits below both
     // PIO-USB's timer and the kernel's threshold, and a band drawn late shows
-    // the previous one again -- which myrtos_video_late counts.
+    // the previous one again -- which ubiqos_video_late counts.
     //
     // Like the pump on the other board, it calls nothing: two DMA registers,
     // cells, font bytes, pixels.
@@ -686,20 +686,20 @@ static void dma_setup(uint data_sm)
 // What `vidstat` asks for. The same sixteen slots as video.c fills for the other
 // display, and the ones that have no meaning here are left at zero rather than
 // filled with a number that would read as a measurement.
-void myrtos_video_stats_fill(uint32_t *sixteen)
+void ubiqos_video_stats_fill(uint32_t *sixteen)
 {
     for (uint32_t i = 0; i < 16; i++) sixteen[i] = 0;
-    sixteen[1]  = myrtos_video_pumps;
+    sixteen[1]  = ubiqos_video_pumps;
     sixteen[3]  = 2;                          // bands, not scanline buffers
-    sixteen[6]  = myrtos_chargen_view_back();
-    sixteen[7]  = myrtos_chargen_history();
-    sixteen[8]  = myrtos_chargen_deep();
+    sixteen[6]  = ubiqos_chargen_view_back();
+    sixteen[7]  = ubiqos_chargen_history();
+    sixteen[8]  = ubiqos_chargen_deep();
     sixteen[10] = pump_us_total;
     sixteen[11] = pump_us_worst;
     // Slot 0 is what vidstat prints as underruns, and a frame whose row count
     // had to be put right is this panel's underrun. It sat in slot 13, which
     // vidstat labels "Glyph rows built" -- where nobody would have looked.
-    sixteen[0]  = myrtos_video_late;
+    sixteen[0]  = ubiqos_video_late;
 
     // The costliest band since the last ask, as its microseconds above the row
     // plus one, so that zero still means nothing to report. Cleared on reading:
@@ -709,11 +709,11 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
 
     // Its breakdown, in slots the character generator's own figures use on the
     // other board; vidstat prints these instead of those when slot 12 is set.
-    sixteen[2]  = band_worst_kind_us[MYRTOS_DRAW_RECT];
-    sixteen[4]  = band_worst_kind_us[MYRTOS_DRAW_MASK];
-    sixteen[5]  = band_worst_kind_us[MYRTOS_DRAW_TEXT];
-    sixteen[13] = band_worst_kind_us[MYRTOS_DRAW_PLOT_FILL];
-    sixteen[14] = band_worst_kind_us[MYRTOS_DRAW_PLOT_LINE];
+    sixteen[2]  = band_worst_kind_us[UBIQOS_DRAW_RECT];
+    sixteen[4]  = band_worst_kind_us[UBIQOS_DRAW_MASK];
+    sixteen[5]  = band_worst_kind_us[UBIQOS_DRAW_TEXT];
+    sixteen[13] = band_worst_kind_us[UBIQOS_DRAW_PLOT_FILL];
+    sixteen[14] = band_worst_kind_us[UBIQOS_DRAW_PLOT_LINE];
     band_worst_us = 0;
     sixteen[15] = pump_period_us;
 }
@@ -734,40 +734,40 @@ void myrtos_video_stats_fill(uint32_t *sixteen)
 // The list is read once, pointer and count, the way the pump reads it. An
 // application that replaces its list rather than rewriting it in place could
 // still be caught between the two; airview never does.
-uint32_t myrtos_video_capture_line(uint32_t y, uint16_t *out)
+uint32_t ubiqos_video_capture_line(uint32_t y, uint16_t *out)
 {
     if (y >= RGB_H) {
         for (uint32_t i = 0; i < RGB_W; i++) out[i] = 0;
         return RGB_W;
     }
-    const myrtos_draw_item_t *items = scene;
+    const ubiqos_draw_item_t *items = scene;
     const uint32_t n = scene_count;
     if (n && items) {
         for (uint32_t i = 0; i < RGB_W; i++) out[i] = 0;
         for (uint32_t i = 0; i < n; i++) {
-            myrtos_draw_item_t it = items[i];
+            ubiqos_draw_item_t it = items[i];
             draw_item_line(&it, y, out);
         }
     } else {
-        myrtos_chargen_line16(y, out);
+        ubiqos_chargen_line16(y, out);
     }
     return RGB_W;
 }
 
-void myrtos_video_peek_line(uint32_t y, uint8_t *out, uint32_t n)
+void ubiqos_video_peek_line(uint32_t y, uint8_t *out, uint32_t n)
 {
-    static uint16_t one[MYRTOS_H_ACTIVE];
-    myrtos_video_capture_line(y, one);
+    static uint16_t one[UBIQOS_H_ACTIVE];
+    ubiqos_video_capture_line(y, one);
     const uint16_t *src = one;
 
     // Handed back a byte per pixel, because that is what the caller's buffer is
     // and what the other display gives it. The high byte of each pixel is
     // enough to tell lit from unlit, which is what a peek is for.
     for (uint32_t i = 0; i < n; i++)
-        out[i] = (i < MYRTOS_H_ACTIVE) ? (uint8_t)(src[i] >> 8) : 0u;
+        out[i] = (i < UBIQOS_H_ACTIVE) ? (uint8_t)(src[i] >> 8) : 0u;
 }
 
-void myrtos_video_init(void)
+void ubiqos_video_init(void)
 {
     // The first two rows, before anything is scanning them out.
     draw_band(0, 0);
@@ -787,50 +787,50 @@ void myrtos_video_init(void)
     const uint sm_de    = pio_claim_unused_sm(PIO_DATA, true);
     const uint sm_data  = pio_claim_unused_sm(PIO_DATA, true);
 
-    const uint off_hsync = pio_add_program(PIO_SYNC, &myrtos_rgb_hsync_program);
-    const uint off_vsync = pio_add_program(PIO_SYNC, &myrtos_rgb_vsync_program);
-    const uint off_de    = pio_add_program(PIO_DATA, &myrtos_rgb_de_program);
-    const uint off_data  = pio_add_program(PIO_DATA, &myrtos_rgb_data_program);
+    const uint off_hsync = pio_add_program(PIO_SYNC, &ubiqos_rgb_hsync_program);
+    const uint off_vsync = pio_add_program(PIO_SYNC, &ubiqos_rgb_vsync_program);
+    const uint off_de    = pio_add_program(PIO_DATA, &ubiqos_rgb_de_program);
+    const uint off_data  = pio_add_program(PIO_DATA, &ubiqos_rgb_data_program);
 
     // Only hsync is divided: it owns the time, at two instructions per pixel.
     // The other three follow its edges and its interrupt, so they run flat out.
-    const float div = (float)clock_get_hz(clk_sys) / (float)(MYRTOS_LCD_PCLK_HZ * 2u);
+    const float div = (float)clock_get_hz(clk_sys) / (float)(UBIQOS_LCD_PCLK_HZ * 2u);
 
     bool ok = true;
     {
-        pio_sm_config c = myrtos_rgb_hsync_program_get_default_config(off_hsync);
+        pio_sm_config c = ubiqos_rgb_hsync_program_get_default_config(off_hsync);
         sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-        sm_config_set_sideset_pins(&c, MYRTOS_LCD_HSYNC_PIN);   // and PCLK, next along
+        sm_config_set_sideset_pins(&c, UBIQOS_LCD_HSYNC_PIN);   // and PCLK, next along
         sm_config_set_clkdiv(&c, div);
-        pio_gpio_init(PIO_SYNC, MYRTOS_LCD_HSYNC_PIN);
-        pio_gpio_init(PIO_SYNC, MYRTOS_LCD_PCLK_PIN);
-        pio_sm_set_consecutive_pindirs(PIO_SYNC, sm_hsync, MYRTOS_LCD_HSYNC_PIN, 2, true);
+        pio_gpio_init(PIO_SYNC, UBIQOS_LCD_HSYNC_PIN);
+        pio_gpio_init(PIO_SYNC, UBIQOS_LCD_PCLK_PIN);
+        pio_sm_set_consecutive_pindirs(PIO_SYNC, sm_hsync, UBIQOS_LCD_HSYNC_PIN, 2, true);
         ok &= sm_start(PIO_SYNC, sm_hsync, off_hsync, &c, "hsync");
     }
     {
-        pio_sm_config c = myrtos_rgb_vsync_program_get_default_config(off_vsync);
+        pio_sm_config c = ubiqos_rgb_vsync_program_get_default_config(off_vsync);
         sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-        sm_config_set_sideset_pins(&c, MYRTOS_LCD_VSYNC_PIN);
-        pio_gpio_init(PIO_SYNC, MYRTOS_LCD_VSYNC_PIN);
-        pio_sm_set_consecutive_pindirs(PIO_SYNC, sm_vsync, MYRTOS_LCD_VSYNC_PIN, 1, true);
+        sm_config_set_sideset_pins(&c, UBIQOS_LCD_VSYNC_PIN);
+        pio_gpio_init(PIO_SYNC, UBIQOS_LCD_VSYNC_PIN);
+        pio_sm_set_consecutive_pindirs(PIO_SYNC, sm_vsync, UBIQOS_LCD_VSYNC_PIN, 1, true);
         ok &= sm_start(PIO_SYNC, sm_vsync, off_vsync, &c, "vsync");
     }
     {
-        pio_sm_config c = myrtos_rgb_de_program_get_default_config(off_de);
+        pio_sm_config c = ubiqos_rgb_de_program_get_default_config(off_de);
         sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
-        sm_config_set_sideset_pins(&c, MYRTOS_LCD_DE_PIN);
-        pio_gpio_init(PIO_DATA, MYRTOS_LCD_DE_PIN);
-        pio_sm_set_consecutive_pindirs(PIO_DATA, sm_de, MYRTOS_LCD_DE_PIN, 1, true);
+        sm_config_set_sideset_pins(&c, UBIQOS_LCD_DE_PIN);
+        pio_gpio_init(PIO_DATA, UBIQOS_LCD_DE_PIN);
+        pio_sm_set_consecutive_pindirs(PIO_DATA, sm_de, UBIQOS_LCD_DE_PIN, 1, true);
         ok &= sm_start(PIO_DATA, sm_de, off_de, &c, "data enable");
     }
     {
-        pio_sm_config c = myrtos_rgb_data_program_get_default_config(off_data);
-        sm_config_set_out_pins(&c, MYRTOS_LCD_DATA0_PIN, 16);
-        for (uint i = 0; i < 16; i++) pio_gpio_init(PIO_DATA, MYRTOS_LCD_DATA0_PIN + i);
-        pio_sm_set_consecutive_pindirs(PIO_DATA, sm_data, MYRTOS_LCD_DATA0_PIN, 16, true);
+        pio_sm_config c = ubiqos_rgb_data_program_get_default_config(off_data);
+        sm_config_set_out_pins(&c, UBIQOS_LCD_DATA0_PIN, 16);
+        for (uint i = 0; i < 16; i++) pio_gpio_init(PIO_DATA, UBIQOS_LCD_DATA0_PIN + i);
+        pio_sm_set_consecutive_pindirs(PIO_DATA, sm_data, UBIQOS_LCD_DATA0_PIN, 16, true);
         ok &= sm_start(PIO_DATA, sm_data, off_data, &c, "pixel");
     }
-    if (!ok) { myrtos_print("lcd: not started\n"); return; }
+    if (!ok) { ubiqos_print("lcd: not started\n"); return; }
 
     dma_setup(sm_data);
 
@@ -861,11 +861,11 @@ void myrtos_video_init(void)
     // pixel rather than something the program was going to read as a width.
     dma_channel_start(ch[0]);
 
-    myrtos_print("lcd: 800x480 RGB565, pixel clock ");
-    myrtos_print_u32(MYRTOS_LCD_PCLK_HZ / 1000000u);
-    myrtos_print(" MHz, ");
-    myrtos_print_u32(MYRTOS_CELL_COLS);
-    myrtos_print(" by ");
-    myrtos_print_u32(MYRTOS_CELL_ROWS);
-    myrtos_print(" characters\n");
+    ubiqos_print("lcd: 800x480 RGB565, pixel clock ");
+    ubiqos_print_u32(UBIQOS_LCD_PCLK_HZ / 1000000u);
+    ubiqos_print(" MHz, ");
+    ubiqos_print_u32(UBIQOS_CELL_COLS);
+    ubiqos_print(" by ");
+    ubiqos_print_u32(UBIQOS_CELL_ROWS);
+    ubiqos_print(" characters\n");
 }

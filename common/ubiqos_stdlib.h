@@ -1,9 +1,9 @@
-#ifndef MYRTOS_STDLIB_H
-#define MYRTOS_STDLIB_H
+#ifndef UBIQOS_STDLIB_H
+#define UBIQOS_STDLIB_H
 
-#include "myrtos_abi.h"
-#include "myrtos_string.h"
-#include "myrtos_ctype.h"
+#include "ubiqos_abi.h"
+#include "ubiqos_string.h"
+#include "ubiqos_ctype.h"
 
 // stdlib.h: the allocator, the string-to-number conversions, and exit.
 //
@@ -19,8 +19,8 @@
 
 static inline void *malloc(uint32_t n)
 {
-    uint32_t *p = (uint32_t *)myrtos_alloc_bulk(n + 8);
-    if (!p) p = (uint32_t *)myrtos_alloc(n + 8);
+    uint32_t *p = (uint32_t *)ubiqos_alloc_bulk(n + 8);
+    if (!p) p = (uint32_t *)ubiqos_alloc(n + 8);
     if (!p) return 0;
     p[0] = n;
     return (void *)(p + 2);
@@ -28,7 +28,7 @@ static inline void *malloc(uint32_t n)
 
 static inline void free(void *ptr)
 {
-    if (ptr) myrtos_free((uint32_t *)ptr - 2);
+    if (ptr) ubiqos_free((uint32_t *)ptr - 2);
 }
 
 static inline void *calloc(uint32_t nmemb, uint32_t size)
@@ -89,6 +89,6 @@ static inline long atol(const char *s) { return strtol(s, 0, 10); }
 static inline int abs(int v) { return v < 0 ? -v : v; }
 static inline long labs(long v) { return v < 0 ? -v : v; }
 
-static inline void exit(int status) { (void)status; myrtos_exit(); }
+static inline void exit(int status) { (void)status; ubiqos_exit(); }
 
 #endif

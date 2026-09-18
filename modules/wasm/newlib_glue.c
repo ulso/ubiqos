@@ -1,11 +1,11 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include <sys/stat.h>
 #include <errno.h>
 
 // What newlib asks of the system underneath it.
 //
 // wasm3 uses vsnprintf, strtod and a little stdio, and newlib's stdio is built
-// on these. They are the standard port layer, and myrtos has a call for each of
+// on these. They are the standard port layer, and UbiqOS has a call for each of
 // the ones that matter; the rest exist so the linker stops asking.
 //
 // This is only reachable from a SINGLE module. A shareable one may not have
@@ -29,10 +29,10 @@ static uint32_t heap_used;
 
 int wasm_heap_init(uint32_t bytes)
 {
-    // From PSRAM: myrtos_alloc takes the SRAM pool, which is 32 kB in total and
+    // From PSRAM: ubiqos_alloc takes the SRAM pool, which is 32 kB in total and
     // has under four free. The bulk pool is eight megabytes and is where a
     // module that is not real-time belongs anyway.
-    heap_base = (char *)myrtos_alloc_bulk(bytes);
+    heap_base = (char *)ubiqos_alloc_bulk(bytes);
     if (!heap_base)
         return -1;
 
@@ -85,22 +85,22 @@ void *_sbrk(int incr)
     return p;
 }
 
-// The descriptors are myrtos's own, so these are one line each.
+// The descriptors are UbiqOS's own, so these are one line each.
 int _write(int fd, const char *buf, int len)
 {
-    int32_t n = myrtos_write(fd, buf, (uint32_t)len);
+    int32_t n = ubiqos_write(fd, buf, (uint32_t)len);
     if (n < 0) { errno = EBADF; return -1; }
     return (int)n;
 }
 
 int _read(int fd, char *buf, int len)
 {
-    int32_t n = myrtos_read(fd, buf, (uint32_t)len);
+    int32_t n = ubiqos_read(fd, buf, (uint32_t)len);
     if (n < 0) { errno = EBADF; return -1; }
     return (int)n;
 }
 
-int _close(int fd)               { myrtos_close(fd); return 0; }
+int _close(int fd)               { ubiqos_close(fd); return 0; }
 int _lseek(int fd, int off, int w) { (void)fd; (void)off; (void)w; return 0; }
 
 // Enough for newlib to decide stdout is a terminal and stop trying to buffer
@@ -110,5 +110,5 @@ int _isatty(int fd)              { (void)fd; return 1; }
 
 int _getpid(void)                { return 1; }
 int _kill(int pid, int sig)      { (void)pid; (void)sig; errno = EINVAL; return -1; }
-void _exit(int code)             { (void)code; myrtos_exit(); for (;;) { } }
+void _exit(int code)             { (void)code; ubiqos_exit(); for (;;) { } }
 int _times(void *buf)            { (void)buf; return -1; }

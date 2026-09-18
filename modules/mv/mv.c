@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // mv -- another name for a file, and on one volume that is all it is.
 //
@@ -20,27 +20,27 @@ static bool is(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: mv SOURCE DEST\n\n"
             "Renames a file, which also moves it between directories on the same\n"
             "volume. It does not copy, so it will not move between volumes.\n"))
         return;
 
     if (argc != 3) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: mv SOURCE DEST\n");
+        ubiqos_write_str(UBIQOS_STDERR, "usage: mv SOURCE DEST\n");
         return;
     }
     if (is(argv[1], argv[2])) return;             // nothing to do, and not an error
 
-    if (myrtos_fs_rename(argv[1], argv[2]) == 0) return;
+    if (ubiqos_fs_rename(argv[1], argv[2]) == 0) return;
 
     // One message, and it names the likely causes rather than the operation.
     // "mv: failed" sends the reader to look at the card.
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "mv: cannot rename ");
-    myrtos_line_str(&l, argv[1]);
-    myrtos_line_str(&l, "\n     -- no such file, the destination exists, or the two\n"
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "mv: cannot rename ");
+    ubiqos_line_str(&l, argv[1]);
+    ubiqos_line_str(&l, "\n     -- no such file, the destination exists, or the two\n"
                         "        are on different volumes, which mv does not cross\n");
-    myrtos_line_flush(MYRTOS_STDERR, &l);
+    ubiqos_line_flush(UBIQOS_STDERR, &l);
 }

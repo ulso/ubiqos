@@ -7,7 +7,7 @@
 // what ARM needs to have the thing tp gives away.
 //
 // r9 holds it. It is the platform register -- reserved by the AAPCS for exactly
-// this kind of use -- and myrtos_frame_start puts the process's thread-local
+// this kind of use -- and ubiqos_frame_start puts the process's thread-local
 // block there when the process is laid out. The trap frame saves and restores
 // r9 like any other register, so a process keeps its own across every switch,
 // and kernel or SDK code that uses r9 for its own purposes cannot disturb it.

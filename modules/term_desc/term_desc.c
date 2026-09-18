@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // Device descriptor for the terminal. No code -- the module is just these bytes.
 //
@@ -7,8 +7,8 @@
 // card they become replaceable without rebuilding the kernel.
 
 typedef struct {
-    myrtos_descriptor_t desc;
-    myrtos_uart_config_t uart;
+    ubiqos_descriptor_t desc;
+    ubiqos_uart_config_t uart;
 } term_descriptor_t;
 
 __attribute__((section(".rodata.descriptor"), used))
@@ -16,10 +16,10 @@ const term_descriptor_t term_descriptor = {
     .desc = {
         .device_name   = "term",
         .driver_name   = "uart",
-        .device_class  = MYRTOS_CLASS_CHAR,
+        .device_class  = UBIQOS_CLASS_CHAR,
         .reserved      = 0,
-        .config_offset = sizeof(myrtos_descriptor_t),
-        .config_size   = sizeof(myrtos_uart_config_t),
+        .config_offset = sizeof(ubiqos_descriptor_t),
+        .config_size   = sizeof(ubiqos_uart_config_t),
     },
     .uart = {
         .uart_base = 0x40070000u,   // UART0

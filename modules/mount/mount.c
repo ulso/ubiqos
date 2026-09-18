@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // mount -- takes the SD card from the beginning, or says who has it.
 //
@@ -29,48 +29,48 @@ static bool same(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: mount [spi|sdio]\n\n"
             "With no argument, reports which bus the card is on and changes nothing.\n"))
         return;
 
-    uint32_t bus = MYRTOS_MOUNT_QUERY;
+    uint32_t bus = UBIQOS_MOUNT_QUERY;
 
     if (argc > 1) {
         if (same(argv[1], "sdio")) {
-            bus = MYRTOS_MOUNT_SDIO;
+            bus = UBIQOS_MOUNT_SDIO;
         } else if (same(argv[1], "spi")) {
-            bus = MYRTOS_MOUNT_SPI;
+            bus = UBIQOS_MOUNT_SPI;
         } else {
-            myrtos_write_str(MYRTOS_STDOUT, "usage: mount [spi|sdio]\n");
+            ubiqos_write_str(UBIQOS_STDOUT, "usage: mount [spi|sdio]\n");
             return;
         }
     }
 
-    int32_t rc = myrtos_mount(bus);
+    int32_t rc = ubiqos_mount(bus);
     if (rc == -2) {
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
             "mount: the host has the card. Eject it there, then 'usbdisk off'\n");
         return;
     }
-    if (bus == MYRTOS_MOUNT_QUERY) {
-        if (rc == (int32_t)MYRTOS_MOUNT_SDIO) {
-            myrtos_write_str(MYRTOS_STDOUT, "/sd: four-bit SDIO\n");
-        } else if (rc == (int32_t)MYRTOS_MOUNT_SPI) {
-            myrtos_write_str(MYRTOS_STDOUT, "/sd: SPI\n");
+    if (bus == UBIQOS_MOUNT_QUERY) {
+        if (rc == (int32_t)UBIQOS_MOUNT_SDIO) {
+            ubiqos_write_str(UBIQOS_STDOUT, "/sd: four-bit SDIO\n");
+        } else if (rc == (int32_t)UBIQOS_MOUNT_SPI) {
+            ubiqos_write_str(UBIQOS_STDOUT, "/sd: SPI\n");
         } else {
-            myrtos_write_str(MYRTOS_STDOUT,
+            ubiqos_write_str(UBIQOS_STDOUT,
                              "no card mounted. 'mount sdio' for four bits, 'mount spi' for one.\n");
         }
         return;
     }
     if (rc == 0) {
-        myrtos_write_str(MYRTOS_STDOUT, "card mounted\n");
-    } else if (bus == MYRTOS_MOUNT_SDIO) {
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT, "card mounted\n");
+    } else if (bus == UBIQOS_MOUNT_SDIO) {
+        ubiqos_write_str(UBIQOS_STDOUT,
                          "mount: no SDIO. If the card was already mounted over SPI it\n"
                          "       cannot change bus until the power is cut.\n");
     } else {
-        myrtos_write_str(MYRTOS_STDOUT, "mount: no card, or not FAT32\n");
+        ubiqos_write_str(UBIQOS_STDOUT, "mount: no card, or not FAT32\n");
     }
 }

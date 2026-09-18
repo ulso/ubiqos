@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // font -- which typeface the screen draws in.
 //
@@ -12,14 +12,14 @@
 // sensible way to reflow eighty columns into a hundred and six, so what comes
 // back is the shell's next prompt.
 
-static void describe(myrtos_line_t *l, const myrtos_confont_t *f) {
-    myrtos_line_u32(l, f->cell_w);
-    myrtos_line_str(l, "x");
-    myrtos_line_u32(l, f->cell_h);
-    myrtos_line_str(l, ", ");
-    myrtos_line_u32(l, f->cols);
-    myrtos_line_str(l, " by ");
-    myrtos_line_u32(l, f->rows);
+static void describe(ubiqos_line_t *l, const ubiqos_confont_t *f) {
+    ubiqos_line_u32(l, f->cell_w);
+    ubiqos_line_str(l, "x");
+    ubiqos_line_u32(l, f->cell_h);
+    ubiqos_line_str(l, ", ");
+    ubiqos_line_u32(l, f->cols);
+    ubiqos_line_str(l, " by ");
+    ubiqos_line_u32(l, f->rows);
 }
 
 // "6x12" into its two numbers. Anything else is not a font name.
@@ -36,49 +36,49 @@ static bool parse_cell(const char *s, uint32_t *w, uint32_t *h) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: font [WxH]\n\nShows the console fonts, or selects one.\n")) return;
 
-    myrtos_line_t line;
-    myrtos_confont_t cur;
+    ubiqos_line_t line;
+    ubiqos_confont_t cur;
 
-    if (myrtos_console_font_info(-1, &cur) < 0) {
-        myrtos_write_str(MYRTOS_STDOUT, "font: no console\n");
+    if (ubiqos_console_font_info(-1, &cur) < 0) {
+        ubiqos_write_str(UBIQOS_STDOUT, "font: no console\n");
         return;
     }
 
     if (argc < 2) {
         for (uint32_t i = 0; i < cur.count; i++) {
-            myrtos_confont_t f;
-            if (myrtos_console_font_info((int32_t)i, &f) < 0) continue;
-            myrtos_line_reset(&line);
-            myrtos_line_str(&line, i == cur.index ? "* " : "  ");
+            ubiqos_confont_t f;
+            if (ubiqos_console_font_info((int32_t)i, &f) < 0) continue;
+            ubiqos_line_reset(&line);
+            ubiqos_line_str(&line, i == cur.index ? "* " : "  ");
             describe(&line, &f);
-            myrtos_line_str(&line, "\n");
-            myrtos_line_flush(MYRTOS_STDOUT, &line);
+            ubiqos_line_str(&line, "\n");
+            ubiqos_line_flush(UBIQOS_STDOUT, &line);
         }
         return;
     }
 
     uint32_t w, h;
     if (!parse_cell(argv[1], &w, &h)) {
-        myrtos_write_str(MYRTOS_STDOUT, "usage: font [WxH]\n");
+        ubiqos_write_str(UBIQOS_STDOUT, "usage: font [WxH]\n");
         return;
     }
 
     for (uint32_t i = 0; i < cur.count; i++) {
-        myrtos_confont_t f;
-        if (myrtos_console_font_info((int32_t)i, &f) < 0) continue;
+        ubiqos_confont_t f;
+        if (ubiqos_console_font_info((int32_t)i, &f) < 0) continue;
         if (f.cell_w != w || f.cell_h != h) continue;
-        myrtos_console_font((int32_t)i, &f);
+        ubiqos_console_font((int32_t)i, &f);
         // Written for the serial shell, which is still there to read it. On the
         // screen the clear takes this with it, and the prompt says it took.
-        myrtos_line_reset(&line);
-        myrtos_line_str(&line, "font: ");
+        ubiqos_line_reset(&line);
+        ubiqos_line_str(&line, "font: ");
         describe(&line, &f);
-        myrtos_line_str(&line, "\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &line);
+        ubiqos_line_str(&line, "\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &line);
         return;
     }
-    myrtos_write_str(MYRTOS_STDOUT, "font: no such font\n");
+    ubiqos_write_str(UBIQOS_STDOUT, "font: no such font\n");
 }

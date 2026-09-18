@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // pwd -- prints the current directory.
 //
@@ -7,7 +7,7 @@
 // that has to be built into the shell, because changing a copy changes nothing.
 void module_main(void) {
     char cwd[64];
-    myrtos_getcwd(cwd, sizeof(cwd));
-    myrtos_write_str(MYRTOS_STDOUT, cwd[0] ? cwd : "/");
-    myrtos_write_str(MYRTOS_STDOUT, "\n");
+    ubiqos_getcwd(cwd, sizeof(cwd));
+    ubiqos_write_str(UBIQOS_STDOUT, cwd[0] ? cwd : "/");
+    ubiqos_write_str(UBIQOS_STDOUT, "\n");
 }

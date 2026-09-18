@@ -1,4 +1,4 @@
-// Trap vector for myrtos on Cortex-M33, the ARM half of kernel/scheduler.S.
+// Trap vector for UbiqOS on Cortex-M33, the ARM half of kernel/scheduler.S.
 //
 // The contract is the same one and is worth stating before the differences:
 // the whole context is saved on the interrupted process's own stack, the
@@ -40,7 +40,7 @@
 .thumb
 
 .section .text
-.global myrtos_trap_vector
+.global ubiqos_trap_vector
 .global isr_svcall
 .global isr_pendsv
 .global isr_systick
@@ -67,7 +67,7 @@ isr_systick:
 .thumb_func
 isr_hardfault:
 .thumb_func
-myrtos_trap_vector:
+ubiqos_trap_vector:
     // The process stack, which is where the hardware frame already is. A
     // process always runs on PSP; only these handlers run on MSP.
     mrs     r0, psp
@@ -107,7 +107,7 @@ myrtos_trap_vector:
     // nothing, which is nearly all of them.
     //
     // Written 64 bytes BELOW the frame rather than pushed, so that
-    // myrtos_frame_t stays one contiguous structure with the hardware's half
+    // ubiqos_frame_t stays one contiguous structure with the hardware's half
     // and r0 keeps pointing at it. That space is below the process's live
     // stack and nothing else can reach it: handlers run on MSP, and the
     // process is not running. It does mean a frame's worst case is 136 bytes
@@ -120,7 +120,7 @@ myrtos_trap_vector:
 1:
 
     // The frame is the argument, and the answer is the frame to resume.
-    bl      myrtos_trap_handler
+    bl      ubiqos_trap_handler
 
     // r0 now points at the frame to return through -- the same one, or another
     // process's. Its own EXC_RETURN says whether it has a block to restore,
@@ -141,4 +141,4 @@ myrtos_trap_vector:
     // hardware frame on the way.
     bx      lr
 
-myrtos_trap_vector_end:
+ubiqos_trap_vector_end:

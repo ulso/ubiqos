@@ -4,7 +4,7 @@ What this machine is called, and what network it belongs to. Read once at boot,
 by the filesystem server, as soon as the card is up and before `/sd/startup`
 runs.
 
-    # myrtos
+    # ubiqos
     hostname = jamboree
     ssid     = the-network
     password = ...
@@ -19,7 +19,7 @@ pedantry: any `#` used to end the line, so a password containing one was
 silently cut short and the only symptom was a network that would not join.
 A password may now hold `#` anywhere except directly after a space, which is
 the whole of what is left of the trade. No file, or no card, and nothing
-is lost: the machine is called `myrtos`, as it always has been.
+is lost: the machine is called `ubiqos`, as it always has been.
 
 A hostname is also an mDNS label, so it may hold letters, digits and hyphens
 and nothing else, and may not begin or end with one. Anything else is said out
@@ -55,7 +55,7 @@ The flag that says the card has been looked at is set AFTER the reading, not
 before. It was before -- so that an early return still counted as having
 tried -- and reading the card takes milliseconds during which the USB task ran,
 saw the flag, and started lwIP with a hostname nobody had read yet. The log
-showed `answering to myrtos.local` three lines above `config: hostname
+showed `answering to ubiqos.local` three lines above `config: hostname
 jamboree`. It was right the first time it was tested, which is how a race that
 usually wins survives.
 
@@ -69,7 +69,7 @@ one `cat`, so it does not:
   bytes to nothing;
 * the filesystem server refuses to open or read that one path for any process.
   `cat` says "this one is not readable" -- a refusal has an answer of its own,
-  `MYRTOS_FS_REFUSED`, precisely so it is not confused with a missing file;
+  `UBIQOS_FS_REFUSED`, precisely so it is not confused with a missing file;
 * writing is still allowed, so an editor can replace it, and so is `rm`;
 * `wifi connect` with no arguments joins the network named there. The kernel
   does the joining, so the module that asked never sees the password.

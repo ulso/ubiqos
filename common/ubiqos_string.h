@@ -1,5 +1,5 @@
-#ifndef MYRTOS_STRING_H
-#define MYRTOS_STRING_H
+#ifndef UBIQOS_STRING_H
+#define UBIQOS_STRING_H
 
 #include <stdint.h>
 
@@ -16,7 +16,7 @@
 // that brings its own strtok will be refused for exactly that reason.
 //
 // So the state is thread-local, which means the program has to define it --
-// MYRTOS_LIBC_DEFINE does, along with errno and the streams. strtok_r needs
+// UBIQOS_LIBC_DEFINE does, along with errno and the streams. strtok_r needs
 // none of it, keeping the state in the caller's own variable, and is the better
 // function anyway.
 
@@ -143,11 +143,11 @@ static inline char *strstr(const char *h, const char *n)
 // The state strtok keeps between calls. Thread-local because a shareable module
 // may not have writable data, and per-process is what it should have been all
 // along: two processes tokenising at once would otherwise tread on each other.
-extern __thread char *__myrtos_strtok;
+extern __thread char *__ubiqos_strtok;
 
-// Defined by MYRTOS_LIBC_DEFINE. Here as well, for a program that wants the
+// Defined by UBIQOS_LIBC_DEFINE. Here as well, for a program that wants the
 // string functions without stdio.
-#define MYRTOS_STRING_DEFINE __thread char *__myrtos_strtok;
+#define UBIQOS_STRING_DEFINE __thread char *__ubiqos_strtok;
 
 // The reentrant one, which needs no hidden state at all: the caller keeps it.
 static inline char *strtok_r(char *s, const char *sep, char **save)
@@ -164,7 +164,7 @@ static inline char *strtok_r(char *s, const char *sep, char **save)
 
 static inline char *strtok(char *s, const char *sep)
 {
-    return strtok_r(s, sep, &__myrtos_strtok);
+    return strtok_r(s, sep, &__ubiqos_strtok);
 }
 
 #endif

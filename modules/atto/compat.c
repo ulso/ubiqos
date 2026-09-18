@@ -1,9 +1,9 @@
-// The two calls Atto wants that a myrtos module has no library answer for.
+// The two calls Atto wants that a UbiqOS module has no library answer for.
 //
 // This is the native twin of modules/wasm/examples/curses/compat.c, and the
 // difference between them is two lines of directory reading. That file expands
 // the pattern with opendir and readdir, which WASI has and which newlib on bare
-// metal does not; here the same job is done with myrtos_fs_dir_at, which asks
+// metal does not; here the same job is done with ubiqos_fs_dir_at, which asks
 // the file server for the nth name and is what the shell's own ls uses.
 //
 // The wasm version also had to adopt PWD, because a guest started life in "/"
@@ -13,7 +13,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 void curses_adopt_pwd(void) { }
 
@@ -44,7 +44,7 @@ static const char *after(const char *s, const char *prefix)
 // Filename completion on TAB, which Atto asks for by shelling out to
 // "echo prefix* >tmpfile" and reading the names back.
 //
-// A module could exec a real shell here -- myrtos has one and SYS_EXEC to start
+// A module could exec a real shell here -- UbiqOS has one and SYS_EXEC to start
 // it with. It does not, for the same reason the wasm side does not: the shell
 // would have to glob, and it does not, so the work would land back here anyway
 // having cost a process and a pipe. So this recognises the one command shape
@@ -79,7 +79,7 @@ int system(const char *command)
         dirname[d < sizeof dirname ? d : sizeof dirname - 1] = 0;
         strcpy(prefix, slash + 1);
     } else {
-        if (myrtos_getcwd(dirname, sizeof dirname) < 0) strcpy(dirname, "/");
+        if (ubiqos_getcwd(dirname, sizeof dirname) < 0) strcpy(dirname, "/");
         strcpy(prefix, pattern);
     }
     unsigned plen = strlen(prefix);
@@ -88,12 +88,12 @@ int system(const char *command)
     int fd = open(target, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd < 0) return -1;
 
-    // By index rather than through a handle, which is the shape myrtos gives a
+    // By index rather than through a handle, which is the shape UbiqOS gives a
     // directory: ask for the nth name until it says there is no nth name.
     char name[64];
     uint32_t size;
     int first = 1;
-    for (uint32_t i = 0; myrtos_fs_dir_at(dirname, i, name, &size) == 0; i++) {
+    for (uint32_t i = 0; ubiqos_fs_dir_at(dirname, i, name, &size) == 0; i++) {
         if (name[0] == '.') continue;
         if (plen && strncmp(name, prefix, plen) != 0) continue;
         if (!first) (void)!write(fd, " ", 1);

@@ -1,7 +1,7 @@
 // The bottom end of newlib: what the C library calls when it needs the system.
 //
 // A module built this way gets the whole standard library -- qsort, strtod,
-// time, the full stdio -- instead of the header-only subset in myrtos_stdio.h
+// time, the full stdio -- instead of the header-only subset in ubiqos_stdio.h
 // and its neighbours. That subset is smaller and needs nothing linked; this is
 // for ported code, where the library is what the program was written against
 // and rewriting it is not the job.
@@ -33,7 +33,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <fcntl.h>
-#include "myrtos_abi.h"
+#include "ubiqos_abi.h"
 
 #undef errno
 extern int errno;
@@ -45,17 +45,17 @@ extern int errno;
 // The bulk pool rather than the process's own area, because a ported program
 // sizes its appetite by what it is editing rather than by what the module
 // header declared, and PSRAM has eight megabytes to be casual with.
-__attribute__((weak)) uint32_t myrtos_heap_bytes = 64u * 1024u;
+__attribute__((weak)) uint32_t ubiqos_heap_bytes = 64u * 1024u;
 
 static char *heap_base, *heap_end, *heap_brk;
 
 void *_sbrk(int incr)
 {
     if (!heap_base) {
-        heap_base = (char *)myrtos_alloc_bulk(myrtos_heap_bytes);
+        heap_base = (char *)ubiqos_alloc_bulk(ubiqos_heap_bytes);
         if (!heap_base) { errno = ENOMEM; return (void *)-1; }
         heap_brk = heap_base;
-        heap_end = heap_base + myrtos_heap_bytes;
+        heap_end = heap_base + ubiqos_heap_bytes;
     }
     char *prev = heap_brk;
     if (incr > 0 && heap_brk + incr > heap_end) { errno = ENOMEM; return (void *)-1; }
@@ -78,29 +78,29 @@ void *_sbrk(int incr)
 static int open_errno(const char *path)
 {
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(path, &size);
+    int32_t attr = ubiqos_fs_stat(path, &size);
     if (attr < 0) return ENOENT;
-    if (attr & MYRTOS_ATTR_DIRECTORY) return EISDIR;
+    if (attr & UBIQOS_ATTR_DIRECTORY) return EISDIR;
     return EMFILE;
 }
 
 int _write(int fd, const char *buf, int len)
 {
-    int32_t n = myrtos_write(fd, buf, (uint32_t)len);
+    int32_t n = ubiqos_write(fd, buf, (uint32_t)len);
     if (n < 0) { errno = EBADF; return -1; }
     return n;
 }
 
 int _read(int fd, char *buf, int len)
 {
-    int32_t n = myrtos_read(fd, buf, (uint32_t)len);
+    int32_t n = ubiqos_read(fd, buf, (uint32_t)len);
     if (n < 0) { errno = EBADF; return -1; }
     return n;
 }
 
 // The access mode is the same number in both worlds -- 0, 1 and 2, straight
-// from Unix -- and NOTHING ABOVE IT IS. Newlib's O_CREAT is 0x200, which myrtos
-// reads as O_TRUNC; newlib's O_TRUNC is 0x400, which myrtos reads as O_APPEND.
+// from Unix -- and NOTHING ABOVE IT IS. Newlib's O_CREAT is 0x200, which UbiqOS
+// reads as O_TRUNC; newlib's O_TRUNC is 0x400, which UbiqOS reads as O_APPEND.
 // Passed through unchanged, fopen(path, "w") asks to truncate a file it never
 // creates. Caught by reading the two headers rather than by running it: the
 // first test only opened for reading, where every one of these bits is zero.
@@ -108,7 +108,7 @@ int _open(const char *path, int flags, int mode)
 {
     (void)mode;
     // A flag that cannot be honoured is refused rather than dropped. That is
-    // the rule common/myrtos_posix.h states for the other library here, and it
+    // the rule common/ubiqos_posix.h states for the other library here, and it
     // holds for the same reason: a program that asks for O_EXCL is asking to be
     // told whether it won a race, and answering yes to one it never entered is
     // how two instances come to believe they hold the same lock. Better a port
@@ -121,21 +121,21 @@ int _open(const char *path, int flags, int mode)
     if (flags & O_EXCL) { errno = ENOTSUP; return -1; }
 
     uint32_t f = (uint32_t)flags & 3u;
-    if (flags & O_CREAT)  f |= MYRTOS_O_CREAT;
-    if (flags & O_TRUNC)  f |= MYRTOS_O_TRUNC;
-    if (flags & O_APPEND) f |= MYRTOS_O_APPEND;
-    int32_t fd = myrtos_open_flags(path, f);
+    if (flags & O_CREAT)  f |= UBIQOS_O_CREAT;
+    if (flags & O_TRUNC)  f |= UBIQOS_O_TRUNC;
+    if (flags & O_APPEND) f |= UBIQOS_O_APPEND;
+    int32_t fd = ubiqos_open_flags(path, f);
     // A refusal says so itself, and does not need guessing at.
-    if (fd == MYRTOS_FS_REFUSED) { errno = EACCES; return -1; }
+    if (fd == UBIQOS_FS_REFUSED) { errno = EACCES; return -1; }
     if (fd < 0) { errno = open_errno(path); return -1; }
     return fd;
 }
 
-int _close(int fd) { myrtos_close(fd); return 0; }
+int _close(int fd) { ubiqos_close(fd); return 0; }
 
 int _lseek(int fd, int offset, int whence)
 {
-    int32_t n = myrtos_seek(fd, offset, (uint32_t)whence);
+    int32_t n = ubiqos_seek(fd, offset, (uint32_t)whence);
     if (n < 0) { errno = ESPIPE; return -1; }
     return n;
 }
@@ -151,7 +151,7 @@ int _fstat(int fd, struct stat *st)
     return 0;
 }
 
-// The attribute byte myrtos answers with is FAT's, and the one bit of it that
+// The attribute byte UbiqOS answers with is FAT's, and the one bit of it that
 // a ported program actually reads is whether this is a directory: S_ISDIR is
 // how anything that walks a tree decides to descend. Reporting every entry as a
 // regular file makes such a program treat a directory as a file it cannot read,
@@ -159,16 +159,16 @@ int _fstat(int fd, struct stat *st)
 int _stat(const char *path, struct stat *st)
 {
     uint32_t size = 0;
-    int32_t attr = myrtos_fs_stat(path, &size);
+    int32_t attr = ubiqos_fs_stat(path, &size);
     if (attr < 0) { errno = ENOENT; return -1; }
-    st->st_mode = (attr & MYRTOS_ATTR_DIRECTORY) ? S_IFDIR : S_IFREG;
+    st->st_mode = (attr & UBIQOS_ATTR_DIRECTORY) ? S_IFDIR : S_IFREG;
     st->st_size = (off_t)size;
     return 0;
 }
 
 int _unlink(const char *path)
 {
-    if (myrtos_fs_remove(path) < 0) { errno = ENOENT; return -1; }
+    if (ubiqos_fs_remove(path) < 0) { errno = ENOENT; return -1; }
     return 0;
 }
 
@@ -180,7 +180,7 @@ int _getpid(void) { return 1; }
 
 int _kill(int pid, int sig) { (void)pid; (void)sig; errno = EINVAL; return -1; }
 
-void _exit(int code) { (void)code; myrtos_exit(); for (;;) { } }
+void _exit(int code) { (void)code; ubiqos_exit(); for (;;) { } }
 
 // Time, and it is worth saying plainly what kind: this machine has no clock to
 // ask. There is no battery-backed anything on the board, and nothing has told it
@@ -201,7 +201,7 @@ int _gettimeofday(struct timeval *tv, void *tz)
 {
     (void)tz;
     if (!tv) { errno = EINVAL; return -1; }
-    uint32_t ms = myrtos_ticks_now();
+    uint32_t ms = ubiqos_ticks_now();
     tv->tv_sec  = (time_t)(ms / 1000u);
     tv->tv_usec = (suseconds_t)((ms % 1000u) * 1000u);
     return 0;
@@ -213,7 +213,7 @@ int _gettimeofday(struct timeval *tv, void *tz)
 // machine's to choose and multiplying milliseconds by it overflows otherwise.
 clock_t _times(struct tms *buf)
 {
-    uint32_t ms = myrtos_ticks_now();
+    uint32_t ms = ubiqos_ticks_now();
     clock_t t = (clock_t)((uint64_t)ms * CLOCKS_PER_SEC / 1000u);
     if (buf) {
         buf->tms_utime = t;
@@ -224,8 +224,8 @@ clock_t _times(struct tms *buf)
     return t;
 }
 
-// Ported programs have a main; myrtos starts a module at module_main. Weak, so
-// a module written for myrtos from the start can define its own and never have
+// Ported programs have a main; UbiqOS starts a module at module_main. Weak, so
+// a module written for UbiqOS from the start can define its own and never have
 // a main at all.
 __attribute__((weak)) void module_main(int argc, char **argv)
 {

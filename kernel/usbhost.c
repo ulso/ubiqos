@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include "pico/stdlib.h"
 #include "board.h"
-#if !MYRTOS_USB_NATIVE_HOST
+#if !UBIQOS_USB_NATIVE_HOST
 #include "pio_usb.h"
 #include "pio_usb_ll.h"
 #endif
@@ -13,19 +13,19 @@
 #include "hardware/sync.h"
 #include "pico/multicore.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-void myrtos_print_hex(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+void ubiqos_print_hex(uint32_t v);
 
 // A USB host on two PIO state machines, so a keyboard can be plugged in while
 // the hardware controller stays busy being our console.
 //
 // The pins are the board's, from its header. D- is always D+ plus one, which
 // PIO-USB requires; the rest a board may simply not have.
-#define USB_HOST_DP_PIN  MYRTOS_USB_HOST_DP
+#define USB_HOST_DP_PIN  UBIQOS_USB_HOST_DP
 
-#if MYRTOS_HAS_USB_HOST_POWER
-#define USB_HOST_POWER   MYRTOS_USB_HOST_POWER
+#if UBIQOS_HAS_USB_HOST_POWER
+#define USB_HOST_POWER   UBIQOS_USB_HOST_POWER
 #endif
 
 // Some boards hold their peripherals in reset until a pin is driven high. The
@@ -33,9 +33,9 @@ void myrtos_print_hex(uint32_t v);
 // enumerates while it is low -- which looks exactly like a host that is not
 // working. A board with a socket soldered straight to the pads has neither the
 // hub nor the pin.
-#if MYRTOS_HAS_PERIPH_RESET
-#define PERIPH_RESET     MYRTOS_PERIPH_RESET
-#define ESP_BOOT         MYRTOS_ESP_BOOT_STRAP   // the ESP32-C6's GPIO9, and the BOOT button
+#if UBIQOS_HAS_PERIPH_RESET
+#define PERIPH_RESET     UBIQOS_PERIPH_RESET
+#define ESP_BOOT         UBIQOS_ESP_BOOT_STRAP   // the ESP32-C6's GPIO9, and the BOOT button
 #endif
 
 static uint8_t keys[32];
@@ -51,13 +51,13 @@ static spin_lock_t *keylock;
 // The key queue is a data structure and not a device, so its lock is claimed
 // whether or not a host is ever started.
 //
-// It used to be claimed inside myrtos_usbhost_init, which a board with no PIO
+// It used to be claimed inside ubiqos_usbhost_init, which a board with no PIO
 // USB host does not call -- and then keylock stayed NULL and the first read
 // spun on address zero for ever. That deadlocked the Waveshare board the moment
 // a shell ran on its panel: `con` reads the keyboard, and a console with no
 // keyboard still reads it. The probe found it in spin_lock_unsafe_blocking with
 // the tick frozen thirteen milliseconds after pre-emption started.
-void myrtos_usbhost_queue_init(void)
+void ubiqos_usbhost_queue_init(void)
 {
     if (!keylock) keylock = spin_lock_instance((uint)spin_lock_claim_unused(true));
 }
@@ -105,8 +105,8 @@ uint32_t tusb_time_millis_api(void) {
 // it: GP22 releases the hub, the audio DAC and the ESP32-C6 together, and the
 // drivers that come later in boot depend on having happened after it. Only the
 // PIO half belongs on the other core.
-void myrtos_usbhost_init(void) {
-    myrtos_usbhost_queue_init();
+void ubiqos_usbhost_init(void) {
+    ubiqos_usbhost_queue_init();
 
     // GP22 releases the USB hub, the audio DAC and the ESP32-C6 together, so the
     // ESP's reset happens here whether or not anybody wants WiFi.
@@ -117,7 +117,7 @@ void myrtos_usbhost_init(void) {
     // reset as an input with its PULL-DOWN on, so GP0 was holding the ESP in
     // bootloader mode every time. The chip had power and drove its busy line,
     // which is what made it look present but permanently not ready.
-#if MYRTOS_HAS_PERIPH_RESET
+#if UBIQOS_HAS_PERIPH_RESET
     gpio_init(ESP_BOOT);
     gpio_set_dir(ESP_BOOT, GPIO_IN);
     gpio_set_pulls(ESP_BOOT, true, false);   // pull up, and leave the button alone
@@ -130,7 +130,7 @@ void myrtos_usbhost_init(void) {
     gpio_put(PERIPH_RESET, 1);            // let the on-board peripherals go
 #endif
 
-#if MYRTOS_HAS_USB_HOST_POWER
+#if UBIQOS_HAS_USB_HOST_POWER
     gpio_init(USB_HOST_POWER);
     gpio_set_dir(USB_HOST_POWER, GPIO_OUT);
     gpio_put(USB_HOST_POWER, 1);          // the port is dead without this
@@ -156,8 +156,8 @@ void myrtos_usbhost_init(void) {
 // everything else through the event queue, which core 0 drains. That is the
 // rule already written for a handler above the kernel's threshold, applied to a
 // core instead of a handler.
-void myrtos_usbhost_repeat(void);
-void myrtos_usbhost_rearm(void);
+void ubiqos_usbhost_repeat(void);
+void ubiqos_usbhost_rearm(void);
 
 // Core 1's pulse, for the question a USB fault asks first and that nothing else
 // could answer: is the host loop running at all? The debugger cannot halt core 1
@@ -168,7 +168,7 @@ static volatile uint32_t core1_last_ms;
 
 static void core1_main(void)
 {
-#if !MYRTOS_USB_NATIVE_HOST
+#if !UBIQOS_USB_NATIVE_HOST
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = USB_HOST_DP_PIN;
 
@@ -200,27 +200,27 @@ static void core1_main(void)
         core1_last_ms = tusb_time_millis_api();
 
         tuh_task();
-        myrtos_usbhost_repeat();
-        myrtos_usbhost_rearm();
+        ubiqos_usbhost_repeat();
+        ubiqos_usbhost_rearm();
         busy_wait_us(200);
     }
 }
 
-void myrtos_usbhost_start_core1(void)
+void ubiqos_usbhost_start_core1(void)
 {
     multicore_launch_core1(core1_main);
 }
 
-void myrtos_usbhost_task(void) { tuh_task(); }
+void ubiqos_usbhost_task(void) { tuh_task(); }
 
-bool myrtos_io_interrupt(const char *device_name);
+bool ubiqos_io_interrupt(const char *device_name);
 static void push_locked(const char *sq, uint32_t n);
 
 // --- CORE 0 DRAINS WHAT CORE 1 COULD NOT DO --------------------------------
 // Everything here touches the kernel, and that is the point: it runs on the
 // core that owns it. The events carry ids and numbers, never a pointer, so
 // nothing that crosses can dangle.
-void myrtos_usbhost_drain(void)
+void ubiqos_usbhost_drain(void)
 {
     while (ev_tail != ev_head) {
         usb_event_t e = evq[ev_tail];
@@ -232,17 +232,17 @@ void myrtos_usbhost_drain(void)
             // Nobody wanted it, so it is a character after all -- which is what
             // the old code decided at the keyboard, in a place that no longer
             // knows enough to decide it.
-            if (!myrtos_io_interrupt("con") && !myrtos_io_interrupt("kbd")) {
+            if (!ubiqos_io_interrupt("con") && !ubiqos_io_interrupt("kbd")) {
                 char c = 3;
                 push_locked(&c, 1);
             }
             break;
 
         case EV_VIEW:
-#if MYRTOS_VIDEO_CHARGEN
-            if (e.id == VIEW_MOVE) myrtos_chargen_view_move((int32_t)e.a);
-            else if (e.id == VIEW_HOME) myrtos_chargen_view_home();
-            else myrtos_chargen_view_end();
+#if UBIQOS_VIDEO_CHARGEN
+            if (e.id == VIEW_MOVE) ubiqos_chargen_view_move((int32_t)e.a);
+            else if (e.id == VIEW_HOME) ubiqos_chargen_view_home();
+            else ubiqos_chargen_view_end();
 #endif
             break;
 
@@ -250,47 +250,47 @@ void myrtos_usbhost_drain(void)
             switch (e.id) {
             case LOG_MOUNT:
             case LOG_UMOUNT:
-                myrtos_print("USB host: device ");
-                myrtos_print_u32(e.a);
-                myrtos_print(e.id == LOG_MOUNT ? " attached\n" : " removed\n");
+                ubiqos_print("USB host: device ");
+                ubiqos_print_u32(e.a);
+                ubiqos_print(e.id == LOG_MOUNT ? " attached\n" : " removed\n");
                 break;
-            case LOG_HID_KBD:   myrtos_print("USB host: keyboard ready\n"); break;
-            case LOG_HID_OTHER: myrtos_print("USB host: HID device, not a keyboard\n"); break;
-            case LOG_NO_SLOT:   myrtos_print("USB host: no free HID slot; this device will not be polled\n"); break;
-            case LOG_ARMED:     myrtos_print("USB host:   armed\n"); break;
-            case LOG_HID_GONE:  myrtos_print("USB host: HID gone\n"); break;
-            case LOG_CDC_GONE:  myrtos_print("USB host: CDC-ACM device gone\n"); break;
+            case LOG_HID_KBD:   ubiqos_print("USB host: keyboard ready\n"); break;
+            case LOG_HID_OTHER: ubiqos_print("USB host: HID device, not a keyboard\n"); break;
+            case LOG_NO_SLOT:   ubiqos_print("USB host: no free HID slot; this device will not be polled\n"); break;
+            case LOG_ARMED:     ubiqos_print("USB host:   armed\n"); break;
+            case LOG_HID_GONE:  ubiqos_print("USB host: HID gone\n"); break;
+            case LOG_CDC_GONE:  ubiqos_print("USB host: CDC-ACM device gone\n"); break;
             case LOG_STARTED:
                 // The numbers, not a remembered pair of them. This line said
                 // "D+ GP1, power GP11" on a board whose D+ is GP0 and which has
                 // no power pin at all -- printed because starting the host on
                 // core 1 had been left unguarded, and believed because the line
                 // could not disagree with the code.
-#if MYRTOS_USB_NATIVE_HOST
+#if UBIQOS_USB_NATIVE_HOST
                 // And the same mistake the other way: a host on the chip's own
                 // controller said it was PIO on GP0 and GP1, which it has left.
-                myrtos_print("USB host on core 1, the chip's own controller");
+                ubiqos_print("USB host on core 1, the chip's own controller");
 #else
-                myrtos_print("USB host on core 1, PIO, D+ GP");
-                myrtos_print_u32(USB_HOST_DP_PIN);
-                myrtos_print(", D- GP");
-                myrtos_print_u32(USB_HOST_DP_PIN + 1);
-#if MYRTOS_HAS_USB_HOST_POWER
-                myrtos_print(", power GP");
-                myrtos_print_u32(USB_HOST_POWER);
+                ubiqos_print("USB host on core 1, PIO, D+ GP");
+                ubiqos_print_u32(USB_HOST_DP_PIN);
+                ubiqos_print(", D- GP");
+                ubiqos_print_u32(USB_HOST_DP_PIN + 1);
+#if UBIQOS_HAS_USB_HOST_POWER
+                ubiqos_print(", power GP");
+                ubiqos_print_u32(USB_HOST_POWER);
 #else
-                myrtos_print(", 5V always on");
+                ubiqos_print(", 5V always on");
 #endif
 #endif
-                myrtos_print("\n");
+                ubiqos_print("\n");
                 break;
-            case LOG_INIT_FAIL: myrtos_print("USB host: tuh_init failed\n"); break;
+            case LOG_INIT_FAIL: ubiqos_print("USB host: tuh_init failed\n"); break;
             case LOG_CDC_UP:
-                myrtos_print("USB host: CDC-ACM ready as 'acm', ");
-                myrtos_print_hex(e.a >> 16);
-                myrtos_print(":");
-                myrtos_print_hex(e.a & 0xffffu);
-                myrtos_print(e.b ? ", DTR high\n" : ", DTR low\n");
+                ubiqos_print("USB host: CDC-ACM ready as 'acm', ");
+                ubiqos_print_hex(e.a >> 16);
+                ubiqos_print(":");
+                ubiqos_print_hex(e.a & 0xffffu);
+                ubiqos_print(e.b ? ", DTR high\n" : ", DTR low\n");
                 break;
             }
             break;
@@ -300,7 +300,7 @@ void myrtos_usbhost_drain(void)
 
 // What the driver hands out. A ring, because keys arrive in an interrupt-ish
 // context and are read from a system call.
-int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len) {
+int32_t ubiqos_usbhost_read(uint8_t *buf, uint32_t len) {
     // The reader takes the lock as well, now that the writer is on another
     // core. Reading an index the other core is updating is the same race as
     // writing one.
@@ -314,7 +314,7 @@ int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len) {
     return (int32_t)n;
 }
 
-uint32_t myrtos_usbhost_available(void) {
+uint32_t ubiqos_usbhost_available(void) {
     return (head - tail) % sizeof(keys);
 }
 
@@ -393,10 +393,10 @@ static struct {
     uint8_t tries;               // recoveries since the last report arrived
 } hid_poll[HID_SLOTS];
 
-uint32_t myrtos_hid_rearms;      // how many times the ask had to be repeated
-uint32_t myrtos_hid_lost_repeats; // repeats abandoned because the keyboard went
-uint32_t myrtos_hid_recoveries;  // how many times a submitted transfer was lost
-uint32_t myrtos_hid_no_slot;     // devices turned away because the table was full
+uint32_t ubiqos_hid_rearms;      // how many times the ask had to be repeated
+uint32_t ubiqos_hid_lost_repeats; // repeats abandoned because the keyboard went
+uint32_t ubiqos_hid_recoveries;  // how many times a submitted transfer was lost
+uint32_t ubiqos_hid_no_slot;     // devices turned away because the table was full
 
 static void hid_want(uint8_t addr, uint8_t instance) {
     for (int i = 0; i < HID_SLOTS; i++) {
@@ -424,7 +424,7 @@ static void hid_want(uint8_t addr, uint8_t instance) {
     // report is the only thing that keeps a keyboard alive; a device that never
     // gets a slot is never asked.
     ev_push(EV_LOG, LOG_NO_SLOT, addr, instance);
-    myrtos_hid_no_slot++;
+    ubiqos_hid_no_slot++;
 }
 
 // Everything this side is holding on behalf of one device address.
@@ -435,7 +435,7 @@ static void hid_forget_device(uint8_t addr) {
             hid_poll[i].armed = false;
         }
     }
-    if (repeat_key) myrtos_hid_lost_repeats++;
+    if (repeat_key) ubiqos_hid_lost_repeats++;
     forget_held_keys();
 }
 
@@ -463,7 +463,7 @@ static void hid_forget_device(uint8_t addr) {
 // twice. Three consecutive milliseconds with nothing in flight is not a window.
 #define HID_IDLE_SWEEPS 3
 
-int32_t myrtos_usbhost_cdc_index(void);
+int32_t ubiqos_usbhost_cdc_index(void);
 
 // The interrupt IN endpoint one HID instance's reports arrive on, or nothing.
 //
@@ -480,7 +480,7 @@ int32_t myrtos_usbhost_cdc_index(void);
 //
 // PIO-USB's own pool, so a host on the chip's controller has no such look and
 // goes without this recovery; the ready sweep below still applies to it.
-#if !MYRTOS_USB_NATIVE_HOST
+#if !UBIQOS_USB_NATIVE_HOST
 static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
     for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
         const endpoint_t *e = PIO_USB_ENDPOINT(i);
@@ -531,7 +531,7 @@ static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
 // again. That is flow control, it heals the moment somebody reads, and it is why
 // this refuses to act while the FIFO holds anything. The genuine fault -- the
 // one with three failures behind it -- could not be provoked to order, so what
-// follows was reasoned out rather than watched. myrtos_cdc_rearms is there to
+// follows was reasoned out rather than watched. ubiqos_cdc_rearms is there to
 // say whether it ever fires.
 //
 // tuh_cdc_read_clear queues it again. The claim inside fails harmlessly when the
@@ -545,7 +545,7 @@ static const endpoint_t *hid_in_endpoint(uint8_t addr, uint8_t instance) {
 // An IN endpoint of the CDC device with nothing queued is the state, and it has
 // to be seen twice sixty-four milliseconds apart, so that the window where PIO
 // has finished and the host stack has not yet noticed cannot be mistaken for it.
-uint32_t myrtos_cdc_rearms;
+uint32_t ubiqos_cdc_rearms;
 
 // How many times a silent dongle is asked again before it is left alone.
 //
@@ -556,7 +556,7 @@ uint32_t myrtos_cdc_rearms;
 // the power was cut. A recovery with no way to give up is not a recovery.
 #define CDC_REARM_LIMIT 32
 
-uint32_t myrtos_cdc_gaveup;
+uint32_t ubiqos_cdc_gaveup;
 
 static void cdc_rearm(void) {
     static uint8_t idle_sweeps;
@@ -565,12 +565,12 @@ static void cdc_rearm(void) {
     // Every one of these means the endpoint is healthy or the device is gone,
     // and either way the count starts again -- so a dongle that is unplugged
     // and put back gets the same patience as the first time.
-    int32_t idx = myrtos_usbhost_cdc_index();
+    int32_t idx = ubiqos_usbhost_cdc_index();
     if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) {
-        idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return;
+        idle_sweeps = 0; attempts = 0; ubiqos_cdc_gaveup = 0; return;
     }
     if (tuh_cdc_read_available((uint8_t)idx)) {
-        idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return;
+        idle_sweeps = 0; attempts = 0; ubiqos_cdc_gaveup = 0; return;
     }
 
     tuh_itf_info_t info;
@@ -579,7 +579,7 @@ static void cdc_rearm(void) {
     // Read from PIO-USB's pool; on the chip's controller there is no pool to
     // read, so nothing is ever seen as stalled and this does nothing.
     bool stalled = false;
-#if !MYRTOS_USB_NATIVE_HOST
+#if !UBIQOS_USB_NATIVE_HOST
     for (int i = 0; i < PIO_USB_EP_POOL_CNT; i++) {
         const endpoint_t *e = PIO_USB_ENDPOINT(i);
         if (e->dev_addr != info.daddr) continue;
@@ -592,7 +592,7 @@ static void cdc_rearm(void) {
         if (!e->has_transfer) stalled = true;
     }
 #endif
-    if (!stalled) { idle_sweeps = 0; attempts = 0; myrtos_cdc_gaveup = 0; return; }
+    if (!stalled) { idle_sweeps = 0; attempts = 0; ubiqos_cdc_gaveup = 0; return; }
     if (++idle_sweeps < 2)    return;
 
     idle_sweeps = 0;
@@ -600,14 +600,14 @@ static void cdc_rearm(void) {
     // Out of patience. Nothing is torn down -- taking a device away from
     // TinyUSB while it believes it owns one is what has produced an ebreak
     // twice today -- it is simply left alone, and usbstat says so.
-    if (attempts >= CDC_REARM_LIMIT) { myrtos_cdc_gaveup = 1; return; }
+    if (attempts >= CDC_REARM_LIMIT) { ubiqos_cdc_gaveup = 1; return; }
     attempts++;
 
     tuh_cdc_read_clear((uint8_t)idx);
-    myrtos_cdc_rearms++;
+    ubiqos_cdc_rearms++;
 }
 
-void myrtos_usbhost_rearm(void) {
+void ubiqos_usbhost_rearm(void) {
     // Not every pass. A healthy endpoint is busy and the claim simply fails, so
     // this costs little either way, but sixty times a second is enough.
     static uint8_t cdc_countdown;
@@ -619,7 +619,7 @@ void myrtos_usbhost_rearm(void) {
         if (!hid_poll[i].armed) {
             hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr, hid_poll[i].instance);
             hid_poll[i].idle = 0;
-            myrtos_hid_rearms++;
+            ubiqos_hid_rearms++;
             continue;
         }
 
@@ -653,7 +653,7 @@ void myrtos_usbhost_rearm(void) {
         // Aborting first is what makes the ask land. Without it the claim
         // inside tuh_hid_receive_report is refused for exactly the reason the
         // report is needed, and the retry would repeat for ever.
-#if !MYRTOS_USB_NATIVE_HOST
+#if !UBIQOS_USB_NATIVE_HOST
         const endpoint_t *ep = hid_in_endpoint(hid_poll[i].addr, hid_poll[i].instance);
         if (ep && !ep->has_transfer) {
             if (++hid_poll[i].dead < HID_DEAD_SWEEPS) continue;
@@ -664,7 +664,7 @@ void myrtos_usbhost_rearm(void) {
             hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr,
                                                        hid_poll[i].instance);
             hid_poll[i].idle = 0;
-            myrtos_hid_recoveries++;
+            ubiqos_hid_recoveries++;
             forget_held_keys();
             continue;
         }
@@ -679,7 +679,7 @@ void myrtos_usbhost_rearm(void) {
 
         hid_poll[i].idle = 0;
         hid_poll[i].armed = tuh_hid_receive_report(hid_poll[i].addr, hid_poll[i].instance);
-        myrtos_hid_recoveries++;
+        ubiqos_hid_recoveries++;
         forget_held_keys();
     }
 }
@@ -734,19 +734,19 @@ void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
     // Counted as well as cleared: a repeat that was in flight when its keyboard
     // left is the exact event nobody could see, and one number would have named
     // this fault in an afternoon rather than over two days.
-    if (repeat_key) myrtos_hid_lost_repeats++;
+    if (repeat_key) ubiqos_hid_lost_repeats++;
     forget_held_keys();
 
-    myrtos_print("USB host: HID gone\n");
+    ubiqos_print("USB host: HID gone\n");
 }
 
 // The layout comes from the keyboard's descriptor, which is where it belongs:
 // changing it is a matter of replacing one module rather than rebuilding the
 // kernel. Until a descriptor has been registered these two lines stand in --
 // enough to type a command, and American whatever is printed on the keys.
-static const myrtos_keymap_t *keymap;
+static const ubiqos_keymap_t *keymap;
 
-void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k) { keymap = k; }
+void ubiqos_usbhost_set_keymap(const ubiqos_keymap_t *k) { keymap = k; }
 
 // Auto-repeat. When a held key first stopped flooding the queue it stopped
 // repeating altogether, which is the other half of the problem: a report says
@@ -806,9 +806,9 @@ static uint8_t translate(uint8_t k, uint8_t mods);
 // screen: it ends that process instead. With nothing running it goes through as
 // an ordinary character, because then there is a shell reading and it can do
 // something better with it -- clearing the line -- than the kernel can.
-bool myrtos_io_interrupt(const char *device_name);
+bool ubiqos_io_interrupt(const char *device_name);
 
-void myrtos_usbhost_push_str(const char *sq);   // defined below
+void ubiqos_usbhost_push_str(const char *sq);   // defined below
 
 // The keymap holds one byte per key and cannot hold anything else: a layout is
 // a table of characters, and a-ring is one character. What leaves here is UTF-8,
@@ -829,7 +829,7 @@ static void emit(uint8_t c) {
     pair[0] = (char)(0xc0 | (c >> 6));
     pair[1] = (char)(0x80 | (c & 0x3f));
     pair[2] = 0;
-    myrtos_usbhost_push_str(pair);
+    ubiqos_usbhost_push_str(pair);
 }
 
 // The arrows and their neighbours, as the escape sequences every terminal has
@@ -852,12 +852,12 @@ static void emit(uint8_t c) {
 // Shift+PgUp and Shift+PgDn move half a screen, Shift+Home goes as far back as
 // there is, Shift+End returns to the live screen.
 static bool scroll_key(uint8_t k, uint8_t mods) {
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
     if (!(mods & 0x22))                       // either shift
         return false;
     switch (k) {
-    case 0x4b: ev_push(EV_VIEW, VIEW_MOVE, (uint32_t)(-(int32_t)(MYRTOS_CELL_ROWS / 2)), 0); return true;
-    case 0x4e: ev_push(EV_VIEW, VIEW_MOVE, (uint32_t)(int32_t)(MYRTOS_CELL_ROWS / 2), 0); return true;
+    case 0x4b: ev_push(EV_VIEW, VIEW_MOVE, (uint32_t)(-(int32_t)(UBIQOS_CELL_ROWS / 2)), 0); return true;
+    case 0x4e: ev_push(EV_VIEW, VIEW_MOVE, (uint32_t)(int32_t)(UBIQOS_CELL_ROWS / 2), 0); return true;
     case 0x4a: ev_push(EV_VIEW, VIEW_HOME, 0, 0); return true;
     case 0x4d: ev_push(EV_VIEW, VIEW_END, 0, 0);  return true;
     default:   return false;
@@ -872,7 +872,7 @@ static bool scroll_key(uint8_t k, uint8_t mods) {
 // cursor is. Output does not: a line printed while you are reading history
 // should not yank the page away, and that difference is the whole of the rule.
 static void scroll_to_live(void) {
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
     ev_push(EV_VIEW, VIEW_END, 0, 0);
 #endif
 }
@@ -899,20 +899,20 @@ static const char *nav_sequence(uint8_t k) {
 // looks like a strange direction until you remember what a terminal is -- the
 // screen's reply to the program goes to the program's input, and on this
 // machine the console's input is the keyboard.
-void myrtos_usbhost_push_str(const char *sq) {
+void ubiqos_usbhost_push_str(const char *sq) {
     uint32_t n = 0;
     while (sq[n]) n++;
     push_locked(sq, n);
 }
 
-void myrtos_usbhost_repeat(void) {
+void ubiqos_usbhost_repeat(void) {
     if (!repeat_key) return;
     uint32_t now = tusb_time_millis_api();
     if ((int32_t)(now - repeat_began) > REPEAT_LIMIT_MS) { forget_held_keys(); return; }
     if ((int32_t)(now - repeat_due) < 0) return;
     const char *sq = nav_sequence(repeat_key);
     if (sq) {
-        myrtos_usbhost_push_str(sq);
+        ubiqos_usbhost_push_str(sq);
     } else {
         uint8_t c = translate(repeat_key, repeat_mods);
         if (c) emit(c);
@@ -948,7 +948,7 @@ static uint8_t translate(uint8_t k, uint8_t mods) {
     bool ctrl = (mods & 0x11) != 0;             // either control
 
     if (keymap) {
-        if (k >= MYRTOS_KEYMAP_KEYS) return 0;
+        if (k >= UBIQOS_KEYMAP_KEYS) return 0;
         uint8_t c = alt ? keymap->altgr[k] : (sh ? keymap->shift[k] : keymap->plain[k]);
         // AltGr on a key with nothing there falls back to the unshifted
         // character, as it does everywhere else.
@@ -965,7 +965,7 @@ static uint8_t translate(uint8_t k, uint8_t mods) {
 // --- CDC-ACM ON THE HOST SIDE ---------------------------------------------
 // The serial port that is not a serial port: a BLE dongle, a modem, a sensor.
 // TinyUSB's class driver does the protocol; what is kept here is which
-// interface index turned up, because the myrtos device that a process opens has
+// interface index turned up, because the UbiqOS device that a process opens has
 // to point at something.
 //
 // One at a time. The class is configured for one interface and a second would
@@ -973,7 +973,7 @@ static uint8_t translate(uint8_t k, uint8_t mods) {
 // rather than a driver one.
 static int32_t cdc_index = -1;
 
-int32_t myrtos_usbhost_cdc_index(void) { return cdc_index; }
+int32_t ubiqos_usbhost_cdc_index(void) { return cdc_index; }
 
 void tuh_cdc_mount_cb(uint8_t idx) {
     cdc_index = (int32_t)idx;
@@ -985,16 +985,16 @@ void tuh_cdc_mount_cb(uint8_t idx) {
     if (tuh_cdc_itf_get_info(idx, &info))
         tuh_vid_pid_get(info.daddr, &vid, &pid);
 
-    myrtos_print("USB host: CDC-ACM ready as 'acm', ");
-    myrtos_print_hex(vid);
-    myrtos_print(":");
-    myrtos_print_hex(pid);
-    myrtos_print(tuh_cdc_get_dtr(idx) ? ", DTR high\n" : ", DTR low\n");
+    ubiqos_print("USB host: CDC-ACM ready as 'acm', ");
+    ubiqos_print_hex(vid);
+    ubiqos_print(":");
+    ubiqos_print_hex(pid);
+    ubiqos_print(tuh_cdc_get_dtr(idx) ? ", DTR high\n" : ", DTR low\n");
 }
 
 void tuh_cdc_umount_cb(uint8_t idx) {
     if (cdc_index == (int32_t)idx) cdc_index = -1;
-    myrtos_print("USB host: CDC-ACM device gone\n");
+    ubiqos_print("USB host: CDC-ACM device gone\n");
 }
 
 void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
@@ -1036,7 +1036,7 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
             const char *sq = nav_sequence(k);
             if (sq) {
                 scroll_to_live();
-                myrtos_usbhost_push_str(sq);
+                ubiqos_usbhost_push_str(sq);
             } else {
                 uint8_t c = translate(k, report[0]);
                 if (c) { scroll_to_live(); emit(c); }
@@ -1076,31 +1076,31 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
 // machine that never stops. One word at a time, because a syscall that returns
 // a structure would have to copy it into the caller's memory and this needs no
 // such ceremony -- usbstat asks for the fields it wants and lays them out.
-uint32_t myrtos_usbhost_info(uint32_t what) {
-    if (what == MYRTOS_USB_REARMS)     return myrtos_hid_rearms;
-    if (what == MYRTOS_USB_RECOVERIES) return myrtos_hid_recoveries;
-    if (what == MYRTOS_USB_CDCREARMS)  return myrtos_cdc_rearms;
-    if (what == MYRTOS_USB_CDCGIVEUP)  return myrtos_cdc_gaveup;
-    if (what == MYRTOS_USB_REPEATKEY)  return repeat_key;
-    if (what == MYRTOS_USB_KEYSIN)     return head;
-    if (what == MYRTOS_USB_CORE1_BEATS) return core1_beats;
-    if (what == MYRTOS_USB_CORE1_AGE)   return tusb_time_millis_api() - core1_last_ms;
+uint32_t ubiqos_usbhost_info(uint32_t what) {
+    if (what == UBIQOS_USB_REARMS)     return ubiqos_hid_rearms;
+    if (what == UBIQOS_USB_RECOVERIES) return ubiqos_hid_recoveries;
+    if (what == UBIQOS_USB_CDCREARMS)  return ubiqos_cdc_rearms;
+    if (what == UBIQOS_USB_CDCGIVEUP)  return ubiqos_cdc_gaveup;
+    if (what == UBIQOS_USB_REPEATKEY)  return repeat_key;
+    if (what == UBIQOS_USB_KEYSIN)     return head;
+    if (what == UBIQOS_USB_CORE1_BEATS) return core1_beats;
+    if (what == UBIQOS_USB_CORE1_AGE)   return tusb_time_millis_api() - core1_last_ms;
 
     // The device side's, not this file's -- but usbstat asks one question of
     // one call, and splitting it in two for four counters would be ceremony.
     {
-        extern uint32_t myrtos_usb_suspends, myrtos_usb_resumes;
-        extern uint32_t myrtos_usb_mounts, myrtos_usb_unmounts;
-        extern uint32_t myrtos_usb_last_event_ms;
-        if (what == MYRTOS_USB_SUSPENDS)  return myrtos_usb_suspends;
-        if (what == MYRTOS_USB_RESUMES)   return myrtos_usb_resumes;
-        if (what == MYRTOS_USB_MOUNTS)    return myrtos_usb_mounts;
-        if (what == MYRTOS_USB_UNMOUNTS)  return myrtos_usb_unmounts;
-        if (what == MYRTOS_USB_LASTEVENT) return myrtos_usb_last_event_ms;
+        extern uint32_t ubiqos_usb_suspends, ubiqos_usb_resumes;
+        extern uint32_t ubiqos_usb_mounts, ubiqos_usb_unmounts;
+        extern uint32_t ubiqos_usb_last_event_ms;
+        if (what == UBIQOS_USB_SUSPENDS)  return ubiqos_usb_suspends;
+        if (what == UBIQOS_USB_RESUMES)   return ubiqos_usb_resumes;
+        if (what == UBIQOS_USB_MOUNTS)    return ubiqos_usb_mounts;
+        if (what == UBIQOS_USB_UNMOUNTS)  return ubiqos_usb_unmounts;
+        if (what == UBIQOS_USB_LASTEVENT) return ubiqos_usb_last_event_ms;
     }
 
-#if !MYRTOS_USB_NATIVE_HOST             // see the note above the endpoint pool
-    if (what == MYRTOS_USB_ROOT) {
+#if !UBIQOS_USB_NATIVE_HOST             // see the note above the endpoint pool
+    if (what == UBIQOS_USB_ROOT) {
         const root_port_t *r = PIO_USB_ROOT_PORT(0);
         return (uint32_t)r->initialized | ((uint32_t)r->connected << 1)
              | ((uint32_t)r->is_fullspeed << 2) | ((uint32_t)r->suspended << 3)
@@ -1108,8 +1108,8 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
     }
 #endif
 
-    if (what >= MYRTOS_USB_HID && what < MYRTOS_USB_HID + HID_SLOTS) {
-        int i = (int)(what - MYRTOS_USB_HID);
+    if (what >= UBIQOS_USB_HID && what < UBIQOS_USB_HID + HID_SLOTS) {
+        int i = (int)(what - UBIQOS_USB_HID);
         return (uint32_t)hid_poll[i].addr | ((uint32_t)hid_poll[i].instance << 8)
              | ((uint32_t)hid_poll[i].wanted << 16) | ((uint32_t)hid_poll[i].armed << 17)
              | ((uint32_t)hid_poll[i].idle << 24);
@@ -1117,9 +1117,9 @@ uint32_t myrtos_usbhost_info(uint32_t what) {
 
     // The root port and the endpoint pool are PIO-USB's. A host on the chip's
     // controller answers zero for both, which usbstat shows as nothing there.
-#if !MYRTOS_USB_NATIVE_HOST
-    if (what >= MYRTOS_USB_EP && what < MYRTOS_USB_EP + PIO_USB_EP_POOL_CNT) {
-        const endpoint_t *e = PIO_USB_ENDPOINT((int)(what - MYRTOS_USB_EP));
+#if !UBIQOS_USB_NATIVE_HOST
+    if (what >= UBIQOS_USB_EP && what < UBIQOS_USB_EP + PIO_USB_EP_POOL_CNT) {
+        const endpoint_t *e = PIO_USB_ENDPOINT((int)(what - UBIQOS_USB_EP));
         // Bit 19 says the slot is in use. Closing an endpoint sets size to zero
         // and leaves dev_addr and ep_num where they were -- "ep size is used as
         // valid indicator", says the library, and allocation reuses any slot

@@ -11,18 +11,18 @@
 #include "video.h"
 #include "chargen.h"
 
-int32_t myrtos_current_pid(void);
+int32_t ubiqos_current_pid(void);
 #include "hardware/sync.h"
 
-#include "../common/modules.h"   // myrtos_sleep, through the shared ABI
+#include "../common/modules.h"   // ubiqos_sleep, through the shared ABI
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 
 // Both tables have the same shape: one byte per scanline, leftmost pixel in bit
 // 7, so a six pixel cell leaves the low two bits clear. That is what lets one
 // piece of drawing code serve both -- see tools/make_font.py.
-extern const uint8_t myrtos_font8x16[224][16];
-extern const uint8_t myrtos_font6x12[224][12];
+extern const uint8_t ubiqos_font8x16[224][16];
+extern const uint8_t ubiqos_font6x12[224][12];
 
 typedef struct
 {
@@ -33,22 +33,22 @@ typedef struct
 // A font has no name beyond its cell: "6x12" is what the two numbers say, and
 // leaving it at that means nothing has to be kept in step with anything.
 static const console_font_t fonts[] = {
-    {&myrtos_font8x16[0][0], 8, 16},
-    {&myrtos_font6x12[0][0], 6, 12},
+    {&ubiqos_font8x16[0][0], 8, 16},
+    {&ubiqos_font6x12[0][0], 6, 12},
 };
 #define NFONTS   (sizeof(fonts) / sizeof(fonts[0]))
 
 // The most rows the smallest cell gives. Both cell heights divide 480 exactly,
 // which matters: the framebuffer is a ring and a height that did not divide
 // would leave a partial row straddling the join.
-#define ROWS_MAX (MYRTOS_V_ACTIVE / 12)   // 40
+#define ROWS_MAX (UBIQOS_V_ACTIVE / 12)   // 40
 
 // The framebuffer is RGB332 -- red in bits 7-5, green in 4-2, blue in 1-0 --
 // which is not guesswork: video.c's test card draws its bars from these very
 // values and the pattern was checked against a monitor. The bright half is
 // those same eight bars; the normal half is the same hues at about half
 // intensity, and colour 8 is a grey rather than a second black.
-const uint8_t myrtos_ansi_colour[16] = {
+const uint8_t ubiqos_ansi_colour[16] = {
     0x00,
     0x80,
     0x10,
@@ -77,11 +77,11 @@ static bool reverse_video;
 // remember to honour it.
 static inline uint8_t eff_fg(void)
 {
-    return myrtos_ansi_colour[reverse_video ? bg_index : fg_index];
+    return ubiqos_ansi_colour[reverse_video ? bg_index : fg_index];
 }
 static inline uint8_t eff_bg(void)
 {
-    return myrtos_ansi_colour[reverse_video ? fg_index : bg_index];
+    return ubiqos_ansi_colour[reverse_video ? fg_index : bg_index];
 }
 
 // The same pair as one byte, which is what a cell stores: foreground index in
@@ -98,13 +98,13 @@ static inline uint8_t eff_attr(void)
 // switches back. Both heights divide 480 exactly, which is what the ring
 // framebuffer requires.
 // One place decides the cell, because two did and they no longer agreed: the
-// pointer said 8x16 under chargen while myrtos_console_init still asked for
+// pointer said 8x16 under chargen while ubiqos_console_init still asked for
 // 6x12 by number, so the boot messages appeared and the console then cleared
 // them and wrote the prompt onto rows the generator does not show.
 //
 // The generator builds eight pixels as two words through a nibble table, which
 // six does not divide into.
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
 #define DEFAULT_FONT 0     // 8x16
 #else
 #define DEFAULT_FONT 1     // 6x12
@@ -112,7 +112,7 @@ static inline uint8_t eff_attr(void)
 
 static const console_font_t *font = &fonts[DEFAULT_FONT];
 static uint32_t cell_w = 8, cell_h = 16;
-static uint32_t cols = MYRTOS_H_ACTIVE / 8, rows = MYRTOS_V_ACTIVE / 16;
+static uint32_t cols = UBIQOS_H_ACTIVE / 8, rows = UBIQOS_V_ACTIVE / 16;
 // 106 columns of six pixels come to 636, four short of the line. Split them, so
 // what is left over sits as two pixels at each edge rather than four at one.
 // Eight divides 640 exactly and leaves none.
@@ -128,7 +128,7 @@ static uint32_t cur_col, cur_row;
 // pixels back. That restores exactly what was there and needs no record of it.
 //
 // It was drawn as a solid block once, and lifted by drawing a space -- which
-// destroyed whatever it had covered. myrtos_print emits a carriage return
+// destroyed whatever it had covered. ubiqos_print emits a carriage return
 // before every newline, so the cursor landed on column zero of the line just
 // written and ate its first character, on every line. The fix then was to keep
 // a copy of the text; inverting is the fix that needs no copy, and four
@@ -149,16 +149,16 @@ static bool wrap_pending;
 static bool row_wrapped[ROWS_MAX];
 static bool ready;
 
-#if !MYRTOS_VIDEO_CHARGEN
+#if !UBIQOS_VIDEO_CHARGEN
 // Row and glyph-line to a scanline in the framebuffer, through the origin.
 static inline uint8_t *cell_line(uint32_t row, uint32_t y)
 {
-    uint32_t fb = (myrtos_video_origin + row * cell_h + y) % MYRTOS_V_ACTIVE;
-    return &myrtos_framebuf[fb * MYRTOS_H_ACTIVE];
+    uint32_t fb = (ubiqos_video_origin + row * cell_h + y) % UBIQOS_V_ACTIVE;
+    return &ubiqos_framebuf[fb * UBIQOS_H_ACTIVE];
 }
 #endif
 
-#if !MYRTOS_VIDEO_CHARGEN
+#if !UBIQOS_VIDEO_CHARGEN
 // Four background pixels in a word, for clearing.
 static inline uint32_t bg_word(void)
 {
@@ -168,8 +168,8 @@ static inline uint32_t bg_word(void)
 
 static void draw_glyph(uint32_t col, uint32_t row, char c)
 {
-#if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_put(row, col, myrtos_chargen_glyph(c), eff_attr());
+#if UBIQOS_VIDEO_CHARGEN
+    ubiqos_chargen_put(row, col, ubiqos_chargen_glyph(c), eff_attr());
 #else
     // Latin-1, not ASCII: a Swedish keyboard produces letters above 126 and
     // they have to land somewhere. Anything below space is drawn as one.
@@ -195,14 +195,14 @@ static void draw_glyph(uint32_t col, uint32_t row, char c)
 
 static void clear_row(uint32_t row)
 {
-#if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_fill(row, 0, cols - 1, eff_attr());
+#if UBIQOS_VIDEO_CHARGEN
+    ubiqos_chargen_fill(row, 0, cols - 1, eff_attr());
 #else
     uint32_t w = bg_word();
 
     for (uint32_t y = 0; y < cell_h; y++) {
         uint32_t *p = (uint32_t *)cell_line(row, y);
-        for (uint32_t x = 0; x < MYRTOS_H_ACTIVE / 4; x++)
+        for (uint32_t x = 0; x < UBIQOS_H_ACTIVE / 4; x++)
             p[x] = w;
     }
 #endif
@@ -217,10 +217,10 @@ static void cursor(bool on)
     if (on == cursor_shown)
         return;
 
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
     // A register rather than inverted pixels, which is how a CRTC did it: there
     // is no state on the screen to get out of step with.
-    myrtos_chargen_cursor(cur_row, cur_col, on);
+    ubiqos_chargen_cursor(cur_row, cur_col, on);
 #else
     for (uint32_t y = 0; y < cell_h; y++) {
         uint8_t *p = cell_line(cur_row, y) + x_margin + cur_col * cell_w;
@@ -237,10 +237,10 @@ static void newline(void)
     cur_col = 0;
     if (++cur_row >= rows) {
         cur_row = rows - 1;
-#if MYRTOS_VIDEO_CHARGEN
-        myrtos_chargen_scroll(eff_attr());
+#if UBIQOS_VIDEO_CHARGEN
+        ubiqos_chargen_scroll(eff_attr());
 #else
-        myrtos_video_set_origin(myrtos_video_origin + cell_h);
+        ubiqos_video_set_origin(ubiqos_video_origin + cell_h);
 #endif
         for (uint32_t r = 1; r < rows; r++)   // the flags move up with it
             row_wrapped[r - 1] = row_wrapped[r];
@@ -347,8 +347,8 @@ static void erase_cells(uint32_t row, uint32_t from, uint32_t to)
     if (to >= cols)
         to = cols - 1;
 
-#if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_fill(row, from, to, eff_attr());
+#if UBIQOS_VIDEO_CHARGEN
+    ubiqos_chargen_fill(row, from, to, eff_attr());
 #else
     uint8_t b = eff_bg();
 
@@ -407,7 +407,7 @@ static void set_graphics(void)
 
 // ESC [ row ; col R, back to whoever is reading this console -- which is the
 // keyboard, because that is what the console reads.
-void myrtos_usbhost_push_str(const char *s);
+void ubiqos_usbhost_push_str(const char *s);
 
 static void report_position(void)
 {
@@ -432,7 +432,7 @@ static void report_position(void)
     }
 
     *p = 0;
-    myrtos_usbhost_push_str(buf);
+    ubiqos_usbhost_push_str(buf);
 }
 
 static void do_csi(uint8_t final)
@@ -629,24 +629,24 @@ static void set_grid(const console_font_t *f)
     cell_w = f->w;
     cell_h = f->h;
 
-    cols = MYRTOS_H_ACTIVE / cell_w;
-    rows = MYRTOS_V_ACTIVE / cell_h;
+    cols = UBIQOS_H_ACTIVE / cell_w;
+    rows = UBIQOS_V_ACTIVE / cell_h;
     if (rows > ROWS_MAX)
         rows = ROWS_MAX;   // row_wrapped is sized for this
 
-    x_margin = (MYRTOS_H_ACTIVE - cols * cell_w) / 2;
+    x_margin = (UBIQOS_H_ACTIVE - cols * cell_w) / 2;
 
-#if MYRTOS_VIDEO_CHARGEN
-    myrtos_chargen_init(eff_attr());
+#if UBIQOS_VIDEO_CHARGEN
+    ubiqos_chargen_init(eff_attr());
 #else
     // The origin is a multiple of the old cell height and need not be one of the
     // new. Start the ring over rather than leave a row straddling the join.
-    myrtos_video_set_origin(0);
+    ubiqos_video_set_origin(0);
 
     uint8_t b = eff_bg();
 
-    for (uint32_t i = 0; i < MYRTOS_H_ACTIVE * MYRTOS_V_ACTIVE; i++)
-        myrtos_framebuf[i] = b;
+    for (uint32_t i = 0; i < UBIQOS_H_ACTIVE * UBIQOS_V_ACTIVE; i++)
+        ubiqos_framebuf[i] = b;
 #endif
 
     for (uint32_t r = 0; r < rows; r++)
@@ -660,12 +660,12 @@ static void set_grid(const console_font_t *f)
 // Asked from a process, applied by the server. Reports the grid that font
 // gives, whether or not it was asked to switch to it -- which is what lets a
 // caller find out what it would get before deciding.
-int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out, bool look_only)
+int32_t ubiqos_console_select_font(int32_t index, ubiqos_confont_t *out, bool look_only)
 {
     if (index >= (int32_t)NFONTS)
         return -1;
 
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
     // The generator builds eight pixels as two words from a nibble table, which
     // six does not divide into. Refuse the switch rather than take it and show
     // eighty of the hundred and six columns the caller was told it had.
@@ -682,13 +682,13 @@ int32_t myrtos_console_select_font(int32_t index, myrtos_confont_t *out, bool lo
         out->index = (uint8_t)i;
         out->cell_w = fonts[i].w;
         out->cell_h = fonts[i].h;
-#if MYRTOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_CHARGEN
         out->count = 1;
 #else
         out->count = (uint8_t)NFONTS;
 #endif
-        out->cols = (uint16_t)(MYRTOS_H_ACTIVE / fonts[i].w);
-        out->rows = (uint16_t)(MYRTOS_V_ACTIVE / fonts[i].h);
+        out->cols = (uint16_t)(UBIQOS_H_ACTIVE / fonts[i].w);
+        out->rows = (uint16_t)(UBIQOS_V_ACTIVE / fonts[i].h);
     }
 
     return 0;
@@ -727,7 +727,7 @@ static uint32_t ring_used(void)
     return (ring_head - ring_tail) & RING_MASK;
 }
 
-uint32_t myrtos_console_room(void)
+uint32_t ubiqos_console_room(void)
 {
     return RING_SIZE - 1u - ring_used();
 }
@@ -737,12 +737,12 @@ uint32_t myrtos_console_room(void)
 // that already existed and needed no changing.
 // --- WHAT WENT INTO THE RING, AND FROM WHOM ------------------------------
 //
-// Everything reaching the console passes through myrtos_console_put, so this is
+// Everything reaching the console passes through ubiqos_console_put, so this is
 // the one place that sees the byte order the ANSI parser will later see. The
-// rule myrtos_print states is that two writers may interleave between lines but
+// rule ubiqos_print states is that two writers may interleave between lines but
 // not within one -- and an escape sequence is not a line, nor is a prompt
 // redraw. This records enough to check that: one record per CALL, because
-// myrtos_console_write loops over this function when the ring is full and that
+// ubiqos_console_write loops over this function when the ring is full and that
 // split is itself a way for one writer to land inside another's sequence.
 //
 // A record is 0xfe, the writer's pid, the length, then the bytes. 0xfe cannot
@@ -757,18 +757,18 @@ static void trace_byte(uint8_t b) {
     if (trace_head >= TRACE_SIZE) { trace_head = 0; trace_wrapped = true; }
 }
 
-uint32_t myrtos_console_trace_size(void) {
+uint32_t ubiqos_console_trace_size(void) {
     return trace_wrapped ? TRACE_SIZE : trace_head;
 }
 
-int32_t myrtos_console_trace_at(uint32_t offset) {
-    uint32_t n = myrtos_console_trace_size();
+int32_t ubiqos_console_trace_at(uint32_t offset) {
+    uint32_t n = ubiqos_console_trace_size();
     if (offset >= n) return -1;
     uint32_t start = trace_wrapped ? trace_head : 0;
     return (uint8_t)trace_buf[(start + offset) % TRACE_SIZE];
 }
 
-uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len)
+uint32_t ubiqos_console_put(const uint8_t *buf, uint32_t len)
 {
     uint32_t st = save_and_disable_interrupts();
     uint32_t room = RING_SIZE - 1u - ((ring_head - ring_tail) & RING_MASK);
@@ -778,7 +778,7 @@ uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len)
 
     // AFTER the clamp, and only for what is actually taken. Recording what was
     // offered instead hung the machine at /sd/startup: a full ring makes this
-    // return zero, myrtos_console_write loops until it does not, and every one
+    // return zero, ubiqos_console_write loops until it does not, and every one
     // of those spins was writing a full record with interrupts off. The trace
     // is meant to say what the parser will see, and a byte that was refused is
     // not that.
@@ -789,7 +789,7 @@ uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len)
     if (len) {
         uint32_t k = len > 64 ? 64 : len;
         trace_byte(0xfe);
-        trace_byte((uint8_t)myrtos_current_pid());
+        trace_byte((uint8_t)ubiqos_current_pid());
         trace_byte((uint8_t)k);
         for (uint32_t i = 0; i < k; i++) trace_byte(buf[i]);
     }
@@ -806,7 +806,7 @@ uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len)
 // The kernel's own printing goes the same way, so that it too is drawn by the
 // server and cannot interleave with a module's output mid-character. Before the
 // server exists there is nothing else running, so drawing directly is safe.
-void myrtos_console_putc(char c)
+void ubiqos_console_putc(char c)
 {
     if (!server_up) {
         console_feed((uint8_t)c);
@@ -816,7 +816,7 @@ void myrtos_console_putc(char c)
 
     uint8_t b = (uint8_t)c;
 
-    while (myrtos_console_put(&b, 1) == 0) { /* the kernel waits; it is rare */
+    while (ubiqos_console_put(&b, 1) == 0) { /* the kernel waits; it is rare */
     }
 }
 
@@ -824,7 +824,7 @@ void myrtos_console_putc(char c)
 // interrupts off -- so a line put in this way cannot be split by another writer.
 // One that is fed a byte at a time can, and was: the shell greeted the user in
 // the middle of "Kernel is now the idle process."
-void myrtos_console_write(const char *p, uint32_t n)
+void ubiqos_console_write(const char *p, uint32_t n)
 {
     if (!server_up) {
         for (uint32_t i = 0; i < n; i++)
@@ -834,7 +834,7 @@ void myrtos_console_write(const char *p, uint32_t n)
     }
 
     while (n) {
-        uint32_t took = myrtos_console_put((const uint8_t *)p, n);
+        uint32_t took = ubiqos_console_put((const uint8_t *)p, n);
         p += took;
         n -= took;   // nothing taken means full; the server is draining it
     }
@@ -858,21 +858,21 @@ static void console_thread(void)
             cursor(true);
         }
 
-        myrtos_sleep(1);
+        ubiqos_sleep(1);
     }
 }
 
-void myrtos_console_start_server(void)
+void ubiqos_console_start_server(void)
 {
-    extern int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
+    extern int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
 
     // Below the USB task, which must never wait for pixels, and above a shell,
     // so output drains rather than queuing behind whatever asked for it.
-    if (myrtos_kernel_thread(console_thread, 2048, MYRTOS_PRIO_CONSOLE) < 0)
-        myrtos_print("Console: could not start its service process\n");
+    if (ubiqos_kernel_thread(console_thread, 2048, UBIQOS_PRIO_CONSOLE) < 0)
+        ubiqos_print("Console: could not start its service process\n");
 }
 
-void myrtos_console_init(void)
+void ubiqos_console_init(void)
 {
     set_grid(&fonts[DEFAULT_FONT]);   // see the note above the font pointer
     ready = true;

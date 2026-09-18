@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // usbdisk -- hands the SD card to the host over USB, so a program built on the
 // host can be copied straight onto the card.
@@ -18,14 +18,14 @@
 // over SPI and cost four-bit SDIO for the rest of the power cycle. Ejecting on the host first is
 // good manners -- it makes sure the host has flushed what it was writing -- but
 // it is not enough on its own: macOS unmounts the volume and stops asking
-// without sending START_STOP_UNIT, so the board never hears about it. myrtos
+// without sending START_STOP_UNIT, so the board never hears about it. UbiqOS
 // does listen for the eject when one comes, but it will not wait for one.
 
 // If the host is a Mac, put these on the card once and mounting goes from
 // fifteen seconds to none:
 //
-//     touch /Volumes/MYRTOS/.metadata_never_index
-//     mkdir -p /Volumes/MYRTOS/.fseventsd && touch /Volumes/MYRTOS/.fseventsd/no_log
+//     touch /Volumes/UBIQOS/.metadata_never_index
+//     mkdir -p /Volumes/UBIQOS/.fseventsd && touch /Volumes/UBIQOS/.fseventsd/no_log
 //
 // Measured. The first mount of this card read 15920 sectors -- eight megabytes,
 // off a volume holding a hundred kilobytes of files -- and wrote 2796, because
@@ -40,7 +40,7 @@ static bool same(const char *a, const char *b) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: usbdisk [off | force]\n\nHands the card to the host as a disk.\n  off     take it back\n  force   take it back even if the host has not ejected it\n")) return;
 
     uint32_t what = 1;                  // hand it over
@@ -49,15 +49,15 @@ void module_main(int argc, char **argv) {
         if      (same(argv[1], "off"))   what = 0;
         else if (same(argv[1], "force")) what = 2;
         else {
-            myrtos_write_str(MYRTOS_STDOUT, "usage: usbdisk [off | force]\n");
+            ubiqos_write_str(UBIQOS_STDOUT, "usage: usbdisk [off | force]\n");
             return;
         }
     }
 
-    int32_t rc = myrtos_usbdisk(what);
+    int32_t rc = ubiqos_usbdisk(what);
 
     if (rc == -2) {
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
             "usbdisk: the host has not ejected the card. Eject it there first --\n"
             "         taking it back now would leave the host hung on a device\n"
             "         that has stopped answering. 'usbdisk force' if the host\n"
@@ -65,13 +65,13 @@ void module_main(int argc, char **argv) {
         return;
     }
     if (rc != 0) {
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
             what == 1 ? "usbdisk: no card is mounted to hand over\n"
                       : "usbdisk: could not take the card back\n");
         return;
     }
 
-    myrtos_write_str(MYRTOS_STDOUT,
+    ubiqos_write_str(UBIQOS_STDOUT,
         what == 1 ? "the card is the host's. Eject it there, then 'usbdisk off'\n"
                   : "the card is back, on the bus it was already using\n");
 }

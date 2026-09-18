@@ -1,4 +1,4 @@
-// The myrtos system interface, for modules written in D.
+// The UbiqOS system interface, for modules written in D.
 //
 // D is here for one property: every module-level and static variable goes into
 // thread-local storage unless it is marked __gshared. That is what a shareable
@@ -6,7 +6,7 @@
 // declaration has to remember -- the C side gets there with __thread on every
 // variable and check_module.py to catch the ones that forgot.
 //
-// This is the counterpart of common/myrtos_abi.h and follows it. The numbers
+// This is the counterpart of common/ubiqos_abi.h and follows it. The numbers
 // are that file's; if one changes there it must change here, and there is
 // nothing but this comment to enforce that.
 //
@@ -14,9 +14,9 @@
 // what OS-9 called it -- a path number is exactly what Unix calls a file
 // descriptor, and the kernel's tables are named for it throughout. Here it is
 // `fd`, because `int path` reads as a string until you check the type, and
-// myrtos_posix.h already uses `fd` for the same thing. They are the same
+// ubiqos_posix.h already uses `fd` for the same thing. They are the same
 // number; only the spelling changes with which world you are standing in.
-module myrtos;
+module ubiqos;
 
 import ldc.llvmasm;
 
@@ -57,7 +57,7 @@ enum : uint { O_RDONLY = 0, O_WRONLY = 1, O_RDWR = 2, O_CREAT = 4, O_TRUNC = 8, 
 
 // Writes take what the device can hold and say how much that was, so this
 // loops rather than assuming. The kernel blocks instead of returning zero, so
-// the loop waits rather than spins. Same as myrtos_write in the C header.
+// the loop waits rather than spins. Same as ubiqos_write in the C header.
 int write(int fd, const(void)* buf, uint len) {
     auto p = cast(const(ubyte)*) buf;
     uint done = 0;

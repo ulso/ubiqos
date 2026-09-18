@@ -1,10 +1,10 @@
 // What a module gets when it is built NEWLIB: the standard library, rather than
-// the header-only subset in common/myrtos_stdio.h.
+// the header-only subset in common/ubiqos_stdio.h.
 //
 // Everything here is deliberately something that subset does not have. qsort
 // and bsearch are algorithms rather than syscalls; strdup needs malloc; fopen
 // on a real file goes all the way down through _open, _read and _lseek in
-// common/myrtos_syscalls.c to the file server. If this prints "passed" the
+// common/ubiqos_syscalls.c to the file server. If this prints "passed" the
 // bottom end is wired up.
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +15,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <time.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 static int failures;
 
@@ -63,7 +63,7 @@ int main(int argc, char **argv)
     }
 
     // Writing is the half that flag translation gets wrong, and the half a
-    // read-only test cannot see: newlib's O_CREAT is myrtos's O_TRUNC, so a
+    // read-only test cannot see: newlib's O_CREAT is UbiqOS's O_TRUNC, so a
     // straight pass-through asks to truncate a file it never creates.
     FILE *w = fopen("/sd/nlctest.txt", "w");
     check("fopen for writing", w != NULL);
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
         remove("/sd/nlctest.txt");
     }
 
-    // How nearly every C program asks how big a file is. myrtos could not
+    // How nearly every C program asks how big a file is. UbiqOS could not
     // answer it at all until SEEK_END was sent to the file server: the trap
     // has no way to learn a length, and a cached one goes stale the moment
     // somebody writes.
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
         fclose(e);
     }
 
-    // Refused, not ignored: myrtos cannot promise the file did not exist.
+    // Refused, not ignored: UbiqOS cannot promise the file did not exist.
     errno = 0;
     int x = open("/sd/w4", O_RDONLY | O_EXCL);
     check("O_EXCL is refused, not dropped", x < 0);
@@ -145,7 +145,7 @@ int main(int argc, char **argv)
     // wrong for a date and right for measuring, which is what ports use it for.
     time_t t0 = time(NULL);
     clock_t c0 = clock();
-    myrtos_sleep(1200);
+    ubiqos_sleep(1200);
     time_t t1 = time(NULL);
     clock_t c1 = clock();
     check("time advances over a sleep", t1 >= t0 + 1 && t1 <= t0 + 3);

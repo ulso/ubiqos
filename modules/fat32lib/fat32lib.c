@@ -6,34 +6,34 @@
 //
 // No kernel header, no SDK header. Everything it needs from outside is in K:
 // two prints and four block-device calls, which is the whole of what a
-// filesystem asked of the system underneath it. myrtos_fsops_t came along to
+// filesystem asked of the system underneath it. ubiqos_fsops_t came along to
 // the ABI, because it stopped being a kernel detail the moment this file left.
-#include "../../common/myrtos_abi.h"
-#include "../../common/myrtos_string.h"   // memset and strlen, which the
+#include "../../common/ubiqos_abi.h"
+#include "../../common/ubiqos_string.h"   // memset and strlen, which the
                                           // compiler emits calls to by itself
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 
 // What fat32.h used to declare. The header stayed in the kernel because the
 // kernel's own callers still want those four names; everything else was only
 // ever this file talking to itself, and now says so here.
-bool     myrtos_fat_mount(void);
-bool     myrtos_fat_remount(void);
-bool     myrtos_fat_extent(uint32_t *first_block, uint32_t *block_count);
-int32_t  myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len);
-bool     myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out);
-int32_t  myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len);
-int32_t  myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
+bool     ubiqos_fat_mount(void);
+bool     ubiqos_fat_remount(void);
+bool     ubiqos_fat_extent(uint32_t *first_block, uint32_t *block_count);
+int32_t  ubiqos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len);
+bool     ubiqos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out);
+int32_t  ubiqos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len);
+int32_t  ubiqos_fat_stat_nth(const char *dirpath, uint32_t index,
                              char *name_out, uint32_t *size_out);
-int32_t  myrtos_fat_write_at(const char *path, uint32_t offset,
+int32_t  ubiqos_fat_write_at(const char *path, uint32_t offset,
                              const uint8_t *buf, uint32_t len);
-bool     myrtos_fat_remove(const char *path);
-bool     myrtos_fat_rename(const char *from, const char *to);
-bool     myrtos_fat_mkdir(const char *path);
-bool     myrtos_fat_rmdir(const char *path);
-int32_t  myrtos_fat_stat(const char *path, uint32_t *size_out);
-bool     myrtos_fat_name_to_83(const char *user, char *out_11);
-extern const myrtos_fsops_t myrtos_fat_ops;
+bool     ubiqos_fat_remove(const char *path);
+bool     ubiqos_fat_rename(const char *from, const char *to);
+bool     ubiqos_fat_mkdir(const char *path);
+bool     ubiqos_fat_rmdir(const char *path);
+int32_t  ubiqos_fat_stat(const char *path, uint32_t *size_out);
+bool     ubiqos_fat_name_to_83(const char *user, char *out_11);
+extern const ubiqos_fsops_t ubiqos_fat_ops;
 
 
 static uint32_t fat_start_lba;      // the first FAT
@@ -77,12 +77,12 @@ static uint32_t rd32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-void myrtos_fat_forget_read_cache(void);   // defined with the cache, below
+void ubiqos_fat_forget_read_cache(void);   // defined with the cache, below
 
-bool myrtos_fat_mount(void) {
+bool ubiqos_fat_mount(void) {
     fatbuf_lba = UINT32_MAX;
     alloc_hint = 2;
-    myrtos_fat_forget_read_cache();
+    ubiqos_fat_forget_read_cache();
     mounted = false;
 
     if (!K->sd_read_block(0, sector)) {
@@ -303,7 +303,7 @@ static const char *component_83(const char *p, char *out_11, char *raw_out) {
     // A component with no 8.3 form is not an error: it is a long name, and
     // raw_out carries it for find_entry to match. out_11 stays blank, which
     // matches nothing, so the two spellings cannot be confused.
-    if (!myrtos_fat_name_to_83(part, out_11) && !(raw_out && raw_out[0])) return 0;
+    if (!ubiqos_fat_name_to_83(part, out_11) && !(raw_out && raw_out[0])) return 0;
     return p;
 }
 
@@ -357,10 +357,10 @@ static bool resolve_parent(const char *path, uint32_t *dir_out, char *leaf_83,
     }
     // A leaf that has no 8.3 form at all -- ".wasm" has none -- is still a
     // perfectly good long name, so this is not the end of the lookup.
-    return myrtos_fat_name_to_83(last, leaf_83) || (leaf_long && leaf_long[0]);
+    return ubiqos_fat_name_to_83(last, leaf_83) || (leaf_long && leaf_long[0]);
 }
 
-int32_t myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len) {
+int32_t ubiqos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len) {
     if (!mounted) return -1;
 
     uint32_t file_cluster = 0, file_size = 0;
@@ -382,7 +382,7 @@ int32_t myrtos_fat_read_file(const char *name_83, uint8_t *buf, uint32_t max_len
     return (int32_t)written;
 }
 
-bool myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
+bool ubiqos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
     if (!mounted) return false;
 
     uint32_t seen = 0;
@@ -421,7 +421,7 @@ bool myrtos_fat_find_nth(const char *ext_3, uint32_t index, char *name_out) {
 // small, and the place to put a cursor if that stops being true.
 // One named entry, which is what read_at already does before it reads -- the
 // two helpers were here all along and nothing needed adding to find them.
-int32_t myrtos_fat_stat(const char *path, uint32_t *size_out) {
+int32_t ubiqos_fat_stat(const char *path, uint32_t *size_out) {
     if (!mounted) return -1;
     if (size_out) *size_out = 0;
 
@@ -458,12 +458,12 @@ static uint32_t ra_cluster;
 // Anything that moves data or entries around drops it. This is deliberately
 // blunt: a stale cluster number reads the wrong sector and hands back another
 // file's bytes, which is far worse than the walk it saves.
-void myrtos_fat_forget_read_cache(void) { ra_valid = false; }
+void ubiqos_fat_forget_read_cache(void) { ra_valid = false; }
 
 // How much of the card is worth exposing: everything up to the end of the
 // mounted volume, counted from block zero so the partition table comes with it.
 // A host then sees what a card reader would show it and mounts it the same way.
-bool myrtos_fat_extent(uint32_t *first_block, uint32_t *block_count) {
+bool ubiqos_fat_extent(uint32_t *first_block, uint32_t *block_count) {
     if (!mounted || !volume_sectors) return false;
     if (first_block) *first_block = volume_lba;
     if (block_count) *block_count = volume_lba + volume_sectors;
@@ -475,7 +475,7 @@ static bool same_path(const char *a, const char *b) {
     return *a == *b;
 }
 
-int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len) {
+int32_t ubiqos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len) {
     if (!mounted) return -1;
 
     if (!ra_valid || !same_path(path, ra_path)) {
@@ -524,11 +524,11 @@ int32_t myrtos_fat_read_at(const char *path, uint32_t offset, uint8_t *buf, uint
     return (int32_t)written;
 }
 
-// Enumerate the root directory. Unlike myrtos_fat_find_nth this filters on
+// Enumerate the root directory. Unlike ubiqos_fat_find_nth this filters on
 // nothing: ls should show what is on the card, not what the module loader cares
 // about. Hidden entries stay out, which is both what ls does without -a and
 // what keeps macOS AppleDouble files off the listing.
-int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
+int32_t ubiqos_fat_stat_nth(const char *dirpath, uint32_t index,
                             char *name_out, uint32_t *size_out) {
     if (!mounted) return -1;
 
@@ -558,7 +558,7 @@ int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
                 // is the only kind worth returning.
                 if (have_long) {
                     uint32_t i = 0;
-                    for (; kept[i] && i < MYRTOS_DIRNAME_MAX - 1; i++) name_out[i] = kept[i];
+                    for (; kept[i] && i < UBIQOS_DIRNAME_MAX - 1; i++) name_out[i] = kept[i];
                     name_out[i] = 0;
                 } else {
                     for (int i = 0; i < 11; i++) name_out[i] = (char)sector[e + i];
@@ -589,7 +589,7 @@ int32_t myrtos_fat_stat_nth(const char *dirpath, uint32_t index,
 // have the name as the user typed it fall back to it -- resolve_parent hands
 // back both spellings and find_entry tries each -- and callers that do not, the
 // module loader among them, get the refusal they should have had.
-bool myrtos_fat_name_to_83(const char *user, char *out_11) {
+bool ubiqos_fat_name_to_83(const char *user, char *out_11) {
     for (int i = 0; i < 11; i++) out_11[i] = ' ';
     out_11[11] = 0;
 
@@ -987,8 +987,8 @@ static bool dir_create(uint32_t dir_cluster, const char *name_83, const char *le
     return true;
 }
 
-bool myrtos_fat_remove(const char *path) {
-    myrtos_fat_forget_read_cache();
+bool ubiqos_fat_remove(const char *path) {
+    ubiqos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
@@ -1023,10 +1023,10 @@ bool myrtos_fat_remove(const char *path) {
 // chain, which fsck resolves and which the card survives. The other order would
 // leave the clusters allocated with nothing naming them, and the file is then
 // gone -- so this order risks a duplicate and the other risks the data. See the
-// same argument the other way round in myrtos_fat_remove, where erasing first
+// same argument the other way round in ubiqos_fat_remove, where erasing first
 // is right because there is no second name to be had.
-bool myrtos_fat_rename(const char *from, const char *to) {
-    myrtos_fat_forget_read_cache();
+bool ubiqos_fat_rename(const char *from, const char *to) {
+    ubiqos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t src_dir = 0; char src_83[12], src_leaf[FAT_LFN_MAX + 1];
@@ -1055,7 +1055,7 @@ bool myrtos_fat_rename(const char *from, const char *to) {
 
     // dir_create leaves the new entry IN `sector`, with the name written and
     // the rest zeroed, and deliberately does not write it back: the caller
-    // fills in what only it knows and writes once. myrtos_fat_write_at does
+    // fills in what only it knows and writes once. ubiqos_fat_write_at does
     // exactly that.
     //
     // Re-reading the sector here threw the name away. What was written back was
@@ -1078,11 +1078,11 @@ bool myrtos_fat_rename(const char *from, const char *to) {
 }
 
 // Write a slice of a file, creating it and extending it as needed. The mirror of
-// myrtos_fat_read_at, and for the same reason: a process has 4 kB for data and
+// ubiqos_fat_read_at, and for the same reason: a process has 4 kB for data and
 // stack, so a utility streams rather than holding a file in memory.
-int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
+int32_t ubiqos_fat_write_at(const char *path, uint32_t offset,
                             const uint8_t *buf, uint32_t len) {
-    myrtos_fat_forget_read_cache();
+    ubiqos_fat_forget_read_cache();
     if (!mounted || !len) return -1;
 
     uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
@@ -1164,8 +1164,8 @@ int32_t myrtos_fat_write_at(const char *path, uint32_t offset,
 // The ".." of a directory whose parent is the root holds zero, not the root's
 // cluster number. FAT has said so since the beginning, and resolve_dir turns it
 // back into root_cluster on the way up.
-bool myrtos_fat_mkdir(const char *path) {
-    myrtos_fat_forget_read_cache();
+bool ubiqos_fat_mkdir(const char *path) {
+    ubiqos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t dir = 0;
@@ -1208,8 +1208,8 @@ bool myrtos_fat_mkdir(const char *path) {
 // The entry is deleted before the clusters are freed, the same order as for a
 // file: the other way round would leave a name pointing at clusters that had
 // been handed to somebody else.
-bool myrtos_fat_rmdir(const char *path) {
-    myrtos_fat_forget_read_cache();
+bool ubiqos_fat_rmdir(const char *path) {
+    ubiqos_fat_forget_read_cache();
     if (!mounted) return false;
 
     uint32_t dir = 0;
@@ -1254,7 +1254,7 @@ bool myrtos_fat_rmdir(const char *path) {
 // a card swapped while the board is running is not seen -- and a swapped card
 // needs the whole conversation repeated, not just the boot sector reread, since
 // a fresh card comes up idle and knows nothing of what was asked before.
-bool myrtos_fat_remount(void) {
+bool ubiqos_fat_remount(void) {
     // SDIO first, and the order is the whole point. A card latches into SPI mode
     // the moment it is addressed that way and stays there until the power is
     // cut, so asking afterwards -- as this did -- asks a card that does not
@@ -1268,47 +1268,47 @@ bool myrtos_fat_remount(void) {
     // the first: the driver has unbounded waits that upstream itself marks
     // "todo not forever". In this process a hang costs one process. Before the
     // scheduler it costs the board, which is what it did.
-    if (K->sd_try_sdio() && myrtos_fat_mount()) return true;
+    if (K->sd_try_sdio() && ubiqos_fat_mount()) return true;
     if (!K->sd_init()) return false;
-    return myrtos_fat_mount();
+    return ubiqos_fat_mount();
 }
 
 // See vfs.h. Nothing above needed changing -- every one of these already takes
 // an absolute path in this filesystem's own terms, which is exactly what the
 // server hands over once it has stripped the volume name off the front.
-const myrtos_fsops_t myrtos_fat_ops = {
-    .read_at   = myrtos_fat_read_at,
-    .write_at  = myrtos_fat_write_at,
-    .remove    = myrtos_fat_remove,
-    .rename    = myrtos_fat_rename,
-    .mkdir     = myrtos_fat_mkdir,
-    .rmdir     = myrtos_fat_rmdir,
-    .stat_nth  = myrtos_fat_stat_nth,
-    .stat      = myrtos_fat_stat,
-    .find_nth  = myrtos_fat_find_nth,
-    .read_file = myrtos_fat_read_file,
+const ubiqos_fsops_t ubiqos_fat_ops = {
+    .read_at   = ubiqos_fat_read_at,
+    .write_at  = ubiqos_fat_write_at,
+    .remove    = ubiqos_fat_remove,
+    .rename    = ubiqos_fat_rename,
+    .mkdir     = ubiqos_fat_mkdir,
+    .rmdir     = ubiqos_fat_rmdir,
+    .stat_nth  = ubiqos_fat_stat_nth,
+    .stat      = ubiqos_fat_stat,
+    .find_nth  = ubiqos_fat_find_nth,
+    .read_file = ubiqos_fat_read_file,
 };
 
 // --- WHAT THE KERNEL CALLS -------------------------------------------------
 // Entry zero takes the kernel's table and must be called first. Entry two is
 // not a function but the volume's operation table, which the file server hands
-// straight to myrtos_vfs_add -- so a mounted card is nine function pointers
+// straight to ubiqos_vfs_add -- so a mounted card is nine function pointers
 // into PSRAM, relocated at load like everything else in the module.
-static bool fat_lib_init(const myrtos_kernel_api_t *api)
+static bool fat_lib_init(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_lib_table_t myrtos_lib = {
-    .abi   = MYRTOS_LIB_ABI,
+const ubiqos_lib_table_t ubiqos_lib = {
+    .abi   = UBIQOS_LIB_ABI,
     .count = 5,
     .fn    = {
         (void*)fat_lib_init,          // 0: take the kernel's table
-        (void*)myrtos_fat_mount,      // 1: find the volume on the card
-        (void*)&myrtos_fat_ops,       // 2: the operations, for myrtos_vfs_add
-        (void*)myrtos_fat_stat,       // 3: one named entry
-        (void*)myrtos_fat_extent,     // 4: where the volume sits, for usbmsc
+        (void*)ubiqos_fat_mount,      // 1: find the volume on the card
+        (void*)&ubiqos_fat_ops,       // 2: the operations, for ubiqos_vfs_add
+        (void*)ubiqos_fat_stat,       // 3: one named entry
+        (void*)ubiqos_fat_extent,     // 4: where the volume sits, for usbmsc
     },
 };

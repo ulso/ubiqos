@@ -1,5 +1,5 @@
 #pragma once
-#include "myrtos_abi.h"
+#include "ubiqos_abi.h"
 
 // The C++ face of a module.
 //
@@ -24,35 +24,35 @@
 // which is also where ported C++ belongs.
 
 extern "C" {
-typedef void (*myrtos_initfn_t)(void);
-extern myrtos_initfn_t __init_array_start[], __init_array_end[];
-extern myrtos_initfn_t __fini_array_start[], __fini_array_end[];
+typedef void (*ubiqos_initfn_t)(void);
+extern ubiqos_initfn_t __init_array_start[], __init_array_end[];
+extern ubiqos_initfn_t __fini_array_start[], __fini_array_end[];
 }
 
-static inline void myrtos_run_constructors()
+static inline void ubiqos_run_constructors()
 {
-    for (myrtos_initfn_t *f = __init_array_start; f != __init_array_end; ++f) (*f)();
+    for (ubiqos_initfn_t *f = __init_array_start; f != __init_array_end; ++f) (*f)();
 }
 
 // Backwards, as the standard requires: last constructed, first destroyed.
-static inline void myrtos_run_destructors()
+static inline void ubiqos_run_destructors()
 {
-    for (myrtos_initfn_t *f = __fini_array_end; f != __fini_array_start; ) (*--f)();
+    for (ubiqos_initfn_t *f = __fini_array_end; f != __fini_array_start; ) (*--f)();
 }
 
 // Writes module_main for you -- constructors, your function, destructors:
 //
 //     static void app(int argc, char **argv) { ... }
-//     MYRTOS_CXX_MAIN(app)
+//     UBIQOS_CXX_MAIN(app)
 //
 // A ported program needs a shim like this anyway, because the entry point is
 // not called main here, so this costs it nothing it was not already paying.
-#define MYRTOS_CXX_MAIN(fn)                                  \
+#define UBIQOS_CXX_MAIN(fn)                                  \
     extern "C" void module_main(int argc, char **argv)       \
     {                                                        \
-        myrtos_run_constructors();                           \
+        ubiqos_run_constructors();                           \
         fn(argc, argv);                                      \
-        myrtos_run_destructors();                            \
+        ubiqos_run_destructors();                            \
     }
 
 //
@@ -64,11 +64,11 @@ static inline void myrtos_run_destructors()
 //
 // Derive from this, put every variable in the class, and the problem is gone.
 //
-//     struct Counter : MyrtosModule<Counter> {
+//     struct Counter : UbiqOSModule<Counter> {
 //         unsigned count;
 //         void run(int argc, char **argv) { count++; }
 //     };
-//     MYRTOS_MODULE(Counter)
+//     UBIQOS_MODULE(Counter)
 //
 // Two rules remain, and they are the ones C++ can break by itself:
 //
@@ -80,7 +80,7 @@ static inline void myrtos_run_destructors()
 //   No global instances. A constructor at file scope puts a pointer in
 //   .init_array, which is the same kind of table.
 
-template <class Derived> struct MyrtosModule
+template <class Derived> struct UbiqOSModule
 {
     // How much raw area exists after the thread-local block. The stack grows
     // down into the same span, so this is what is there rather than what is safe
@@ -88,7 +88,7 @@ template <class Derived> struct MyrtosModule
     static uint32_t room()
     {
         uint32_t n = 0;
-        (void)myrtos_data_area(&n);
+        (void)ubiqos_data_area(&n);
         return n;
     }
 };
@@ -99,9 +99,9 @@ template <class Derived> struct MyrtosModule
 // and the kernel gives every process its own zeroed copy. Reaching a member is
 // one instruction from tp -- no system call, and nothing to fetch or carry. The
 // class must not need a constructor to have run: the block arrives zeroed.
-#define MYRTOS_MODULE(Class)                                                                                           \
-    static __thread Class myrtos_instance;                                                                             \
+#define UBIQOS_MODULE(Class)                                                                                           \
+    static __thread Class ubiqos_instance;                                                                             \
     extern "C" void module_main(int argc, char **argv)                                                                 \
     {                                                                                                                  \
-        myrtos_instance.run(argc, argv);                                                                               \
+        ubiqos_instance.run(argc, argv);                                                                               \
     }

@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // fill -- writes a known pattern to a file and reads it back to check it.
 //
@@ -29,26 +29,26 @@ static bool parse_u32(const char *s, uint32_t *out) {
 }
 
 static void say(const char *a, const char *b, uint32_t n, bool with_n) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, a);
-    if (b) myrtos_line_str(&l, b);
-    if (with_n) myrtos_line_u32(&l, n);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, a);
+    if (b) ubiqos_line_str(&l, b);
+    if (with_n) ubiqos_line_u32(&l, n);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: fill FILE BYTES\n\nWrites BYTES of test pattern.\n")) return;
 
     uint32_t total;
     if (argc != 3 || !parse_u32(argv[2], &total) || !total) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: fill FILE BYTES\n");
+        ubiqos_write_str(UBIQOS_STDERR, "usage: fill FILE BYTES\n");
         return;
     }
 
-    myrtos_fs_remove(argv[1]);
+    ubiqos_fs_remove(argv[1]);
 
     uint8_t buf[CHUNK];
     uint32_t offset = 0;
@@ -56,7 +56,7 @@ void module_main(int argc, char **argv) {
         uint32_t n = total - offset;
         if (n > CHUNK) n = CHUNK;
         for (uint32_t j = 0; j < n; j++) buf[j] = pattern(offset + j);
-        if (myrtos_fs_write(argv[1], offset, buf, n) != (int32_t)n) {
+        if (ubiqos_fs_write(argv[1], offset, buf, n) != (int32_t)n) {
             say("fill: write failed at ", 0, offset, true);
             return;
         }
@@ -68,7 +68,7 @@ void module_main(int argc, char **argv) {
     // exercises the chain walk as well as the write.
     offset = 0;
     while (offset < total) {
-        int32_t n = myrtos_fs_read(argv[1], offset, buf, CHUNK);
+        int32_t n = ubiqos_fs_read(argv[1], offset, buf, CHUNK);
         if (n <= 0) { say("fill: read stopped at ", 0, offset, true); return; }
         for (int32_t j = 0; j < n; j++) {
             if (buf[j] == pattern(offset + (uint32_t)j)) continue;

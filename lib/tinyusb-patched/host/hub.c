@@ -330,7 +330,7 @@ static void hub_get_status_complete (tuh_xfer_t* xfer);
 static void connection_clear_conn_change_complete (tuh_xfer_t* xfer);
 static void connection_port_reset_complete (tuh_xfer_t* xfer);
 
-// --- myrtos: the only change in this file ----------------------------------
+// --- UbiqOS: the only change in this file ----------------------------------
 //
 // Upstream opened with TU_VERIFY(result == XFER_RESULT_SUCCESS), which returns
 // before the poll is queued again -- and the poll is the only thing that ever
@@ -350,21 +350,21 @@ static void connection_port_reset_complete (tuh_xfer_t* xfer);
 //
 // Bounded, and the bound is on CONSECUTIVE failures: a hub that has genuinely
 // gone must not be asked for ever, and any success starts the count again.
-#define MYRTOS_HUB_RETRY 16
-static uint8_t myrtos_hub_fails[CFG_TUH_DEVICE_MAX + 1];
+#define UBIQOS_HUB_RETRY 16
+static uint8_t ubiqos_hub_fails[CFG_TUH_DEVICE_MAX + 1];
 
 // callback as response of interrupt endpoint polling
 bool hub_xfer_cb(uint8_t dev_addr, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
   (void) xferred_bytes; // TODO can be more than 1 for hub with lots of ports
   (void) ep_addr;
   if (result != XFER_RESULT_SUCCESS) {
-    if (dev_addr <= CFG_TUH_DEVICE_MAX && myrtos_hub_fails[dev_addr] < MYRTOS_HUB_RETRY) {
-      myrtos_hub_fails[dev_addr]++;
+    if (dev_addr <= CFG_TUH_DEVICE_MAX && ubiqos_hub_fails[dev_addr] < UBIQOS_HUB_RETRY) {
+      ubiqos_hub_fails[dev_addr]++;
       return hub_edpt_status_xfer(dev_addr);
     }
     return false;
   }
-  if (dev_addr <= CFG_TUH_DEVICE_MAX) myrtos_hub_fails[dev_addr] = 0;
+  if (dev_addr <= CFG_TUH_DEVICE_MAX) ubiqos_hub_fails[dev_addr] = 0;
 
   hub_interface_t* p_hub = get_itf(dev_addr);
 

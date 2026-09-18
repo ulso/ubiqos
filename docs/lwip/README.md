@@ -19,7 +19,7 @@ All fifteen were two tables in `core/tcp.c`, and they needed different answers.
 
 ## `tcp_state_str[]` -- eleven strings
 
-`MYRTOS_RELTAB_*` from `common/myrtos_abi.h` does exactly this. The table stores
+`UBIQOS_RELTAB_*` from `common/ubiqos_abi.h` does exactly this. The table stores
 the DISTANCE from itself to each string, and the strings live in the module image
 beside it, so that distance is a link-time constant. Eleven `R_RISCV_32` become
 eleven ADD32/SUB32 pairs, which carry no absolute address.
@@ -32,7 +32,7 @@ and the assembler cannot take its difference.
 A relative table does **not** work here, and the reason is the interesting part.
 Those globals are writable, so in a module they live in each process's own data
 area. The distance from a shared `.rodata` table to them is not the same for
-every process, and a fixed number cannot express it. `MYRTOS_RELTAB_*` is for
+every process, and a fixed number cannot express it. `UBIQOS_RELTAB_*` is for
 code and read-only data, which move together.
 
 A function replaces the table, returning the address the compiler would have

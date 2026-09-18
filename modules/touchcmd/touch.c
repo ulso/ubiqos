@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // touch -- where the fingers are, as fast as the screen will say.
 //
@@ -9,65 +9,65 @@
 //
 // Ctrl-C ends it.
 
-static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
+static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv, "touch -- print the touch points until Ctrl-C"))
+    if (ubiqos_help(argc, argv, "touch -- print the touch points until Ctrl-C"))
         return;
 
-    int32_t fd = myrtos_open("/dev/touch");
+    int32_t fd = ubiqos_open("/dev/touch");
     if (fd < 0) { say("touch: no /dev/touch\r\n"); return; }
 
     // Said first, because the numbers below mean nothing without it. The chip
     // holds its own coordinate range and it need not be the panel's, so this is
     // what decides whether anything has to be scaled at all.
-    myrtos_touch_range_t r;
-    if (myrtos_getstat(fd, MYRTOS_SS_TOUCH_RANGE, &r, sizeof r) == 0) {
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "range ");
-        myrtos_line_u32(&l, r.width);
-        myrtos_line_str(&l, " by ");
-        myrtos_line_u32(&l, r.height);
-        myrtos_line_str(&l, ", ");
-        myrtos_line_u32(&l, r.points);
-        myrtos_line_str(&l, " points, firmware ");
-        myrtos_line_u32(&l, r.firmware);
-        myrtos_line_str(&l, ", config ");
-        myrtos_line_u32(&l, r.config);
-        myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_touch_range_t r;
+    if (ubiqos_getstat(fd, UBIQOS_SS_TOUCH_RANGE, &r, sizeof r) == 0) {
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "range ");
+        ubiqos_line_u32(&l, r.width);
+        ubiqos_line_str(&l, " by ");
+        ubiqos_line_u32(&l, r.height);
+        ubiqos_line_str(&l, ", ");
+        ubiqos_line_u32(&l, r.points);
+        ubiqos_line_str(&l, " points, firmware ");
+        ubiqos_line_u32(&l, r.firmware);
+        ubiqos_line_str(&l, ", config ");
+        ubiqos_line_u32(&l, r.config);
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
     } else {
         say("range: the driver will not say\r\n");
     }
 
     uint32_t was = 0xffffffffu;
     for (;;) {
-        myrtos_touch_t t;
-        int32_t n = myrtos_read(fd, (uint8_t *)&t, sizeof t);
+        ubiqos_touch_t t;
+        int32_t n = ubiqos_read(fd, (uint8_t *)&t, sizeof t);
         if (n == (int32_t)sizeof t) {
             // Printed on a change rather than every poll: a finger held still
             // would otherwise fill the screen and hide what moved.
             bool changed = (t.points != was);
             if (!changed && t.points) changed = true;   // a moving finger is news
             if (changed) {
-                myrtos_line_t l;
-                myrtos_line_reset(&l);
+                ubiqos_line_t l;
+                ubiqos_line_reset(&l);
                 if (!t.points) {
-                    myrtos_line_str(&l, "up\r\n");
+                    ubiqos_line_str(&l, "up\r\n");
                 } else {
                     for (uint32_t i = 0; i < t.points; i++) {
-                        myrtos_line_str(&l, i ? "   " : "");
-                        myrtos_line_u32(&l, t.p[i].x);
-                        myrtos_line_str(&l, ",");
-                        myrtos_line_u32(&l, t.p[i].y);
+                        ubiqos_line_str(&l, i ? "   " : "");
+                        ubiqos_line_u32(&l, t.p[i].x);
+                        ubiqos_line_str(&l, ",");
+                        ubiqos_line_u32(&l, t.p[i].y);
                     }
-                    myrtos_line_str(&l, "\r\n");
+                    ubiqos_line_str(&l, "\r\n");
                 }
-                myrtos_line_flush(MYRTOS_STDOUT, &l);
+                ubiqos_line_flush(UBIQOS_STDOUT, &l);
             }
             was = t.points;
         }
-        myrtos_sleep(30);          // thirty a second is more than a finger needs
+        ubiqos_sleep(30);          // thirty a second is more than a finger needs
     }
 }

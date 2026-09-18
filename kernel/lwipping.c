@@ -25,12 +25,12 @@
 #include "lwip/ip.h"
 #include "lwip/dns.h"
 
-int32_t myrtos_mdns_resolve(const char *name);
-int32_t myrtos_mdns_state(uint32_t *addr_out);
+int32_t ubiqos_mdns_resolve(const char *name);
+int32_t ubiqos_mdns_state(uint32_t *addr_out);
 #include "lwip/timeouts.h"
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 
 #define PING_DATA 32u                   // payload, so a reply is worth timing
 #define PING_ID   0xbeefu
@@ -41,7 +41,7 @@ static volatile uint32_t seq;
 // What the caller asks about. One ping at a time: this is a command somebody
 // typed, not a service, and two at once would be two people.
 static struct {
-    uint32_t state;                     // MYRTOS_PING_*
+    uint32_t state;                     // UBIQOS_PING_*
     ip_addr_t addr;
     uint32_t sent_us;
     uint32_t took_us;
@@ -60,7 +60,7 @@ static u8_t on_icmp(void *arg, struct raw_pcb *p, struct pbuf *buf, const ip_add
 {
     (void)arg; (void)p;
 
-    if (cur.state != MYRTOS_PING_WAITING) return 0;    // not ours to take
+    if (cur.state != UBIQOS_PING_WAITING) return 0;    // not ours to take
 
     u8_t hlen = 0;
     if (buf->len >= 1) hlen = (u8_t)((*(u8_t *)buf->payload & 0x0f) * 4);
@@ -75,7 +75,7 @@ static u8_t on_icmp(void *arg, struct raw_pcb *p, struct pbuf *buf, const ip_add
     if (!ip_addr_cmp(from, &cur.addr)) return 0;
 
     cur.took_us = (uint32_t)time_us_64() - cur.sent_us;
-    cur.state = MYRTOS_PING_REPLIED;
+    cur.state = UBIQOS_PING_REPLIED;
 
     pbuf_free(buf);
     return 1;                                          // eaten
@@ -102,11 +102,11 @@ static bool send_echo(void)
 
     cur.want_seq = seq;
     cur.sent_us  = (uint32_t)time_us_64();
-    cur.state    = MYRTOS_PING_WAITING;
+    cur.state    = UBIQOS_PING_WAITING;
 
     err_t rc = raw_sendto(pcb, p, &cur.addr);
     pbuf_free(p);
-    if (rc != ERR_OK) { cur.state = MYRTOS_PING_UNREACHABLE; return false; }
+    if (rc != ERR_OK) { cur.state = UBIQOS_PING_UNREACHABLE; return false; }
     return true;
 }
 
@@ -115,15 +115,15 @@ static bool send_echo(void)
 static void on_resolved(const char *name, const ip_addr_t *addr, void *arg)
 {
     (void)name; (void)arg;
-    if (cur.state != MYRTOS_PING_RESOLVING) return;
-    if (!addr) { cur.state = MYRTOS_PING_NONAME; return; }
+    if (cur.state != UBIQOS_PING_RESOLVING) return;
+    if (!addr) { cur.state = UBIQOS_PING_NONAME; return; }
     cur.addr = *addr;
     send_echo();
 }
 
 // --- WHAT THE SERVER CALLS --------------------------------------------------
 
-int32_t myrtos_ping_start(const char *host)
+int32_t ubiqos_ping_start(const char *host)
 {
     if (!pcb) {
         pcb = raw_new(IP_PROTO_ICMP);
@@ -132,7 +132,7 @@ int32_t myrtos_ping_start(const char *host)
         if (raw_bind(pcb, IP_ADDR_ANY) != ERR_OK) { raw_remove(pcb); pcb = NULL; return -1; }
     }
 
-    cur.state   = MYRTOS_PING_RESOLVING;
+    cur.state   = UBIQOS_PING_RESOLVING;
     cur.took_us = 0;
     ip_addr_set_zero(&cur.addr);
 
@@ -166,7 +166,7 @@ int32_t myrtos_ping_start(const char *host)
         err_t rc = dns_gethostbyname(host, &cur.addr, on_resolved, NULL);
         if (rc == ERR_OK) return send_echo() ? 0 : -1;      // already known
         if (rc == ERR_INPROGRESS) { cur.by_dns = true; return 0; }
-        cur.state = MYRTOS_PING_NONAME;
+        cur.state = UBIQOS_PING_NONAME;
         return -1;
     }
 
@@ -191,32 +191,32 @@ int32_t myrtos_ping_start(const char *host)
     }
 
     cur.by_dns = false;
-    if (myrtos_mdns_resolve(ask) < 0) { cur.state = MYRTOS_PING_NONAME; return -1; }
+    if (ubiqos_mdns_resolve(ask) < 0) { cur.state = UBIQOS_PING_NONAME; return -1; }
     return 0;                                           // the poll picks it up
 }
 
 // Three words: where it is now, the address once known, and the microseconds
 // when there is an answer to time.
-void myrtos_ping_poll(uint32_t out[3])
+void ubiqos_ping_poll(uint32_t out[3])
 {
     // The deadline is checked HERE rather than on a timer, because this is
     // asked once a turn anyway and a timeout that needs its own callback is a
     // callback that can outlive the thing it was timing.
     // Still waiting on a name. The querier answers or gives up on its own, and
     // the echo goes out the moment it answers.
-    if (cur.state == MYRTOS_PING_RESOLVING && !cur.by_dns) {
+    if (cur.state == UBIQOS_PING_RESOLVING && !cur.by_dns) {
         uint32_t a = 0;
-        int32_t r = myrtos_mdns_state(&a);
-        if (r < 0) cur.state = MYRTOS_PING_NONAME;
+        int32_t r = ubiqos_mdns_state(&a);
+        if (r < 0) cur.state = UBIQOS_PING_NONAME;
         else if (r > 0) {
             ip_addr_set_ip4_u32(&cur.addr, a);
             send_echo();
         }
     }
 
-    if (cur.state == MYRTOS_PING_WAITING) {
+    if (cur.state == UBIQOS_PING_WAITING) {
         uint32_t waited = (uint32_t)time_us_64() - cur.sent_us;
-        if (waited > 2000000u) cur.state = MYRTOS_PING_TIMEDOUT;
+        if (waited > 2000000u) cur.state = UBIQOS_PING_TIMEDOUT;
     }
     out[0] = cur.state;
     out[1] = ip_addr_get_ip4_u32(&cur.addr);

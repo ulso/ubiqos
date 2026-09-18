@@ -1,5 +1,5 @@
-#ifndef MYRTOS_CURSES_H
-#define MYRTOS_CURSES_H
+#ifndef UBIQOS_CURSES_H
+#define UBIQOS_CURSES_H
 
 // A curses small enough to carry: the twenty-one calls Atto uses, over ANSI.
 //
@@ -8,7 +8,7 @@
 // terminfo is a database of files describing terminals nobody here has. But a
 // program like this does not want a terminal database. It wants to move the
 // cursor, write some text, clear to the end of a line and read a key, and every
-// one of those is an escape sequence the myrtos console already understands.
+// one of those is an escape sequence the UbiqOS console already understands.
 //
 // So this is not a port of curses. It is the part of curses that Atto uses,
 // written directly, and any other curses program that stays inside these calls

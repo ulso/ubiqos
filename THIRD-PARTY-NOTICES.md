@@ -1,8 +1,8 @@
 # Third-party notices
 
-myrtos is built on other people's work. This file names each piece, says where
+UbiqOS is built on other people's work. This file names each piece, says where
 it is and under what terms, and carries the licence texts that must travel with
-a binary. **Anyone passing on a myrtos UF2 should pass this file on with it** --
+a binary. **Anyone passing on a UbiqOS UF2 should pass this file on with it** --
 the BSD licences below ask for exactly that.
 
 ## In every UF2
@@ -35,7 +35,7 @@ the Arm and RISC-V toolchains the Pico SDK installs.
 
 The ESP32-C6 firmware is Espressif's ESP-Hosted, `esp-hosted-mcu`, under the
 Apache License 2.0. `esp/fruitjam-c6/build.sh` fetches and builds it; none of its
-source is in this tree, and myrtos's side of the protocol (`modules/ehspi`,
+source is in this tree, and UbiqOS's side of the protocol (`modules/ehspi`,
 `modules/ehrpc`) is written here from the protocol description. Whoever passes
 on a built `ehcp.bin` should include Espressif's `LICENSE` from that checkout.
 
@@ -121,4 +121,4 @@ THE SOFTWARE.
 Copyright (C) 2020 Dimitar Toshkov Zhekov, with Reserved Font Name "Terminus
 Font". The full text is `third_party/terminus/OFL.txt`. The fonts in the kernel
 are converted from the BDF files beside it by `tools/make_font.py` and are not
-called Terminus in anything myrtos displays.
+called Terminus in anything UbiqOS displays.

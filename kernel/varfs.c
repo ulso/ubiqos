@@ -1,5 +1,5 @@
 #include "vfs.h"
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 
 // /var -- what the kernel has said, as a file.
 //
@@ -8,7 +8,7 @@
 // that console exists the kernel has already said everything interesting. This
 // is where to read it afterwards.
 //
-// The ring lives in main.c beside myrtos_print, because the first line is
+// The ring lives in main.c beside ubiqos_print, because the first line is
 // written before any of this is running.
 //
 // /time joined it when the board learned to ask the network what time it is.
@@ -18,9 +18,9 @@
 
 #include "clock.h"
 
-uint32_t myrtos_dmesg_size(void);
-int32_t  myrtos_dmesg_at(uint32_t offset);
-void     myrtos_print(const char *s);
+uint32_t ubiqos_dmesg_size(void);
+int32_t  ubiqos_dmesg_at(uint32_t offset);
+void     ubiqos_print(const char *s);
 
 static bool name_is(const char *path, const char *want) {
     for (int i = 0; want[i] || path[i]; i++)
@@ -34,7 +34,7 @@ static bool is_time(const char *path)  { return name_is(path, "/time"); }
 // The line /var/time holds. Regenerated on every read, which is the point of
 // it: two reads a minute apart differ.
 static uint32_t time_line(char *out, uint32_t cap) {
-    myrtos_clock_stamp(out, cap);
+    ubiqos_clock_stamp(out, cap);
     uint32_t n = 0;
     while (out[n]) n++;
     if (n + 2 <= cap) { out[n++] = '\n'; out[n] = 0; }
@@ -53,7 +53,7 @@ static int32_t var_read_at(const char *path, uint32_t offset, uint8_t *buf, uint
     if (!is_dmesg(path)) return -1;
     uint32_t n = 0;
     while (n < len) {
-        int32_t c = myrtos_dmesg_at(offset + n);
+        int32_t c = ubiqos_dmesg_at(offset + n);
         if (c < 0) break;                        // the end of what was said
         buf[n++] = (uint8_t)c;
     }
@@ -62,14 +62,14 @@ static int32_t var_read_at(const char *path, uint32_t offset, uint8_t *buf, uint
 
 static int32_t var_stat(const char *path, uint32_t *size_out) {
     if (size_out) *size_out = 0;
-    if (path[0] == '/' && !path[1]) return MYRTOS_ATTR_DIRECTORY;
+    if (path[0] == '/' && !path[1]) return UBIQOS_ATTR_DIRECTORY;
     if (is_time(path)) {
         char line[24];
         if (size_out) *size_out = time_line(line, sizeof line);
         return 0;
     }
     if (!is_dmesg(path)) return -1;
-    if (size_out) *size_out = myrtos_dmesg_size();
+    if (size_out) *size_out = ubiqos_dmesg_size();
     return 0;
 }
 
@@ -83,18 +83,18 @@ static int32_t var_stat_nth(const char *dirpath, uint32_t index,
     name_out[i] = 0;
     if (size_out) {
         if (index) { char line[24]; *size_out = time_line(line, sizeof line); }
-        else       { *size_out = myrtos_dmesg_size(); }
+        else       { *size_out = ubiqos_dmesg_size(); }
     }
     return 0;
 }
 
-static const myrtos_fsops_t var_ops = {
+static const ubiqos_fsops_t var_ops = {
     .read_at  = var_read_at,
     .stat_nth = var_stat_nth,
     .stat     = var_stat,
 };
 
-void myrtos_varfs_init(void) {
-    if (!myrtos_vfs_add("var", &var_ops))
-        myrtos_print("var: no room in the volume table\n");
+void ubiqos_varfs_init(void) {
+    if (!ubiqos_vfs_add("var", &var_ops))
+        ubiqos_print("var: no room in the volume table\n");
 }

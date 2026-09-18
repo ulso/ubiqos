@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // ps -- what is running, and what each process is waiting for.
 //
@@ -20,13 +20,13 @@ static const char STATE_NAMES[] = "?\0ready\0run\0read\0child\0sleep\0write\0rec
 
 static const char *state_name(uint32_t s) {
     const char *p = STATE_NAMES;
-    if (s > MYRTOS_PS_ZOMBIE) return p;
+    if (s > UBIQOS_PS_ZOMBIE) return p;
     while (s--) { while (*p) p++; p++; }
     return p;
 }
 
-static void pad(myrtos_line_t *l, uint32_t written, uint32_t width) {
-    while (written++ < width) myrtos_line_str(l, " ");
+static void pad(ubiqos_line_t *l, uint32_t written, uint32_t width) {
+    while (written++ < width) ubiqos_line_str(l, " ");
 }
 
 static uint32_t digits(uint32_t v) {
@@ -36,33 +36,33 @@ static uint32_t digits(uint32_t v) {
 }
 
 void module_main(void) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "\n pid  pri  state  memory  name\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "\n pid  pri  state  memory  name\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
-    for (uint32_t slot = 0; slot < MYRTOS_PS_SLOTS; slot++) {
-        myrtos_psinfo_t p;
-        if (myrtos_psinfo(slot, &p) < 0) continue;
+    for (uint32_t slot = 0; slot < UBIQOS_PS_SLOTS; slot++) {
+        ubiqos_psinfo_t p;
+        if (ubiqos_psinfo(slot, &p) < 0) continue;
 
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, " ");
-        myrtos_line_u32(&l, p.pid);
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, " ");
+        ubiqos_line_u32(&l, p.pid);
         pad(&l, digits(p.pid) + 1, 5);
-        myrtos_line_u32(&l, p.priority);
+        ubiqos_line_u32(&l, p.priority);
         pad(&l, digits(p.priority), 5);
 
         const char *st = state_name(p.state);
-        myrtos_line_str(&l, st);
+        ubiqos_line_str(&l, st);
         uint32_t n = 0;
         while (st[n]) n++;
         pad(&l, n, 7);
 
-        myrtos_line_u32(&l, p.mem_size);
+        ubiqos_line_u32(&l, p.mem_size);
         pad(&l, digits(p.mem_size), 8);
 
-        myrtos_line_str(&l, p.name);
-        myrtos_line_str(&l, "\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        ubiqos_line_str(&l, p.name);
+        ubiqos_line_str(&l, "\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
 }

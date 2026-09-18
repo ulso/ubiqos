@@ -36,12 +36,12 @@ static uint64_t timer_read(void)
 
 // Nothing to do, and that is the difference worth naming. The machine timer on
 // RISC-V is a comparator: it fires once and the handler must set the next
-// deadline, so myrtos_timer_rearm exists. SysTick reloads itself. The call
+// deadline, so ubiqos_timer_rearm exists. SysTick reloads itself. The call
 // stays because the handler that makes it should not have to know which
 // machine it is on.
-void myrtos_timer_rearm(void) { }
+void ubiqos_timer_rearm(void) { }
 
-void myrtos_timer_init(uint32_t interval_ticks)
+void ubiqos_timer_init(uint32_t interval_ticks)
 {
     // Microseconds, from the reference clock rather than the processor clock,
     // so the interval means what it means on RISC-V without anyone having to
@@ -61,4 +61,4 @@ void myrtos_timer_init(uint32_t interval_ticks)
     __asm__ volatile("cpsie i" ::: "memory");
 }
 
-uint64_t myrtos_timer_now(void) { return timer_read(); }
+uint64_t ubiqos_timer_now(void) { return timer_read(); }

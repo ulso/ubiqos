@@ -4,8 +4,8 @@
 // program up here it is a file, and an FTDI cable would be one too the day a
 // driver registers it.
 //
-// The module waits with myrtos_arm and a pulse. This waits by reading, because
-// a device read on myrtos blocks until there is something -- so the whole of
+// The module waits with ubiqos_arm and a pulse. This waits by reading, because
+// a device read on UbiqOS blocks until there is something -- so the whole of
 // the arming, the message loop and the disarm come to one blocking call.
 #include <stdio.h>
 #include <string.h>

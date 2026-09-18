@@ -15,7 +15,7 @@
 //   between the application and the serial bootloader. It is pulled up by R27,
 //   so a board nobody interferes with always boots the application. It is also
 //   wired to the audio DAC's GPIO1, which is why the SDK's board header calls
-//   it I2S_ESP_IRQ; myrtos never enables that DAC's GPIO, so the net has one
+//   it I2S_ESP_IRQ; UbiqOS never enables that DAC's GPIO, so the net has one
 //   driver at a time.
 //
 //   GP22 is EN, and it is the DAC's reset as well. Resetting the C6 takes the
@@ -27,7 +27,7 @@
 // returns; the waiting belongs to whoever is driving, which is modules/espflash.
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
@@ -38,7 +38,7 @@
 // three-millisecond syscall would cost bytes at 115200.
 #define ESP_IRQ_PRIORITY 0x40u
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 static uart_inst_t *esp_uart;
 static uint32_t strap_pin = 0xffffffffu;
 static uint32_t reset_pin = 0xffffffffu;
@@ -97,8 +97,8 @@ static uint32_t rx_waiting(void)
 
 static int32_t esp_configure(const void *config, uint32_t size)
 {
-    if (size < sizeof(myrtos_esp_config_t)) return -1;
-    const myrtos_esp_config_t *c = (const myrtos_esp_config_t*)config;
+    if (size < sizeof(ubiqos_esp_config_t)) return -1;
+    const ubiqos_esp_config_t *c = (const ubiqos_esp_config_t*)config;
 
     esp_uart = (c->uart_base == 0x40070000u) ? uart0 : uart1;
     K->uart_init(esp_uart, c->baud_rate);
@@ -200,8 +200,8 @@ static int32_t esp_setstat(uint32_t code, const void *data, uint32_t len)
     uint32_t v = *(const uint32_t*)data;
 
     switch (code) {
-    case MYRTOS_SS_ESP_STRAP: hold(strap_pin, v == 0); return 0;
-    case MYRTOS_SS_ESP_RESET: hold(reset_pin, v == 0); return 0;
+    case UBIQOS_SS_ESP_STRAP: hold(strap_pin, v == 0); return 0;
+    case UBIQOS_SS_ESP_RESET: hold(reset_pin, v == 0); return 0;
     default: return -1;
     }
 }
@@ -212,9 +212,9 @@ static int32_t esp_getstat(uint32_t code, void *data, uint32_t len)
     uint32_t *out = (uint32_t*)data;
 
     switch (code) {
-    case MYRTOS_SS_ESP_STRAP: *out = K->gpio_get(strap_pin) ? 1u : 0u; return 0;
-    case MYRTOS_SS_ESP_RESET: *out = K->gpio_get(reset_pin) ? 1u : 0u; return 0;
-    case MYRTOS_SS_ESP_STATS:
+    case UBIQOS_SS_ESP_STRAP: *out = K->gpio_get(strap_pin) ? 1u : 0u; return 0;
+    case UBIQOS_SS_ESP_RESET: *out = K->gpio_get(reset_pin) ? 1u : 0u; return 0;
+    case UBIQOS_SS_ESP_STATS:
         if (len < 3 * sizeof(uint32_t)) return -1;
         // Dropped is the number that matters. A ring that never fills says the
         // log is whole; one that does says which part of it to distrust.
@@ -226,15 +226,15 @@ static int32_t esp_getstat(uint32_t code, void *data, uint32_t len)
     }
 }
 
-static bool esp_init_module(const myrtos_kernel_api_t *api)
+static bool esp_init_module(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = esp_init_module,
     .ops = {

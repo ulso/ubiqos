@@ -1,6 +1,6 @@
 // The compiler and platform layer lwIP asks its port for.
-#ifndef MYRTOS_LWIP_CC_H
-#define MYRTOS_LWIP_CC_H
+#ifndef UBIQOS_LWIP_CC_H
+#define UBIQOS_LWIP_CC_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -13,9 +13,9 @@
 // interrupt reaches into it, so there is nothing to protect against.
 typedef int sys_prot_t;
 
-void myrtos_lwip_assert(const char *why);
+void ubiqos_lwip_assert(const char *why);
 
 #define LWIP_PLATFORM_DIAG(x)   do { } while (0)
-#define LWIP_PLATFORM_ASSERT(x) do { myrtos_lwip_assert(x); } while (0)
+#define LWIP_PLATFORM_ASSERT(x) do { ubiqos_lwip_assert(x); } while (0)
 
 #endif

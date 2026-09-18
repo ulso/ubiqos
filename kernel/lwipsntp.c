@@ -23,7 +23,7 @@
 #include "lwip/netif.h"
 #include "pico/time.h"
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 
 #define NTP_PORT        123u
 #define NTP_PACKET      48u
@@ -47,15 +47,15 @@ static void took_it(uint32_t ntp_seconds)
 {
     if (ntp_seconds < NTP_TO_UNIX) return;         // before 1970: not an answer
 
-    const bool first = !myrtos_clock_is_set();
-    myrtos_clock_set(ntp_seconds - NTP_TO_UNIX);
+    const bool first = !ubiqos_clock_is_set();
+    ubiqos_clock_set(ntp_seconds - NTP_TO_UNIX);
 
     if (first) {
         char stamp[24];
-        myrtos_clock_stamp(stamp, sizeof stamp);
-        myrtos_print("ntp: the time is ");
-        myrtos_print(stamp);
-        myrtos_print(myrtos_clock_offset() ? "\n" : " UTC\n");
+        ubiqos_clock_stamp(stamp, sizeof stamp);
+        ubiqos_print("ntp: the time is ");
+        ubiqos_print(stamp);
+        ubiqos_print(ubiqos_clock_offset() ? "\n" : " UTC\n");
     }
 }
 
@@ -105,7 +105,7 @@ static bool have_a_route(void)
     return !ip4_addr_isany_val(*netif_ip4_gw(n));
 }
 
-void myrtos_sntp_poll(void)
+void ubiqos_sntp_poll(void)
 {
     if (!have_a_route()) return;
 
@@ -114,11 +114,11 @@ void myrtos_sntp_poll(void)
         if (!pcb) return;
         if (udp_bind(pcb, IP_ANY_TYPE, 0) != ERR_OK) { udp_remove(pcb); pcb = 0; return; }
         udp_recv(pcb, on_reply, 0);
-        myrtos_print("ntp: asking pool.ntp.org what time it is\n");
+        ubiqos_print("ntp: asking pool.ntp.org what time it is\n");
     }
 
     const uint64_t now = time_us_64();
-    const uint64_t due = myrtos_clock_is_set() ? ASK_AGAIN_US : RETRY_US;
+    const uint64_t due = ubiqos_clock_is_set() ? ASK_AGAIN_US : RETRY_US;
     if (asked_at && now - asked_at < due) return;
 
     if (!have_server) {

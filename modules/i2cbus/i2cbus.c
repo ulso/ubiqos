@@ -1,10 +1,10 @@
 // The I2C bus, as a driver module.
 //
-// A process opens /dev/i2c, writes a myrtos_i2c_xfer_t followed by the bytes to
+// A process opens /dev/i2c, writes a ubiqos_i2c_xfer_t followed by the bytes to
 // send, and reads back whatever came in. The bus is not a byte stream -- every
 // exchange names a device and says how much to say and how much to hear -- so
 // the device takes a description of the exchange rather than pretending to be
-// a pipe. See the note beside myrtos_i2c_xfer_t in the ABI.
+// a pipe. See the note beside ubiqos_i2c_xfer_t in the ABI.
 //
 // I2C0 on GP20 and GP21, which is where the Fruit Jam puts the Stemma QT
 // connector and the audio DAC. The board has pull-ups on both, so the internal
@@ -12,7 +12,7 @@
 // far too weak to drive a real one, and a Stemma cable brings its own.
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/i2c.h"
 #include "hardware/gpio.h"
 
@@ -20,9 +20,9 @@
 #define I2C_SCL   21
 #define I2C_HZ    (100 * 1000)   // standard mode, which every Stemma board takes
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 static bool ready;
-static uint8_t rx[MYRTOS_I2C_MAX_READ];
+static uint8_t rx[UBIQOS_I2C_MAX_READ];
 static uint32_t rx_len;
 
 static int32_t i2c_configure(const void *config, uint32_t size)
@@ -56,13 +56,13 @@ static int32_t i2c_close(void) { return 0; }
 static int32_t i2c_do_write(const uint8_t *buf, uint32_t len)
 {
     if (!ready) return -1;
-    if (len < sizeof(myrtos_i2c_xfer_t)) return -1;
+    if (len < sizeof(ubiqos_i2c_xfer_t)) return -1;
 
-    myrtos_i2c_xfer_t x;
+    ubiqos_i2c_xfer_t x;
     const uint8_t *p = buf;
     x.addr = p[0]; x.nwrite = p[1]; x.nread = p[2]; x.reserved = p[3];
 
-    if (x.nread > MYRTOS_I2C_MAX_READ) return -1;
+    if (x.nread > UBIQOS_I2C_MAX_READ) return -1;
     if (len < sizeof x + x.nwrite) return -1;
 
     rx_len = 0;
@@ -93,15 +93,15 @@ static int32_t i2c_do_read(uint8_t *buf, uint32_t len)
 
 static int32_t i2c_readable(void) { return (int32_t)rx_len; }
 
-static bool i2c_lib_init(const myrtos_kernel_api_t *api)
+static bool i2c_lib_init(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = i2c_lib_init,
     .ops = {

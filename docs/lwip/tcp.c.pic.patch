@@ -20,7 +20,7 @@
 +/* LOCAL: a table of pointers carries absolute addresses. The strings live in
 +   the module image beside the table, so the DISTANCE to each is a link-time
 +   constant and the table can be position independent. */
-+#include "myrtos_reltab.h"
++#include "ubiqos_reltab.h"
  
 +__attribute__((used)) static const char tcp_st_0[] = "CLOSED";
 +__attribute__((used)) static const char tcp_st_1[] = "LISTEN";
@@ -34,21 +34,21 @@
 +__attribute__((used)) static const char tcp_st_9[] = "LAST_ACK";
 +__attribute__((used)) static const char tcp_st_10[] = "TIME_WAIT";
 +
-+MYRTOS_RELTAB_BEGIN(tcp_state_str_rel);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_0);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_1);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_2);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_3);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_4);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_5);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_6);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_7);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_8);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_9);
-+MYRTOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_10);
-+MYRTOS_RELTAB_END();
++UBIQOS_RELTAB_BEGIN(tcp_state_str_rel);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_0);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_1);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_2);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_3);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_4);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_5);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_6);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_7);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_8);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_9);
++UBIQOS_RELTAB_ENTRY(tcp_state_str_rel, tcp_st_10);
++UBIQOS_RELTAB_END();
 +
-+#define tcp_state_str(i) MYRTOS_RELTAB_CALL(tcp_state_str_rel, (i), const char *)
++#define tcp_state_str(i) UBIQOS_RELTAB_CALL(tcp_state_str_rel, (i), const char *)
 +
  /* last local TCP port */
  static u16_t tcp_port = TCP_LOCAL_PORT_RANGE_START;
@@ -60,7 +60,7 @@
 -struct tcp_pcb **const tcp_pcb_lists[] = {&tcp_listen_pcbs.pcbs, &tcp_bound_pcbs,
 -         &tcp_active_pcbs, &tcp_tw_pcbs
 -};
-+/* LOCAL: these point at WRITABLE globals, which in a myrtos module live in each
++/* LOCAL: these point at WRITABLE globals, which in a UbiqOS module live in each
 +   process's own data area -- so the distance from a shared .rodata table to them
 +   is not the same for every process, and a relative table cannot express it. A
 +   function instead: the compiler addresses each global the way it addresses any

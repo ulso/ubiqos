@@ -19,7 +19,7 @@
 // and in interrupt context the thread pointer belongs to whatever was
 // interrupted, which makes thread-local storage exactly the wrong place.
 
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/adc.h"
 #include "hardware/resets.h"
 #include "hardware/irq.h"
@@ -28,7 +28,7 @@
 #include "hardware/structs/iobank0.h"
 #include "hardware/structs/sio.h"
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 
 // A0 to A3 on this board, which are ADC channels 0 to 3 on GP40 to GP43.
 #define ADC_FIRST_PIN  40u
@@ -164,7 +164,7 @@ static bool ready;
 // be brought up a step at a time from a shell, so that a failure is a power
 // cycle and the step that caused it is known.
 //
-// MYRTOS_SS_RUN carries how far to go: 1 pads, 2 the ADC block and its clock,
+// UBIQOS_SS_RUN carries how far to go: 1 pads, 2 the ADC block and its clock,
 // 3 the interrupt installed, 4 converting. Each step includes the ones before
 // it. 0 stops.
 static int32_t adc_configure(const void *config, uint32_t size)
@@ -203,7 +203,7 @@ static bool adc_pads(void)
     return ch_mask != 0;
 }
 
-uint32_t myrtos_adc_channels(void) { return ch_mask; }
+uint32_t ubiqos_adc_channels(void) { return ch_mask; }
 
 static void adc_block(void)
 {
@@ -284,12 +284,12 @@ static int32_t adc_readable(void) { return ready ? (int32_t)(ch_count() * 2u) : 
 static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
 {
     if (!data) return -1;
-    if (code == MYRTOS_SS_RATE && len == 4) {
+    if (code == UBIQOS_SS_RATE && len == 4) {
         *(uint32_t *)data = rate_hz / ch_count();      // per channel actually visited
         return 0;
     }
-    if (code == MYRTOS_SS_CAPTURE && len == sizeof(myrtos_adccap_t)) {
-        myrtos_adccap_t *o = (myrtos_adccap_t *)data;
+    if (code == UBIQOS_SS_CAPTURE && len == sizeof(ubiqos_adccap_t)) {
+        ubiqos_adccap_t *o = (ubiqos_adccap_t *)data;
         uint32_t have = cap_have;
         o->channel = cap_channel;
         o->count   = cap_want ? cap_want : have;
@@ -297,11 +297,11 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
         o->span_us = have > 1u ? (cap_last_us - cap_first_us) : 0u;
         return 0;
     }
-    if (code == MYRTOS_SS_ADCCHANS && len == 4) {
+    if (code == UBIQOS_SS_ADCCHANS && len == 4) {
         *(uint32_t *)data = ch_mask;
         return 0;
     }
-    if (code == MYRTOS_SS_CAPDATA) {
+    if (code == UBIQOS_SS_CAPDATA) {
         // Refused while the handler is still writing: half a sweep drawn as a
         // whole one is a picture that lies about the signal.
         if (cap_want) return -1;
@@ -314,8 +314,8 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
         }
         return (int32_t)n;
     }
-    if (code == MYRTOS_SS_IRQSTATS && len == sizeof(myrtos_irqstats_t)) {
-        myrtos_irqstats_t *o = (myrtos_irqstats_t *)data;
+    if (code == UBIQOS_SS_IRQSTATS && len == sizeof(ubiqos_irqstats_t)) {
+        ubiqos_irqstats_t *o = (ubiqos_irqstats_t *)data;
         o->taken = taken;
         o->overruns = overruns;
         o->worst_gap_us = worst_gap_us;
@@ -332,8 +332,8 @@ static int32_t adc_getstat(uint32_t code, void *data, uint32_t len)
 // measurement is that one number.
 static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
 {
-    if (code == MYRTOS_SS_CAPTURE && len == sizeof(myrtos_adccap_t)) {
-        const myrtos_adccap_t *a = (const myrtos_adccap_t *)data;
+    if (code == UBIQOS_SS_CAPTURE && len == sizeof(ubiqos_adccap_t)) {
+        const ubiqos_adccap_t *a = (const ubiqos_adccap_t *)data;
         if (stage < 4u) return -1;            // nothing is converting
         if (a->channel >= ADC_CHANNELS || !(ch_mask & (1u << a->channel))) return -1;
         uint32_t n = a->count;
@@ -346,14 +346,14 @@ static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
         cap_want = n;
         return 0;
     }
-    if (code == MYRTOS_SS_RATE && len == 4) {
+    if (code == UBIQOS_SS_RATE && len == 4) {
         uint32_t hz = *(const uint32_t *)data * ch_count();     // per channel in
         if (hz < 1000u || hz > 500000u) return -1;
         adc_hw->div = ((48000000u / hz) - 1u) << ADC_DIV_INT_LSB;
         rate_hz = hz;
         return 0;
     }
-    if (code == MYRTOS_SS_IRQPIN) {
+    if (code == UBIQOS_SS_IRQPIN) {
         if (!data || len != 4) return -1;
         uint32_t pin = *(const uint32_t *)data;
         if (pin == 0xffffffffu) {
@@ -374,27 +374,27 @@ static int32_t adc_setstat(uint32_t code, const void *data, uint32_t len)
         scope_mask = 1u << pin;
         return 0;
     }
-    if (code == MYRTOS_SS_RUN) {
+    if (code == UBIQOS_SS_RUN) {
         if (!data || len != 4) return -1;
         return adc_to_stage(*(const uint32_t *)data);
     }
     (void)data; (void)len;
-    if (code != MYRTOS_SS_IRQSTATS) return -1;
+    if (code != UBIQOS_SS_IRQSTATS) return -1;
     worst_gap_us = 0;
     best_gap_us = 0xffffffffu;
     overruns = 0;
     return 0;
 }
 
-static bool adc_init_mod(const myrtos_kernel_api_t *api)
+static bool adc_init_mod(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = adc_init_mod,
     .ops = {

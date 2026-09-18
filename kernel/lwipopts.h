@@ -5,8 +5,8 @@
 // task, because tud_network_recv_cb is called from there and a frame can then
 // go straight into the netif with no queue between -- and TinyUSB's own flow
 // control does the rest, since returning false there means "ask me again".
-#ifndef MYRTOS_LWIPOPTS_H
-#define MYRTOS_LWIPOPTS_H
+#ifndef UBIQOS_LWIPOPTS_H
+#define UBIQOS_LWIPOPTS_H
 
 #define NO_SYS                      1
 #define LWIP_SOCKET                 0   // the sequential APIs need threads

@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // httpd -- a web server.
 //
@@ -31,7 +31,7 @@
 // Nothing caught it. That is worth knowing about this system: a module's stack
 // has no guard page and no canary, so it corrupts a neighbour rather than
 // faulting -- and the neighbour here was the allocator's own bookkeeping.
-MYRTOS_MEM_SIZE(16384);
+UBIQOS_MEM_SIZE(16384);
 
 #define REQ_MAX  256
 #define BUF_MAX  512
@@ -69,7 +69,7 @@ static uint32_t u32_to_dec(uint32_t v, char *out) {
 // the state dot, the two-second poll. The rest of that UI is I2C, SCPI and
 // audio, none of which this machine has.
 static const char SENSOR_PAGE[] =
-    "<!doctype html><meta charset=\"utf-8\"><title>myrtos - HibouAir</title>\n"
+    "<!doctype html><meta charset=\"utf-8\"><title>UbiqOS - HibouAir</title>\n"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
     "<style>\n"
     ":root{--bg:#0f1720;--card:#152029;--line:#233240;--ink:#e6edf3;--dim:#8b9bab;--ok:#4ade80;--off:#64748b}\n"
@@ -95,7 +95,7 @@ static const char SENSOR_PAGE[] =
     "a{color:var(--dim)}\n"
     "</style>\n"
     "<div class=top>\n"
-    "  <div><h1>myrtos &middot; HibouAir</h1><div class=sub>BleuIO scanner over the USB host</div></div>\n"
+    "  <div><h1>UbiqOS &middot; HibouAir</h1><div class=sub>BleuIO scanner over the USB host</div></div>\n"
     "  <div class=state><span class=dot id=dot></span><span id=stateText>connecting</span></div>\n"
     "</div>\n"
     "<div class=grid id=cards></div>\n"
@@ -147,12 +147,12 @@ static const char SENSOR_PAGE[] =
     "</script>\n"
     "\n";
 
-static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
+static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
 // A whole answer, headers and body, in as few writes as the chip will take.
 // Every send costs a command, a wait and a poll for "did it go", so a header
 // written a field at a time would cost more than the page.
-// Until it has all gone. myrtos_sock_send hands the chip one buffer and answers
+// Until it has all gone. ubiqos_sock_send hands the chip one buffer and answers
 // with how much it took -- at most 2000 bytes, which is the chip's own limit --
 // so a single call is not a write, it is the first of however many it takes.
 //
@@ -179,11 +179,11 @@ static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
 static bool send_all(int32_t sock, const uint8_t *p, uint32_t n) {
     uint32_t stalled = 0;
     for (uint32_t done = 0; done < n; ) {
-        int32_t sent = myrtos_sock_send(sock, p + done, n - done);
+        int32_t sent = ubiqos_sock_send(sock, p + done, n - done);
         if (sent < 0) return false;            // the client has gone
         if (sent == 0) {
             if (++stalled > 1000) return false;   // a second of nothing taken
-            myrtos_sleep(1);                   // let the acknowledgements in
+            ubiqos_sleep(1);                   // let the acknowledgements in
             continue;
         }
         stalled = 0;
@@ -225,11 +225,11 @@ static uint32_t status_json(char *out, uint32_t max) {
     (void)max;
     uint32_t n = 0;
     struct { const char *key; uint32_t value; } rows[] = {
-        { "sramFree",   (uint32_t)myrtos_meminfo(MYRTOS_MEM_LARGEST_FREE) },
-        { "psramFree",  (uint32_t)myrtos_meminfo(MYRTOS_MEM_BULK_FREE) },
-        { "psramTotal", (uint32_t)myrtos_meminfo(MYRTOS_MEM_BULK_SIZE) },
-        { "processes",  (uint32_t)myrtos_meminfo(MYRTOS_MEM_PROCESSES) },
-        { "assertions", (uint32_t)myrtos_meminfo(MYRTOS_MEM_ASSERTS) },
+        { "sramFree",   (uint32_t)ubiqos_meminfo(UBIQOS_MEM_LARGEST_FREE) },
+        { "psramFree",  (uint32_t)ubiqos_meminfo(UBIQOS_MEM_BULK_FREE) },
+        { "psramTotal", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_BULK_SIZE) },
+        { "processes",  (uint32_t)ubiqos_meminfo(UBIQOS_MEM_PROCESSES) },
+        { "assertions", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_ASSERTS) },
     };
     out[n++] = '{';
     for (uint32_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
@@ -251,13 +251,13 @@ static uint32_t index_page(char *out, uint32_t max) {
     for (const char *q = "<!doctype html><meta charset=\"utf-8\"><title>/sd</title>"
                          "<h1>/sd</h1><ul>"; *q; q++) out[n++] = *q;
     for (uint32_t i = 0; n + 200 < max; i++) {
-        char raw[MYRTOS_DIRNAME_MAX], name[MYRTOS_DIRNAME_MAX];
+        char raw[UBIQOS_DIRNAME_MAX], name[UBIQOS_DIRNAME_MAX];
         uint32_t size = 0;
-        if (myrtos_fs_dir_at("/sd", i, raw, &size) < 0) break;
+        if (ubiqos_fs_dir_at("/sd", i, raw, &size) < 0) break;
         // The same expansion ls does. A short FAT entry is eleven padded
         // characters with the dot implied, and the rule for putting it back
-        // lives in one place -- see the note beside myrtos_pretty_name.
-        myrtos_pretty_name(raw, name);
+        // lives in one place -- see the note beside ubiqos_pretty_name.
+        ubiqos_pretty_name(raw, name);
         for (const char *q = "<li><a href=\"/sd/"; *q; q++) out[n++] = *q;
         for (const char *q = name; *q; q++) out[n++] = *q;
         for (const char *q = "\">"; *q; q++) out[n++] = *q;
@@ -275,7 +275,7 @@ static uint32_t index_page(char *out, uint32_t max) {
 // and the card holds files larger than this machine's memory.
 static bool send_file(int32_t sock, const char *path, const char *as_type) {
     uint32_t size = 0;
-    if (myrtos_fs_stat(path, &size) < 0) return false;
+    if (ubiqos_fs_stat(path, &size) < 0) return false;
 
     // By extension, which is a guess and is the guess every server makes. A
     // wrong one shows the file rather than losing it. A caller that knows
@@ -292,15 +292,15 @@ static bool send_file(int32_t sock, const char *path, const char *as_type) {
 
     send_head(sock, "200 OK", type, size);
 
-    int32_t fd = myrtos_open_flags(path, MYRTOS_O_RDONLY);
+    int32_t fd = ubiqos_open_flags(path, UBIQOS_O_RDONLY);
     if (fd < 0) return false;
     uint8_t buf[BUF_MAX];
     for (;;) {
-        int32_t got = myrtos_read(fd, buf, sizeof buf);
+        int32_t got = ubiqos_read(fd, buf, sizeof buf);
         if (got <= 0) break;
         if (!send_all(sock, buf, (uint32_t)got)) break;
     }
-    myrtos_close(fd);
+    ubiqos_close(fd);
     return true;
 }
 
@@ -364,7 +364,7 @@ static void serve(int32_t sock, const char *req) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: httpd [port] [stack]\n\n"
             "Serves the sensors at /, the card at /files and the files under it,\n"
             "and the machine's own numbers at /api/status -- on port 80 unless\n"
@@ -386,7 +386,7 @@ void module_main(int argc, char **argv) {
     // chip ran it, and went on being the default after the chip stopped -- so
     // plain `httpd` asked a stack that was no longer there for an address, got
     // none, and said the board was not on a network while it was on two.
-    uint32_t stack = MYRTOS_NET_LWIP;
+    uint32_t stack = UBIQOS_NET_LWIP;
     if (argc > 2) {
         stack = 0;
         for (const char *q = argv[2]; *q >= '0' && *q <= '9'; q++)
@@ -397,7 +397,7 @@ void module_main(int argc, char **argv) {
     // whether lwIP has an address would be the wrong question, and answering
     // it would refuse a stack that is perfectly well connected.
     char addr[48];
-    if (stack == MYRTOS_NET_NINA && myrtos_wifi_address(addr, sizeof addr) != 0) {
+    if (stack == UBIQOS_NET_NINA && ubiqos_wifi_address(addr, sizeof addr) != 0) {
         say("httpd: not on a network. 'wifi connect <ssid>' first.\r\n");
         return;
     }
@@ -405,27 +405,27 @@ void module_main(int argc, char **argv) {
     // `httpd &` -- so that is what is said first. It used to lead with "no such
     // network stack", which on a board whose stack was plainly up and serving
     // the very browser asking read as a fault.
-    int32_t server = myrtos_sock_listen_on(stack, (uint16_t)port);
+    int32_t server = ubiqos_sock_listen_on(stack, (uint16_t)port);
     if (server < 0) {
-        myrtos_line_t e;
-        myrtos_line_reset(&e);
-        myrtos_line_str(&e, "httpd: could not listen on port ");
-        myrtos_line_u32(&e, port);
-        myrtos_line_str(&e, " -- is another httpd already running? (ps)\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &e);
+        ubiqos_line_t e;
+        ubiqos_line_reset(&e);
+        ubiqos_line_str(&e, "httpd: could not listen on port ");
+        ubiqos_line_u32(&e, port);
+        ubiqos_line_str(&e, " -- is another httpd already running? (ps)\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &e);
         return;
     }
 
     // lwIP answers on every interface it has, so there is no one address to
     // name: the board is its hostname.local on the cable and on the WiFi.
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "httpd: serving on ");
-    myrtos_line_str(&l, stack == MYRTOS_NET_NINA ? addr : "lwIP (the cable and the WiFi)");
-    myrtos_line_str(&l, " port ");
-    myrtos_line_u32(&l, port);
-    myrtos_line_str(&l, ", ctrl-C to stop\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "httpd: serving on ");
+    ubiqos_line_str(&l, stack == UBIQOS_NET_NINA ? addr : "lwIP (the cable and the WiFi)");
+    ubiqos_line_str(&l, " port ");
+    ubiqos_line_u32(&l, port);
+    ubiqos_line_str(&l, ", ctrl-C to stop\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
     // Several connections at once, which is what makes keeping them free.
     //
@@ -460,14 +460,14 @@ void module_main(int argc, char **argv) {
 
     for (;;) {
         bool worked = false;
-        uint32_t now = myrtos_ticks_now();
+        uint32_t now = ubiqos_ticks_now();
 
         // One new client a pass. Asking is an SPI transaction and there is no
         // hurry: if two arrive together the second is taken on the next pass,
         // five milliseconds later.
         for (uint32_t i = 0; i < MAX_CONNS; i++) {
             if (conn[i].sock >= 0) continue;
-            int32_t c = myrtos_sock_accept(server);
+            int32_t c = ubiqos_sock_accept(server);
             if (c >= 0) {
                 conn[i].sock = c; conn[i].n = 0; conn[i].served = false;
                 conn[i].asked = false; conn[i].quiet_since = now;
@@ -478,7 +478,7 @@ void module_main(int argc, char **argv) {
 
         for (uint32_t i = 0; i < MAX_CONNS; i++) {
             if (conn[i].sock < 0) continue;
-            int32_t got = myrtos_sock_recv(conn[i].sock, (uint8_t *)conn[i].req + conn[i].n,
+            int32_t got = ubiqos_sock_recv(conn[i].sock, (uint8_t *)conn[i].req + conn[i].n,
                                            REQ_MAX - 1 - conn[i].n);
             if (got < 0) {
                 // A receive that fails is the client gone, or the fault nobody
@@ -487,14 +487,14 @@ void module_main(int argc, char **argv) {
                 // is worth a word only when nothing was ever served on this
                 // connection, because after that it is just a client leaving.
                 if (!conn[i].served) {
-                    myrtos_line_t e;
-                    myrtos_line_reset(&e);
-                    myrtos_line_str(&e, "httpd: receive failed before any request, sock ");
-                    myrtos_line_u32(&e, (uint32_t)conn[i].sock);
-                    myrtos_line_str(&e, "\r\n");
-                    myrtos_line_flush(MYRTOS_STDERR, &e);
+                    ubiqos_line_t e;
+                    ubiqos_line_reset(&e);
+                    ubiqos_line_str(&e, "httpd: receive failed before any request, sock ");
+                    ubiqos_line_u32(&e, (uint32_t)conn[i].sock);
+                    ubiqos_line_str(&e, "\r\n");
+                    ubiqos_line_flush(UBIQOS_STDERR, &e);
                 }
-                myrtos_sock_close(conn[i].sock);
+                ubiqos_sock_close(conn[i].sock);
                 conn[i].sock = -1;
                 continue;
             }
@@ -517,14 +517,14 @@ void module_main(int argc, char **argv) {
                 // stay until the two-second timeout.
                 if (quiet > 100u && !conn[i].asked) {
                     conn[i].asked = true;
-                    if (myrtos_sock_state(conn[i].sock) != (int32_t)MYRTOS_TCP_ESTABLISHED) {
-                        myrtos_sock_close(conn[i].sock);
+                    if (ubiqos_sock_state(conn[i].sock) != (int32_t)UBIQOS_TCP_ESTABLISHED) {
+                        ubiqos_sock_close(conn[i].sock);
                         conn[i].sock = -1;
                         continue;
                     }
                 }
                 if (quiet > 2000u) {
-                    myrtos_sock_close(conn[i].sock);
+                    ubiqos_sock_close(conn[i].sock);
                     conn[i].sock = -1;
                 }
                 continue;
@@ -546,15 +546,15 @@ void module_main(int argc, char **argv) {
             conn[i].n = 0;
             conn[i].served = true;
             conn[i].asked = false;
-            conn[i].quiet_since = myrtos_ticks_now();
+            conn[i].quiet_since = ubiqos_ticks_now();
         }
 
         // Only when there was nothing to do anywhere. Fast while the board is
         // busy, slow when it is not: an idle server asks five times a second,
         // not two hundred.
         if (!worked) {
-            uint32_t idle = myrtos_ticks_now() - last_request_ms;
-            myrtos_sleep(idle < 1000u ? 5 : 200);
+            uint32_t idle = ubiqos_ticks_now() - last_request_ms;
+            ubiqos_sleep(idle < 1000u ? 5 : 200);
         }
     }
 }

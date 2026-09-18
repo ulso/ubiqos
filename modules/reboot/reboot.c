@@ -1,9 +1,9 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // reboot -- starts the machine again.
 //
 // The counterpart of bootsel, which hands the board to the ROM bootloader
-// instead. This one comes back up as myrtos: the watchdog fires with a zero
+// instead. This one comes back up as UbiqOS: the watchdog fires with a zero
 // entry point, the bootrom runs, and the image is copied to RAM again exactly
 // as it is from power-on.
 //
@@ -21,9 +21,9 @@
 // is the window this command itself opens.
 void module_main(void) {
     uint32_t size = 0;
-    (void)myrtos_fs_stat("/", &size);
+    (void)ubiqos_fs_stat("/", &size);
 
-    myrtos_write_str(MYRTOS_STDOUT, "restarting\n");
-    myrtos_sleep(100);          // let the line reach the host before USB goes
-    myrtos_reboot();
+    ubiqos_write_str(UBIQOS_STDOUT, "restarting\n");
+    ubiqos_sleep(100);          // let the line reach the host before USB goes
+    ubiqos_reboot();
 }

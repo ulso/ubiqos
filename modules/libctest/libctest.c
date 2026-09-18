@@ -1,4 +1,4 @@
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // libctest -- checks the C library headers against what the standard says.
 //
@@ -6,8 +6,8 @@
 // wrong width goes unnoticed for a year. Every line says ok or FAIL, and the
 // last line is the count that matters.
 
-MYRTOS_LIBC_DEFINE
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_LIBC_DEFINE
+UBIQOS_MEM_SIZE(8192);
 
 // Thread-local, not plain static: a shareable module may not have writable
 // data, and check_module.py refused this file until it said so. Per-process is
@@ -107,7 +107,7 @@ void module_main(int argc, char **argv)
     check("calloc zeroes", z && !z[0] && !z[7]);
     free(z);
 
-    // myrtos_pretty_name, which turns what FAT stores into what a caller can
+    // ubiqos_pretty_name, which turns what FAT stores into what a caller can
     // open. It was three copies of the same rule until they were made one, and
     // until now it was only ever tested by looking at a directory listing --
     // which cannot show the cases that never occur on this card.
@@ -116,35 +116,35 @@ void module_main(int argc, char **argv)
     // short entry and nothing else is. A short entry cannot contain a dot,
     // because the separator is implied by position and not stored.
     printf("pretty names\n");
-    char pn[MYRTOS_DIRNAME_MAX];
+    char pn[UBIQOS_DIRNAME_MAX];
 
-    myrtos_pretty_name("SH      MOD", pn);
+    ubiqos_pretty_name("SH      MOD", pn);
     check_str("name and extension", pn, "sh.mod");
 
-    myrtos_pretty_name("W4         ", pn);
+    ubiqos_pretty_name("W4         ", pn);
     check_str("no extension", pn, "w4");
 
-    myrtos_pretty_name("README  TXT", pn);
+    ubiqos_pretty_name("README  TXT", pn);
     check_str("eight characters used", pn, "readme.txt");
 
-    myrtos_pretty_name("A       B  ", pn);
+    ubiqos_pretty_name("A       B  ", pn);
     check_str("one of each", pn, "a.b");
 
     // Eleven characters WITH a dot cannot be a short entry, so it is a name
     // already and must survive untouched -- case included.
-    myrtos_pretty_name("Makefile.in", pn);
+    ubiqos_pretty_name("Makefile.in", pn);
     check_str("eleven with a dot is a name", pn, "Makefile.in");
 
     // Any other length is a long name off the card, or a device's.
-    myrtos_pretty_name("hello.wasm", pn);
+    ubiqos_pretty_name("hello.wasm", pn);
     check_str("long name kept", pn, "hello.wasm");
-    myrtos_pretty_name("term", pn);
+    ubiqos_pretty_name("term", pn);
     check_str("device name kept", pn, "term");
-    myrtos_pretty_name("", pn);
+    ubiqos_pretty_name("", pn);
     check_str("empty stays empty", pn, "");
 
     // Twelve characters, no dot: one too many to be a short entry.
-    myrtos_pretty_name("ABCDEFGHIJKL", pn);
+    ubiqos_pretty_name("ABCDEFGHIJKL", pn);
     check_str("twelve is not a short entry", pn, "ABCDEFGHIJKL");
 
     printf("%d failure%s\n", failures, failures == 1 ? "" : "s");

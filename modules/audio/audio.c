@@ -20,7 +20,7 @@
 // reach -- the same wall sdlib hit, and the same way round it.
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
 #include "hardware/dma.h"
@@ -78,7 +78,7 @@
 #define I2S_MCLK   25u
 #define MCLK_HZ    48000000u
 
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 static bool ready;
 
 // --- THE RING -------------------------------------------------------------
@@ -192,7 +192,7 @@ static const dac_step_t dac_init[] = {
     // tone. That was audible and measurable and entirely self-inflicted.
     //
     // Nothing has to care about the odd rate. /dev/audio answers
-    // MYRTOS_SS_RATE and play resamples to whatever it says. The PIO divider
+    // UBIQOS_SS_RATE and play resamples to whatever it says. The PIO divider
     // comes out at exactly 40 here as well, which costs nothing and removes
     // the one bit of jitter this driver was making itself.
     //
@@ -279,7 +279,7 @@ static int32_t audio_getstat(uint32_t code, void *data, uint32_t len)
     // The ring is the exception to the four-byte rule below: it is as big as
     // it is, and a caller that asks for it with the wrong size is refused
     // rather than given part of it.
-    if (code == MYRTOS_SS_RINGDUMP) {
+    if (code == UBIQOS_SS_RINGDUMP) {
         if (!ready || !data || len != RING_BYTES) return -1;
         uint32_t at = dma_at();
         uint32_t *out32 = (uint32_t *)data;
@@ -289,12 +289,12 @@ static int32_t audio_getstat(uint32_t code, void *data, uint32_t len)
     }
     if (!data || len != 4) return -1;
     switch (code) {
-    case MYRTOS_SS_VOLUME: *(uint32_t *)data = vol_now; return 0;
+    case UBIQOS_SS_VOLUME: *(uint32_t *)data = vol_now; return 0;
     // Fixed, and not by choice: the PIO divider is an integer at this system
     // clock and 48000 is the rate that comes out exact. Worth answering all
     // the same -- a player has to know whether the file it holds can be
     // played at all, and the honest answer to that is a number.
-    case MYRTOS_SS_RATE:   *(uint32_t *)data = I2S_HZ; return 0;
+    case UBIQOS_SS_RATE:   *(uint32_t *)data = I2S_HZ; return 0;
     default:               return -1;
     }
 }
@@ -302,7 +302,7 @@ static int32_t audio_getstat(uint32_t code, void *data, uint32_t len)
 static int32_t audio_setstat(uint32_t code, const void *data, uint32_t len)
 {
     if (!data || len != 4) return -1;
-    if (code != MYRTOS_SS_VOLUME) return -1;
+    if (code != UBIQOS_SS_VOLUME) return -1;
     uint32_t v = *(const uint32_t *)data;
     if (v > 100u) return -1;
     uint8_t reg = (uint8_t)(int8_t)((int32_t)v - 100);
@@ -457,7 +457,7 @@ static int32_t audio_close(void)
 // contract for a device that can fill up, and the I/O manager parks the writer
 // on WAIT_WRITE until writable() says there is room again. Waiting here would
 // be waiting inside a system call, which on this machine is how a driver
-// starves everything else -- see the note in myrtos_long_syscalls.
+// starves everything else -- see the note in ubiqos_long_syscalls.
 static int32_t audio_write(const uint8_t *buf, uint32_t len)
 {
     if (!ready) return -1;
@@ -489,15 +489,15 @@ static int32_t audio_writable(void)
     return ready ? (int32_t)(ring_free() * 4u) : 0;
 }
 
-static bool audio_init(const myrtos_kernel_api_t *api)
+static bool audio_init(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = audio_init,
     .ops = {

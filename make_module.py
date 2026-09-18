@@ -6,7 +6,7 @@ import struct
 
 # Use the intended sync word, or keep 0x0509000B for RISC-V hardware protection.
 # Let's use 0x0509000B since it actively prevents CPU execution crashes via Custom-0!
-MYRTOS_SYNC = 0x0509000B
+UBIQOS_SYNC = 0x0509000B
 
 def elf_load_base(elf_path, nm_tool):
     """The lowest loaded address, which is where objcopy starts writing."""
@@ -24,7 +24,7 @@ def elf_load_base(elf_path, nm_tool):
 def find_mem_size(elf_path, nm_tool, default):
     """How much memory the module asks for, if it says.
 
-    MYRTOS_MEM_SIZE(n) puts an ABSOLUTE symbol in the object -- no data, no
+    UBIQOS_MEM_SIZE(n) puts an ABSOLUTE symbol in the object -- no data, no
     relocation, nothing in the image -- so its nm value IS the number. A module
     that says nothing gets the default, which is what every module got before
     this existed.
@@ -34,7 +34,7 @@ def find_mem_size(elf_path, nm_tool, default):
     out = subprocess.run([nm_tool, elf_path], capture_output=True, text=True)
     if out.returncode != 0:
         raise SystemExit(f"nm failed on {elf_path}")
-    m = re.search(r"^([0-9a-fA-F]+)\s+[aA]\s+__myrtos_mem_size$", out.stdout, re.M)
+    m = re.search(r"^([0-9a-fA-F]+)\s+[aA]\s+__ubiqos_mem_size$", out.stdout, re.M)
     if not m:
         return default
 
@@ -44,7 +44,7 @@ def find_mem_size(elf_path, nm_tool, default):
     # asking for more cannot be satisfied and should fail here, where it can be
     # read, rather than at exec where it is a number nobody sees.
     if n % 4 or not (1024 <= n <= 64 * 1024):
-        raise SystemExit(f"{elf_path}: MYRTOS_MEM_SIZE({n}) is not a multiple of "
+        raise SystemExit(f"{elf_path}: UBIQOS_MEM_SIZE({n}) is not a multiple of "
                          f"four between 1024 and 65536")
     return n
 
@@ -54,7 +54,7 @@ def find_entry_offset(elf_path, nm_tool, symbol):
 
     objcopy -O binary writes from the lowest loaded address, so the offset is the
     symbol's address minus that address. Two bugs have lived here. Assuming zero
-    went wrong: the linker put myrtos_syscall first and the kernel called it
+    went wrong: the linker put ubiqos_syscall first and the kernel called it
     instead of module_main. Then taking the lowest symbol address went wrong once
     modules had thread-local variables: their nm addresses are offsets inside the
     TLS block, starting at zero, so the base became zero and exec_offset became
@@ -77,8 +77,8 @@ def find_entry_offset(elf_path, nm_tool, symbol):
     for line in out.splitlines():
         parts = line.split()
         # W and V are weak definitions, which are still definitions. A module
-        # built NEWLIB gets its module_main from common/myrtos_syscalls.c as a
-        # weak symbol, so that a program written for myrtos can define its own
+        # built NEWLIB gets its module_main from common/ubiqos_syscalls.c as a
+        # weak symbol, so that a program written for UbiqOS can define its own
         # and a ported one can just have a main.
         if len(parts) == 3 and parts[2] == symbol and parts[1] in "tTdDrRWV":
             return int(parts[0], 16) - base
@@ -115,11 +115,11 @@ def tls_layout(elf_path, nm_tool):
     return vaddr - min(bases), init, total
 
 
-# A constant out of common/myrtos_abi.h, so that this script and the kernel
+# A constant out of common/ubiqos_abi.h, so that this script and the kernel
 # cannot disagree about it. The header is beside this file.
 def abi_constant(name):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "common", "myrtos_abi.h")
+                        "common", "ubiqos_abi.h")
     with open(path) as f:
         m = re.search(r"^#define\s+%s\s+(\d+)" % re.escape(name), f.read(), re.M)
     if not m:
@@ -143,11 +143,11 @@ def elf_machine(elf_path, nm_tool):
             continue
         what = line.split(":", 1)[1].strip()
         if "RISC-V" in what:
-            return 1                      # MYRTOS_ARCH_RV32
+            return 1                      # UBIQOS_ARCH_RV32
         if what.startswith("ARM"):
-            return 2                      # MYRTOS_ARCH_ARM32
+            return 2                      # UBIQOS_ARCH_ARM32
         raise SystemExit("unknown machine in %s: %s" % (elf_path, what))
-    return 0                              # MYRTOS_ARCH_NONE
+    return 0                              # UBIQOS_ARCH_NONE
 
 
 def max_alignment(elf_path, nm_tool):
@@ -362,7 +362,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
     if len(code_bytes) % 4 != 0:
         code_bytes += b'\x00' * (4 - (len(code_bytes) % 4))
 
-    # Fifteen characters, which is MYRTOS_NAME_LEN minus the terminator.
+    # Fifteen characters, which is UBIQOS_NAME_LEN minus the terminator.
     # It was eight until the module directory stopped storing 8.3 names, and a
     # longer one was silently cut short: the module built, loaded and
     # registered, and then could not be run, because no name a user could type
@@ -389,7 +389,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 
 # The header is 56 bytes: fourteen 32-bit words, with type_lang and attr_rev
 # sharing one and revision and reserved sharing another. It must match
-# myrtos_module_header_t exactly; when this said 28 and the struct said 32,
+# ubiqos_module_header_t exactly; when this said 28 and the struct said 32,
 # exec_offset and name_offset landed four bytes into the code.
     header_size = 56
     exec_offset = 0 if module_type == "data" else header_size + entry_in_code
@@ -432,14 +432,14 @@ def create_module(input_bin_path, output_mod_path, module_name,
     reloc_count = len(reloc)
     module_size = reloc_offset + 8 * reloc_count
 
-# Defaults for the myrtos-specific fields
-    MYRTOS_TYPE_PROGRAM = 1
-    MYRTOS_TYPE_DRIVER  = 2
-    MYRTOS_TYPE_DATA    = 3
-    MYRTOS_TYPE_LIBRARY = 4
-    kind = {"data": MYRTOS_TYPE_DATA,
-            "driver": MYRTOS_TYPE_DRIVER,
-            "library": MYRTOS_TYPE_LIBRARY}.get(module_type, MYRTOS_TYPE_PROGRAM)
+# Defaults for the ubiqos-specific fields
+    UBIQOS_TYPE_PROGRAM = 1
+    UBIQOS_TYPE_DRIVER  = 2
+    UBIQOS_TYPE_DATA    = 3
+    UBIQOS_TYPE_LIBRARY = 4
+    kind = {"data": UBIQOS_TYPE_DATA,
+            "driver": UBIQOS_TYPE_DRIVER,
+            "library": UBIQOS_TYPE_LIBRARY}.get(module_type, UBIQOS_TYPE_PROGRAM)
     # High byte: type. Low byte: the machine in the high nibble, the language in
     # the low one. Both fit in four bits and always have.
     arch = elf_machine(elf_path, nm_tool) if (elf_path and nm_tool) else 0
@@ -453,7 +453,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # the kernel refused all fifty-two of them -- a whole machine that booted to
 # "Nothing to run". A number that must agree with another number belongs in one
 # place, and the other place asks.
-    MYRTOS_ABI_VERSION = abi_constant("MYRTOS_ABI_VERSION")
+    UBIQOS_ABI_VERSION = abi_constant("UBIQOS_ABI_VERSION")
     # Bit 0 re-entrant, bit 1 real-time. A real-time module keeps its code and
     # its process memory in SRAM; everything else is given PSRAM, which is
     # plentiful but sits behind the XIP cache with latency nobody can predict.
@@ -462,7 +462,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # so the kernel allows only one instance to exist.
     attrs = (0 if single else 1) | (2 if realtime else 0)
     # Bit 3: start this program when the system comes up. See
-    # MYRTOS_ATTR_AUTOSTART; only a program can be started, so only a program
+    # UBIQOS_ATTR_AUTOSTART; only a program can be started, so only a program
     # may ask.
     if autostart:
         if module_type != "program":
@@ -473,10 +473,10 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # to zero. Any of them means the module cannot run where it lies.
     if reloc or bss_size or (elf_path and nm_tool and has_writable_data(elf_path, nm_tool)):
         attrs |= 4
-    attr_rev  = (attrs << 8) | MYRTOS_ABI_VERSION
+    attr_rev  = (attrs << 8) | UBIQOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
 # trap frame is 128 bytes, so 4 kB leaves ample depth for call chains -- and it
-# was every module's ration until MYRTOS_MEM_SIZE let one say otherwise. A
+# was every module's ration until UBIQOS_MEM_SIZE let one say otherwise. A
 # module that needs a buffer larger than its stack can spare is what this is
 # for; stdio's is the first.
     mem_size = 4096
@@ -488,7 +488,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
 # little-endian struct, hence (attr_rev << 16) | type_lang and not the other way
 # round; and the kernel once summed the crc field into its own checksum.
     fields = [
-        MYRTOS_SYNC, module_size, name_offset,
+        UBIQOS_SYNC, module_size, name_offset,
         (attr_rev << 16) | type_lang,
         exec_offset, mem_size,
         tls_offset, tls_init, tls_total,
@@ -498,7 +498,7 @@ def create_module(input_bin_path, output_mod_path, module_name,
     header_crc = (~sum(fields)) & 0xFFFFFFFF
 
     header_bytes = struct.pack('<IIIHHIIIIIHHIIII',
-        MYRTOS_SYNC, module_size, name_offset,
+        UBIQOS_SYNC, module_size, name_offset,
         type_lang, attr_rev, exec_offset, mem_size,
         tls_offset, tls_init, tls_total,
         revision, 0, reloc_offset, reloc_count, bss_size, header_crc

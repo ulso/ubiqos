@@ -31,8 +31,8 @@ by the act of recovering the machine.**
 
 Two changes fixed that:
 
-* `myrtos_crash` now lives in `__uninitialized_ram`, which survives a warm
-  reset, and `myrtos_crash_report` puts it in the log at the next boot. A power
+* `ubiqos_crash` now lives in `__uninitialized_ram`, which survives a warm
+  reset, and `ubiqos_crash_report` puts it in the log at the next boot. A power
   cycle still loses it, and that is the honest limit.
 * The Debug Probe can flash this board directly, so a wedged machine can be
   recovered WITHOUT BOOTSEL and without losing the record:
@@ -44,7 +44,7 @@ Two changes fixed that:
 
       openocd ... -c "init" -c "halt" -c "mdw 0x20000110 4"
 
-  where the address is whatever `nm build/os_kernel.elf | grep myrtos_crash`
+  where the address is whatever `nm build/os_kernel.elf | grep ubiqos_crash`
   says today.
 
 ## What it was, on 11 September 2026
@@ -90,16 +90,16 @@ crashed, it had stopped. That is a different thing and needed different tools.
 
 ## What the probe said
 
-    myrtos_ticks        213733 -> 217831   over four seconds
-    myrtos_video_pumps  275951 -> 275951   frozen
-    myrtos_video_lines  frozen
+    ubiqos_ticks        213733 -> 217831   over four seconds
+    ubiqos_video_pumps  275951 -> 275951   frozen
+    ubiqos_video_lines  frozen
     pc                  0x200088b2
 
 The millisecond tick was still counting, so the machine was not dead. The video
-pump was not, and the program counter was inside `myrtos_chargen_band` at
+pump was not, and the program counter was inside `ubiqos_chargen_band` at
 `chargen.c:349` -- which is this line:
 
-    const uint8_t *g = myrtos_font8x16[ch];
+    const uint8_t *g = ubiqos_font8x16[ch];
 
 **The font is in flash.** The character generator reads it from a TIMER
 INTERRUPT, and since 10 September this machine also runs driver modules whose
@@ -127,7 +127,7 @@ A photograph of the screen, which no amount of probing would have given:
 
 repeated down the whole screen. `Processes alive` is the `free` command, so the
 shell was running `free` over and over while the keyboard re-enumerated between
-each. myrtos has a note about exactly this from before -- "key repeat outlives
+each. UbiqOS has a note about exactly this from before -- "key repeat outlives
 the keyboard, repeat_key held 0x28" -- and 0x28 is Enter.
 
 So the keyboard dropped, the repeat kept sending Enter, the shell kept
@@ -206,7 +206,7 @@ holding and restarted the five-second clock with it each time round. That is
 what the photograph showed: `free` and "keyboard ready" alternating down the
 whole screen, with no "HID gone" between them.
 
-Both callbacks clear them now, and `myrtos_hid_lost_repeats` counts the repeats
+Both callbacks clear them now, and `ubiqos_hid_lost_repeats` counts the repeats
 abandoned because the keyboard went. One number would have named this in an
 afternoon instead of over two days.
 

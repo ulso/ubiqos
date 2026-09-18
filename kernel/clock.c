@@ -14,27 +14,27 @@ static uint64_t base_us;       // the uptime at which it was true
 static bool     have_it;
 static int32_t  offset_min;    // from config.txt, east of UTC
 
-bool myrtos_clock_is_set(void) { return have_it; }
-int32_t myrtos_clock_offset(void) { return offset_min; }
-void myrtos_clock_set_offset(int32_t minutes) { offset_min = minutes; }
+bool ubiqos_clock_is_set(void) { return have_it; }
+int32_t ubiqos_clock_offset(void) { return offset_min; }
+void ubiqos_clock_set_offset(int32_t minutes) { offset_min = minutes; }
 
-void myrtos_clock_set(uint32_t utc_seconds)
+void ubiqos_clock_set(uint32_t utc_seconds)
 {
     base_utc = utc_seconds;
     base_us  = time_us_64();
     have_it  = true;
 }
 
-uint32_t myrtos_clock_utc(void)
+uint32_t ubiqos_clock_utc(void)
 {
     if (!have_it) return 0;
     return base_utc + (uint32_t)((time_us_64() - base_us) / 1000000u);
 }
 
-uint32_t myrtos_clock_local(void)
+uint32_t ubiqos_clock_local(void)
 {
     if (!have_it) return 0;
-    return (uint32_t)((int32_t)myrtos_clock_utc() + offset_min * 60);
+    return (uint32_t)((int32_t)ubiqos_clock_utc() + offset_min * 60);
 }
 
 // Days since the epoch to a civil date. Howard Hinnant's algorithm, which
@@ -62,7 +62,7 @@ static char *two(char *p, uint32_t v)
     return p;
 }
 
-void myrtos_clock_stamp(char *out, uint32_t cap)
+void ubiqos_clock_stamp(char *out, uint32_t cap)
 {
     if (cap < 20) { if (cap) out[0] = 0; return; }
     if (!have_it) {
@@ -73,7 +73,7 @@ void myrtos_clock_stamp(char *out, uint32_t cap)
         return;
     }
 
-    const uint32_t t = myrtos_clock_local();
+    const uint32_t t = ubiqos_clock_local();
     const uint32_t secs_of_day = t % 86400u;
     int32_t y; uint32_t mo, d;
     civil_from_days((int32_t)(t / 86400u), &y, &mo, &d);
@@ -91,12 +91,12 @@ void myrtos_clock_stamp(char *out, uint32_t cap)
     *p = 0;
 }
 
-void myrtos_clock_time_only(char *out, uint32_t cap)
+void ubiqos_clock_time_only(char *out, uint32_t cap)
 {
     if (cap < 9) { if (cap) out[0] = 0; return; }
     if (!have_it) { out[0] = 0; return; }
 
-    const uint32_t s = myrtos_clock_local() % 86400u;
+    const uint32_t s = ubiqos_clock_local() % 86400u;
     char *p = out;
     p = two(p, s / 3600u);
     *p++ = ':'; p = two(p, (s / 60u) % 60u);

@@ -77,7 +77,7 @@ SDIO works. Four-bit wide bus, full clock. What was wrong was that it was asked
 second.
 
 A card latches into SPI mode the moment it is addressed that way and stays there
-until the power is cut. `myrtos_fat_remount` called `myrtos_sd_init` -- which is
+until the power is cut. `ubiqos_fat_remount` called `ubiqos_sd_init` -- which is
 SPI -- and then asked for SDIO, so every attempt for two days was made to a card
 that no longer spoke it. No amount of pin fixing could have helped.
 
@@ -229,15 +229,15 @@ wait that is too short for one card is a wrong answer waiting to happen.
 
 ## Any PIO block, and standard-capacity cards
 
-17 Sep 2026, for the Waveshare board built with `MYRTOS_NATIVE_USB=host`, where
+17 Sep 2026, for the Waveshare board built with `UBIQOS_NATIVE_USB=host`, where
 pio1 is the panel's and pio0 is free.
 
 **The block.** `pio1` was named in the global, in every DMA request
 (`DREQ_PIO1_RX0`, `DREQ_PIO1_TX0`) and in every pin function
-(`GPIO_FUNC_PIO1`). `MYRTOS_SD_PIO_INDEX` in `sd_card.h` chooses it now, pio1
+(`GPIO_FUNC_PIO1`). `UBIQOS_SD_PIO_INDEX` in `sd_card.h` chooses it now, pio1
 unless the build says otherwise. The replacements are constant expressions, so
 a pio1 build asks for the same numbers it did. The block's GPIO window is still
-the caller's business: `modules/sdlib` sets it from `MYRTOS_SD_PIO_GPIO_BASE`,
+the caller's business: `modules/sdlib` sets it from `UBIQOS_SD_PIO_GPIO_BASE`,
 16 by default for the Fruit Jam's GP34-39, 0 on the Waveshare board's GP10-15.
 
 **The card.** Upstream passes the block number straight to CMD17 and CMD24,
@@ -249,5 +249,5 @@ that card: FAT32 mounted over four-bit SDIO, and a file written over SDIO was
 there after a power cycle.
 
 `modules/sdlib/printf.c` changed too: it collects a call's output and hands it
-to `myrtos_print`, because character-at-a-time `myrtos_putc` does not reach the
+to `ubiqos_print`, because character-at-a-time `ubiqos_putc` does not reach the
 kernel log, and the Waveshare board has nowhere else to read it.

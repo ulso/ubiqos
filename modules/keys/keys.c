@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // keys -- reads the USB keyboard and writes what it gets to standard output.
 //
@@ -9,21 +9,21 @@
 // Escape quits.
 
 void module_main(void) {
-    int32_t kbd = myrtos_open("/dev/kbd");
+    int32_t kbd = ubiqos_open("/dev/kbd");
     if (kbd < 0) {
-        myrtos_write_str(MYRTOS_STDERR, "keys: no such device\n");
+        ubiqos_write_str(UBIQOS_STDERR, "keys: no such device\n");
         return;
     }
 
-    myrtos_write_str(MYRTOS_STDOUT, "reading the keyboard, escape to stop\n");
+    ubiqos_write_str(UBIQOS_STDOUT, "reading the keyboard, escape to stop\n");
 
     for (;;) {
         uint8_t c;
-        if (myrtos_read(kbd, &c, 1) <= 0) continue;   // blocks until there is one
+        if (ubiqos_read(kbd, &c, 1) <= 0) continue;   // blocks until there is one
         if (c == 27) break;
-        myrtos_write(MYRTOS_STDOUT, &c, 1);
+        ubiqos_write(UBIQOS_STDOUT, &c, 1);
     }
 
-    myrtos_write_str(MYRTOS_STDOUT, "\ndone\n");
-    myrtos_close(kbd);
+    ubiqos_write_str(UBIQOS_STDOUT, "\ndone\n");
+    ubiqos_close(kbd);
 }

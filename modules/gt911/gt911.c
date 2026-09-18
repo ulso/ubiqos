@@ -1,12 +1,12 @@
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "hardware/gpio.h"
 
 // gt911 -- the capacitive touch controller on the Waveshare 4.3B panel.
 //
 // A driver module, so nothing about it is in the kernel, and its pins come from
-// its descriptor rather than from here -- see myrtos_touch_config_t. The board
+// its descriptor rather than from here -- see ubiqos_touch_config_t. The board
 // is in the descriptor; this file is the chip.
 //
 // The bus is whichever I2C the descriptor names, and that is the reason this
@@ -15,8 +15,8 @@
 // a new entry in the kernel API. K->i2c is the first one; this asks for the
 // other.
 
-static const myrtos_kernel_api_t *K;
-static myrtos_touch_config_t cfg;
+static const ubiqos_kernel_api_t *K;
+static ubiqos_touch_config_t cfg;
 static void *bus;
 static bool ready;
 
@@ -123,14 +123,14 @@ static int32_t gt911_read(uint8_t *out, uint32_t len)
 {
     if (!ready) return -1;
 
-    myrtos_touch_t t = { 0, { { 0, 0 } } };
+    ubiqos_touch_t t = { 0, { { 0, 0 } } };
 
     uint8_t st = 0;
     if (reg_read(GT911_STATUS, &st, 1) && (st & 0x80u)) {
         uint32_t n = st & 0x0fu;
-        if (n > MYRTOS_TOUCH_MAX) n = MYRTOS_TOUCH_MAX;
+        if (n > UBIQOS_TOUCH_MAX) n = UBIQOS_TOUCH_MAX;
 
-        uint8_t raw[MYRTOS_TOUCH_MAX * 8];
+        uint8_t raw[UBIQOS_TOUCH_MAX * 8];
         if (n && reg_read(GT911_STATUS + 1u, raw, n * 8u)) {
             t.points = n;
             for (uint32_t i = 0; i < n; i++) {
@@ -150,7 +150,7 @@ static int32_t gt911_read(uint8_t *out, uint32_t len)
 }
 
 // Always: a poll has an answer even when the answer is nobody is touching it.
-static int32_t gt911_readable(void) { return ready ? (int32_t)sizeof(myrtos_touch_t) : 0; }
+static int32_t gt911_readable(void) { return ready ? (int32_t)sizeof(ubiqos_touch_t) : 0; }
 
 // What the chip says it is, rather than what the board header assumes. Asked
 // once by anything that has to turn a coordinate into a pixel: if these come
@@ -158,16 +158,16 @@ static int32_t gt911_readable(void) { return ready ? (int32_t)sizeof(myrtos_touc
 // not, this is the pair to scale by.
 static int32_t gt911_getstat(uint32_t code, void *data, uint32_t len)
 {
-    if (code != MYRTOS_SS_TOUCH_RANGE) return -1;
+    if (code != UBIQOS_SS_TOUCH_RANGE) return -1;
     if (!ready) return -1;
-    if (len < sizeof(myrtos_touch_range_t)) return -1;
+    if (len < sizeof(ubiqos_touch_range_t)) return -1;
 
     uint8_t c[6] = { 0, 0, 0, 0, 0, 0 };     // version, width, height, points
     uint8_t fw[2] = { 0, 0 };
     if (!reg_read(GT911_CONFIG_VER, c, sizeof c)) return -1;
     if (!reg_read(GT911_FIRMWARE, fw, sizeof fw)) return -1;
 
-    myrtos_touch_range_t r;
+    ubiqos_touch_range_t r;
     r.width    = (uint16_t)(c[1] | ((uint16_t)c[2] << 8));
     r.height   = (uint16_t)(c[3] | ((uint16_t)c[4] << 8));
     r.points   = (uint16_t)(c[5] & 0x0fu);
@@ -181,14 +181,14 @@ static int32_t gt911_getstat(uint32_t code, void *data, uint32_t len)
     return 0;
 }
 
-static bool gt911_lib_init(const myrtos_kernel_api_t *api)
+static bool gt911_lib_init(const ubiqos_kernel_api_t *api)
 {
     K = api;
     return true;
 }
 
-const myrtos_driver_module_t myrtos_driver = {
-    .abi = MYRTOS_DRIVER_ABI,
+const ubiqos_driver_module_t ubiqos_driver = {
+    .abi = UBIQOS_DRIVER_ABI,
     .reserved = 0,
     .init = gt911_lib_init,
     .ops = {

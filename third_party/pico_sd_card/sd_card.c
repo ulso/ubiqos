@@ -44,14 +44,14 @@ static inline uint32_t sd_pio_cmd(uint cmd, uint32_t param)
 
 #define SD_PIO_CMD(a, b)
 // LOCAL CHANGE: pio1 was named here, in every DMA request and in the pin
-// functions below; see MYRTOS_SD_PIO_INDEX in sd_card.h. Constants, so a build that keeps pio1
+// functions below; see UBIQOS_SD_PIO_INDEX in sd_card.h. Constants, so a build that keeps pio1
 // compiles to what it did.
-PIO sd_pio = PIO_INSTANCE(MYRTOS_SD_PIO_INDEX);
-#define SD_DREQ_RX0 (MYRTOS_SD_PIO_INDEX == 0 ? DREQ_PIO0_RX0 : \
-                     MYRTOS_SD_PIO_INDEX == 1 ? DREQ_PIO1_RX0 : DREQ_PIO2_RX0)
-#define SD_DREQ_TX0 (MYRTOS_SD_PIO_INDEX == 0 ? DREQ_PIO0_TX0 : \
-                     MYRTOS_SD_PIO_INDEX == 1 ? DREQ_PIO1_TX0 : DREQ_PIO2_TX0)
-#define SD_GPIO_FUNC ((gpio_function_t)(GPIO_FUNC_PIO0 + MYRTOS_SD_PIO_INDEX))
+PIO sd_pio = PIO_INSTANCE(UBIQOS_SD_PIO_INDEX);
+#define SD_DREQ_RX0 (UBIQOS_SD_PIO_INDEX == 0 ? DREQ_PIO0_RX0 : \
+                     UBIQOS_SD_PIO_INDEX == 1 ? DREQ_PIO1_RX0 : DREQ_PIO2_RX0)
+#define SD_DREQ_TX0 (UBIQOS_SD_PIO_INDEX == 0 ? DREQ_PIO0_TX0 : \
+                     UBIQOS_SD_PIO_INDEX == 1 ? DREQ_PIO1_TX0 : DREQ_PIO2_TX0)
+#define SD_GPIO_FUNC ((gpio_function_t)(GPIO_FUNC_PIO0 + UBIQOS_SD_PIO_INDEX))
 
 // LOCAL: from the card's answer to ACMD41. See sd_is_high_capacity.
 static bool sd_high_capacity;

@@ -15,7 +15,7 @@
 //
 // The frames do not come through read and write. Those already carry the
 // control plane, and a driver module serves exactly one device, so the data
-// plane goes through getstat and setstat -- see MYRTOS_SS_EH_RX and _TX.
+// plane goes through getstat and setstat -- see UBIQOS_SS_EH_RX and _TX.
 //
 // --- THE ADDRESS ------------------------------------------------------------
 //
@@ -36,8 +36,8 @@
 #include "io.h"
 #include "config.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
 
 #define EH_MTU 1500
 
@@ -59,7 +59,7 @@ static struct netif wnif;
 static int32_t eh_path = -1;
 static bool up;
 
-uint32_t myrtos_eh_in, myrtos_eh_out, myrtos_eh_dropped;
+uint32_t ubiqos_eh_in, ubiqos_eh_out, ubiqos_eh_dropped;
 
 // The kernel owns this descriptor: it is opened once, never closed, and
 // belongs to no process -- which is why it is opened with the kernel's own pid
@@ -78,14 +78,14 @@ static err_t wifi_link_output(struct netif *n, struct pbuf *p)
     uint16_t n_copied = pbuf_copy_partial(p, flat, p->tot_len, 0);
     if (!n_copied) return ERR_IF;
 
-    if (myrtos_io_setstat(eh_path, MYRTOS_SS_EH_TX, flat, n_copied, KERNEL_PID) < 0) {
+    if (ubiqos_io_setstat(eh_path, UBIQOS_SS_EH_TX, flat, n_copied, KERNEL_PID) < 0) {
         // One frame at a time on that wire. lwIP retries, and saying so is
         // better than dropping it quietly -- a link that loses packets without
         // counting them is the hardest kind to believe.
-        myrtos_eh_dropped++;
+        ubiqos_eh_dropped++;
         return ERR_IF;
     }
-    myrtos_eh_out++;
+    ubiqos_eh_out++;
     return ERR_OK;
 }
 
@@ -100,7 +100,7 @@ static err_t wifi_if_init(struct netif *n)
     // co-processor turns 802.11 into 802.3 using the address the access point
     // knows, and a netif with any other would discard everything addressed to
     // the machine it is part of.
-    if (myrtos_io_getstat(eh_path, MYRTOS_SS_EH_MAC, n->hwaddr, 6, KERNEL_PID) < 0)
+    if (ubiqos_io_getstat(eh_path, UBIQOS_SS_EH_MAC, n->hwaddr, 6, KERNEL_PID) < 0)
         return ERR_IF;
 
     n->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET
@@ -114,8 +114,8 @@ static void print_ip(const void *addr)
 {
     const uint8_t *a = (const uint8_t *)addr;
     for (int i = 0; i < 4; i++) {
-        myrtos_print_u32(a[i]);
-        if (i < 3) myrtos_print(".");
+        ubiqos_print_u32(a[i]);
+        if (i < 3) ubiqos_print(".");
     }
 }
 
@@ -135,7 +135,7 @@ static void print_ip(const void *addr)
 static void take_the_default(struct netif *n)
 {
     netif_set_default(n);
-    myrtos_print("wifi: routing through the air now, not the cable\n");
+    ubiqos_print("wifi: routing through the air now, not the cable\n");
 }
 
 static void on_status(struct netif *n)
@@ -148,13 +148,13 @@ static void on_status(struct netif *n)
     // together are what says the address came from a DHCP server rather than
     // from somewhere else. An address on its own proves only that the stack
     // put something in the field.
-    myrtos_print("wifi: address ");
+    ubiqos_print("wifi: address ");
     print_ip(netif_ip4_addr(n));
-    myrtos_print(" mask ");
+    ubiqos_print(" mask ");
     print_ip(netif_ip4_netmask(n));
-    myrtos_print(" router ");
+    ubiqos_print(" router ");
     print_ip(netif_ip4_gw(n));
-    myrtos_print("\n");
+    ubiqos_print("\n");
 }
 
 // Brought up when the radio is, which is when somebody has run the control
@@ -173,9 +173,9 @@ static void ask_to_join(void)
 {
     static bool asked;
     if (asked) return;
-    if (!myrtos_config_done()) return;          // the card has not been read
+    if (!ubiqos_config_done()) return;          // the card has not been read
 
-    const char *creds = myrtos_config_credentials();
+    const char *creds = ubiqos_config_credentials();
     asked = true;                               // once either way
     if (!creds) return;                         // no network named, or no password
 
@@ -183,25 +183,25 @@ static void ask_to_join(void)
     while (creds[n] || creds[n + 1]) n++;        // over the NUL between the two
     n += 2;                                     // and the pair of terminators
 
-    if (myrtos_io_setstat(eh_path, MYRTOS_SS_EH_JOIN, creds, n, KERNEL_PID) < 0)
-        myrtos_print("wifi: the driver would not take the card's network\n");
+    if (ubiqos_io_setstat(eh_path, UBIQOS_SS_EH_JOIN, creds, n, KERNEL_PID) < 0)
+        ubiqos_print("wifi: the driver would not take the card's network\n");
     else
-        myrtos_print("wifi: joining the network named on the card\n");
+        ubiqos_print("wifi: joining the network named on the card\n");
 }
 
-bool myrtos_eh_netif_start(void)
+bool ubiqos_eh_netif_start(void)
 {
     if (up) return true;
 
     if (eh_path < 0) {
-        eh_path = myrtos_io_open("eh", KERNEL_PID);
+        eh_path = ubiqos_io_open("eh", KERNEL_PID);
         if (eh_path < 0) return false;
     }
 
     ask_to_join();
 
     uint8_t mac[6];
-    if (myrtos_io_getstat(eh_path, MYRTOS_SS_EH_MAC, mac, 6, KERNEL_PID) < 0)
+    if (ubiqos_io_getstat(eh_path, UBIQOS_SS_EH_MAC, mac, 6, KERNEL_PID) < 0)
         return false;                     // the radio has not joined yet
 
     if (!netif_add(&wnif, NULL, NULL, NULL, NULL, wifi_if_init, ethernet_input))
@@ -212,7 +212,7 @@ bool myrtos_eh_netif_start(void)
     // Without it the board appears on the network and appears nowhere in the
     // router's list of devices -- which is exactly how it looked: pingable,
     // leased, and anonymous.
-    const char *host = myrtos_config_hostname();
+    const char *host = ubiqos_config_hostname();
     netif_set_hostname(&wnif, host);
 
     netif_set_status_callback(&wnif, on_status);
@@ -229,18 +229,18 @@ bool myrtos_eh_netif_start(void)
         mdns_resp_add_service(&wnif, host, "_http", DNSSD_PROTO_TCP, 80, NULL, NULL);
         mdns_resp_announce(&wnif);
     } else {
-        myrtos_print("wifi: the mDNS responder would not take this interface\n");
+        ubiqos_print("wifi: the mDNS responder would not take this interface\n");
     }
 #endif
 
     up = true;
-    myrtos_print("wifi: interface up as ");
-    myrtos_print(host);
-    myrtos_print(", asking DHCP for an address\n");
+    ubiqos_print("wifi: interface up as ");
+    ubiqos_print(host);
+    ubiqos_print(", asking DHCP for an address\n");
     return true;
 }
 
-bool myrtos_eh_netif_up(void) { return up; }
+bool ubiqos_eh_netif_up(void) { return up; }
 
 // Everything the driver has queued, handed to lwIP. Called from the USB task's
 // loop, which is the only place either of these may be touched.
@@ -248,24 +248,24 @@ bool myrtos_eh_netif_up(void) { return up; }
 // Bounded, and deliberately: a burst of broadcast traffic is not a reason to
 // stop answering USB for as long as it lasts. What is left waits for the next
 // turn, which is a millisecond away.
-void myrtos_eh_netif_poll(void)
+void ubiqos_eh_netif_poll(void)
 {
     if (!up) return;
 
     for (int budget = 0; budget < 8; budget++) {
         static uint8_t frame[EH_FRAME_MAX];
-        int32_t n = myrtos_io_getstat(eh_path, MYRTOS_SS_EH_RX,
+        int32_t n = ubiqos_io_getstat(eh_path, UBIQOS_SS_EH_RX,
                                       frame, sizeof(frame), KERNEL_PID);
         if (n <= 0) return;
 
         struct pbuf *p = pbuf_alloc(PBUF_RAW, (uint16_t)n, PBUF_POOL);
-        if (!p) { myrtos_eh_dropped++; continue; }   // the pool is empty; drop it
+        if (!p) { ubiqos_eh_dropped++; continue; }   // the pool is empty; drop it
         pbuf_take(p, frame, (uint16_t)n);
 
-        myrtos_eh_in++;
+        ubiqos_eh_in++;
         if (wnif.input(p, &wnif) != ERR_OK) {
             pbuf_free(p);
-            myrtos_eh_dropped++;
+            ubiqos_eh_dropped++;
         }
     }
 }

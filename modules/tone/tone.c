@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // tone -- a sine into /dev/audio, so there is something to listen to.
 //
@@ -16,7 +16,7 @@
 // nobody has heard yet is not the moment to find out whether the volume
 // registers were what you thought.
 
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_MEM_SIZE(8192);
 
 // Asked, not assumed. This was 48000 written in, and when the device moved to
 // 46875 every tone came out 2.3% flat and every duration 2.3% long -- a wrong
@@ -44,7 +44,7 @@ static uint32_t to_u32(const char *s, bool *ok) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: tone [-v] [HZ [MS]]\n\nA sine out of /dev/audio. 440 Hz for a second by default.\n-v reports what the device took, which is how the ring is checked.\n"))
         return;
 
@@ -57,18 +57,18 @@ void module_main(int argc, char **argv) {
     if (argc > 1) hz = to_u32(argv[1], &ok);
     if (ok && argc > 2) ok = (ms = to_u32(argv[2], &ok), ok);
 
-    int32_t fd = myrtos_open("/dev/audio");
-    if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "tone: no /dev/audio\n"); return; }
+    int32_t fd = ubiqos_open("/dev/audio");
+    if (fd < 0) { ubiqos_write_str(UBIQOS_STDERR, "tone: no /dev/audio\n"); return; }
 
     // The device is opened before the arguments are checked, because half of
     // what makes an argument wrong is the rate, and only the device knows it.
     uint32_t rate = RATE_FALLBACK;
-    if (myrtos_getstat(fd, MYRTOS_SS_RATE, &rate, sizeof rate) < 0 || !rate)
+    if (ubiqos_getstat(fd, UBIQOS_SS_RATE, &rate, sizeof rate) < 0 || !rate)
         rate = RATE_FALLBACK;
 
     if (!ok || !hz || hz > rate / 2 || !ms || ms > 30000) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: tone [-v] [HZ [MS]]  -- up to half the device rate, 30000 ms\n");
-        myrtos_close(fd);
+        ubiqos_write_str(UBIQOS_STDERR, "usage: tone [-v] [HZ [MS]]  -- up to half the device rate, 30000 ms\n");
+        ubiqos_close(fd);
         return;
     }
 
@@ -89,7 +89,7 @@ void module_main(int argc, char **argv) {
             buf[i * 2 + 1] = s;
             phase += step;
         }
-        int32_t w = myrtos_write(fd, (const uint8_t *)buf, n * 4u);
+        int32_t w = ubiqos_write(fd, (const uint8_t *)buf, n * 4u);
         if (w < 0) break;
         if (w == 0) { if (++zeros > 100000) break; continue; }
         if ((uint32_t)w < n * 4u) shorts++;
@@ -106,15 +106,15 @@ void module_main(int argc, char **argv) {
     // debugged -- a silent tone that "finished" instantly showed up here as
     // asked 144000, wrote 2048 -- so they are worth a flag rather than a
     // deletion. They are not worth printing at every beep.
-    if (!verbose) { myrtos_close(fd); return; }
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "asked "); myrtos_line_u32(&l, asked);
-    myrtos_line_str(&l, ", wrote "); myrtos_line_u32(&l, wrote);
-    myrtos_line_str(&l, ", short writes "); myrtos_line_u32(&l, shorts);
-    myrtos_line_str(&l, ", empty "); myrtos_line_u32(&l, zeros);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    if (!verbose) { ubiqos_close(fd); return; }
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "asked "); ubiqos_line_u32(&l, asked);
+    ubiqos_line_str(&l, ", wrote "); ubiqos_line_u32(&l, wrote);
+    ubiqos_line_str(&l, ", short writes "); ubiqos_line_u32(&l, shorts);
+    ubiqos_line_str(&l, ", empty "); ubiqos_line_u32(&l, zeros);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
-    myrtos_close(fd);
+    ubiqos_close(fd);
 }

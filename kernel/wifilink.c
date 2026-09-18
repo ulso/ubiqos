@@ -18,17 +18,17 @@
 #include "hardware/dma.h"
 #include "hardware/clocks.h"
 #include "hardware/irq.h"
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 #include "moddir.h"
 #include "io.h"
 #include "sdcard.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-int32_t myrtos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
-void *myrtos_tlsf_malloc(void *pool, uint32_t size);
-extern void *myrtos_bulk_pool;
-extern void *myrtos_mem_pool;
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
+void *ubiqos_tlsf_malloc(void *pool, uint32_t size);
+extern void *ubiqos_bulk_pool;
+extern void *ubiqos_mem_pool;
 
 // Wrappers rather than the functions themselves, and for two different reasons.
 // gpio_put, gpio_get and gpio_set_dir are inline in the SDK's headers, so there
@@ -48,15 +48,15 @@ static void   k_gpio_set_pulls(uint32_t p, bool u, bool d) { gpio_set_pulls(p, u
 static void   k_busy_wait(uint64_t us)                     { busy_wait_us(us); }
 static uint64_t k_time_us(void)                            { return time_us_64(); }
 static void  *k_bulk_alloc(uint32_t n)
-{ return myrtos_bulk_pool ? myrtos_tlsf_malloc(myrtos_bulk_pool, n) : 0; }
+{ return ubiqos_bulk_pool ? ubiqos_tlsf_malloc(ubiqos_bulk_pool, n) : 0; }
 
 // Version 3. SRAM rather than the bulk pool, because this is where a library
 // puts anything DMA will touch -- see the note on mem_alloc in the ABI.
-void *myrtos_mem_alloc(uint32_t size);
-void myrtos_putc(char c);
-uint32_t myrtos_psram_bytes(void);
-static void  *k_mem_alloc(uint32_t n)                      { return myrtos_mem_alloc(n); }
-static void   k_putc(char c)                               { myrtos_putc(c); }
+void *ubiqos_mem_alloc(uint32_t size);
+void ubiqos_putc(char c);
+uint32_t ubiqos_psram_bytes(void);
+static void  *k_mem_alloc(uint32_t n)                      { return ubiqos_mem_alloc(n); }
+static void   k_putc(char c)                               { ubiqos_putc(c); }
 
 // The PSRAM window, bounded at BOTH ends. SRAM is at 0x20000000 and PSRAM at
 // 0x11000000, so "above the PSRAM base" is true of SRAM too -- a mistake this
@@ -64,8 +64,8 @@ static void   k_putc(char c)                               { myrtos_putc(c); }
 static bool   k_dma_safe(const void *p)
 {
     uintptr_t a = (uintptr_t)p;
-    uint32_t n = myrtos_psram_bytes();
-    return !(n && a >= MYRTOS_PSRAM_BASE && a < (uintptr_t)MYRTOS_PSRAM_BASE + n);
+    uint32_t n = ubiqos_psram_bytes();
+    return !(n && a >= UBIQOS_PSRAM_BASE && a < (uintptr_t)UBIQOS_PSRAM_BASE + n);
 }
 static void   k_spi_set_baudrate(void *spi, uint32_t baud)
 { spi_set_baudrate((spi_inst_t*)spi, baud); }
@@ -104,7 +104,7 @@ static int32_t  k_dma_claim(void) { return dma_claim_unused_channel(false); }
 // Straight out of the pool with no owner and no header: a driver's buffer is
 // never given back, so there is nothing to remember about it.
 static void  *k_driver_alloc(uint32_t n)
-{ return myrtos_mem_pool ? myrtos_tlsf_malloc(myrtos_mem_pool, n) : 0; }
+{ return ubiqos_mem_pool ? ubiqos_tlsf_malloc(ubiqos_mem_pool, n) : 0; }
 // Integer divisions only, and of the clocks this machine already has. A
 // fractional divider would widen what can be asked for and would put jitter on
 // the answer, which defeats the purpose of handing a chip a clock at all.
@@ -144,11 +144,11 @@ static int32_t k_irq_install(uint32_t irq, void (*handler)(void), uint32_t prior
 
 // Not static any more: fat32link.c wants the same table, and there is only
 // one kernel to describe.
-const myrtos_kernel_api_t myrtos_kernel_api = {
-    .abi               = MYRTOS_KERNEL_API_ABI,
-    .print             = myrtos_print,
-    .print_u32         = myrtos_print_u32,
-    .kernel_thread     = myrtos_kernel_thread,
+const ubiqos_kernel_api_t ubiqos_kernel_api = {
+    .abi               = UBIQOS_KERNEL_API_ABI,
+    .print             = ubiqos_print,
+    .print_u32         = ubiqos_print_u32,
+    .kernel_thread     = ubiqos_kernel_thread,
     .bulk_alloc        = k_bulk_alloc,
     .spi               = spi1,
     .spi_init          = k_spi_init,
@@ -161,10 +161,10 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .gpio_set_pulls    = k_gpio_set_pulls,
     .busy_wait_us      = k_busy_wait,
     .time_us           = k_time_us,
-    .sd_init           = myrtos_sd_init,
-    .sd_try_sdio       = myrtos_sd_try_sdio,
-    .sd_read_block     = myrtos_sd_read_block,
-    .sd_write_block    = myrtos_sd_write_block,
+    .sd_init           = ubiqos_sd_init,
+    .sd_try_sdio       = ubiqos_sd_try_sdio,
+    .sd_read_block     = ubiqos_sd_read_block,
+    .sd_write_block    = ubiqos_sd_write_block,
 
     .mem_alloc         = k_mem_alloc,
     .putc              = k_putc,
@@ -188,50 +188,50 @@ const myrtos_kernel_api_t myrtos_kernel_api = {
     .driver_alloc      = k_driver_alloc,
     .gpio_clock_out    = k_gpio_clock_out,
     .irq_install       = k_irq_install,
-    .pin_claim         = myrtos_pin_claim,
-    .pin_release       = myrtos_pin_release,
-    .pin_owner         = myrtos_pin_owner,
+    .pin_claim         = ubiqos_pin_claim,
+    .pin_release       = ubiqos_pin_release,
+    .pin_owner         = ubiqos_pin_owner,
 };
 
 // The entries wifilib publishes, in the order its table documents them.
 enum { WIFI_INIT = 0, WIFI_PROBE = 1, WIFI_START = 2, WIFI_PID = 3,
        WIFI_FORGET = 4, WIFI_RESET = 5 };
 
-static const myrtos_lib_table_t *lib;
+static const ubiqos_lib_table_t *lib;
 
 // Linked on the first call and not at boot, so that a machine with no wifi
 // module in flash pays nothing and says nothing. Failing is not an error worth
-// a message here: myrtos_lib_link has already said what went wrong if anything
+// a message here: ubiqos_lib_link has already said what went wrong if anything
 // did, and a board without the module simply has no wifi.
 static bool ensure_linked(void)
 {
     if (lib) return true;
-    lib = myrtos_lib_link("wifilib", 0);
+    lib = ubiqos_lib_link("wifilib", 0);
     if (!lib || lib->count <= WIFI_RESET) { lib = 0; return false; }
 
-    bool (*init)(const myrtos_kernel_api_t *) = (bool (*)(const myrtos_kernel_api_t *))lib->fn[WIFI_INIT];
-    if (!init(&myrtos_kernel_api)) { lib = 0; return false; }
+    bool (*init)(const ubiqos_kernel_api_t *) = (bool (*)(const ubiqos_kernel_api_t *))lib->fn[WIFI_INIT];
+    if (!init(&ubiqos_kernel_api)) { lib = 0; return false; }
 
     // Said out loud, because a library that does not link fails silently by
     // design -- a board without the module simply has no wifi -- and silence
     // is indistinguishable from success when you are looking for either.
-    myrtos_print("wifi: library linked, running from the module pool\n");
+    ubiqos_print("wifi: library linked, running from the module pool\n");
     return true;
 }
 
-void myrtos_wifi_probe(void)
+void ubiqos_wifi_probe(void)
 {
     if (!ensure_linked()) return;
     ((void (*)(void))lib->fn[WIFI_PROBE])();
 }
 
-void myrtos_wifi_start_server(void)
+void ubiqos_wifi_start_server(void)
 {
     if (!ensure_linked()) return;
     ((void (*)(void))lib->fn[WIFI_START])();
 }
 
-int32_t myrtos_wifi_server_pid(void)
+int32_t ubiqos_wifi_server_pid(void)
 {
     if (!lib) return -1;                 // not linked means no server to ask
     return ((int32_t (*)(void))lib->fn[WIFI_PID])();
@@ -247,7 +247,7 @@ int32_t myrtos_wifi_server_pid(void)
 // the wifi thread does the closing at the top of the next request it handles.
 // Called on every process teardown, so it must also be free when there is no
 // wifi library at all.
-void myrtos_wifi_forget_pid(int32_t pid)
+void ubiqos_wifi_forget_pid(int32_t pid)
 {
     if (!lib) return;                    // never linked: no sockets to lose
     ((void (*)(int32_t))lib->fn[WIFI_FORGET])(pid);
@@ -257,7 +257,7 @@ void myrtos_wifi_forget_pid(int32_t pid)
 // asked anything, which is exactly when it is wanted. It disconnects the
 // machine -- nina-fw keeps no credentials across a reset -- so it is asked for
 // and never done quietly.
-int32_t myrtos_wifi_hard_reset(void)
+int32_t ubiqos_wifi_hard_reset(void)
 {
     if (!ensure_linked()) return -1;
     ((void (*)(void))lib->fn[WIFI_RESET])();

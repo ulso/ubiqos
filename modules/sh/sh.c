@@ -1,6 +1,6 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
-// The myrtos shell. OS-9's shell did essentially this: read a name, look the
+// The UbiqOS shell. OS-9's shell did essentially this: read a name, look the
 // module up, start it. All the complexity is in the kernel; the shell is a loop.
 //
 // The loop grew an editor. It is worth saying why it is here rather than in the
@@ -57,8 +57,8 @@ static uint32_t copy_str(char *dst, const char *src, uint32_t max) {
 // rather than printed, because the editor needs to know how wide it is.
 static void build_prompt(editor_t *e) {
     char cwd[64];
-    myrtos_getcwd(cwd, sizeof(cwd));
-    uint32_t n = copy_str(e->prompt, "myrtos:", PROMPT_MAX);
+    ubiqos_getcwd(cwd, sizeof(cwd));
+    uint32_t n = copy_str(e->prompt, "ubiqos:", PROMPT_MAX);
     n += copy_str(e->prompt + n, cwd[0] ? cwd : "/", PROMPT_MAX - n);
     n += copy_str(e->prompt + n, "> ", PROMPT_MAX - n);
     e->prompt_len = n;
@@ -75,21 +75,21 @@ static uint32_t byte_of_column(editor_t *e, uint32_t col);
 
 static void redraw(editor_t *e) {
     if (e->quiet) return;            // a script has nobody to draw for
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "\r");
-    myrtos_line_str(&l, e->prompt);
-    myrtos_line_flush(e->out, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "\r");
+    ubiqos_line_str(&l, e->prompt);
+    ubiqos_line_flush(e->out, &l);
 
     uint32_t start = view_start(e), w = view_width(e);
     uint32_t shown = byte_of_column(e, columns_to(e, start) + w) - start;
-    if (shown) myrtos_write(e->out, e->line + start, shown);
+    if (shown) ubiqos_write(e->out, e->line + start, shown);
 
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "\x1b[K\r\x1b[");
-    myrtos_line_u32(&l, e->prompt_len + (columns_to(e, e->pos) - columns_to(e, start)) + 1);
-    myrtos_line_str(&l, "G");
-    myrtos_line_flush(e->out, &l);
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "\x1b[K\r\x1b[");
+    ubiqos_line_u32(&l, e->prompt_len + (columns_to(e, e->pos) - columns_to(e, start)) + 1);
+    ubiqos_line_str(&l, "G");
+    ubiqos_line_flush(e->out, &l);
 }
 
 // How much of a command fits: the buffer, and nothing else.
@@ -223,22 +223,22 @@ static uint32_t ask_width(int32_t out, int32_t in) {
     // host:", every time the two happened to coincide. A console byte trace is
     // what showed it; see vidstat -t.
     //
-    // One write, because myrtos_console_put takes a whole call into the ring
+    // One write, because ubiqos_console_put takes a whole call into the ring
     // with interrupts off. Split across two, another writer could still land
     // between them.
-    myrtos_write_str(out, "\x1b[999C\x1b[6n\r");
+    ubiqos_write_str(out, "\x1b[999C\x1b[6n\r");
 
-    uint32_t deadline = myrtos_ticks_now() + WIDTH_WAIT_MS;
+    uint32_t deadline = ubiqos_ticks_now() + WIDTH_WAIT_MS;
     uint32_t col = 0, seen = 0;
     int state = 0;                       // 0 esc, 1 '[', 2 row, 3 col
-    while ((int32_t)(myrtos_ticks_now() - deadline) < 0) {
+    while ((int32_t)(ubiqos_ticks_now() - deadline) < 0) {
         uint8_t ch;
-        // Ask before reading. myrtos_read blocks when there is nothing, so
+        // Ask before reading. ubiqos_read blocks when there is nothing, so
         // reading blindly here waited for the answer that was never coming --
         // until the first keystroke arrived, which it then ate. That is where
         // "echo one" came back as "cho one".
-        if (myrtos_readable(in) <= 0) { myrtos_sleep(2); continue; }
-        if (myrtos_read(in, &ch, 1) <= 0) continue;
+        if (ubiqos_readable(in) <= 0) { ubiqos_sleep(2); continue; }
+        if (ubiqos_read(in, &ch, 1) <= 0) continue;
         if (state == 0) { if (ch == 0x1b) state = 1; }
         else if (state == 1) { state = (ch == '[') ? 2 : 0; }
         else if (state == 2) { if (ch == ';') state = 3; else if (ch < '0' || ch > '9') state = 0; }
@@ -247,7 +247,7 @@ static uint32_t ask_width(int32_t out, int32_t in) {
             else { if (ch == 'R' && seen) break; state = 0; col = 0; seen = 0; }
         }
     }
-    myrtos_write_str(out, "\r");
+    ubiqos_write_str(out, "\r");
     return (seen && col >= 20 && col <= 400) ? col : WIDTH_DEFAULT;
 }
 
@@ -270,18 +270,18 @@ static void change_dir(int32_t c, const char *arg) {
     while (*arg == ' ') arg++;
     if (!*arg) arg = "/";
 
-    if (myrtos_chdir(arg) == 0) return;
+    if (ubiqos_chdir(arg) == 0) return;
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "cd: no such directory: ");
-    myrtos_line_str(&l, arg);
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_flush(c, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "cd: no such directory: ");
+    ubiqos_line_str(&l, arg);
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_flush(c, &l);
 }
 
 static void help(int32_t c) {
-    myrtos_write_str(c,
+    ubiqos_write_str(c,
         // The name column is nine wide because bootsel is seven characters and
         // needs two after it. Everything lines up on the same column.
         "\r\nType a module name to run it. Built in:\r\n"
@@ -358,10 +358,10 @@ static int take_redirects(char *args, redirect_t *out, int max) {
         int32_t fd = -1;
         bool append = false;
         int len = 0;
-        if (token_is(p, "2>"))      { fd = MYRTOS_STDERR; len = 2; }
-        else if (token_is(p, ">>")) { fd = MYRTOS_STDOUT; len = 2; append = true; }
-        else if (token_is(p, ">"))  { fd = MYRTOS_STDOUT; len = 1; }
-        else if (token_is(p, "<"))  { fd = MYRTOS_STDIN;  len = 1; }
+        if (token_is(p, "2>"))      { fd = UBIQOS_STDERR; len = 2; }
+        else if (token_is(p, ">>")) { fd = UBIQOS_STDOUT; len = 2; append = true; }
+        else if (token_is(p, ">"))  { fd = UBIQOS_STDOUT; len = 1; }
+        else if (token_is(p, "<"))  { fd = UBIQOS_STDIN;  len = 1; }
         if (fd < 0) {                                   // an ordinary argument
             while (*p && *p != ' ') p++;
             continue;
@@ -407,19 +407,19 @@ static int32_t start_one(char *cmd) {
         // The arrow says what the flags are, and the kernel does the rest:
         // emptying the file for >, placing the descriptor at the end for >>,
         // and refusing a missing one for <.
-        uint32_t flags = rd[i].fd == MYRTOS_STDIN
-                       ? MYRTOS_O_RDONLY
-                       : MYRTOS_O_WRONLY | MYRTOS_O_CREAT
-                         | (rd[i].append ? MYRTOS_O_APPEND : MYRTOS_O_TRUNC);
+        uint32_t flags = rd[i].fd == UBIQOS_STDIN
+                       ? UBIQOS_O_RDONLY
+                       : UBIQOS_O_WRONLY | UBIQOS_O_CREAT
+                         | (rd[i].append ? UBIQOS_O_APPEND : UBIQOS_O_TRUNC);
 
-        int32_t f = myrtos_open_flags(rd[i].name, flags);
+        int32_t f = ubiqos_open_flags(rd[i].name, flags);
         if (f < 0) {
-            myrtos_write_str(MYRTOS_STDERR, "sh: cannot open the file\n");
+            ubiqos_write_str(UBIQOS_STDERR, "sh: cannot open the file\n");
             break;                                      // the command does not run
         }
-        saved[i] = myrtos_dup(rd[i].fd, -1);
-        myrtos_dup(f, rd[i].fd);
-        myrtos_close(f);
+        saved[i] = ubiqos_dup(rd[i].fd, -1);
+        ubiqos_dup(f, rd[i].fd);
+        ubiqos_close(f);
         opened++;
     }
 
@@ -427,7 +427,7 @@ static int32_t start_one(char *cmd) {
     // they are behind the same redirections as everything else. Dispatching
     // them on the whole line meant `help | more` never reached this function
     // at all: the pipe split the line first, and `help` was then looked for
-    // among the modules and not found. They write to MYRTOS_STDOUT, which is
+    // among the modules and not found. They write to UBIQOS_STDOUT, which is
     // the pipe's file, or the > file, whenever one of those is in place.
     //
     // -3 rather than -1: the redirection said what was wrong, and the caller
@@ -437,21 +437,21 @@ static int32_t start_one(char *cmd) {
     if (opened != nrd) {
         pid = -3;
     } else if (line_is(cmd, "help")) {
-        help(MYRTOS_STDOUT);
+        help(UBIQOS_STDOUT);
         pid = SH_BUILTIN;
     } else if (line_is(cmd, "cd")) {
-        change_dir(MYRTOS_STDOUT, args);
+        change_dir(UBIQOS_STDOUT, args);
         pid = SH_BUILTIN;
     } else {
-        pid = myrtos_exec(cmd, args);
+        pid = ubiqos_exec(cmd, args);
     }
 
     // Back to the terminal. The child took its copy when it was made, so this
     // cannot reach it.
     for (int i = nrd - 1; i >= 0; i--) {
         if (saved[i] < 0) continue;
-        myrtos_dup(saved[i], rd[i].fd);
-        myrtos_close(saved[i]);
+        ubiqos_dup(saved[i], rd[i].fd);
+        ubiqos_close(saved[i]);
     }
     return pid;
 }
@@ -459,7 +459,7 @@ static int32_t start_one(char *cmd) {
 // left | right, through a file in PSRAM rather than a buffer with two ends.
 //
 // Ulf's idea, and the better one for this machine. The kernel has a real pipe --
-// myrtos_pipe, blocking, with end of file once the writers have gone -- and
+// ubiqos_pipe, blocking, with end of file once the writers have gone -- and
 // driving it from the shell hung twice, because a child inherits EVERY
 // descriptor its parent holds and there is no fork here in which to close what
 // it does not need. Through /tmp there is nothing to inherit: the halves run one
@@ -470,24 +470,24 @@ static int32_t start_one(char *cmd) {
 // megabytes of PSRAM and no `yes` to run for ever that is a fair trade, and the
 // streaming version is an upgrade of this shape rather than a different one.
 static int32_t run_between(char *cmd, int32_t fd, const char *file, uint32_t flags) {
-    int32_t f = myrtos_open_flags(file, flags);
+    int32_t f = ubiqos_open_flags(file, flags);
     if (f < 0) {
-        myrtos_write_str(MYRTOS_STDERR, "sh: no room in /tmp for the pipe\n");
+        ubiqos_write_str(UBIQOS_STDERR, "sh: no room in /tmp for the pipe\n");
         return -3;
     }
-    int32_t saved = myrtos_dup(fd, -1);
-    myrtos_dup(f, fd);
-    myrtos_close(f);
+    int32_t saved = ubiqos_dup(fd, -1);
+    ubiqos_dup(f, fd);
+    ubiqos_close(f);
 
     int32_t pid = start_one(cmd);
     if (pid >= 0) {
-        myrtos_foreground(MYRTOS_STDIN, pid);
-        myrtos_wait(pid);
-        myrtos_foreground(MYRTOS_STDIN, 0);
+        ubiqos_foreground(UBIQOS_STDIN, pid);
+        ubiqos_wait(pid);
+        ubiqos_foreground(UBIQOS_STDIN, 0);
     }
 
-    myrtos_dup(saved, fd);
-    myrtos_close(saved);
+    ubiqos_dup(saved, fd);
+    ubiqos_close(saved);
     return pid;
 }
 
@@ -499,15 +499,15 @@ static const char *failed_name;
 static int32_t run_pipeline(char *left, char *right) {
     const char *between = "/tmp/pipe";
 
-    int32_t p1 = run_between(left, MYRTOS_STDOUT, between,
-                             MYRTOS_O_WRONLY | MYRTOS_O_CREAT | MYRTOS_O_TRUNC);
+    int32_t p1 = run_between(left, UBIQOS_STDOUT, between,
+                             UBIQOS_O_WRONLY | UBIQOS_O_CREAT | UBIQOS_O_TRUNC);
     if (p1 == -3) return -3;
     if (p1 < 0 && p1 != SH_BUILTIN) {
-        myrtos_fs_remove(between); failed_name = left; return p1;
+        ubiqos_fs_remove(between); failed_name = left; return p1;
     }
 
-    int32_t p2 = run_between(right, MYRTOS_STDIN, between, MYRTOS_O_RDONLY);
-    myrtos_fs_remove(between);
+    int32_t p2 = run_between(right, UBIQOS_STDIN, between, UBIQOS_O_RDONLY);
+    ubiqos_fs_remove(between);
     // The half that failed is the half to name. start_one has NUL-terminated
     // each of these at its first space, so both are bare command names by now.
     if (p2 < 0 && p2 != SH_BUILTIN) failed_name = right;
@@ -587,24 +587,24 @@ static void complete(editor_t *e)
     uint32_t leaf_len = 0;
     while (leaf[leaf_len]) leaf_len++;
 
-    char best[MYRTOS_DIRNAME_MAX];
+    char best[UBIQOS_DIRNAME_MAX];
     uint32_t best_len = 0, matches = 0;
 
     for (uint32_t i = 0; ; i++) {
-        char name[MYRTOS_DIRNAME_MAX];
+        char name[UBIQOS_DIRNAME_MAX];
         if (commands) {
-            myrtos_modinfo_t m;
-            if (myrtos_moddir_get(i, &m) < 0) break;
+            ubiqos_modinfo_t m;
+            if (ubiqos_moddir_get(i, &m) < 0) break;
             // A data module is a descriptor or a keymap, not something to run.
-            if (m.type == MYRTOS_TYPE_DATA) continue;
+            if (m.type == UBIQOS_TYPE_DATA) continue;
             uint32_t k = 0;
-            while (k < MYRTOS_NAME_LEN - 1 && m.name[k]) { name[k] = m.name[k]; k++; }
+            while (k < UBIQOS_NAME_LEN - 1 && m.name[k]) { name[k] = m.name[k]; k++; }
             name[k] = 0;
         } else {
-            char raw[MYRTOS_DIRNAME_MAX];
+            char raw[UBIQOS_DIRNAME_MAX];
             uint32_t size = 0;
-            if (myrtos_fs_dir_at(dir, i, raw, &size) < 0) break;
-            myrtos_pretty_name(raw, name);
+            if (ubiqos_fs_dir_at(dir, i, raw, &size) < 0) break;
+            ubiqos_pretty_name(raw, name);
         }
 
         bool hit = true;
@@ -638,34 +638,34 @@ static void complete(editor_t *e)
     // left is to show what the choices are. Printed above a fresh prompt, so
     // the line being edited is not lost.
     if (matches > 1) {
-        myrtos_write_str(e->out, "\r\n");
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
+        ubiqos_write_str(e->out, "\r\n");
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
         uint32_t shown = 0;
         for (uint32_t i = 0; ; i++) {
-            char name[MYRTOS_DIRNAME_MAX];
+            char name[UBIQOS_DIRNAME_MAX];
             if (commands) {
-                myrtos_modinfo_t m;
-                if (myrtos_moddir_get(i, &m) < 0) break;
-                if (m.type == MYRTOS_TYPE_DATA) continue;
+                ubiqos_modinfo_t m;
+                if (ubiqos_moddir_get(i, &m) < 0) break;
+                if (m.type == UBIQOS_TYPE_DATA) continue;
                 uint32_t k = 0;
-                while (k < MYRTOS_NAME_LEN - 1 && m.name[k]) { name[k] = m.name[k]; k++; }
+                while (k < UBIQOS_NAME_LEN - 1 && m.name[k]) { name[k] = m.name[k]; k++; }
                 name[k] = 0;
             } else {
-                char raw[MYRTOS_DIRNAME_MAX];
+                char raw[UBIQOS_DIRNAME_MAX];
                 uint32_t size = 0;
-                if (myrtos_fs_dir_at(dir, i, raw, &size) < 0) break;
-                myrtos_pretty_name(raw, name);
+                if (ubiqos_fs_dir_at(dir, i, raw, &size) < 0) break;
+                ubiqos_pretty_name(raw, name);
             }
             bool hit = true;
             for (uint32_t k = 0; k < leaf_len; k++) if (name[k] != leaf[k]) { hit = false; break; }
             if (!hit) continue;
-            myrtos_line_str(&l, name);
-            myrtos_line_str(&l, "  ");
-            if (++shown % 6 == 0) { myrtos_line_str(&l, "\r\n"); myrtos_line_flush(e->out, &l); myrtos_line_reset(&l); }
+            ubiqos_line_str(&l, name);
+            ubiqos_line_str(&l, "  ");
+            if (++shown % 6 == 0) { ubiqos_line_str(&l, "\r\n"); ubiqos_line_flush(e->out, &l); ubiqos_line_reset(&l); }
         }
-        myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(e->out, &l);
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(e->out, &l);
         redraw(e);
     }
 }
@@ -685,7 +685,7 @@ static int32_t exec_line(char *line) {
         char *e = b;
         while (e > line && e[-1] == ' ') *--e = 0;
         if (!*line || !*right) {
-            myrtos_write_str(MYRTOS_STDERR, "sh: a pipe wants a command on both sides\n");
+            ubiqos_write_str(UBIQOS_STDERR, "sh: a pipe wants a command on both sides\n");
             return -3;
         }
         return run_pipeline(line, right);
@@ -713,9 +713,9 @@ static int32_t exec_line(char *line) {
         // -- by then the process is usually blocked in a rendezvous, reading
         // nothing -- and the shell is the only thing that knows what it started
         // and on which terminal.
-        myrtos_foreground(MYRTOS_STDIN, pid);
-        myrtos_wait(pid);
-        myrtos_foreground(MYRTOS_STDIN, 0);
+        ubiqos_foreground(UBIQOS_STDIN, pid);
+        ubiqos_wait(pid);
+        ubiqos_foreground(UBIQOS_STDIN, 0);
     }
     return pid;
 }
@@ -732,20 +732,20 @@ void module_main(int argc, char **argv) {
     // away from caring where its input comes from, which it should not.
     e->quiet = argc > 1 && line_is(argv[1], "script");
 
-    e->out = MYRTOS_STDOUT;
+    e->out = UBIQOS_STDOUT;
     e->len = e->pos = 0;
     e->line[0] = 0;
     e->stash[0] = 0;
     e->hist_count = e->hist_next = e->browse = 0;
-    e->hist = (char*)myrtos_alloc(HIST_LINES * LINE_MAX);
+    e->hist = (char*)ubiqos_alloc(HIST_LINES * LINE_MAX);
 
     if (!e->quiet) {
-        myrtos_write_str(e->out, "\r\nmyrtos shell ready. Type 'help'.\r\n");
+        ubiqos_write_str(e->out, "\r\nubiqos shell ready. Type 'help'.\r\n");
         // Not merely pointless on a script but destructive: ask_width writes a
         // cursor report request and then reads whatever comes back for 150 ms.
         // Pointed at a file it swallows the first 150 ms of the script looking
         // for an escape sequence that is never coming.
-        e->width = ask_width(e->out, MYRTOS_STDIN);
+        e->width = ask_width(e->out, UBIQOS_STDIN);
     } else {
         e->width = WIDTH_DEFAULT;
     }
@@ -757,7 +757,7 @@ void module_main(int argc, char **argv) {
 
     for (;;) {
         uint8_t ch;
-        int32_t got = myrtos_read(MYRTOS_STDIN, &ch, 1);
+        int32_t got = ubiqos_read(UBIQOS_STDIN, &ch, 1);
         // Zero is the end and not "nothing yet": the kernel blocks a process
         // whose device has nothing to say rather than returning, so a nought
         // reaching here came from a file that has been read to its end or a
@@ -814,27 +814,27 @@ void module_main(int argc, char **argv) {
 
         if (ch == '\r' || ch == '\n') {
             e->line[e->len] = 0;
-            if (!e->quiet) myrtos_write_str(e->out, "\r\n");
+            if (!e->quiet) ubiqos_write_str(e->out, "\r\n");
             bool ran = e->len != 0;
             if (ran) {
                 remember(e);
                 int32_t r = exec_line(e->line);
                 if (r < 0 && r != -3 && r != SH_BUILTIN) {
-                    myrtos_line_t l;
-                    myrtos_line_reset(&l);
+                    ubiqos_line_t l;
+                    ubiqos_line_reset(&l);
                     // -2 means the module is there but is not re-entrant and
                     // is already running. Saying "no such module" for that
                     // sends the reader looking for the wrong problem.
-                    myrtos_line_str(&l, r == -2 ? "already running: "
+                    ubiqos_line_str(&l, r == -2 ? "already running: "
                                                 : "no such module: ");
                     // The command that failed, which for a pipeline is not
                     // the head of the line. This read e->line, and start_one
                     // NUL-terminates the LEFT half at its first space -- so
                     // `echo x | nosuch` reported "no such module: echo",
                     // naming the command that had just run successfully.
-                    myrtos_line_str(&l, failed_name);
-                    myrtos_line_str(&l, "\r\n");
-                    myrtos_line_flush(e->out, &l);
+                    ubiqos_line_str(&l, failed_name);
+                    ubiqos_line_str(&l, "\r\n");
+                    ubiqos_line_flush(e->out, &l);
                 }
             }
             e->len = e->pos = e->browse = 0;
@@ -843,12 +843,12 @@ void module_main(int argc, char **argv) {
             if (e->quiet) continue;
             // A blank line between a command's output and the next prompt, as
             // there has always been. Nothing ran, nothing to separate.
-            if (ran) myrtos_write_str(e->out, "\r\n");
+            if (ran) ubiqos_write_str(e->out, "\r\n");
             redraw(e);
         } else if (ch == 3) {            // Ctrl-C, with nothing running
             // The kernel passes it through when there is no command to end, so
             // it does here what it does everywhere: abandon the line.
-            myrtos_write_str(e->out, "^C\r\n");
+            ubiqos_write_str(e->out, "^C\r\n");
             e->len = e->pos = e->browse = 0;
             e->line[0] = 0;
             redraw(e);
@@ -859,7 +859,7 @@ void module_main(int argc, char **argv) {
         } else if (ch == 5) {            // Ctrl-E
             e->pos = e->len; redraw(e);
         } else if (ch == 12) {           // Ctrl-L, but only on an empty line
-            if (!e->len) { myrtos_write_str(e->out, "\x1b[2J\x1b[H"); redraw(e); }
+            if (!e->len) { ubiqos_write_str(e->out, "\x1b[2J\x1b[H"); redraw(e); }
         } else if (ch == 8 || ch == 127) {
             // Back over a whole character: the continuation bytes first, then
             // the one that started it.

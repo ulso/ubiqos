@@ -1,7 +1,7 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // A flash block is a kilobyte, and it is read, escaped and sent from here.
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_MEM_SIZE(8192);
 
 // espflash -- talk to the ESP32-C6's ROM loader.
 //
@@ -14,7 +14,7 @@ MYRTOS_MEM_SIZE(8192);
 // arriving on the USB console and takes 0x03 as Ctrl-C. Bridging the console
 // through to the C6 would have the transfer killed by its own data. Making the
 // console raw for the occasion would put a hole in the one mechanism that ends
-// a runaway command, so myrtos speaks the ROM's protocol itself instead.
+// a runaway command, so UbiqOS speaks the ROM's protocol itself instead.
 //
 // Everything this does is undone by a power cycle or a reset: the strap is only
 // read while the chip comes out of reset, and NINA is still in the flash.
@@ -48,26 +48,26 @@ static bool is(const char *a, const char *b) {
     return *a == *b;
 }
 
-static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
+static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
 static void say_u32(uint32_t v) {
     char b[12];
     int n = 0;
     if (!v) b[n++] = '0';
     while (v) { b[n++] = (char)('0' + v % 10); v /= 10; }
-    while (n) { char c = b[--n]; myrtos_write(MYRTOS_STDOUT, &c, 1); }
+    while (n) { char c = b[--n]; ubiqos_write(UBIQOS_STDOUT, &c, 1); }
 }
 
 static void say_hex(uint8_t v) {
     const char *d = "0123456789abcdef";
     char b[2] = { d[v >> 4], d[v & 15] };
-    myrtos_write(MYRTOS_STDOUT, b, 2);
+    ubiqos_write(UBIQOS_STDOUT, b, 2);
 }
 
 // One pin, one call, and the waiting out here. The driver cannot wait: a
 // setstat runs in the trap handler with interrupts off.
 static void pin(int32_t dev, uint32_t code, uint32_t level) {
-    myrtos_setstat(dev, code, &level, sizeof(level));
+    ubiqos_setstat(dev, code, &level, sizeof(level));
 }
 
 // The sequence the ROM wants. IO9 low BEFORE the chip leaves reset, because
@@ -88,17 +88,17 @@ static void pin(int32_t dev, uint32_t code, uint32_t level) {
 // is worse than no proof.
 static void drain(int32_t dev) {
     uint8_t b[64];
-    while (myrtos_readable(dev) > 0) {
-        if (myrtos_read(dev, b, sizeof(b)) <= 0) break;
+    while (ubiqos_readable(dev) > 0) {
+        if (ubiqos_read(dev, b, sizeof(b)) <= 0) break;
     }
 }
 
 static void into_bootloader(int32_t dev) {
     drain(dev);
-    pin(dev, MYRTOS_SS_ESP_STRAP, 0);
-    pin(dev, MYRTOS_SS_ESP_RESET, 0);
-    myrtos_sleep(20);
-    pin(dev, MYRTOS_SS_ESP_RESET, 1);
+    pin(dev, UBIQOS_SS_ESP_STRAP, 0);
+    pin(dev, UBIQOS_SS_ESP_RESET, 0);
+    ubiqos_sleep(20);
+    pin(dev, UBIQOS_SS_ESP_RESET, 1);
     // Held a while longer than the reset edge itself. IO9 is latched as the
     // chip comes out of reset and twenty milliseconds is far more than that
     // needs -- but it is also twenty milliseconds in which nobody is reading,
@@ -107,15 +107,15 @@ static void into_bootloader(int32_t dev) {
     // which chip answered, which is all this is for. Reading the whole banner
     // would mean listening through the strap hold, and there is no reason to
     // shorten a delay that costs nothing for a string nobody needs.
-    myrtos_sleep(20);
-    pin(dev, MYRTOS_SS_ESP_STRAP, 1);
+    ubiqos_sleep(20);
+    pin(dev, UBIQOS_SS_ESP_STRAP, 1);
 }
 
 static void into_application(int32_t dev) {
-    pin(dev, MYRTOS_SS_ESP_STRAP, 1);  // released first: it must be high at reset
-    pin(dev, MYRTOS_SS_ESP_RESET, 0);
-    myrtos_sleep(20);
-    pin(dev, MYRTOS_SS_ESP_RESET, 1);
+    pin(dev, UBIQOS_SS_ESP_STRAP, 1);  // released first: it must be high at reset
+    pin(dev, UBIQOS_SS_ESP_RESET, 0);
+    ubiqos_sleep(20);
+    pin(dev, UBIQOS_SS_ESP_RESET, 1);
 }
 
 // Read for a while and show it, printable or not. The C6's ROM prints a banner
@@ -129,20 +129,20 @@ static uint32_t listen_or_discard(int32_t dev, uint32_t ms, bool quiet) {
         // Asked before it is read, because a read of a device with nothing in
         // it waits, and a chip that says nothing is exactly the case this is
         // here to report.
-        if (myrtos_readable(dev) <= 0) { myrtos_sleep(5); waited += 5; continue; }
+        if (ubiqos_readable(dev) <= 0) { ubiqos_sleep(5); waited += 5; continue; }
 
         // Taken as fast as it comes, without a sleep in between. A sleep here
         // caps the reader at its buffer per tick, and this wire delivers 11.5
         // kilobytes a second: the driver's ring would fill behind a reader that
         // paused politely between mouthfuls.
-        int32_t n = myrtos_read(dev, buf, sizeof(buf));
-        if (n <= 0) { myrtos_sleep(5); waited += 5; continue; }
+        int32_t n = ubiqos_read(dev, buf, sizeof(buf));
+        if (n <= 0) { ubiqos_sleep(5); waited += 5; continue; }
         total += (uint32_t)n;
         if (quiet) continue;
         for (int32_t i = 0; i < n; i++) {
             uint8_t c = buf[i];
             if (c == '\n') say("\r\n");
-            else if (c >= ' ' && c < 0x7f) myrtos_write(MYRTOS_STDOUT, &c, 1);
+            else if (c >= ' ' && c < 0x7f) ubiqos_write(UBIQOS_STDOUT, &c, 1);
             else if (c != '\r') { say("<"); say_hex(c); say(">"); }
         }
     }
@@ -151,9 +151,9 @@ static uint32_t listen_or_discard(int32_t dev, uint32_t ms, bool quiet) {
 
 static void put_escaped(int32_t dev, uint8_t b) {
     uint8_t two[2];
-    if (b == SLIP_END)      { two[0] = SLIP_ESC; two[1] = SLIP_ESC_END; myrtos_write(dev, two, 2); }
-    else if (b == SLIP_ESC) { two[0] = SLIP_ESC; two[1] = SLIP_ESC_ESC; myrtos_write(dev, two, 2); }
-    else                      myrtos_write(dev, &b, 1);
+    if (b == SLIP_END)      { two[0] = SLIP_ESC; two[1] = SLIP_ESC_END; ubiqos_write(dev, two, 2); }
+    else if (b == SLIP_ESC) { two[0] = SLIP_ESC; two[1] = SLIP_ESC_ESC; ubiqos_write(dev, two, 2); }
+    else                      ubiqos_write(dev, &b, 1);
 }
 
 // A command packet: direction, command, payload length, checksum, payload.
@@ -165,7 +165,7 @@ static void put_escaped(int32_t dev, uint8_t b) {
 static void send_command(int32_t dev, uint8_t cmd, const uint8_t *head, uint16_t hlen,
                          const uint8_t *body, uint32_t blen, uint32_t checksum) {
     uint8_t end = SLIP_END;
-    myrtos_write(dev, &end, 1);
+    ubiqos_write(dev, &end, 1);
 
     uint32_t len = (uint32_t)hlen + blen;
     uint8_t h[8] = { 0x00, cmd, (uint8_t)(len & 0xff), (uint8_t)((len >> 8) & 0xff),
@@ -175,7 +175,7 @@ static void send_command(int32_t dev, uint8_t cmd, const uint8_t *head, uint16_t
     for (uint16_t i = 0; i < hlen; i++) put_escaped(dev, head[i]);
     for (uint32_t i = 0; i < blen; i++) put_escaped(dev, body[i]);
 
-    myrtos_write(dev, &end, 1);
+    ubiqos_write(dev, &end, 1);
 }
 
 static void put_le32(uint8_t *p, uint32_t v) {
@@ -191,8 +191,8 @@ static int32_t read_frame(int32_t dev, uint8_t *out, uint32_t cap, uint32_t ms) 
 
     for (uint32_t waited = 0; waited < ms; ) {
         uint8_t c;
-        if (myrtos_readable(dev) <= 0) { myrtos_sleep(2); waited += 2; continue; }
-        if (myrtos_read(dev, &c, 1) <= 0) { myrtos_sleep(2); waited += 2; continue; }
+        if (ubiqos_readable(dev) <= 0) { ubiqos_sleep(2); waited += 2; continue; }
+        if (ubiqos_read(dev, &c, 1) <= 0) { ubiqos_sleep(2); waited += 2; continue; }
 
         if (c == SLIP_END) {
             if (!started) { started = true; n = 0; continue; }
@@ -266,7 +266,7 @@ static bool sync_rom(int32_t dev, bool quiet) {
         }
         // Whatever else the ROM sends after a SYNC, before the next command
         // goes out and its reply is looked for.
-        myrtos_sleep(50);
+        ubiqos_sleep(50);
         drain(dev);
         return true;
     }
@@ -370,7 +370,7 @@ static bool prepare(int32_t dev, uint32_t size) {
 // filled is the difference between a log and a sample of one.
 static void report_losses(int32_t dev) {
     uint32_t st[3];
-    if (myrtos_getstat(dev, MYRTOS_SS_ESP_STATS, st, sizeof(st)) < 0) return;
+    if (ubiqos_getstat(dev, UBIQOS_SS_ESP_STATS, st, sizeof(st)) < 0) return;
     if (!st[1]) return;
     say("(");
     say_u32(st[1]);
@@ -378,7 +378,7 @@ static void report_losses(int32_t dev) {
 }
 
 static void do_write(int32_t dev, const char *path) {
-    int32_t f = myrtos_open_flags(path, MYRTOS_O_RDONLY);
+    int32_t f = ubiqos_open_flags(path, UBIQOS_O_RDONLY);
     if (f < 0) {
         say("espflash: cannot read ");
         say(path);
@@ -387,9 +387,9 @@ static void do_write(int32_t dev, const char *path) {
     }
 
     uint32_t size = 0;
-    if (myrtos_fs_stat(path, &size) < 0 || !size) {
+    if (ubiqos_fs_stat(path, &size) < 0 || !size) {
         say("espflash: that file has no length\r\n");
-        myrtos_close(f);
+        ubiqos_close(f);
         return;
     }
 
@@ -401,11 +401,11 @@ static void do_write(int32_t dev, const char *path) {
     say("This replaces NINA. 'wifi' stops working until it is put back.\r\n\r\n");
 
     if (!sync_rom(dev, true)) {
-        myrtos_close(f);
+        ubiqos_close(f);
         return;
     }
     if (!prepare(dev, size)) {
-        myrtos_close(f);
+        ubiqos_close(f);
         into_application(dev);
         return;
     }
@@ -416,7 +416,7 @@ static void do_write(int32_t dev, const char *path) {
     uint32_t done = 0;
 
     for (uint32_t seq = 0; seq < blocks; seq++) {
-        int32_t got = myrtos_read(f, block, FLASH_BLOCK);
+        int32_t got = ubiqos_read(f, block, FLASH_BLOCK);
         if (got <= 0) {
             say("\r\nespflash: the file ended early\r\n");
             break;
@@ -442,7 +442,7 @@ static void do_write(int32_t dev, const char *path) {
             say(why(last_error));
             say("\r\nThe chip now holds neither firmware. Adafruit's "
                 "SerialESPPassthrough UF2 is the way back.\r\n");
-            myrtos_close(f);
+            ubiqos_close(f);
             return;
         }
 
@@ -455,7 +455,7 @@ static void do_write(int32_t dev, const char *path) {
             say(" kB");
         }
     }
-    myrtos_close(f);
+    ubiqos_close(f);
 
     say("\r  ");
     say_u32(size / 1024);
@@ -472,7 +472,7 @@ static void do_write(int32_t dev, const char *path) {
 
     say("\r\nwritten. Starting it.\r\n\r\n");
     into_application(dev);
-    myrtos_sleep(200);
+    ubiqos_sleep(200);
 
     say("--- what it says ---------------------------------------------\r\n");
     uint32_t heard = listen_or_discard(dev, 1500, false);
@@ -513,7 +513,7 @@ static void do_sync(int32_t dev) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: espflash sync | log | write FILE\n\n"
             "Talks to the ESP32-C6 over /dev/esp.\n\n"
             "  sync         reset the chip into its serial bootloader and prove\n"
@@ -533,7 +533,7 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    int32_t dev = myrtos_open(ESP_DEV);
+    int32_t dev = ubiqos_open(ESP_DEV);
     if (dev < 0) {
         say("espflash: no " ESP_DEV ". Is the esplink driver loaded?\r\n");
         return;
@@ -542,5 +542,5 @@ void module_main(int argc, char **argv) {
     if (sync)      do_sync(dev);
     else if (log)  do_log(dev, 3000);
     else           do_write(dev, argv[2]);
-    myrtos_close(dev);
+    ubiqos_close(dev);
 }

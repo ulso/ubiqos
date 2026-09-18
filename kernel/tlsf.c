@@ -85,7 +85,7 @@ static void tlsf_remove(tlsf_ctrl_t* ctrl, block_header_t* block) {
     block->size &= ~(size_t)BLOCK_FREE_BIT;
 }
 
-tlsf_pool_t myrtos_tlsf_create(void* mem, size_t bytes) {
+tlsf_pool_t ubiqos_tlsf_create(void* mem, size_t bytes) {
     if (bytes < sizeof(tlsf_ctrl_t) + sizeof(block_header_t) + MIN_PAYLOAD) return NULL;
 
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)mem;
@@ -109,7 +109,7 @@ tlsf_pool_t myrtos_tlsf_create(void* mem, size_t bytes) {
     return (tlsf_pool_t)ctrl;
 }
 
-static void* myrtos_tlsf_malloc_unlocked(tlsf_pool_t pool, size_t size) {
+static void* ubiqos_tlsf_malloc_unlocked(tlsf_pool_t pool, size_t size) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     if (!ctrl || !size) return NULL;
 
@@ -152,7 +152,7 @@ static void* myrtos_tlsf_malloc_unlocked(tlsf_pool_t pool, size_t size) {
     return (void*)((uintptr_t)block + sizeof(block_header_t));
 }
 
-static void myrtos_tlsf_free_unlocked(tlsf_pool_t pool, void* ptr) {
+static void ubiqos_tlsf_free_unlocked(tlsf_pool_t pool, void* ptr) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     if (!ctrl || !ptr) return;
 
@@ -184,7 +184,7 @@ static void myrtos_tlsf_free_unlocked(tlsf_pool_t pool, void* ptr) {
 // The largest contiguous free block. It exists to show that coalescing really
 // happens: without it this number shrinks with every cycle of allocation and
 // freeing.
-static size_t myrtos_tlsf_largest_free_unlocked(tlsf_pool_t pool) {
+static size_t ubiqos_tlsf_largest_free_unlocked(tlsf_pool_t pool) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     size_t best = 0;
     for (uintptr_t p = ctrl->pool_start; p < ctrl->pool_end; ) {
@@ -197,7 +197,7 @@ static size_t myrtos_tlsf_largest_free_unlocked(tlsf_pool_t pool) {
 }
 
 
-bool myrtos_tlsf_owns(tlsf_pool_t pool, const void* p) {
+bool ubiqos_tlsf_owns(tlsf_pool_t pool, const void* p) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
     if (!ctrl || !p) return false;
     return (uintptr_t)p >= ctrl->pool_start && (uintptr_t)p < ctrl->pool_end;
@@ -230,25 +230,25 @@ bool myrtos_tlsf_owns(tlsf_pool_t pool, const void* p) {
 // Nesting is free: save_and_disable_interrupts returns the previous state and
 // restore_interrupts puts that state back, so a call from a trap leaves
 // interrupts off, as they already were.
-void* myrtos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
-    uint32_t st = myrtos_critical_enter();
-    void* p = myrtos_tlsf_malloc_unlocked(pool, size);
-    myrtos_critical_exit(st);
+void* ubiqos_tlsf_malloc(tlsf_pool_t pool, size_t size) {
+    uint32_t st = ubiqos_critical_enter();
+    void* p = ubiqos_tlsf_malloc_unlocked(pool, size);
+    ubiqos_critical_exit(st);
     return p;
 }
 
-void myrtos_tlsf_free(tlsf_pool_t pool, void* ptr) {
-    uint32_t st = myrtos_critical_enter();
-    myrtos_tlsf_free_unlocked(pool, ptr);
-    myrtos_critical_exit(st);
+void ubiqos_tlsf_free(tlsf_pool_t pool, void* ptr) {
+    uint32_t st = ubiqos_critical_enter();
+    ubiqos_tlsf_free_unlocked(pool, ptr);
+    ubiqos_critical_exit(st);
 }
 
 // Walking the pool block by block reads the same structure the other two write,
 // so it needs the same protection -- a torn walk reports a number that was
 // never true, and free is the one number a caller acts on.
-size_t myrtos_tlsf_largest_free(tlsf_pool_t pool) {
-    uint32_t st = myrtos_critical_enter();
-    size_t n = myrtos_tlsf_largest_free_unlocked(pool);
-    myrtos_critical_exit(st);
+size_t ubiqos_tlsf_largest_free(tlsf_pool_t pool) {
+    uint32_t st = ubiqos_critical_enter();
+    size_t n = ubiqos_tlsf_largest_free_unlocked(pool);
+    ubiqos_critical_exit(st);
     return n;
 }

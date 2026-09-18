@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/modules.h"   // myrtos_sleep and the message types
+#include "../../common/modules.h"   // ubiqos_sleep and the message types
 
 // A library module: code the kernel calls rather than runs. This was
 // kernel/wifi.c until 6 Sep 2026, six and a half kilobytes of SRAM that only
@@ -27,14 +27,14 @@
 //
 // Which is why there is not an SDK header in sight. A library runs in kernel
 // context but is linked separately, so it cannot call the kernel's functions by
-// name -- it is handed their addresses in myrtos_kernel_api_t, and everything
+// name -- it is handed their addresses in ubiqos_kernel_api_t, and everything
 // below reaches the hardware through K. Even gpio_put and gpio_get, which are
 // inline in the SDK's headers and would otherwise have dragged them in.
-static const myrtos_kernel_api_t *K;
+static const ubiqos_kernel_api_t *K;
 
 // The named priorities, which used to come from usbdev.h. A library cannot
 // include a kernel header, and one number is not worth an interface.
-#define MYRTOS_PRIO_WIFI 20
+#define UBIQOS_PRIO_WIFI 20
 
 #define WIFI_SPI    (K->spi)
 #define WIFI_SCK    30
@@ -95,14 +95,14 @@ static bool select_chip(void) {
 //
 // It has to yield rather than spin. This runs in the wifi server at priority
 // 21, above the shell, and seconds of spinning is exactly what froze the
-// machine when sleep_ms was used instead of myrtos_sleep.
+// machine when sleep_ms was used instead of ubiqos_sleep.
 static bool select_chip_slow(uint32_t ms) {
     for (uint32_t waited = 0; waited < ms; waited += 4) {
         if (!K->gpio_get(WIFI_ACK)) {               // ready is ACK low
             K->gpio_put(WIFI_CS, 0);
             return wait_ack(true, 100);
         }
-        myrtos_sleep(4);
+        ubiqos_sleep(4);
     }
     return false;
 }
@@ -122,7 +122,7 @@ static void deselect_chip(void) {
 // Ten milliseconds low is what every host library for these chips uses, and
 // three quarters of a second is how long the chip takes to be worth talking to
 // afterwards. Both are the reference's numbers rather than ones I measured.
-// Named for the chip and not for the call, because myrtos_wifi_reset is the
+// Named for the chip and not for the call, because ubiqos_wifi_reset is the
 // name the ABI gives the syscall a program makes -- and one of them is a
 // GPIO pulse while the other is a message to this thread.
 static void wifi_chip_reset(void) {
@@ -300,23 +300,23 @@ static uint32_t rx_param_u32(void) {
     return v;
 }
 
-void myrtos_wifi_init(void) {
+void ubiqos_wifi_init(void) {
     K->spi_init(WIFI_SPI, 8 * 1000 * 1000);
-    K->gpio_set_function(WIFI_SCK,  MYRTOS_GPIO_FUNC_SPI);
-    K->gpio_set_function(WIFI_MOSI, MYRTOS_GPIO_FUNC_SPI);
-    K->gpio_set_function(WIFI_MISO, MYRTOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(WIFI_SCK,  UBIQOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(WIFI_MOSI, UBIQOS_GPIO_FUNC_SPI);
+    K->gpio_set_function(WIFI_MISO, UBIQOS_GPIO_FUNC_SPI);
 
     K->gpio_init(WIFI_CS);
-    K->gpio_set_dir(WIFI_CS, MYRTOS_GPIO_OUT);
+    K->gpio_set_dir(WIFI_CS, UBIQOS_GPIO_OUT);
     K->gpio_put(WIFI_CS, 1);
 
     K->gpio_init(WIFI_ACK);
-    K->gpio_set_dir(WIFI_ACK, MYRTOS_GPIO_IN);
+    K->gpio_set_dir(WIFI_ACK, UBIQOS_GPIO_IN);
 
     // Held released. The pin is driven rather than left floating, so the chip
     // cannot be reset by a stray edge on a line nobody owns.
     K->gpio_init(WIFI_RESET);
-    K->gpio_set_dir(WIFI_RESET, MYRTOS_GPIO_OUT);
+    K->gpio_set_dir(WIFI_RESET, UBIQOS_GPIO_OUT);
     K->gpio_put(WIFI_RESET, 1);
 
     // Not reset here, deliberately. This runs at boot, before the scheduler is
@@ -332,7 +332,7 @@ void myrtos_wifi_init(void) {
 // Returns 0, or which of the three ways it failed -- the caller can then say so
 // where the caller's output goes, rather than the kernel saying it on a console
 // the asker may not be looking at.
-int32_t myrtos_wifi_firmware(char *out, uint32_t max) {
+int32_t ubiqos_wifi_firmware(char *out, uint32_t max) {
     if (!select_chip()) {
         // Say what the line is actually doing rather than only that it did not
         // move. Reading it with each pull in turn tells driven from floating: a
@@ -382,8 +382,8 @@ int32_t myrtos_wifi_firmware(char *out, uint32_t max) {
 // Boot only sets the pins up. Asking the chip anything is what the `wifi`
 // command is for: a line printed among thirty others at startup has scrolled
 // past before anyone can read it, and this is a line worth reading.
-void myrtos_wifi_probe(void) {
-    myrtos_wifi_init();
+void ubiqos_wifi_probe(void) {
+    ubiqos_wifi_init();
 }
 
 
@@ -601,7 +601,7 @@ static int32_t rssi_of(uint32_t index) {
 // in hand before any of it is looked at. The version this replaces walked the
 // wire with the parameter loop and the length loop nested, and any surprise in
 // either left the rest of the frame unread.
-int32_t myrtos_wifi_ipaddr(char *out, uint32_t max) {
+int32_t ubiqos_wifi_ipaddr(char *out, uint32_t max) {
     uint8_t p[3][4] = {{0}};
     uint8_t any = 0xff;
     nina_arg_t a = { &any, 1, false };
@@ -627,7 +627,7 @@ int32_t myrtos_wifi_ipaddr(char *out, uint32_t max) {
     return (p[0][0] || p[0][1] || p[0][2] || p[0][3]) ? 0 : -1;
 }
 
-int32_t myrtos_wifi_connect(const char *ssid, const char *pass) {
+int32_t ubiqos_wifi_connect(const char *ssid, const char *pass) {
     uint32_t sl = 0, pl = 0;
     while (ssid[sl]) sl++;
     while (pass[pl]) pl++;
@@ -660,7 +660,7 @@ int32_t myrtos_wifi_connect(const char *ssid, const char *pass) {
 
     // WL_CONNECTED is 3. Ask until it says so, or for twenty seconds.
     for (int i = 0; i < 40; i++) {
-        myrtos_sleep(500);
+        ubiqos_sleep(500);
         if (!simple_cmd(GET_CONN_STATUS_CMD) || !select_chip()) continue;
         uint8_t c = 0;
         for (int k = 0; k < 64; k++) { c = xfer(0xff); if (c == START_CMD || c == ERR_CMD) break; }
@@ -681,7 +681,7 @@ int32_t myrtos_wifi_connect(const char *ssid, const char *pass) {
     return -2;                                    // still trying when we gave up
 }
 
-int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
+int32_t ubiqos_wifi_scan(int32_t index, char *out, uint32_t max) {
     if (!scan_room()) return -1;
 
     if (index < 0) {
@@ -723,7 +723,7 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
         // chip stops raising READY afterwards and the next command times out.
         // Tried once, measured, and not again.
 
-        myrtos_sleep(50);
+        ubiqos_sleep(50);
         if (!simple_cmd(START_SCAN_CMD)) return -1;
 
         // Read the acknowledgement properly rather than throwing bytes away: a
@@ -757,7 +757,7 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
         // worse than waiting -- two seconds, ten times, is what the Arduino
         // library waits and it is not being cautious for nothing.
         for (int tries = 0; tries < 3 && scan_count == 0; tries++) {
-            // myrtos_sleep, not the SDK's sleep_ms. The SDK's spins, and a
+            // ubiqos_sleep, not the SDK's sleep_ms. The SDK's spins, and a
             // kernel thread that spins never reaches the scheduler: it is only
             // preempted where it makes a system call. Two seconds of spinning
             // froze the whole machine, which is what the serial shell going
@@ -813,7 +813,7 @@ int32_t myrtos_wifi_scan(int32_t index, char *out, uint32_t max) {
 
 static int32_t server_pid = -1;
 
-int32_t myrtos_wifi_server_pid(void) { return server_pid; }
+int32_t ubiqos_wifi_server_pid(void) { return server_pid; }
 
 // --- SOCKETS ---------------------------------------------------------------
 // The chip carries the TCP/IP stack, so this is not a stack: it is nine
@@ -860,7 +860,7 @@ int32_t myrtos_wifi_server_pid(void) { return server_pid; }
 // socket belonging to a process that no longer existed.
 //
 // So a socket is owned, the way a path is owned, and the owner going away
-// releases it -- which is what myrtos_io_close_all does for paths in reap().
+// releases it -- which is what ubiqos_io_close_all does for paths in reap().
 // The difference is that this cannot be done in reap(): releasing a socket
 // means SPI transactions with handshakes and waits, and reap runs in kernel
 // context where waiting stops the machine.
@@ -907,7 +907,7 @@ static void disown(int32_t sock) {
 // What the chip believes about a socket, which is the only opinion that counts
 // -- but only for a socket it can have. Out of range is answered here rather
 // than passed on, because passing it on is what took the network down.
-int32_t myrtos_wifi_state(uint8_t sock)
+int32_t ubiqos_wifi_state(uint8_t sock)
 {
     if (sock >= NINA_SOCKETS) return -1;
     return sock_cmd_u8(GET_STATE_TCP_CMD, sock);
@@ -915,20 +915,20 @@ int32_t myrtos_wifi_state(uint8_t sock)
 
 // Who asked for it, for the same command to report. OWNER_NONE and OWNER_DEAD
 // come through as themselves.
-int32_t myrtos_wifi_owner(uint8_t sock)
+int32_t ubiqos_wifi_owner(uint8_t sock)
 {
     owners_init();
     return sock < NINA_SOCKETS ? sock_owner[sock] : OWNER_NONE;
 }
 
-int32_t myrtos_wifi_port_of(uint8_t sock)
+int32_t ubiqos_wifi_port_of(uint8_t sock)
 {
     owners_init();
     return sock < NINA_SOCKETS ? (int32_t)sock_port[sock] : 0;
 }
 
 // Called from the kernel when a process is reaped. Marks only.
-void myrtos_wifi_forget_pid(int32_t pid) {
+void ubiqos_wifi_forget_pid(int32_t pid) {
     owners_init();
     for (int i = 0; i < NINA_SOCKETS; i++)
         if (sock_owner[i] == pid) sock_owner[i] = OWNER_DEAD;
@@ -956,7 +956,7 @@ static int32_t sock_cmd_u8(uint8_t cmd, uint8_t arg)
 // the other side.
 //
 // So a server outlives its process and is ADOPTED by the next one that asks for
-// that port. See myrtos_wifi_listen.
+// that port. See ubiqos_wifi_listen.
 static void sweep_orphans(void)
 {
     owners_init();
@@ -979,12 +979,12 @@ static void sweep_orphans(void)
 // has to still be LISTEN. A socket this side believes in and the chip has
 // forgotten is exactly the situation that produced a server which bound
 // successfully and then never answered.
-int32_t myrtos_wifi_listen(uint16_t port)
+int32_t ubiqos_wifi_listen(uint16_t port)
 {
     owners_init();
     for (int i = 0; i < NINA_SOCKETS; i++) {
         if (sock_port[i] != port) continue;
-        if (myrtos_wifi_state((uint8_t)i) == (int32_t)TCP_LISTEN) return i;
+        if (ubiqos_wifi_state((uint8_t)i) == (int32_t)TCP_LISTEN) return i;
         sock_port[i] = 0;                          // stale: the chip disagrees
     }
 
@@ -1011,7 +1011,7 @@ int32_t myrtos_wifi_listen(uint16_t port)
 
 // Is anybody there? The client's socket, or -1 for nobody. Asked repeatedly by
 // whoever is serving, so it must be cheap and must not block.
-int32_t myrtos_wifi_accept(uint8_t server_sock)
+int32_t ubiqos_wifi_accept(uint8_t server_sock)
 {
     int32_t v = sock_cmd_u8(AVAIL_DATA_TCP_CMD, server_sock);
     if (v < 0 || v == (int32_t)NO_SOCKET || v == (int32_t)server_sock) return -1;
@@ -1021,7 +1021,7 @@ int32_t myrtos_wifi_accept(uint8_t server_sock)
 // Read what a client has sent. Zero means nothing yet, not end of stream -- the
 // caller decides how long to keep asking, because only the caller knows what it
 // is waiting for.
-int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
+int32_t ubiqos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
 {
     if (!len) return 0;
     if (len > 4000u) len = 4000u;                  // the chip's own buffer limit
@@ -1083,7 +1083,7 @@ int32_t myrtos_wifi_recv(uint8_t sock, uint8_t *buf, uint32_t len)
 // Hand a block to the chip and wait for it to say it went. The wait matters:
 // without it a close can overtake the data, and the browser gets an empty
 // answer for a page that was written correctly.
-int32_t myrtos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
+int32_t ubiqos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
 {
     if (!len) return 0;
     if (len > 2000u) len = 2000u;                  // one chip buffer at a time
@@ -1121,19 +1121,19 @@ int32_t myrtos_wifi_send(uint8_t sock, const uint8_t *buf, uint32_t len)
 // is told to stop. If a close does overtake, it will show as a page that
 // arrives short -- which is a thing this server can be watched for, and was.
 
-int32_t myrtos_wifi_close(uint8_t sock)
+int32_t ubiqos_wifi_close(uint8_t sock)
 {
     disown(sock);
     return sock_cmd_u8(STOP_CLIENT_TCP_CMD, sock) >= 0 ? 0 : -1;
 }
 
-static int32_t handle(const myrtos_msg_t *m, int32_t from) {
-    const myrtos_wifi_req_t *r = (const myrtos_wifi_req_t*)m->data;
+static int32_t handle(const ubiqos_msg_t *m, int32_t from) {
+    const ubiqos_wifi_req_t *r = (const ubiqos_wifi_req_t*)m->data;
     switch (m->type) {
-    case MYRTOS_MSG_WIFI_VER:  return myrtos_wifi_firmware(r->buf, r->len);
-    case MYRTOS_MSG_WIFI_SCAN: return myrtos_wifi_scan(r->index, r->buf, r->len);
-    case MYRTOS_MSG_WIFI_ADDR: return myrtos_wifi_ipaddr(r->buf, r->len);
-    case MYRTOS_MSG_WIFI_STATS: {
+    case UBIQOS_MSG_WIFI_VER:  return ubiqos_wifi_firmware(r->buf, r->len);
+    case UBIQOS_MSG_WIFI_SCAN: return ubiqos_wifi_scan(r->index, r->buf, r->len);
+    case UBIQOS_MSG_WIFI_ADDR: return ubiqos_wifi_ipaddr(r->buf, r->len);
+    case UBIQOS_MSG_WIFI_STATS: {
         if (r->len < 16u) return -1;
         uint32_t *o = (uint32_t*)r->buf;
         o[0] = nina_commands; o[1] = nina_resyncs;
@@ -1144,7 +1144,7 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
         }
         return 0;
     }
-    case MYRTOS_MSG_WIFI_RESET:
+    case UBIQOS_MSG_WIFI_RESET:
         wifi_chip_reset();
         // Everything the chip knew about is gone with it, this side's
         // bookkeeping included -- a socket number that survived a reset would
@@ -1152,41 +1152,41 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
         owners_init();
         for (int i = 0; i < NINA_SOCKETS; i++) { sock_owner[i] = OWNER_NONE; sock_port[i] = 0; }
         return 0;
-    case MYRTOS_MSG_WIFI_SOCK: {
-        const myrtos_wifi_sock_t *q = (const myrtos_wifi_sock_t*)m->data;
+    case UBIQOS_MSG_WIFI_SOCK: {
+        const ubiqos_wifi_sock_t *q = (const ubiqos_wifi_sock_t*)m->data;
         // Before anything else, and cheap when there is nothing to do: a socket
         // whose owner has been reaped is closed here, because this is the first
         // place after the reaping where the chip may be spoken to.
         sweep_orphans();
         switch (q->op) {
-        case MYRTOS_SOCK_LISTEN: {
-            int32_t s = myrtos_wifi_listen((uint16_t)q->arg);
+        case UBIQOS_SOCK_LISTEN: {
+            int32_t s = ubiqos_wifi_listen((uint16_t)q->arg);
             own(s, from);
             return s;
         }
-        case MYRTOS_SOCK_ACCEPT: {
-            int32_t c = myrtos_wifi_accept((uint8_t)q->arg);
+        case UBIQOS_SOCK_ACCEPT: {
+            int32_t c = ubiqos_wifi_accept((uint8_t)q->arg);
             own(c, from);
             return c;
         }
-        case MYRTOS_SOCK_RECV:   return myrtos_wifi_recv((uint8_t)q->arg, q->buf, q->len);
-        case MYRTOS_SOCK_SEND:   return myrtos_wifi_send((uint8_t)q->arg, q->buf, q->len);
-        case MYRTOS_SOCK_CLOSE:  return myrtos_wifi_close((uint8_t)q->arg);
+        case UBIQOS_SOCK_RECV:   return ubiqos_wifi_recv((uint8_t)q->arg, q->buf, q->len);
+        case UBIQOS_SOCK_SEND:   return ubiqos_wifi_send((uint8_t)q->arg, q->buf, q->len);
+        case UBIQOS_SOCK_CLOSE:  return ubiqos_wifi_close((uint8_t)q->arg);
         // Diagnostics. Three numbers about one socket, which is what was
         // missing while three explanations were argued over in an evening.
-        case MYRTOS_SOCK_STATE:  return myrtos_wifi_state((uint8_t)q->arg);
-        case MYRTOS_SOCK_OWNER:  return myrtos_wifi_owner((uint8_t)q->arg);
-        case MYRTOS_SOCK_PORT:   return myrtos_wifi_port_of((uint8_t)q->arg);
+        case UBIQOS_SOCK_STATE:  return ubiqos_wifi_state((uint8_t)q->arg);
+        case UBIQOS_SOCK_OWNER:  return ubiqos_wifi_owner((uint8_t)q->arg);
+        case UBIQOS_SOCK_PORT:   return ubiqos_wifi_port_of((uint8_t)q->arg);
         default:                 return -1;
         }
     }
-    case MYRTOS_MSG_WIFI_JOIN: {
+    case UBIQOS_MSG_WIFI_JOIN: {
         // name, NUL, secret, NUL -- in the caller's own memory, which is stable
         // because the caller is blocked in send.
         const char *ssid = r->buf;
         const char *pass = ssid;
         while (*pass) pass++;
-        return myrtos_wifi_connect(ssid, pass + 1);
+        return ubiqos_wifi_connect(ssid, pass + 1);
     }
     default:                   return -1;
     }
@@ -1194,19 +1194,19 @@ static int32_t handle(const myrtos_msg_t *m, int32_t from) {
 
 static void wifi_thread(void) {
     for (;;) {
-        myrtos_msg_t m;
-        int32_t from = myrtos_receive(&m);
+        ubiqos_msg_t m;
+        int32_t from = ubiqos_receive(&m);
         if (from < 0) continue;
         // Who asked, which is who owns whatever socket comes back. The kernel
         // blocks the sender until the reply, so this pid is alive right now --
         // and if it dies later, reap tells us.
-        myrtos_reply(handle(&m, from));
+        ubiqos_reply(handle(&m, from));
     }
 }
 
-void myrtos_wifi_start_server(void) {
+void ubiqos_wifi_start_server(void) {
     // Below the USB task, which is the thing this exists to stop starving.
-    server_pid = K->kernel_thread(wifi_thread, 2048, MYRTOS_PRIO_WIFI);
+    server_pid = K->kernel_thread(wifi_thread, 2048, UBIQOS_PRIO_WIFI);
     if (server_pid < 0) K->print("WiFi: could not start its service process\n");
 }
 
@@ -1216,22 +1216,22 @@ void myrtos_wifi_start_server(void) {
 // would be following a null pointer. The kernel checks the ABI word before it
 // calls entry zero, and entry zero checks it again -- once on each side of an
 // interface is not one time too many when the alternative is a wild jump.
-static bool wifi_lib_init(const myrtos_kernel_api_t *api)
+static bool wifi_lib_init(const ubiqos_kernel_api_t *api)
 {
-    if (!api || api->abi != MYRTOS_KERNEL_API_ABI) return false;
+    if (!api || api->abi != UBIQOS_KERNEL_API_ABI) return false;
     K = api;
     return true;
 }
 
-const myrtos_lib_table_t myrtos_lib = {
-    .abi   = MYRTOS_LIB_ABI,
+const ubiqos_lib_table_t ubiqos_lib = {
+    .abi   = UBIQOS_LIB_ABI,
     .count = 6,
     .fn    = {
         (void*)wifi_lib_init,            // 0: take the kernel's table
-        (void*)myrtos_wifi_probe,        // 1: find the chip and say what it is
-        (void*)myrtos_wifi_start_server, // 2: start the thread that serves it
-        (void*)myrtos_wifi_server_pid,   // 3: who to send to, or -1
-        (void*)myrtos_wifi_forget_pid,   // 4: this process is gone; mark, do not talk
+        (void*)ubiqos_wifi_probe,        // 1: find the chip and say what it is
+        (void*)ubiqos_wifi_start_server, // 2: start the thread that serves it
+        (void*)ubiqos_wifi_server_pid,   // 3: who to send to, or -1
+        (void*)ubiqos_wifi_forget_pid,   // 4: this process is gone; mark, do not talk
         (void*)wifi_chip_reset,          // 5: hold the chip in reset and let it return
     },
 };

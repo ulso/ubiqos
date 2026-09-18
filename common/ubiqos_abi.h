@@ -1,5 +1,5 @@
-#ifndef MYRTOS_ABI_H
-#define MYRTOS_ABI_H
+#ifndef UBIQOS_ABI_H
+#define UBIQOS_ABI_H
 
 #include <stdint.h>
 // bool is a keyword only from C23 onwards, and this header is public: a
@@ -15,7 +15,7 @@
 // an "unknown system call" at runtime, which is exactly the kind of silent
 // drift an ABI exists to prevent.
 //
-// Once this stops moving, this file is what a myrtos SDK consists of: module
+// Once this stops moving, this file is what a UbiqOS SDK consists of: module
 // development needs it, not the kernel sources.
 
 // --- FORMAT VERSION -------------------------------------------------------
@@ -24,21 +24,21 @@
 // Version 2 added the three tls_ fields; version 3 added the revision. Both
 // changed the header's size and what the checksum covers, so an older module in
 // a newer kernel is refused rather than misread.
-// 10 on 7 Sep 2026: myrtos_fsops_t gained rename. A module built against 9
+// 10 on 7 Sep 2026: ubiqos_fsops_t gained rename. A module built against 9
 // supplies a table one pointer short, and the kernel reading ops->rename off
 // the end of it would follow whatever lay after -- which is exactly what the
 // version is here to prevent. Old .mod files on the card are refused rather
 // than trusted.
-#define MYRTOS_ABI_VERSION    10
+#define UBIQOS_ABI_VERSION    10
 
 // --- MODULE HEADER --------------------------------------------------------
-#define MYRTOS_SYNC_CODE      0x0509000B
+#define UBIQOS_SYNC_CODE      0x0509000B
 
 // Attributes, in the high byte of attr_rev. The field already existed and held
 // one bit; this is what an attributes byte is for, and OS-9 used its the same
 // way, so nothing about the header's shape had to change.
-#define MYRTOS_ATTR_REENTRANT 0x01
-#define MYRTOS_ATTR_REALTIME  0x02   // keep this module's memory in SRAM
+#define UBIQOS_ATTR_REENTRANT 0x01
+#define UBIQOS_ATTR_REALTIME  0x02   // keep this module's memory in SRAM
 
 // This module cannot run where it lies and needs a copy of its own. It is set
 // for anything with writable data, anything with relocations to apply, and
@@ -51,7 +51,7 @@
 // variable. Position-independent code is still worth having and still costs
 // nothing -- a module without this bit runs straight out of flash, as most of
 // them do -- but it is no longer the price of admission.
-#define MYRTOS_ATTR_PRIVATE   0x04
+#define UBIQOS_ATTR_PRIVATE   0x04
 
 // Start this program when the system comes up, after the card's startup script
 // if there is one. It is for an application in flash, which has to run whether
@@ -61,7 +61,7 @@
 //
 // No ABI version for it. A kernel that predates the bit ignores it, and a
 // module that predates it has it clear.
-#define MYRTOS_ATTR_AUTOSTART 0x08
+#define UBIQOS_ATTR_AUTOSTART 0x08
 
 // Which machine the code in a module is for, in the high nibble of type_lang's
 // low byte -- the language keeps the low nibble, as it did, and nothing has
@@ -76,26 +76,26 @@
 // It is derived from the object file rather than declared, so it cannot be
 // stated wrongly. Zero means nobody said, and a module with code is refused for
 // it; a data module has no instructions and is not asked.
-#define MYRTOS_ARCH_NONE      0
-#define MYRTOS_ARCH_RV32      1
-#define MYRTOS_ARCH_ARM32     2   // Thumb-2, M-profile
+#define UBIQOS_ARCH_NONE      0
+#define UBIQOS_ARCH_RV32      1
+#define UBIQOS_ARCH_ARM32     2   // Thumb-2, M-profile
 
-#define MYRTOS_ARCH_OF(tl)    (((tl) >> 4) & 0x0f)
-#define MYRTOS_LANG_OF(tl)    ((tl) & 0x0f)
+#define UBIQOS_ARCH_OF(tl)    (((tl) >> 4) & 0x0f)
+#define UBIQOS_LANG_OF(tl)    ((tl) & 0x0f)
 
 #ifdef __riscv
-#define MYRTOS_ARCH_HERE      MYRTOS_ARCH_RV32
+#define UBIQOS_ARCH_HERE      UBIQOS_ARCH_RV32
 #elif defined(__arm__) || defined(__thumb__)
-#define MYRTOS_ARCH_HERE      MYRTOS_ARCH_ARM32
+#define UBIQOS_ARCH_HERE      UBIQOS_ARCH_ARM32
 #else
-#define MYRTOS_ARCH_HERE      MYRTOS_ARCH_NONE
+#define UBIQOS_ARCH_HERE      UBIQOS_ARCH_NONE
 #endif
 
 // Type, in the high byte of type_lang.
-#define MYRTOS_TYPE_PROGRAM   1
-#define MYRTOS_TYPE_DRIVER    2
-#define MYRTOS_TYPE_DATA      3   // no code, no entry point
-#define MYRTOS_TYPE_LIBRARY   4   // code, but entered through a table rather
+#define UBIQOS_TYPE_PROGRAM   1
+#define UBIQOS_TYPE_DRIVER    2
+#define UBIQOS_TYPE_DATA      3   // no code, no entry point
+#define UBIQOS_TYPE_LIBRARY   4   // code, but entered through a table rather
                                   // than at one point -- see exec_offset
 
 // Everything the server asks of a volume. A volume that cannot do something
@@ -122,7 +122,7 @@ typedef struct {
     // Module scanning: find the nth file with this extension, then read it.
     bool    (*find_nth)(const char *ext_3, uint32_t index, char *name_out);
     int32_t (*read_file)(const char *name_83, uint8_t *buf, uint32_t max_len);
-} myrtos_fsops_t;
+} ubiqos_fsops_t;
 
 // --- LIBRARY MODULES ------------------------------------------------------
 // A module the kernel calls rather than runs. OS-9 had these as Sbrtn, and the
@@ -137,15 +137,15 @@ typedef struct {
 // What this buys, and it is the reason wifi went first: a library is loaded
 // where modules are loaded, which is PSRAM. Its code is not in SRAM at all, and
 // the kernel image does not carry it.
-#define MYRTOS_LIB_ABI 1
+#define UBIQOS_LIB_ABI 1
 
 // The table at exec_offset. abi first so a mismatch is caught before anything
 // is called; count second so a caller can ask for entry n and be told no.
 typedef struct {
-    uint32_t abi;       // MYRTOS_LIB_ABI
+    uint32_t abi;       // UBIQOS_LIB_ABI
     uint32_t count;     // how many pointers follow
     void    *fn[];      // in the order the library documents
-} myrtos_lib_table_t;
+} ubiqos_lib_table_t;
 
 // And what the kernel hands back, so a library can call home.
 //
@@ -179,16 +179,16 @@ typedef struct {
 //
 // Version 11 added the pin registry, so that two drivers cannot quietly want
 // the same pin and a person can be told who has one.
-#define MYRTOS_KERNEL_API_ABI 11
+#define UBIQOS_KERNEL_API_ABI 11
 
 // Pin function numbers, which are the SDK's and are passed straight through.
 // Here so that a library needs no SDK header at all -- only this one.
-#define MYRTOS_GPIO_FUNC_SPI  1u
-#define MYRTOS_GPIO_IN        false
-#define MYRTOS_GPIO_OUT       true
+#define UBIQOS_GPIO_FUNC_SPI  1u
+#define UBIQOS_GPIO_IN        false
+#define UBIQOS_GPIO_OUT       true
 
 typedef struct {
-    uint32_t abi;                     // MYRTOS_KERNEL_API_ABI
+    uint32_t abi;                     // UBIQOS_KERNEL_API_ABI
 
     void   (*print)(const char *s);
     void   (*print_u32)(uint32_t v);
@@ -333,7 +333,7 @@ typedef struct {
     //
     // Some chips want a master clock and can otherwise be told to make their
     // own with an internal PLL. The audio codec on this board is one, and the
-    // second way is what everybody does because it costs a pin -- both myrtos
+    // second way is what everybody does because it costs a pin -- both UbiqOS
     // and Adafruit's own firmware locked its PLL to the bit clock, and both
     // sound the same kind of wrong above 5 kHz.
     //
@@ -361,8 +361,8 @@ typedef struct {
     // A HANDLER MORE URGENT THAN THE THRESHOLD MAY NOT CALL ANYTHING IN THIS
     // SYSTEM. Not one function. Specifically:
     //
-    //   - no system call, so none of myrtos_read, myrtos_write, myrtos_open,
-    //     myrtos_sleep or anything else in this header that traps;
+    //   - no system call, so none of ubiqos_read, ubiqos_write, ubiqos_open,
+    //     ubiqos_sleep or anything else in this header that traps;
     //   - no messages, no pulses;
     //   - no allocation, and no free;
     //   - nothing through this table, print included -- it reaches the console
@@ -414,7 +414,7 @@ typedef struct {
     int32_t     (*pin_claim)(uint32_t pin, const char *who);
     int32_t     (*pin_release)(uint32_t pin);
     const char *(*pin_owner)(uint32_t pin);
-} myrtos_kernel_api_t;
+} ubiqos_kernel_api_t;
 
 // One table for every library, which is the simple thing and not the right one
 // for ever: wifi ignores the block device and fat32 ignores the SPI pins. When
@@ -435,7 +435,7 @@ typedef struct {
 // so there is nothing to agree about.
 //
 // The vtable itself lives here rather than in the kernel's io.h for the same
-// reason myrtos_fsops_t does: a module cannot include a kernel header.
+// reason ubiqos_fsops_t does: a module cannot include a kernel header.
 typedef struct {
     const char *module_name;    // what the descriptor refers to: "uart"
     int32_t (*configure)(const void *config, uint32_t size);
@@ -461,24 +461,24 @@ typedef struct {
     // out and every code asked of it answers -1.
     int32_t (*getstat)(uint32_t code, void *data, uint32_t len);
     int32_t (*setstat)(uint32_t code, const void *data, uint32_t len);
-} myrtos_driver_t;
+} ubiqos_driver_t;
 
 // Two, because getstat and setstat were added to the end of the table above.
 // A driver module built against 1 does not have those two words, and the
 // version is what stops the I/O manager reading past the end of its data and
 // calling whatever it finds. An old driver on the card is refused by name
 // instead, which is a message rather than a crash.
-#define MYRTOS_DRIVER_ABI 2
+#define UBIQOS_DRIVER_ABI 2
 
 // What exec_offset points at in a driver module, under the symbol
-// myrtos_driver. init comes first and is called once, like a library's entry
+// ubiqos_driver. init comes first and is called once, like a library's entry
 // zero, because a driver has no other way to reach the kernel either.
 typedef struct {
-    uint32_t abi;               // MYRTOS_DRIVER_ABI
+    uint32_t abi;               // UBIQOS_DRIVER_ABI
     uint32_t reserved;
-    bool (*init)(const myrtos_kernel_api_t *api);
-    myrtos_driver_t ops;
-} myrtos_driver_module_t;
+    bool (*init)(const ubiqos_kernel_api_t *api);
+    ubiqos_driver_t ops;
+} ubiqos_driver_module_t;
 
 // --- DEVICE DESCRIPTORS ---------------------------------------------------
 // A data module describing a device, in the OS-9 sense. It states what the
@@ -515,15 +515,15 @@ typedef struct {
 // "sh      " the same string, which is the kind of equality that has to be
 // remembered everywhere it is compared; and a name with a space in it cannot be
 // typed as one word at a shell prompt, so it could never have been used.
-#define MYRTOS_NAME_LEN       16
+#define UBIQOS_NAME_LEN       16
 
-#define MYRTOS_KEYMAP_KEYS    104
+#define UBIQOS_KEYMAP_KEYS    104
 
 typedef struct {
-    uint8_t plain[MYRTOS_KEYMAP_KEYS];
-    uint8_t shift[MYRTOS_KEYMAP_KEYS];
-    uint8_t altgr[MYRTOS_KEYMAP_KEYS];
-} myrtos_keymap_t;
+    uint8_t plain[UBIQOS_KEYMAP_KEYS];
+    uint8_t shift[UBIQOS_KEYMAP_KEYS];
+    uint8_t altgr[UBIQOS_KEYMAP_KEYS];
+} ubiqos_keymap_t;
 
 // Which font the console draws in, and the grid that results. The font is a
 // property of the screen rather than of whoever writes to it: a process asks
@@ -534,7 +534,7 @@ typedef struct {
     uint8_t cell_w, cell_h;
     uint8_t count;         // how many the kernel has
     uint16_t cols, rows;   // the grid that cell gives on this display
-} myrtos_confont_t;
+} ubiqos_confont_t;
 
 // --- I2C ------------------------------------------------------------------
 // One transaction, written to /dev/i2c as a header followed by the bytes to
@@ -549,26 +549,26 @@ typedef struct {
 //
 // A scan is nwrite 0, nread 1: address the device, ask for a byte, and see
 // whether anything answers at all.
-#define MYRTOS_I2C_MAX_READ 64
+#define UBIQOS_I2C_MAX_READ 64
 
 typedef struct {
     uint8_t addr;      // 7-bit, without the read/write bit
     uint8_t nwrite;    // bytes following this header
-    uint8_t nread;     // bytes to fetch afterwards, up to MYRTOS_I2C_MAX_READ
+    uint8_t nread;     // bytes to fetch afterwards, up to UBIQOS_I2C_MAX_READ
     uint8_t reserved;
-} myrtos_i2c_xfer_t;
+} ubiqos_i2c_xfer_t;
 
-#define MYRTOS_CLASS_CHAR  1   // character stream: terminal, serial port
-#define MYRTOS_CLASS_BLOCK 2   // block oriented: SD, disk
+#define UBIQOS_CLASS_CHAR  1   // character stream: terminal, serial port
+#define UBIQOS_CLASS_BLOCK 2   // block oriented: SD, disk
 
 typedef struct __attribute__((packed, aligned(4))) {
-    char device_name[MYRTOS_NAME_LEN];   // what a process opens: "term"
-    char driver_name[MYRTOS_NAME_LEN];   // the module handling it: "uart"
-    uint16_t device_class;               // MYRTOS_CLASS_*
+    char device_name[UBIQOS_NAME_LEN];   // what a process opens: "term"
+    char driver_name[UBIQOS_NAME_LEN];   // the module handling it: "uart"
+    uint16_t device_class;               // UBIQOS_CLASS_*
     uint16_t reserved;
     uint32_t config_offset;   // from the start of the descriptor to the tail
     uint32_t config_size;     // size of the tail, zero if none
-} myrtos_descriptor_t;
+} ubiqos_descriptor_t;
 
 // The tail for the ESP-Hosted SPI transport. Six pins: four of them are the
 // SPI the WiFiNINA driver used, and the two after them are what ESP-Hosted
@@ -579,7 +579,7 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t handshake_pin;   // GP3  <- the C6's IO18
     uint32_t data_ready_pin;  // GP23 <- the C6's IO9, which is also its strap
     uint32_t baud_rate;
-} myrtos_ehspi_config_t;
+} ubiqos_ehspi_config_t;
 
 // What the transport counts, for ehstat to print.
 typedef struct {
@@ -630,27 +630,27 @@ typedef struct {
     // when we have nothing of our own to send, and it had never been counted.
     uint32_t dr_high, dr_low;
     uint32_t turn_gap_us, worst_turn_gap_us;   // between one offer and the next
-} myrtos_eh_stats_t;
+} ubiqos_eh_stats_t;
 
 // --- PING -------------------------------------------------------------------
 // Started and then polled, because the stack lives in the USB task and that
 // task may not wait for anything. The process that typed `ping` does the
 // waiting instead, which is the one place waiting costs nothing.
-#define MYRTOS_PING_IDLE        0u
-#define MYRTOS_PING_RESOLVING   1u
-#define MYRTOS_PING_WAITING     2u
-#define MYRTOS_PING_REPLIED     3u
-#define MYRTOS_PING_TIMEDOUT    4u
-#define MYRTOS_PING_NONAME      5u   // the name is not answered by anybody
-#define MYRTOS_PING_UNREACHABLE 6u   // the stack would not even send it
+#define UBIQOS_PING_IDLE        0u
+#define UBIQOS_PING_RESOLVING   1u
+#define UBIQOS_PING_WAITING     2u
+#define UBIQOS_PING_REPLIED     3u
+#define UBIQOS_PING_TIMEDOUT    4u
+#define UBIQOS_PING_NONAME      5u   // the name is not answered by anybody
+#define UBIQOS_PING_UNREACHABLE 6u   // the stack would not even send it
 
-#define MYRTOS_SS_EH_STATS   0x0410u   // myrtos_eh_stats_t
+#define UBIQOS_SS_EH_STATS   0x0410u   // ubiqos_eh_stats_t
 
 // The station's own hardware address, which only the control plane can ask
 // for -- RPC 257 -- and only the network interface needs. It is set by
 // whoever ran the RPC and read by whoever builds the netif, so that the
 // protobuf stays in one place and the driver holds six bytes.
-#define MYRTOS_SS_EH_MAC     0x0411u   // uint8_t[6]
+#define UBIQOS_SS_EH_MAC     0x0411u   // uint8_t[6]
 
 // The data plane, which does not go through read and write because those
 // already carry the control plane and a device driver module serves exactly
@@ -659,8 +659,8 @@ typedef struct {
 //
 // It is the kernel that calls these, from the USB task, because that is where
 // lwIP lives and lwIP may be touched nowhere else.
-#define MYRTOS_SS_EH_RX      0x0412u   // uint8_t[], -> the length taken
-#define MYRTOS_SS_EH_TX      0x0413u   // uint8_t[], one Ethernet frame
+#define UBIQOS_SS_EH_RX      0x0412u   // uint8_t[], -> the length taken
+#define UBIQOS_SS_EH_TX      0x0413u   // uint8_t[], one Ethernet frame
 
 // Join a network: "ssid\0password". The whole sequence -- initialise the
 // radio, station mode, power save off, the network, start, connect, and its
@@ -671,8 +671,8 @@ typedef struct {
 // that file itself and hands the bytes to this driver and to nothing else.
 // That is the same arrangement modules/wifilib has had since the NINA days:
 // the caller asks to join, not to be told the password.
-#define MYRTOS_SS_EH_JOIN    0x0414u   // char[], "ssid\0password"
-#define MYRTOS_SS_EH_JOINED  0x0415u   // getstat -> uint32_t: 0 idle, 1 trying,
+#define UBIQOS_SS_EH_JOIN    0x0414u   // char[], "ssid\0password"
+#define UBIQOS_SS_EH_JOINED  0x0415u   // getstat -> uint32_t: 0 idle, 1 trying,
                                        //   2 joined, 3 the last attempt failed
 
 // The tail for the ESP32-C6 link. The UART part is the same shape as the one
@@ -685,7 +685,7 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t baud_rate;
     uint32_t strap_pin;    // GP23 -> the C6's IO9, its download strap
     uint32_t reset_pin;    // GP22 -> the C6's EN, and the audio DAC's
-} myrtos_esp_config_t;
+} ubiqos_esp_config_t;
 
 // The tail for the UART driver. Its layout is the driver's business alone; the
 // I/O manager passes it on without interpreting it.
@@ -694,10 +694,10 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t tx_pin;
     uint32_t rx_pin;   // 0xffffffff if send-only
     uint32_t baud_rate;
-} myrtos_uart_config_t;
+} ubiqos_uart_config_t;
 
 typedef struct __attribute__((packed, aligned(4))) {
-    uint32_t sync_code;     // MYRTOS_SYNC_CODE
+    uint32_t sync_code;     // UBIQOS_SYNC_CODE
     uint32_t module_size;   // the whole module, header included
     uint32_t name_offset;   // to the name string
     uint16_t type_lang;     // type, and the machine and language below it
@@ -748,7 +748,7 @@ typedef struct __attribute__((packed, aligned(4))) {
     uint32_t bss_size;
 
     uint32_t header_crc;   // complement of the sum of the first thirteen words
-} myrtos_module_header_t;
+} ubiqos_module_header_t;
 
 // What has to be copied for a module to run: the header and the code, and
 // nothing after them.
@@ -760,7 +760,7 @@ typedef struct __attribute__((packed, aligned(4))) {
 // counter read 0x65647476, which is "vtde". So the image ends at name_offset,
 // bss_size follows it, and the name is read where the module lies rather than
 // carried along. The relocation table is read there too.
-static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
+static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 {
     return h->name_offset;
 }
@@ -773,29 +773,29 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_OPEN      3u    // a0 = device name       -> a0 = path number
 #define SYS_WRITE     4u    // a0 = path, a1 = buffer, a2 = length
 #define SYS_CLOSE     5u    // a0 = path
-#define SYS_MODDIR    6u    // a0 = index, a1 = &myrtos_modinfo_t -> a0 = 0, -1 = end
+#define SYS_MODDIR    6u    // a0 = index, a1 = &ubiqos_modinfo_t -> a0 = 0, -1 = end
 #define SYS_MEMINFO   7u    // a0 = 0 largest free block, 1 processes -> a0 = value
 #define SYS_READ      8u    // a0 = path, a1 = buf, a2 = length -> a0 = read, 0 = nothing
 #define SYS_EXEC      9u    // a0 = module name, a1 = argument string -> a0 = pid
 #define SYS_ARGS      10u   // a0 = buffer, a1 = length -> a0 = characters copied
-#define SYS_FSDIR     11u   // a0 = &myrtos_fs_dir_t -> a0 = attr byte, -1 = end
-#define SYS_FSREAD    12u   // a0 = &myrtos_fs_io_t -> a0 = bytes read, 0 = eof
-#define SYS_FSWRITE   13u   // a0 = &myrtos_fs_io_t -> a0 = bytes written
+#define SYS_FSDIR     11u   // a0 = &ubiqos_fs_dir_t -> a0 = attr byte, -1 = end
+#define SYS_FSREAD    12u   // a0 = &ubiqos_fs_io_t -> a0 = bytes read, 0 = eof
+#define SYS_FSWRITE   13u   // a0 = &ubiqos_fs_io_t -> a0 = bytes written
 #define SYS_FSREMOVE  14u   // a0 = name -> a0 = 0 ok, -1 failed
-#define SYS_FSRENAME  59u   // a0 = &myrtos_fs_rename_t -> a0 = 0 ok, -1 failed
+#define SYS_FSRENAME  59u   // a0 = &ubiqos_fs_rename_t -> a0 = 0 ok, -1 failed
 #define SYS_WAIT      15u   // a0 = pid; returns when that process has exited
 #define SYS_SLEEP     16u   // a0 = milliseconds; returns when they have passed
 #define SYS_SETPRIO   17u   // a0 = new priority -> a0 = the old one
 #define SYS_TICKS     18u   // -> a0 = milliseconds since the timer started
-#define SYS_PSINFO    19u   // a0 = slot, a1 = &myrtos_psinfo_t -> a0 = 0, -1 empty
+#define SYS_PSINFO    19u   // a0 = slot, a1 = &ubiqos_psinfo_t -> a0 = 0, -1 empty
 #define SYS_BOOTSEL   20u   // reboots into the bootloader; never returns
 #define SYS_ALLOC     21u   // a0 = bytes -> a0 = pointer, 0 on failure
 #define SYS_FREE      22u   // a0 = pointer -> a0 = 0, -1 if not ours
 #define SYS_REALLOC   23u   // a0 = pointer, a1 = bytes -> a0 = pointer
 #define SYS_DATAAREA  24u   // a0 = &size or 0 -> a0 = base of this process's area
 #define SYS_ALLOCBULK 25u   // a0 = bytes -> a0 = pointer, from PSRAM if there is any
-#define SYS_SEND      26u   // a0 = pid, a1 = &myrtos_msg_t -> a0 = the reply status
-#define SYS_RECEIVE   27u   // a0 = &myrtos_msg_t out -> a0 = sender pid
+#define SYS_SEND      26u   // a0 = pid, a1 = &ubiqos_msg_t -> a0 = the reply status
+#define SYS_RECEIVE   27u   // a0 = &ubiqos_msg_t out -> a0 = sender pid
 #define SYS_REPLY     28u   // a0 = status -> a0 = 0, -1 if nobody is being served
 #define SYS_PIDOF     29u   // a0 = module name -> a0 = pid, -1 if not running
 #define SYS_MKDIR     30u   // a0 = path -> a0 = 0 ok, -1 failed
@@ -804,7 +804,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_RMDIR     33u   // a0 = path -> a0 = 0 ok, -1 not empty or not there
 #define SYS_RECEIVETMO 44u  // a0 = msg out, a1 = milliseconds
 #define SYS_SEEK      45u   // a0 = descriptor, a1 = offset, a2 = whence
-#define SYS_FSSTAT    46u   // a0 = myrtos_fs_stat_t -> a0 = attributes, -1 none
+#define SYS_FSSTAT    46u   // a0 = ubiqos_fs_stat_t -> a0 = attributes, -1 none
 #define SYS_DUP       47u   // a0 = descriptor, a1 = new one or -1 -> a0 = new one
 #define SYS_PIPE      48u   // a0 = int32_t[2] out -> a0 = 0, -1 if none can be had
 #define SYS_LOADMOD   49u   // a0 = module name; reads it off the card into the
@@ -818,17 +818,17 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
                             // -> a0 = 0, -1 if there is no room to watch
 #define SYS_DISARM    54u   // drops every watch this process holds
                             // -> a0 = how many there were
-// SYS_OPEN takes the flags in a1. Zero is MYRTOS_O_RDONLY, which is what every
+// SYS_OPEN takes the flags in a1. Zero is UBIQOS_O_RDONLY, which is what every
 // caller written before they existed passed, so none of them changed meaning.
 
-#define MYRTOS_SEEK_SET 0u   // from the start of the file
-#define MYRTOS_SEEK_CUR 1u   // from where the descriptor is now
+#define UBIQOS_SEEK_SET 0u   // from the start of the file
+#define UBIQOS_SEEK_CUR 1u   // from where the descriptor is now
 // From the end, which needs the file's length and so cannot be answered in the
 // trap: SYS_SEEK sends it to the file server, the way open and read already go.
 // Worth having rather than refusing, because fseek(f, 0, SEEK_END) followed by
 // ftell is how nearly every C program asks how big a file is, and a port that
 // cannot do it fails in a way that looks like a bug in the port.
-#define MYRTOS_SEEK_END 2u
+#define UBIQOS_SEEK_END 2u
 // SEEK_END is deliberately absent. It needs the file's length, and nothing can
 // answer that yet: the filesystem lists sizes when it walks a directory and has
 // no stat for one named file. Asking for it returns -1 rather than a number
@@ -852,7 +852,7 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 #define SYS_SETSTAT   62u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
 // a0 = microseconds to hold a kernel critical section. It exists to test the
 // one thing that cannot be tested by waiting for it to happen: whether an
-// interrupt more urgent than MYRTOS_CRITICAL_BASEPRI really does run while the
+// interrupt more urgent than UBIQOS_CRITICAL_BASEPRI really does run while the
 // kernel is inside one. Real critical sections here measure under three
 // microseconds, which is too short to tell the two mechanisms apart -- so the
 // experiment has to make its own.
@@ -866,12 +866,12 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 // What /sd/config.txt said. a0 says which setting, a1 and a2 are where to put
 // it -- except for the password, which is never handed out: asking for it says
 // only whether there is one. See kernel/config.c for why that is the shape.
-#define SYS_CONFIG    68u   // a0 = MYRTOS_CFG_*, a1 = buffer, a2 = length
+#define SYS_CONFIG    68u   // a0 = UBIQOS_CFG_*, a1 = buffer, a2 = length
                             //   -> a0 = the length written, or for the password
                             //      1 when one is set and 0 when it is not
-#define MYRTOS_CFG_HOSTNAME 0u
-#define MYRTOS_CFG_SSID     1u
-#define MYRTOS_CFG_PASSWORD 2u
+#define UBIQOS_CFG_HOSTNAME 0u
+#define UBIQOS_CFG_SSID     1u
+#define UBIQOS_CFG_PASSWORD 2u
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
@@ -890,73 +890,73 @@ static inline uint32_t myrtos_module_image_size(const myrtos_module_header_t *h)
 typedef struct {
     void    *data;
     uint32_t len;
-} myrtos_stat_t;
+} ubiqos_stat_t;
 
 // Codes below 0x100 mean the same thing on every device that answers them at
 // all. From 0x100 they belong to one kind of device and are listed with it.
 // Unknown is always -1: a caller finds out what a device can do by asking.
-#define MYRTOS_SS_RATE     0x0001u  // uint32_t, samples or bits per second
+#define UBIQOS_SS_RATE     0x0001u  // uint32_t, samples or bits per second
 
 // Audio.
-#define MYRTOS_SS_VOLUME   0x0100u  // uint32_t 0-100; 100 is full scale
+#define UBIQOS_SS_VOLUME   0x0100u  // uint32_t 0-100; 100 is full scale
 // The DMA's ring, copied out in the order it is being played, starting from
 // where the DMA is reading now. Diagnostic: it is the only way to see what the
 // hardware is actually being fed, short of a probe on the I2S pins, and it is
 // what separates a fault in the writer from a fault in the codec.
-#define MYRTOS_SS_RINGDUMP 0x0101u  // the whole ring, as bytes
+#define UBIQOS_SS_RINGDUMP 0x0101u  // the whole ring, as bytes
 
 // A driver that owns an interrupt, reporting on how well it is being let run.
 // getstat fills the struct; setstat with any data resets the worst case, which
 // otherwise stands for ever after one early stall and makes every later
 // measurement that same number.
-#define MYRTOS_SS_IRQSTATS 0x0200u  // myrtos_irqstats_t
+#define UBIQOS_SS_IRQSTATS 0x0200u  // ubiqos_irqstats_t
 // setstat: uint32_t, non-zero to start the interrupt and the conversions.
 //
 // A driver that takes an interrupt at boot and gets it wrong takes the machine
 // with it before USB is up, and the only way back in is the BOOTSEL button.
 // Coming up inert and being started from the shell makes a bad experiment cost
 // a power cycle instead.
-#define MYRTOS_SS_RUN      0x0201u
+#define UBIQOS_SS_RUN      0x0201u
 // A pin below 32 for the handler to toggle on every run, or 0xffffffff for
 // none. It exists so that the latency a driver measures with the board's own
 // clock can be checked from outside with an oscilloscope, which is a different
 // instrument answering the same question -- and the first one was measuring
 // itself.
-#define MYRTOS_SS_IRQPIN   0x0202u
+#define UBIQOS_SS_IRQPIN   0x0202u
 
 // A sweep. setstat arms it with a channel and a count and the handler fills the
 // buffer as the conversions come round; getstat says how far it has got. The
 // span is MEASURED between the first sample and the last rather than worked out
 // from the nominal rate, so a timebase drawn from it is what happened and not
 // what was asked for.
-#define MYRTOS_SS_CAPTURE  0x0203u  // myrtos_adccap_t
-#define MYRTOS_SS_CAPDATA  0x0204u  // uint16_t[], the samples themselves
+#define UBIQOS_SS_CAPTURE  0x0203u  // ubiqos_adccap_t
+#define UBIQOS_SS_CAPDATA  0x0204u  // uint16_t[], the samples themselves
 // Which ADC channels the driver actually got, as a bit per channel. The board
 // labels its inputs A1 to A5 and channel n is GP(40+n), so the bit number IS
 // the label -- and a missing bit is a pin that belongs to something else.
-#define MYRTOS_SS_ADCCHANS 0x0205u  // uint32_t bitmask
+#define UBIQOS_SS_ADCCHANS 0x0205u  // uint32_t bitmask
 typedef struct {
     uint32_t channel;
     uint32_t count;      // asked for
     uint32_t taken;      // filled so far; equal to count when the sweep is done
     uint32_t span_us;    // first sample to last, measured
-} myrtos_adccap_t;
+} ubiqos_adccap_t;
 
 // Digital I/O. A pin is set up once with MODE and then driven with LEVEL; a
 // read of the device gives every pin's input level as two 32-bit words, low
 // pins first.
-#define MYRTOS_SS_GPIO_MODE  0x0300u   // myrtos_gpio_t, .value is a MYRTOS_PIN_*
-#define MYRTOS_SS_GPIO_LEVEL 0x0301u   // myrtos_gpio_t, .value is 0 or 1
+#define UBIQOS_SS_GPIO_MODE  0x0300u   // ubiqos_gpio_t, .value is a UBIQOS_PIN_*
+#define UBIQOS_SS_GPIO_LEVEL 0x0301u   // ubiqos_gpio_t, .value is 0 or 1
 // getstat with this one names the owner instead of refusing silently: the
 // caller puts the pin in .pin and gets up to .value bytes of name back.
-#define MYRTOS_SS_GPIO_OWNER 0x0302u   // myrtos_gpio_owner_t
+#define UBIQOS_SS_GPIO_OWNER 0x0302u   // ubiqos_gpio_owner_t
 // Every pin's input level at once, as a uint64_t, low pin in bit 0. A snapshot
 // rather than a stream: reading the device gives edge events instead.
-#define MYRTOS_SS_GPIO_LEVELS 0x0303u  // uint64_t
+#define UBIQOS_SS_GPIO_LEVELS 0x0303u  // uint64_t
 // Watch a pin for edges, or stop. Reading the device then gives one
-// myrtos_gpio_event_t per edge, and a read blocks until there is one -- which
+// ubiqos_gpio_event_t per edge, and a read blocks until there is one -- which
 // is how a program waits for a button without spinning on it.
-#define MYRTOS_SS_GPIO_WATCH 0x0304u   // myrtos_gpio_watch_t
+#define UBIQOS_SS_GPIO_WATCH 0x0304u   // ubiqos_gpio_watch_t
 
 // What the hardware and the handler actually think, for when a watch produces
 // nothing and the question is which half is wrong.
@@ -964,18 +964,18 @@ typedef struct {
 // Two pins, and a code each, because the chip's ROM wants them moved in a
 // sequence with waiting in between and a trap is the wrong place to wait. The
 // driver owns the pins; the program owns the timing. See modules/espflash.
-#define MYRTOS_SS_ESP_STRAP  0x0400u   // uint32_t 0/1: 0 holds IO9 low, which
+#define UBIQOS_SS_ESP_STRAP  0x0400u   // uint32_t 0/1: 0 holds IO9 low, which
                                        //   is what the ROM samples at reset to
                                        //   choose the serial bootloader
-#define MYRTOS_SS_ESP_RESET  0x0401u   // uint32_t 0/1: 0 holds EN low. This
+#define UBIQOS_SS_ESP_RESET  0x0401u   // uint32_t 0/1: 0 holds EN low. This
                                        //   resets the audio DAC as well; they
                                        //   share the pin on this board.
 
-#define MYRTOS_SS_ESP_STATS  0x0402u   // uint32_t[3]: bytes taken by the
+#define UBIQOS_SS_ESP_STATS  0x0402u   // uint32_t[3]: bytes taken by the
                                        //   handler, bytes dropped for want of
                                        //   room, bytes waiting to be read
 
-#define MYRTOS_SS_GPIO_DEBUG 0x0305u   // uint32_t[6]: inte, intr, ints, calls, pending, dropped
+#define UBIQOS_SS_GPIO_DEBUG 0x0305u   // uint32_t[6]: inte, intr, ints, calls, pending, dropped
 
 // --- the touch screen ------------------------------------------------------
 //
@@ -984,43 +984,43 @@ typedef struct {
 // is sold against several. A program turning a finger into a pixel therefore
 // has to ask, and it asks the chip rather than the board header, because the
 // configuration lives in the controller and can be rewritten.
-#define MYRTOS_SS_TOUCH_RANGE 0x0500u  // myrtos_touch_range_t
+#define UBIQOS_SS_TOUCH_RANGE 0x0500u  // ubiqos_touch_range_t
 
-#define MYRTOS_GPIO_FALL 1u
-#define MYRTOS_GPIO_RISE 2u
+#define UBIQOS_GPIO_FALL 1u
+#define UBIQOS_GPIO_RISE 2u
 
 typedef struct {
     uint32_t pin;
-    uint32_t edges;        // MYRTOS_GPIO_FALL, MYRTOS_GPIO_RISE, both, or 0 to stop
+    uint32_t edges;        // UBIQOS_GPIO_FALL, UBIQOS_GPIO_RISE, both, or 0 to stop
     // How long after an accepted edge to ignore that pin. A mechanical button
     // makes a burst of edges over several milliseconds and there is no
     // arrangement of hardware here that removes them; 20 ms is the usual
     // answer and 0 means take everything, which is what a clean signal wants.
     uint32_t debounce_ms;
-} myrtos_gpio_watch_t;
+} ubiqos_gpio_watch_t;
 
 typedef struct {
     uint8_t  pin;
     uint8_t  level;        // what it became
     uint16_t reserved;
-    uint32_t at_ms;        // when, by the same clock as myrtos_ticks_now
-} myrtos_gpio_event_t;
+    uint32_t at_ms;        // when, by the same clock as ubiqos_ticks_now
+} ubiqos_gpio_event_t;
 
-#define MYRTOS_PIN_IN        0u
-#define MYRTOS_PIN_IN_PULLUP 1u
-#define MYRTOS_PIN_IN_PULLDN 2u
-#define MYRTOS_PIN_OUT       3u
-#define MYRTOS_PIN_RELEASE   4u   // give it back, and leave it an input
+#define UBIQOS_PIN_IN        0u
+#define UBIQOS_PIN_IN_PULLUP 1u
+#define UBIQOS_PIN_IN_PULLDN 2u
+#define UBIQOS_PIN_OUT       3u
+#define UBIQOS_PIN_RELEASE   4u   // give it back, and leave it an input
 
 typedef struct {
     uint32_t pin;
     uint32_t value;
-} myrtos_gpio_t;
+} ubiqos_gpio_t;
 
 typedef struct {
     uint32_t pin;
     char     who[24];   // empty if nothing has it
-} myrtos_gpio_owner_t;
+} ubiqos_gpio_owner_t;
 
 typedef struct {
     uint32_t taken;         // how many times the handler has run
@@ -1029,7 +1029,7 @@ typedef struct {
     uint32_t best_gap_us;
     uint32_t expected_us;   // what the hardware asks for
     uint32_t priority;      // its raw Arm priority value
-} myrtos_irqstats_t;
+} ubiqos_irqstats_t;
 
 // --- MESSAGES -------------------------------------------------------------
 // A rendezvous, in the manner of OSE and MINIX. The sender blocks until the
@@ -1051,46 +1051,46 @@ typedef struct {
 // is different: it brings sources that are not messages into the same waiting
 // place. What is genuinely missing here is the deferral. A receiver must take
 // what arrives and put aside anything it is not ready for itself, and for
-// messages there is at least myrtos_reply_to, which lets a server accept a
+// messages there is at least ubiqos_reply_to, which lets a server accept a
 // second request before answering the first.
 typedef struct {
     uint32_t type;    // what this is; the receiver switches on it
     uint32_t len;     // how much data points at
     void *data;       // the sender's own memory, valid until the reply
     int32_t sender;   // filled in by receive; ignored on send
-} myrtos_msg_t;
+} ubiqos_msg_t;
 
-#define MYRTOS_MSG_WRITE     1u   // data = characters, len = how many
+#define UBIQOS_MSG_WRITE     1u   // data = characters, len = how many
 
 // The filesystem is a service. These are sent by the kernel on a process's
 // behalf when it makes a filesystem call, not by the process itself: data
 // points at the request the process already built, which stays valid because
 // the process is blocked in send until the answer comes back.
-#define MYRTOS_MSG_FS_READ   2u
-#define MYRTOS_MSG_FS_WRITE  3u
-#define MYRTOS_MSG_FS_REMOVE 4u
-#define MYRTOS_MSG_FS_DIR    5u
-#define MYRTOS_MSG_FS_MKDIR  6u
-#define MYRTOS_MSG_FS_CHDIR  7u
-#define MYRTOS_MSG_FS_RMDIR  8u
-#define MYRTOS_MSG_FS_MOUNT  9u
-#define MYRTOS_MSG_FS_OPEN   10u   // data = path -> a descriptor
-#define MYRTOS_MSG_FS_FDIO   11u   // data = myrtos_fs_fdio_t
-#define MYRTOS_MSG_FS_STAT   12u   // data = myrtos_fs_stat_t
-#define MYRTOS_MSG_FS_LOADMOD 13u  // data = module name, without the extension
-#define MYRTOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
-#define MYRTOS_MSG_FS_EXEC   15u   // data = myrtos_fs_exec_t -> the new pid
-#define MYRTOS_MSG_FS_SEEK   16u   // data = myrtos_fs_seek_t
-#define MYRTOS_MSG_FS_RENAME 17u   // data = myrtos_fs_rename_t
+#define UBIQOS_MSG_FS_READ   2u
+#define UBIQOS_MSG_FS_WRITE  3u
+#define UBIQOS_MSG_FS_REMOVE 4u
+#define UBIQOS_MSG_FS_DIR    5u
+#define UBIQOS_MSG_FS_MKDIR  6u
+#define UBIQOS_MSG_FS_CHDIR  7u
+#define UBIQOS_MSG_FS_RMDIR  8u
+#define UBIQOS_MSG_FS_MOUNT  9u
+#define UBIQOS_MSG_FS_OPEN   10u   // data = path -> a descriptor
+#define UBIQOS_MSG_FS_FDIO   11u   // data = ubiqos_fs_fdio_t
+#define UBIQOS_MSG_FS_STAT   12u   // data = ubiqos_fs_stat_t
+#define UBIQOS_MSG_FS_LOADMOD 13u  // data = module name, without the extension
+#define UBIQOS_MSG_FS_USBDISK 14u  // data = 1 give the card away, 0 take it back
+#define UBIQOS_MSG_FS_EXEC   15u   // data = ubiqos_fs_exec_t -> the new pid
+#define UBIQOS_MSG_FS_SEEK   16u   // data = ubiqos_fs_seek_t
+#define UBIQOS_MSG_FS_RENAME 17u   // data = ubiqos_fs_rename_t
 
 // How long a name a directory listing may hand back, terminator included. FAT's
 // 8.3 needed twelve; VFAT's long names are read now, and ".wasm" alone does not
 // fit an 8.3 extension, so an application format needed more. Sixty-four is
 // what the filesystem keeps; OS-9 allowed twenty-nine and nobody found it
 // short. Anything that receives a name from a listing must have this much room.
-#define MYRTOS_DIRNAME_MAX 65u
+#define UBIQOS_DIRNAME_MAX 65u
 
-// How a file is being opened. The numbers are POSIX's, so myrtos_posix.h can
+// How a file is being opened. The numbers are POSIX's, so ubiqos_posix.h can
 // alias them rather than translate. The kernel acts on them: it refuses a file
 // that is not there unless one of the creating flags is given, empties it for
 // TRUNC, and puts the descriptor at the end for APPEND -- all before the caller
@@ -1101,19 +1101,19 @@ typedef struct {
 // /sd/config.txt is refused today -- see is_secret in kernel/fsserver.c -- and
 // the point of a code of its own is that "no such file" would send somebody
 // looking for a file that is sitting right there in ls.
-#define MYRTOS_FS_REFUSED (-2)
+#define UBIQOS_FS_REFUSED (-2)
 
-#define MYRTOS_O_RDONLY 0u
-#define MYRTOS_O_WRONLY 1u
-#define MYRTOS_O_RDWR   2u
-#define MYRTOS_O_CREAT  0x40u
-#define MYRTOS_O_TRUNC  0x200u
-#define MYRTOS_O_APPEND 0x400u
+#define UBIQOS_O_RDONLY 0u
+#define UBIQOS_O_WRONLY 1u
+#define UBIQOS_O_RDWR   2u
+#define UBIQOS_O_CREAT  0x40u
+#define UBIQOS_O_TRUNC  0x200u
+#define UBIQOS_O_APPEND 0x400u
 
 typedef struct {
     const char *name;
     uint32_t    flags;
-} myrtos_fs_open_t;
+} ubiqos_fs_open_t;
 
 // Making a process of a module is not the small operation it looks like. A
 // single-instance module has to be copied to the address it was linked for,
@@ -1129,35 +1129,35 @@ typedef struct {
 // because the sender blocks until the reply: its memory cannot move or go away
 // while the server is reading it.
 typedef struct {
-    const myrtos_module_header_t *module;
+    const ubiqos_module_header_t *module;
     const char                   *args;
-} myrtos_fs_exec_t;
+} ubiqos_fs_exec_t;
 
 // The WiFi coprocessor is a service too, for the same reason the filesystem is:
 // talking to it means waiting seconds for a scan, and waiting must not happen
 // inside a trap.
-#define MYRTOS_MSG_WIFI_VER  10u
-#define MYRTOS_MSG_WIFI_SCAN 11u
-#define MYRTOS_MSG_WIFI_JOIN 12u
-#define MYRTOS_MSG_WIFI_ADDR 13u
+#define UBIQOS_MSG_WIFI_VER  10u
+#define UBIQOS_MSG_WIFI_SCAN 11u
+#define UBIQOS_MSG_WIFI_JOIN 12u
+#define UBIQOS_MSG_WIFI_ADDR 13u
 
 typedef struct {
     int32_t index;   // scan: -1 to look, otherwise which entry
     char *buf;
     uint32_t len;
-} myrtos_wifi_req_t;
+} ubiqos_wifi_req_t;
 
 // Sockets, which the coprocessor provides rather than this machine: the chip
 // carries the TCP/IP stack, so what crosses here is a socket number and bytes,
-// not packets. That is why there is no network stack in myrtos and why there is
+// not packets. That is why there is no network stack in UbiqOS and why there is
 // not going to be one -- see the note at the top of modules/wifilib.
 //
 // One message with an operation inside it rather than five message types. The
 // five would each need a syscall number too, and what they have in common -- a
 // socket, a buffer, a length -- is exactly one struct.
-#define MYRTOS_MSG_WIFI_SOCK 14u
+#define UBIQOS_MSG_WIFI_SOCK 14u
 // Hold the coprocessor in reset and let it come back. It loses the network.
-#define MYRTOS_MSG_WIFI_RESET 15u
+#define UBIQOS_MSG_WIFI_RESET 15u
 // How the command channel to the chip has actually been behaving: commands
 // sent, times a reply had to be resynchronised, times one was retried, times
 // one failed anyway. Four uint32_t into r->buf.
@@ -1165,40 +1165,40 @@ typedef struct {
 // It exists because a channel that resynchronises occasionally and one that
 // resynchronises constantly look identical from outside, and the difference is
 // the entire question. Without a count, a day was spent on the wrong half.
-#define MYRTOS_MSG_WIFI_STATS 16u
+#define UBIQOS_MSG_WIFI_STATS 16u
 
-#define MYRTOS_SOCK_LISTEN 0u   // arg = port      -> the listening socket, or -1
-#define MYRTOS_SOCK_ACCEPT 1u   // arg = that sock -> a client socket, or -1 for nobody
-#define MYRTOS_SOCK_RECV   2u   // arg = client    -> bytes read; 0 means not yet
-#define MYRTOS_SOCK_SEND   3u   // arg = client    -> bytes written
-#define MYRTOS_SOCK_CLOSE  4u   // arg = client    -> 0
+#define UBIQOS_SOCK_LISTEN 0u   // arg = port      -> the listening socket, or -1
+#define UBIQOS_SOCK_ACCEPT 1u   // arg = that sock -> a client socket, or -1 for nobody
+#define UBIQOS_SOCK_RECV   2u   // arg = client    -> bytes read; 0 means not yet
+#define UBIQOS_SOCK_SEND   3u   // arg = client    -> bytes written
+#define UBIQOS_SOCK_CLOSE  4u   // arg = client    -> 0
 // Diagnostics, so that what the chip thinks and what this side thinks can be
 // compared instead of assumed. They are separate calls rather than one packed
 // number because a packed number would have to be unpacked by every caller.
-#define MYRTOS_SOCK_STATE  5u   // arg = socket    -> the chip's TCP state
-#define MYRTOS_SOCK_OWNER  6u   // arg = socket    -> pid, -1 nobody, -2 reaped
-#define MYRTOS_SOCK_PORT   7u   // arg = socket    -> the port it serves, or 0
-#define MYRTOS_SOCK_LISTEN_ON 8u // arg = (stack << 16) | port -> socket, or -1
+#define UBIQOS_SOCK_STATE  5u   // arg = socket    -> the chip's TCP state
+#define UBIQOS_SOCK_OWNER  6u   // arg = socket    -> pid, -1 nobody, -2 reaped
+#define UBIQOS_SOCK_PORT   7u   // arg = socket    -> the port it serves, or 0
+#define UBIQOS_SOCK_LISTEN_ON 8u // arg = (stack << 16) | port -> socket, or -1
 
 // ping, which is not a socket but goes to the same server for the same reason:
 // that server IS the one context lwIP may be touched from.
 // How many answers a browse keeps. A home network has a handful of services
 // and a list nobody can read is not a better list.
-#define MYRTOS_MDNS_MAX 12u
+#define UBIQOS_MDNS_MAX 12u
 
-#define MYRTOS_SOCK_PING   9u   // buf = the host, len its length -> 0 started
-#define MYRTOS_SOCK_PINGST 10u  // buf = &uint32_t[3]: state, address, us
+#define UBIQOS_SOCK_PING   9u   // buf = the host, len its length -> 0 started
+#define UBIQOS_SOCK_PINGST 10u  // buf = &uint32_t[3]: state, address, us
 
 // Asking the network what is on it. A question goes out on EVERY interface,
 // which is the difference between this and lwIP's own .local lookup: that one
 // uses the default netif and nothing else, so a name on the other network is
 // simply never asked about.
-#define MYRTOS_SOCK_BROWSE 11u  // buf = the service, e.g. "_http._tcp.local"
-#define MYRTOS_SOCK_FOUND  12u  // arg = which, buf = a name -> its length
+#define UBIQOS_SOCK_BROWSE 11u  // buf = the service, e.g. "_http._tcp.local"
+#define UBIQOS_SOCK_FOUND  12u  // arg = which, buf = a name -> its length
 
-// Making a connection rather than answering one -- see myrtos_sock_connect.
+// Making a connection rather than answering one -- see ubiqos_sock_connect.
 // arg = (stack << 16) | port, buf = the host, len its length.
-#define MYRTOS_SOCK_CONNECT 13u
+#define UBIQOS_SOCK_CONNECT 13u
 
 // --- WHICH STACK ------------------------------------------------------------
 //
@@ -1214,36 +1214,36 @@ typedef struct {
 // which driver is behind it, the table does. What makes it work here is that
 // each stack is already a SERVER PROCESS -- a socket call is a message, because
 // waiting inside a trap stops the machine -- so dispatching is choosing a pid.
-#define MYRTOS_NET_STACKS  4u
-#define MYRTOS_NET_NINA    0u   // the coprocessor, over SPI
-#define MYRTOS_NET_LWIP    1u   // lwIP: the USB cable (CDC-NCM) and the WiFi (ESP-Hosted)
+#define UBIQOS_NET_STACKS  4u
+#define UBIQOS_NET_NINA    0u   // the coprocessor, over SPI
+#define UBIQOS_NET_LWIP    1u   // lwIP: the USB cable (CDC-NCM) and the WiFi (ESP-Hosted)
 
 // A stack RETURNS numbers already carrying its own byte, and receives them
 // with the byte stripped. So NINA, whose byte is zero, needs no change at all,
-// and a second stack tags what it hands out with MYRTOS_SOCK_MAKE.
-#define MYRTOS_SOCK_MAKE(stack, n) ((int32_t)(((uint32_t)(stack) << 8) | ((uint32_t)(n) & 0xffu)))
-#define MYRTOS_SOCK_STACK(s)       ((((uint32_t)(s)) >> 8) & 0xffu)
-#define MYRTOS_SOCK_INDEX(s)       (((uint32_t)(s)) & 0xffu)
+// and a second stack tags what it hands out with UBIQOS_SOCK_MAKE.
+#define UBIQOS_SOCK_MAKE(stack, n) ((int32_t)(((uint32_t)(stack) << 8) | ((uint32_t)(n) & 0xffu)))
+#define UBIQOS_SOCK_STACK(s)       ((((uint32_t)(s)) >> 8) & 0xffu)
+#define UBIQOS_SOCK_INDEX(s)       (((uint32_t)(s)) & 0xffu)
 
 // TCP's own state numbers, as nina-fw reports them.
-#define MYRTOS_TCP_CLOSED      0u
-#define MYRTOS_TCP_LISTEN      1u
-#define MYRTOS_TCP_SYN_SENT    2u
-#define MYRTOS_TCP_SYN_RCVD    3u
-#define MYRTOS_TCP_ESTABLISHED 4u
-#define MYRTOS_TCP_FIN_WAIT_1  5u
-#define MYRTOS_TCP_FIN_WAIT_2  6u
-#define MYRTOS_TCP_CLOSE_WAIT  7u
-#define MYRTOS_TCP_CLOSING     8u
-#define MYRTOS_TCP_LAST_ACK    9u
-#define MYRTOS_TCP_TIME_WAIT  10u
+#define UBIQOS_TCP_CLOSED      0u
+#define UBIQOS_TCP_LISTEN      1u
+#define UBIQOS_TCP_SYN_SENT    2u
+#define UBIQOS_TCP_SYN_RCVD    3u
+#define UBIQOS_TCP_ESTABLISHED 4u
+#define UBIQOS_TCP_FIN_WAIT_1  5u
+#define UBIQOS_TCP_FIN_WAIT_2  6u
+#define UBIQOS_TCP_CLOSE_WAIT  7u
+#define UBIQOS_TCP_CLOSING     8u
+#define UBIQOS_TCP_LAST_ACK    9u
+#define UBIQOS_TCP_TIME_WAIT  10u
 
 typedef struct {
-    uint32_t op;      // MYRTOS_SOCK_*
+    uint32_t op;      // UBIQOS_SOCK_*
     uint32_t arg;     // a port for LISTEN, a socket for everything else
     uint8_t *buf;
     uint32_t len;
-} myrtos_wifi_sock_t;
+} ubiqos_wifi_sock_t;
 
 // --- A TOUCH SCREEN --------------------------------------------------------
 //
@@ -1269,14 +1269,14 @@ typedef struct {
 // Items are drawn in order, so later ones cover earlier ones. Everything is
 // clipped to the band being built, which is what keeps the cost proportional to
 // what is actually on those sixteen lines rather than to the size of the list.
-#define MYRTOS_DRAW_RECT   0u   // colour, filled
-#define MYRTOS_DRAW_MASK   1u   // one bit a pixel: colour where set, nothing
+#define UBIQOS_DRAW_RECT   0u   // colour, filled
+#define UBIQOS_DRAW_MASK   1u   // one bit a pixel: colour where set, nothing
                                 //   where clear. Rows are (w + 7) / 8 bytes,
                                 //   the top bit leftmost. Big digits are these:
                                 //   a 48x64 glyph is 384 bytes and its colour is
                                 //   chosen when it is drawn, not when it is made.
-#define MYRTOS_DRAW_BITMAP 2u   // a byte a pixel, through the scene's palette
-#define MYRTOS_DRAW_TEXT   3u   // the console's own 8x16 font, in `colour`.
+#define UBIQOS_DRAW_BITMAP 2u   // a byte a pixel, through the scene's palette
+#define UBIQOS_DRAW_TEXT   3u   // the console's own 8x16 font, in `colour`.
                                 //   `data` is a NUL-terminated string -- which
                                 //   must be in SRAM like everything else a
                                 //   scene points at -- and `w` is a whole-number
@@ -1286,16 +1286,16 @@ typedef struct {
                                 //   application no font of its own: the glyphs
                                 //   are the kernel's, already in SRAM, and only
                                 //   the big figures need masks.
-#define MYRTOS_DRAW_PLOT_FILL 4u // a curve, filled beneath it. A column is TWO
+#define UBIQOS_DRAW_PLOT_FILL 4u // a curve, filled beneath it. A column is TWO
                                  //   pixels wide, and `data` is (w + 1) / 2
                                  //   bytes, one a column: the row, counted down
                                  //   from `y`, where the curve is in that
-                                 //   column, 0 to h - 1, or MYRTOS_PLOT_NONE for
+                                 //   column, 0 to h - 1, or UBIQOS_PLOT_NONE for
                                  //   a column with no reading. From that row to
                                  //   the bottom of the item is `colour`. Put `x`
                                  //   on an even pixel and each column is one
                                  //   32-bit store a row.
-#define MYRTOS_DRAW_PLOT_LINE 5u // the same bytes, drawn as the curve itself:
+#define UBIQOS_DRAW_PLOT_LINE 5u // the same bytes, drawn as the curve itself:
                                  //   each column lit from the previous column's
                                  //   row to its own, two pixels deep, so a steep
                                  //   rise is a stroke and not a scatter of dots.
@@ -1306,7 +1306,7 @@ typedef struct {
                                  //   sixteen bytes each, against five kilobytes
                                  //   free. `h` is at most 255, which is what a
                                  //   byte can count.
-#define MYRTOS_PLOT_NONE      0xffu
+#define UBIQOS_PLOT_NONE      0xffu
 
 typedef struct {
     uint16_t kind;
@@ -1314,18 +1314,18 @@ typedef struct {
     int16_t  x, y;          // top left; may be negative, and is clipped
     uint16_t w, h;
     const void *data;       // MASK and BITMAP; ignored by RECT
-} myrtos_draw_item_t;
+} ubiqos_draw_item_t;
 
-#define MYRTOS_TOUCH_MAX 5u
+#define UBIQOS_TOUCH_MAX 5u
 
 typedef struct {
     uint32_t points;
-    struct { uint16_t x, y; } p[MYRTOS_TOUCH_MAX];
-} myrtos_touch_t;
+    struct { uint16_t x, y; } p[UBIQOS_TOUCH_MAX];
+} ubiqos_touch_t;
 
 // What the controller says about itself: the range it reports coordinates in,
 // how many fingers this configuration tracks, and its own version numbers. Read
-// with MYRTOS_SS_TOUCH_RANGE.
+// with UBIQOS_SS_TOUCH_RANGE.
 //
 // width and height are counts and not inclusive maxima: the 4.3B's controller
 // answers 800 by 480 for a panel of exactly that, so a coordinate runs 0 to
@@ -1333,14 +1333,14 @@ typedef struct {
 // is where the temptation to read them as 799 and 479 comes from.
 //
 // points is what the configuration says, and a driver may well return fewer:
-// MYRTOS_TOUCH_MAX is five, and this panel's configuration claims ten.
+// UBIQOS_TOUCH_MAX is five, and this panel's configuration claims ten.
 typedef struct {
     uint16_t width, height;
     uint16_t points;         // fingers this configuration tracks, not fingers down
     uint16_t firmware;       // as the chip reports it
     uint16_t config;         // the configuration version, which changes if rewritten
     uint16_t reserved;
-} myrtos_touch_range_t;
+} ubiqos_touch_range_t;
 
 // What a touch descriptor carries, so the driver knows nothing about a board.
 // i2c_index is 0 or 1; the rest are pins, the controller's address and the bus
@@ -1351,44 +1351,44 @@ typedef struct {
     uint32_t int_pin, rst_pin;
     uint32_t addr;
     uint32_t baud;
-} myrtos_touch_config_t;
+} ubiqos_touch_config_t;
 
-#define MYRTOS_MEM_LARGEST_FREE 0u
-#define MYRTOS_MEM_PROCESSES    1u
-#define MYRTOS_MEM_BULK_FREE    2u   // largest free block in PSRAM
-#define MYRTOS_MEM_BULK_SIZE    3u   // how much PSRAM there is at all
+#define UBIQOS_MEM_LARGEST_FREE 0u
+#define UBIQOS_MEM_PROCESSES    1u
+#define UBIQOS_MEM_BULK_FREE    2u   // largest free block in PSRAM
+#define UBIQOS_MEM_BULK_SIZE    3u   // how much PSRAM there is at all
 // Assertions the kernel has stepped over, and where the last one was. A failed
 // TU_ASSERT in the USB stack is an unconditional ebreak on RISC-V, which the
 // trap handler steps past so the machine survives -- see the note in
 // syscalls.c. The count is here because the printed line goes to the screen and
 // the UART, not to the USB console, so a session on the serial port could not
 // otherwise tell whether anything had happened.
-#define MYRTOS_MEM_ASSERTS      4u
-#define MYRTOS_MEM_ASSERT_LAST  5u
+#define UBIQOS_MEM_ASSERTS      4u
+#define UBIQOS_MEM_ASSERT_LAST  5u
 
 // What SYS_USBINFO will tell you about the PIO USB host. This exists because
 // reading the same state with a debug probe is not free: memory access on
 // Hazard3 halts the processor, and PIO-USB loses transactions while it is
 // stopped, so the probe produces the failure it was there to watch. Ask the
 // running machine instead.
-#define MYRTOS_USB_REARMS       0u   // refused asks that had to be repeated
-#define MYRTOS_USB_RECOVERIES   1u   // submitted transfers found lost
-#define MYRTOS_USB_REPEATKEY    2u   // the HID usage now repeating, 0 for none
-#define MYRTOS_USB_KEYSIN       3u   // bytes ever pushed into the key ring
-#define MYRTOS_USB_CDCREARMS    5u   // times the dongle's read was queued again
-#define MYRTOS_USB_CDCGIVEUP    6u   // 1 once the dongle stopped being asked
-#define MYRTOS_USB_ROOT         4u   // init | connected<<1 | fullspeed<<2 | susp<<3 | event<<8
+#define UBIQOS_USB_REARMS       0u   // refused asks that had to be repeated
+#define UBIQOS_USB_RECOVERIES   1u   // submitted transfers found lost
+#define UBIQOS_USB_REPEATKEY    2u   // the HID usage now repeating, 0 for none
+#define UBIQOS_USB_KEYSIN       3u   // bytes ever pushed into the key ring
+#define UBIQOS_USB_CDCREARMS    5u   // times the dongle's read was queued again
+#define UBIQOS_USB_CDCGIVEUP    6u   // 1 once the dongle stopped being asked
+#define UBIQOS_USB_ROOT         4u   // init | connected<<1 | fullspeed<<2 | susp<<3 | event<<8
 
 // What the HOST has done to this device's bus. These exist because a network
 // over USB does not come back on its own when a Mac wakes from sleep, in this
 // project and in every other one here that carries CDC-NCM -- and before that
 // can be blamed on the host, this end has to be able to say whether it even
 // noticed. It could not: nothing was listening for suspend or resume at all.
-#define MYRTOS_USB_SUSPENDS     7u   // times the host suspended the bus
-#define MYRTOS_USB_RESUMES      8u
-#define MYRTOS_USB_MOUNTS       9u   // times it configured us
-#define MYRTOS_USB_UNMOUNTS    10u
-#define MYRTOS_USB_LASTEVENT   11u   // milliseconds since boot of the last one
+#define UBIQOS_USB_SUSPENDS     7u   // times the host suspended the bus
+#define UBIQOS_USB_RESUMES      8u
+#define UBIQOS_USB_MOUNTS       9u   // times it configured us
+#define UBIQOS_USB_UNMOUNTS    10u
+#define UBIQOS_USB_LASTEVENT   11u   // milliseconds since boot of the last one
 
 // Core 1's own pulse. The USB host loop runs there and nothing else does, so
 // whether it is running is the first question any USB fault raises -- and it
@@ -1399,17 +1399,17 @@ typedef struct {
 // The count alone would need two readings and a subtraction; the age answers
 // it in one, which matters when the thing being diagnosed may not survive the
 // second command.
-#define MYRTOS_USB_CORE1_BEATS 12u   // passes of the host loop since boot
-#define MYRTOS_USB_CORE1_AGE   13u   // ms since the last one began
+#define UBIQOS_USB_CORE1_BEATS 12u   // passes of the host loop since boot
+#define UBIQOS_USB_CORE1_AGE   13u   // ms since the last one began
 // addr | instance<<8 | wanted<<16 | armed<<17 | idle<<24, for eight slots
-#define MYRTOS_USB_HID          0x10u
+#define UBIQOS_USB_HID          0x10u
 // dev<<0 | ep<<8 | has_transfer<<16 | started<<17 | stalled<<18 | failed<<24
-#define MYRTOS_USB_EP           0x20u
-#define MYRTOS_USB_EP_COUNT     32u
+#define UBIQOS_USB_EP           0x20u
+#define UBIQOS_USB_EP_COUNT     32u
 
 // Where the second pool lives: the XIP window after sixteen megabytes of flash
 // address space, which is also where our resident module region ends.
-#define MYRTOS_PSRAM_BASE       0x11000000u
+#define UBIQOS_PSRAM_BASE       0x11000000u
 
 // Where a single-instance module is linked and loaded.
 //
@@ -1422,21 +1422,21 @@ typedef struct {
 // The last half megabyte of an eight megabyte PSRAM, kept back from the bulk
 // pool. A constant rather than something worked out at run time, because the
 // module has to be LINKED at it -- which is the entire point.
-#define MYRTOS_SINGLE_RESERVE   (512u * 1024u)
-#define MYRTOS_SINGLE_BASE      0x11780000u
+#define UBIQOS_SINGLE_RESERVE   (512u * 1024u)
+#define UBIQOS_SINGLE_BASE      0x11780000u
 
 // Where such a module's CODE is linked. A .mod file is the header followed by
 // the payload, and the whole file is copied to the base -- so the payload lands
 // one header further on, and that is the address the linker must be told. Get
 // this wrong and every absolute address is off by the size of the header, which
 // shows up as a misaligned store somewhere unrelated. make_module checks it.
-#define MYRTOS_SINGLE_HEADER    52u
-#define MYRTOS_SINGLE_TEXT      (MYRTOS_SINGLE_BASE + MYRTOS_SINGLE_HEADER)
+#define UBIQOS_SINGLE_HEADER    52u
+#define UBIQOS_SINGLE_TEXT      (UBIQOS_SINGLE_BASE + UBIQOS_SINGLE_HEADER)
 
 // The call itself. It is identical in every module, so it belongs here.
 #if defined(__riscv)
 
-static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c)
+static inline int32_t ubiqos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c)
 {
     register uint32_t r_id __asm__("a7") = id;
     register uint32_t r_a0 __asm__("a0") = a;
@@ -1458,7 +1458,7 @@ static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32
 // only when there is one, and modules are built at -O2 where there is not --
 // a module built at -O0 would fail to compile here rather than misbehave,
 // which is the right way round.
-static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c)
+static inline int32_t ubiqos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32_t c)
 {
     register uint32_t r_id __asm__("r7") = id;
     register uint32_t r_a0 __asm__("r0") = a;
@@ -1470,29 +1470,29 @@ static inline int32_t myrtos_syscall(uint32_t id, uint32_t a, uint32_t b, uint32
 }
 
 #else
-#error "myrtos does not know how to make a system call on this machine"
+#error "UbiqOS does not know how to make a system call on this machine"
 #endif
 
-static inline int32_t myrtos_open_flags(const char *name, uint32_t flags)
+static inline int32_t ubiqos_open_flags(const char *name, uint32_t flags)
 {
-    return myrtos_syscall(SYS_OPEN, (uint32_t)(uintptr_t)name, flags, 0);
+    return ubiqos_syscall(SYS_OPEN, (uint32_t)(uintptr_t)name, flags, 0);
 }
 
 // Opening for reading, which is what this always meant.
-static inline int32_t myrtos_open(const char *device)
+static inline int32_t ubiqos_open(const char *device)
 {
-    return myrtos_open_flags(device, MYRTOS_O_RDONLY);
+    return ubiqos_open_flags(device, UBIQOS_O_RDONLY);
 }
 
 // Writes take what the device can hold and report how much that was, as write
 // does everywhere. The kernel blocks rather than returning zero, so this loop
 // waits rather than spins.
-static inline int32_t myrtos_write(int32_t path, const void *buf, uint32_t len)
+static inline int32_t ubiqos_write(int32_t path, const void *buf, uint32_t len)
 {
     const uint8_t *p = (const uint8_t *)buf;
     uint32_t done = 0;
     while (done < len) {
-        int32_t n = myrtos_syscall(SYS_WRITE, (uint32_t)path, (uint32_t)(uintptr_t)(p + done), len - done);
+        int32_t n = ubiqos_syscall(SYS_WRITE, (uint32_t)path, (uint32_t)(uintptr_t)(p + done), len - done);
         if (n < 0)
             return n;
         done += (uint32_t)n;
@@ -1508,24 +1508,24 @@ static inline int32_t myrtos_write(int32_t path, const void *buf, uint32_t len)
 // The standard paths, the same convention as OS-9 and Unix. The kernel sets
 // them up for the first process and every child inherits them, so a utility
 // neither opens nor closes anything: it reads path 0 and writes path 1.
-#define MYRTOS_STDIN  0
-#define MYRTOS_STDOUT 1
-#define MYRTOS_STDERR 2
+#define UBIQOS_STDIN  0
+#define UBIQOS_STDOUT 1
+#define UBIQOS_STDERR 2
 
 // Inherited output if there is any, otherwise a console of our own. The
 // fallback is only needed for a module started without a parent.
-static inline int32_t myrtos_console(void)
+static inline int32_t ubiqos_console(void)
 {
-    if (myrtos_write(MYRTOS_STDOUT, "", 0) >= 0)
-        return MYRTOS_STDOUT;
+    if (ubiqos_write(UBIQOS_STDOUT, "", 0) >= 0)
+        return UBIQOS_STDOUT;
     // Under /dev, and only there. Bare device names stopped reaching the device
     // table when devices were confined to /dev, and this fallback had gone on
     // asking for them by bare name ever since -- so it could not have opened
     // anything. Nothing noticed, because it is only reached by a module started
     // without a parent, and everything here has one.
-    int32_t p = myrtos_open("/dev/usb");
+    int32_t p = ubiqos_open("/dev/usb");
     if (p < 0)
-        p = myrtos_open("/dev/term");
+        p = ubiqos_open("/dev/term");
     return p;
 }
 
@@ -1540,11 +1540,11 @@ static inline int32_t myrtos_console(void)
 //
 // It may be refused, which a message may not: -1 means the process is not there
 // or the kernel's ring is full. That is the honest consequence of not blocking.
-// A receiver tells the two apart by what myrtos_receive returns -- a pid for a
+// A receiver tells the two apart by what ubiqos_receive returns -- a pid for a
 // message, which must be replied to, and 0 for a pulse, which must not.
-static inline int32_t myrtos_pulse(int32_t pid, uint32_t type, uint32_t value)
+static inline int32_t ubiqos_pulse(int32_t pid, uint32_t type, uint32_t value)
 {
-    return myrtos_syscall(SYS_PULSE, (uint32_t)pid, type, value);
+    return ubiqos_syscall(SYS_PULSE, (uint32_t)pid, type, value);
 }
 
 // Ask to be told when a descriptor has something, instead of asking it over and
@@ -1556,14 +1556,14 @@ static inline int32_t myrtos_pulse(int32_t pid, uint32_t type, uint32_t value)
 // otherwise bury its watcher in pulses, and asking again is also the moment a
 // program has finished with the last one. Type 0 cancels.
 //
-// What it is for: waiting on more than one thing. myrtos_read blocks on one
-// descriptor and myrtos_receive_tmo blocks on messages and a clock, and before
+// What it is for: waiting on more than one thing. ubiqos_read blocks on one
+// descriptor and ubiqos_receive_tmo blocks on messages and a clock, and before
 // this there was no way to wait for whichever came first. Arm the descriptor
 // and then wait in receive, and a keystroke, a reply and a deadline all arrive
 // at the same place.
-static inline int32_t myrtos_arm(int32_t path, uint32_t type)
+static inline int32_t ubiqos_arm(int32_t path, uint32_t type)
 {
-    return myrtos_syscall(SYS_ARM, (uint32_t)path, type, 0);
+    return ubiqos_syscall(SYS_ARM, (uint32_t)path, type, 0);
 }
 
 // Drop every watch at once, and every notification a watch has already sent
@@ -1580,48 +1580,48 @@ static inline int32_t myrtos_arm(int32_t path, uint32_t type)
 //
 // The eight slots are the system's, not this process's, so letting go of the
 // ones you have stopped caring about is a courtesy to everything else running.
-static inline int32_t myrtos_disarm_all(void)
+static inline int32_t ubiqos_disarm_all(void)
 {
-    return myrtos_syscall(SYS_DISARM, 0, 0, 0);
+    return ubiqos_syscall(SYS_DISARM, 0, 0, 0);
 }
 
 // Send and block until the receiver replies. The return value is the reply's
 // status, so a failed write comes back as a negative number just as it would
 // from a system call.
-static inline int32_t myrtos_send(int32_t pid, const myrtos_msg_t *m)
+static inline int32_t ubiqos_send(int32_t pid, const ubiqos_msg_t *m)
 {
-    return myrtos_syscall(SYS_SEND, (uint32_t)pid, (uint32_t)(uintptr_t)m, 0);
+    return ubiqos_syscall(SYS_SEND, (uint32_t)pid, (uint32_t)(uintptr_t)m, 0);
 }
 
 // Wait for a message. Returns the sender's pid; the message is copied out.
-static inline int32_t myrtos_receive(myrtos_msg_t *out)
+static inline int32_t ubiqos_receive(ubiqos_msg_t *out)
 {
-    return myrtos_syscall(SYS_RECEIVE, (uint32_t)(uintptr_t)out, 0, 0);
+    return ubiqos_syscall(SYS_RECEIVE, (uint32_t)(uintptr_t)out, 0, 0);
 }
 
-// A tick is a millisecond, the same unit myrtos_sleep takes.
-#define MYRTOS_TIMEOUT_FOREVER 0xffffffffu
+// A tick is a millisecond, the same unit ubiqos_sleep takes.
+#define UBIQOS_TIMEOUT_FOREVER 0xffffffffu
 // Distinct from a sender's pid, which is never negative, and from the -2 that
 // means a sender is still waiting to be answered.
-#define MYRTOS_RECV_TIMEOUT    (-3)
+#define UBIQOS_RECV_TIMEOUT    (-3)
 
-// The same, but giving up after `ms`. MYRTOS_TIMEOUT_FOREVER is exactly
-// myrtos_receive; zero polls and never blocks. Anything else returns
-// MYRTOS_RECV_TIMEOUT when the time runs out with nothing to show.
+// The same, but giving up after `ms`. UBIQOS_TIMEOUT_FOREVER is exactly
+// ubiqos_receive; zero polls and never blocks. Anything else returns
+// UBIQOS_RECV_TIMEOUT when the time runs out with nothing to show.
 //
 // A server that waits forever cannot notice that the thing it serves has
 // stopped answering, and cannot be told to stop either. That is the reason this
 // exists -- not speed, but the ability to complain.
-static inline int32_t myrtos_receive_tmo(myrtos_msg_t *out, uint32_t ms)
+static inline int32_t ubiqos_receive_tmo(ubiqos_msg_t *out, uint32_t ms)
 {
-    return myrtos_syscall(SYS_RECEIVETMO, (uint32_t)(uintptr_t)out, ms, 0);
+    return ubiqos_syscall(SYS_RECEIVETMO, (uint32_t)(uintptr_t)out, ms, 0);
 }
 
 // Release the sender that is being served. Until this is called its buffer must
 // not be touched -- that is the whole guarantee.
-static inline int32_t myrtos_reply(int32_t status)
+static inline int32_t ubiqos_reply(int32_t status)
 {
-    return myrtos_syscall(SYS_REPLY, (uint32_t)status, 0, 0);
+    return ubiqos_syscall(SYS_REPLY, (uint32_t)status, 0, 0);
 }
 
 // Answer a particular sender rather than the last one received. A server that
@@ -1632,21 +1632,21 @@ static inline int32_t myrtos_reply(int32_t status)
 //
 // It refuses a pid that is not blocked waiting on THIS process, so a server
 // cannot release somebody else's client.
-static inline int32_t myrtos_reply_to(int32_t pid, int32_t status)
+static inline int32_t ubiqos_reply_to(int32_t pid, int32_t status)
 {
-    return myrtos_syscall(SYS_REPLYTO, (uint32_t)pid, (uint32_t)status, 0);
+    return ubiqos_syscall(SYS_REPLYTO, (uint32_t)pid, (uint32_t)status, 0);
 }
 
 // Find a running process by its module name. A client has to be able to name the
 // service it wants without anyone having written a pid down.
-static inline int32_t myrtos_pidof(const char *module_name)
+static inline int32_t ubiqos_pidof(const char *module_name)
 {
-    return myrtos_syscall(SYS_PIDOF, (uint32_t)(uintptr_t)module_name, 0, 0);
+    return ubiqos_syscall(SYS_PIDOF, (uint32_t)(uintptr_t)module_name, 0, 0);
 }
 
-static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len)
+static inline int32_t ubiqos_read(int32_t path, void *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_READ, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
+    return ubiqos_syscall(SYS_READ, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
 }
 
 // Start a module by name, with a command line. OS-9's F$Link then F$Fork.
@@ -1656,16 +1656,16 @@ static inline int32_t myrtos_read(int32_t path, void *buf, uint32_t len)
 // 1 gives the card away, 0 takes it back, 2 takes it back from a host that has
 // gone without ejecting. Taking it back is refused with -2 while the host still
 // has the volume mounted, because doing it then hangs the host.
-static inline int32_t myrtos_usbdisk(uint32_t what)
+static inline int32_t ubiqos_usbdisk(uint32_t what)
 {
-    return myrtos_syscall(SYS_USBDISK, what, 0, 0);
+    return ubiqos_syscall(SYS_USBDISK, what, 0, 0);
 }
 
-// Start the machine again. The counterpart of myrtos_bootsel, which hands it to
+// Start the machine again. The counterpart of ubiqos_bootsel, which hands it to
 // the bootloader instead. Neither returns.
-static inline void myrtos_reboot(void)
+static inline void ubiqos_reboot(void)
 {
-    myrtos_syscall(SYS_REBOOT, 0, 0, 0);
+    ubiqos_syscall(SYS_REBOOT, 0, 0, 0);
 }
 
 // Nothing is read off the card until something is run from it, so a name that
@@ -1677,16 +1677,16 @@ static inline void myrtos_reboot(void)
 // cannot read a card itself; it would have to send to the filesystem server and
 // block, and a syscall that blocks in the middle has to be able to resume where
 // it stopped. Two calls from out here need none of that machinery, and every
-// caller gets the behaviour by calling myrtos_exec as it always did.
-static inline int32_t myrtos_exec(const char *module_name, const char *args)
+// caller gets the behaviour by calling ubiqos_exec as it always did.
+static inline int32_t ubiqos_exec(const char *module_name, const char *args)
 {
-    int32_t pid = myrtos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
+    int32_t pid = ubiqos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
                                  (uint32_t)(uintptr_t)args, 0);
     if (pid != -1) return pid;               // -2 is "not re-entrant", not "missing"
 
-    if (myrtos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)module_name, 0, 0) != 0)
+    if (ubiqos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)module_name, 0, 0) != 0)
         return -1;
-    return myrtos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
+    return ubiqos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
                           (uint32_t)(uintptr_t)args, 0);
 }
 
@@ -1700,9 +1700,9 @@ static inline int32_t myrtos_exec(const char *module_name, const char *args)
 
 // Fetch the raw command line. Kept for anyone who would rather parse it
 // themselves than go through argv.
-static inline int32_t myrtos_args(char *buf, uint32_t len)
+static inline int32_t ubiqos_args(char *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_ARGS, (uint32_t)(uintptr_t)buf, len, 0);
+    return ubiqos_syscall(SYS_ARGS, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
 // --- FILESYSTEM -----------------------------------------------------------
@@ -1710,7 +1710,7 @@ static inline int32_t myrtos_args(char *buf, uint32_t len)
 // given as a person types them ("readme.txt"); the kernel pads them into the
 // 8.3 form the directory stores.
 
-#define MYRTOS_ATTR_DIRECTORY 0x10
+#define UBIQOS_ATTR_DIRECTORY 0x10
 
 // List one directory. Paths are absolute and slash-separated -- "/docs/notes" --
 // and an empty path or "/" is the root. Four things have to cross into the
@@ -1719,9 +1719,9 @@ static inline int32_t myrtos_args(char *buf, uint32_t len)
 typedef struct {
     const char *path;
     uint32_t index;   // starts at zero
-    char *name;       // MYRTOS_DIRNAME_MAX bytes out, NUL terminated
+    char *name;       // UBIQOS_DIRNAME_MAX bytes out, NUL terminated
     uint32_t *size;   // out
-} myrtos_fs_dir_t;
+} ubiqos_fs_dir_t;
 
 // "SH      MOD" -> "sh.mod". The name a directory entry should be shown and
 // opened under.
@@ -1735,8 +1735,8 @@ typedef struct {
 //
 // Here rather than in each caller, because there were two copies before this --
 // ls and the wasm host's fd_readdir -- and readdir would have been a third. out
-// needs MYRTOS_DIRNAME_MAX bytes.
-static inline void myrtos_pretty_name(const char *raw, char *out)
+// needs UBIQOS_DIRNAME_MAX bytes.
+static inline void ubiqos_pretty_name(const char *raw, char *out)
 {
     uint32_t len = 0;
     bool dotted = false;
@@ -1763,38 +1763,38 @@ static inline void myrtos_pretty_name(const char *raw, char *out)
     out[n] = 0;
 }
 
-static inline int32_t myrtos_fs_dir_at(const char *path, uint32_t index, char *name_out, uint32_t *size_out)
+static inline int32_t ubiqos_fs_dir_at(const char *path, uint32_t index, char *name_out, uint32_t *size_out)
 {
-    myrtos_fs_dir_t d;
+    ubiqos_fs_dir_t d;
     d.path = path;
     d.index = index;
     d.name = name_out;
     d.size = size_out;
-    return myrtos_syscall(SYS_FSDIR, (uint32_t)(uintptr_t)&d, 0, 0);
+    return ubiqos_syscall(SYS_FSDIR, (uint32_t)(uintptr_t)&d, 0, 0);
 }
 
 // The root, for callers that have no path to give.
-static inline int32_t myrtos_fs_dir(uint32_t index, char *name_out, uint32_t *size_out)
+static inline int32_t ubiqos_fs_dir(uint32_t index, char *name_out, uint32_t *size_out)
 {
-    return myrtos_fs_dir_at("", index, name_out, size_out);
+    return ubiqos_fs_dir_at("", index, name_out, size_out);
 }
 
 // Change the calling process's current directory. Children inherit it; a
 // process changing its own does not affect the one that started it, which is
 // why cd has to be built into the shell rather than be a module.
-static inline int32_t myrtos_chdir(const char *path)
+static inline int32_t ubiqos_chdir(const char *path)
 {
-    return myrtos_syscall(SYS_CHDIR, (uint32_t)(uintptr_t)path, 0, 0);
+    return ubiqos_syscall(SYS_CHDIR, (uint32_t)(uintptr_t)path, 0, 0);
 }
 
-static inline int32_t myrtos_getcwd(char *buf, uint32_t len)
+static inline int32_t ubiqos_getcwd(char *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_GETCWD, (uint32_t)(uintptr_t)buf, len, 0);
+    return ubiqos_syscall(SYS_GETCWD, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
-static inline int32_t myrtos_rmdir(const char *path)
+static inline int32_t ubiqos_rmdir(const char *path)
 {
-    return myrtos_syscall(SYS_RMDIR, (uint32_t)(uintptr_t)path, 0, 0);
+    return ubiqos_syscall(SYS_RMDIR, (uint32_t)(uintptr_t)path, 0, 0);
 }
 
 // Take the card again from the beginning. Mounting happens once at startup, so
@@ -1802,16 +1802,16 @@ static inline int32_t myrtos_rmdir(const char *path)
 // Ask the ESP32-C6 what firmware it is running. A probe interface rather than a
 // lasting one: when the driver can do more than one thing it becomes a device
 // with a name, like the keyboard and the screen, and this goes away.
-static inline int32_t myrtos_wifi_version(char *buf, uint32_t len)
+static inline int32_t ubiqos_wifi_version(char *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_WIFIVER, (uint32_t)(uintptr_t)buf, len, 0);
+    return ubiqos_syscall(SYS_WIFIVER, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
 // Look for networks, then read what was found. Neither needs a name or a
 // password: a scan is what the chip hears, not what it joins.
-static inline int32_t myrtos_wifi_look(void)
+static inline int32_t ubiqos_wifi_look(void)
 {
-    return myrtos_syscall(SYS_WIFISCAN, (uint32_t)-1, 0, 0);
+    return ubiqos_syscall(SYS_WIFISCAN, (uint32_t)-1, 0, 0);
 }
 
 // Join a network. The buffer holds the name and the secret as two
@@ -1819,9 +1819,9 @@ static inline int32_t myrtos_wifi_look(void)
 // caller to wipe afterwards.
 // The address the network handed out, if any. Associating is not the same as
 // being on a network; this is the difference.
-static inline int32_t myrtos_wifi_address(char *buf, uint32_t len)
+static inline int32_t ubiqos_wifi_address(char *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_WIFIADDR, (uint32_t)(uintptr_t)buf, len, 0);
+    return ubiqos_syscall(SYS_WIFIADDR, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
 // Reset the coprocessor. The one recovery that does not depend on the protocol
@@ -1835,9 +1835,9 @@ static inline int32_t myrtos_wifi_address(char *buf, uint32_t len)
 // a channel that went one step out of step and stayed there, and from outside
 // that looks exactly like a chip that has stopped working. A count separates
 // them.
-static inline int32_t myrtos_wifi_stats(uint32_t *eight)
+static inline int32_t ubiqos_wifi_stats(uint32_t *eight)
 {
-    return myrtos_syscall(SYS_WIFISTATS, (uint32_t)(uintptr_t)eight, 0, 0);
+    return ubiqos_syscall(SYS_WIFISTATS, (uint32_t)(uintptr_t)eight, 0, 0);
 }
 
 // How the character generator is keeping up. underruns is the only one that
@@ -1848,109 +1848,109 @@ static inline int32_t myrtos_wifi_stats(uint32_t *eight)
 // The USB network device: whether lwIP is up, what has crossed the link, and
 // the address AutoIP settled on. It went out with the vector graphics by
 // accident, having been written next to them.
-static inline int32_t myrtos_netdev_stats(uint32_t *six)
+static inline int32_t ubiqos_netdev_stats(uint32_t *six)
 {
-    return myrtos_syscall(SYS_NETDEV, (uint32_t)(uintptr_t)six, 0, 0);
+    return ubiqos_syscall(SYS_NETDEV, (uint32_t)(uintptr_t)six, 0, 0);
 }
 
 // Hands the kernel a scene, or clears it with a count of zero and the character
 // generator takes the screen back. The list and everything it points at must
 // stay put and stay valid until it is replaced: the interrupt reads them.
-static inline int32_t myrtos_video_scene(const myrtos_draw_item_t *items, uint32_t count)
+static inline int32_t ubiqos_video_scene(const ubiqos_draw_item_t *items, uint32_t count)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)items, 4, count);
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)items, 4, count);
 }
 
 // The panel's brightness, 0 to 100, and what it was set to comes back. Full
 // brightness is not always kindness: it lights a room at night and shuts out
 // eyes that cannot take it.
-static inline int32_t myrtos_video_brightness(uint32_t percent)
+static inline int32_t ubiqos_video_brightness(uint32_t percent)
 {
-    return myrtos_syscall(SYS_VIDSTAT, 0, 5, percent);
+    return ubiqos_syscall(SYS_VIDSTAT, 0, 5, percent);
 }
 
-static inline int32_t myrtos_video_stats(uint32_t *sixteen)
+static inline int32_t ubiqos_video_stats(uint32_t *sixteen)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)sixteen, 0, 0);
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)sixteen, 0, 0);
 }
 
 // The first 64 bytes the display plays for one scanline, live out of the buffer
 // the DMA reads. Sixty-four bytes is eight character cells.
-static inline int32_t myrtos_video_peek(uint32_t line, uint8_t *buf64)
+static inline int32_t ubiqos_video_peek(uint32_t line, uint8_t *buf64)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 1, line);
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 1, line);
 }
 
 // One scanline of the screen exactly as it is shown, RGB565: the display's
 // whole width, 800 halfwords on the 4.3B, into buf. Returns the width, or -1 on
 // a display that cannot say. What `screenshot` is made of.
-static inline int32_t myrtos_video_capture(uint32_t line, uint16_t *buf)
+static inline int32_t ubiqos_video_capture(uint32_t line, uint16_t *buf)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf, 6, line);
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf, 6, line);
 }
 
 // The bytes that entered the console ring, as records of
 // {0xfe, pid, length, bytes...} -- one per call, because a call is the unit
 // that cannot be interleaved and anything larger can. Returns how many bytes
 // were copied; zero is the end. Works in a framebuffer build too.
-static inline int32_t myrtos_console_trace(uint32_t offset, uint8_t *buf64)
+static inline int32_t ubiqos_console_trace(uint32_t offset, uint8_t *buf64)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 3, offset);
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf64, 3, offset);
 }
 
 // One screen row of the console as characters, 80 of them. This is what the
 // console wrote, not what the generator built out of it.
-static inline int32_t myrtos_console_peek_row(uint32_t row, uint8_t *buf80)
+static inline int32_t ubiqos_console_peek_row(uint32_t row, uint8_t *buf80)
 {
-    return myrtos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf80, 2, row);
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf80, 2, row);
 }
 
-static inline int32_t myrtos_wifi_reset(void)
+static inline int32_t ubiqos_wifi_reset(void)
 {
-    return myrtos_syscall(SYS_WIFIRESET, 0, 0, 0);
+    return ubiqos_syscall(SYS_WIFIRESET, 0, 0, 0);
 }
 
 // Null joins the network named in /sd/config.txt with the password kept there,
 // which is how a caller uses a password it is not allowed to read.
-static inline int32_t myrtos_wifi_join(const char *ssid_then_pass)
+static inline int32_t ubiqos_wifi_join(const char *ssid_then_pass)
 {
-    return myrtos_syscall(SYS_WIFIJOIN, (uint32_t)(uintptr_t)ssid_then_pass, 0, 0);
+    return ubiqos_syscall(SYS_WIFIJOIN, (uint32_t)(uintptr_t)ssid_then_pass, 0, 0);
 }
 
 // The hostname or the SSID into buf; the length, or -1. For the password the
 // buffer is not touched and the answer is 1 or 0 -- there is one, or there is
 // not.
-static inline int32_t myrtos_config_get(uint32_t what, char *buf, uint32_t len)
+static inline int32_t ubiqos_config_get(uint32_t what, char *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_CONFIG, what, (uint32_t)(uintptr_t)buf, len);
+    return ubiqos_syscall(SYS_CONFIG, what, (uint32_t)(uintptr_t)buf, len);
 }
 
-static inline int32_t myrtos_wifi_network(int32_t index, char *ssid, uint32_t len)
+static inline int32_t ubiqos_wifi_network(int32_t index, char *ssid, uint32_t len)
 {
-    return myrtos_syscall(SYS_WIFISCAN, (uint32_t)index, (uint32_t)(uintptr_t)ssid, len);
+    return ubiqos_syscall(SYS_WIFISCAN, (uint32_t)index, (uint32_t)(uintptr_t)ssid, len);
 }
 
 // The buffer and its length travel together because a syscall has three
 // arguments and this wants four. Everything below is one line over it.
-typedef struct { uint8_t *buf; uint32_t len; } myrtos_sockbuf_t;
+typedef struct { uint8_t *buf; uint32_t len; } ubiqos_sockbuf_t;
 
-// The family is myrtos_sock_*, all five of it: myrtos_send and myrtos_receive
+// The family is ubiqos_sock_*, all five of it: ubiqos_send and ubiqos_receive
 // are the message passing and were here first, and a socket send that was
-// called myrtos_send would be two different things one letter apart.
+// called ubiqos_send would be two different things one letter apart.
 //
 // Listen on a port. The answer is a socket to hand to the calls below, or -1 --
 // which on a machine that is not on a network is what always comes back.
-static inline int32_t myrtos_sock_listen(uint16_t port)
+static inline int32_t ubiqos_sock_listen(uint16_t port)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_LISTEN, port, 0);
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_LISTEN, port, 0);
 }
 
-// The same, on a named stack. myrtos_sock_listen is this with MYRTOS_NET_NINA,
+// The same, on a named stack. ubiqos_sock_listen is this with UBIQOS_NET_NINA,
 // and stays that way so that everything written before there was a choice goes
 // on meaning what it meant.
-static inline int32_t myrtos_sock_listen_on(uint32_t stack, uint16_t port)
+static inline int32_t ubiqos_sock_listen_on(uint32_t stack, uint16_t port)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_LISTEN_ON,
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_LISTEN_ON,
                           (stack << 16) | port, 0);
 }
 
@@ -1959,35 +1959,35 @@ static inline int32_t myrtos_sock_listen_on(uint32_t stack, uint16_t port)
 // start them, and nothing could.
 //
 // It does not wait, like the rest of this family. The socket comes back at once
-// and myrtos_sock_state says how far it has got:
+// and ubiqos_sock_state says how far it has got:
 //
-//   MYRTOS_TCP_SYN_SENT     still resolving the name, or the handshake is out
-//   MYRTOS_TCP_ESTABLISHED  send and recv will work
-//   MYRTOS_TCP_CLOSED       it failed -- the socket is still yours to close
+//   UBIQOS_TCP_SYN_SENT     still resolving the name, or the handshake is out
+//   UBIQOS_TCP_ESTABLISHED  send and recv will work
+//   UBIQOS_TCP_CLOSED       it failed -- the socket is still yours to close
 //
 // The name is resolved inside the stack rather than here, because the resolver
 // belongs to it. A dotted address costs no lookup at all.
-static inline int32_t myrtos_sock_connect(uint32_t stack, const char *host, uint16_t port)
+static inline int32_t ubiqos_sock_connect(uint32_t stack, const char *host, uint16_t port)
 {
     uint32_t n = 0;
     while (host[n]) n++;
-    myrtos_sockbuf_t b = { (uint8_t *)(uintptr_t)host, n };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_CONNECT,
+    ubiqos_sockbuf_t b = { (uint8_t *)(uintptr_t)host, n };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_CONNECT,
                           (stack << 16) | port, (uint32_t)(uintptr_t)&b);
 }
 
 // Somebody's socket, or -1 for nobody yet. It does not wait: a server that
 // wants to wait sleeps between asks, and one that has other work does it.
-static inline int32_t myrtos_sock_accept(int32_t server_sock)
+static inline int32_t ubiqos_sock_accept(int32_t server_sock)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_ACCEPT, (uint32_t)server_sock, 0);
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_ACCEPT, (uint32_t)server_sock, 0);
 }
 
 // Zero means nothing has arrived yet, not that the client has gone.
-static inline int32_t myrtos_sock_recv(int32_t sock, uint8_t *buf, uint32_t len)
+static inline int32_t ubiqos_sock_recv(int32_t sock, uint8_t *buf, uint32_t len)
 {
-    myrtos_sockbuf_t b = { buf, len };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_RECV, (uint32_t)sock,
+    ubiqos_sockbuf_t b = { buf, len };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_RECV, (uint32_t)sock,
                           (uint32_t)(uintptr_t)&b);
 }
 
@@ -1997,84 +1997,84 @@ static inline int32_t myrtos_sock_recv(int32_t sock, uint8_t *buf, uint32_t len)
 // Ask the network what it has. The service is a full name -- "_http._tcp.local"
 // -- and "_services._dns-sd._udp.local" is the one that lists the service types
 // themselves, which is where a browse with nothing in mind starts.
-static inline int32_t myrtos_browse(const char *service)
+static inline int32_t ubiqos_browse(const char *service)
 {
     uint32_t n = 0;
     while (service[n]) n++;
-    myrtos_sockbuf_t b = { (uint8_t *)(uintptr_t)service, n };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_BROWSE,
-                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0),
+    ubiqos_sockbuf_t b = { (uint8_t *)(uintptr_t)service, n };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_BROWSE,
+                          (uint32_t)UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, 0),
                           (uint32_t)(uintptr_t)&b);
 }
 
 // -1 while the question is still out, 1 once it has run its course.
-static inline int32_t myrtos_browse_done(void)
+static inline int32_t ubiqos_browse_done(void)
 {
-    myrtos_sockbuf_t b = { 0, 0 };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_FOUND,
-                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0xff),
+    ubiqos_sockbuf_t b = { 0, 0 };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_FOUND,
+                          (uint32_t)UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, 0xff),
                           (uint32_t)(uintptr_t)&b);
 }
 
 // The nth answer, or zero when there is no nth.
-static inline int32_t myrtos_browse_name(uint32_t i, char *out, uint32_t cap)
+static inline int32_t ubiqos_browse_name(uint32_t i, char *out, uint32_t cap)
 {
-    myrtos_sockbuf_t b = { (uint8_t *)out, cap };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_FOUND,
-                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, i),
+    ubiqos_sockbuf_t b = { (uint8_t *)out, cap };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_FOUND,
+                          (uint32_t)UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, i),
                           (uint32_t)(uintptr_t)&b);
 }
 
-static inline int32_t myrtos_ping(const char *host)
+static inline int32_t ubiqos_ping(const char *host)
 {
     uint32_t n = 0;
     while (host[n]) n++;
-    myrtos_sockbuf_t b = { (uint8_t *)(uintptr_t)host, n + 1 };
+    ubiqos_sockbuf_t b = { (uint8_t *)(uintptr_t)host, n + 1 };
     // The stack is named in the socket number's high byte everywhere else;
     // ping has no socket, so it is named here instead.
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_PING,
-                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0),
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_PING,
+                          (uint32_t)UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, 0),
                           (uint32_t)(uintptr_t)&b);
 }
 
-static inline int32_t myrtos_ping_state(uint32_t out[3])
+static inline int32_t ubiqos_ping_state(uint32_t out[3])
 {
-    myrtos_sockbuf_t b = { (uint8_t *)out, 3 * sizeof(uint32_t) };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_PINGST,
-                          (uint32_t)MYRTOS_SOCK_MAKE(MYRTOS_NET_LWIP, 0),
+    ubiqos_sockbuf_t b = { (uint8_t *)out, 3 * sizeof(uint32_t) };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_PINGST,
+                          (uint32_t)UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, 0),
                           (uint32_t)(uintptr_t)&b);
 }
 
-static inline int32_t myrtos_sock_send(int32_t sock, const uint8_t *buf, uint32_t len)
+static inline int32_t ubiqos_sock_send(int32_t sock, const uint8_t *buf, uint32_t len)
 {
-    myrtos_sockbuf_t b = { (uint8_t *)buf, len };
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_SEND, (uint32_t)sock,
+    ubiqos_sockbuf_t b = { (uint8_t *)buf, len };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_SEND, (uint32_t)sock,
                           (uint32_t)(uintptr_t)&b);
 }
 
-static inline int32_t myrtos_sock_close(int32_t sock)
+static inline int32_t ubiqos_sock_close(int32_t sock)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_CLOSE, (uint32_t)sock, 0);
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_CLOSE, (uint32_t)sock, 0);
 }
 
 // What the chip believes, what this side believes, and which port. Asked one at
 // a time by the sockstat command; nothing else needs them.
-static inline int32_t myrtos_sock_state(int32_t sock)
+static inline int32_t ubiqos_sock_state(int32_t sock)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_STATE, (uint32_t)sock, 0);
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_STATE, (uint32_t)sock, 0);
 }
 
-static inline int32_t myrtos_sock_owner(int32_t sock)
+static inline int32_t ubiqos_sock_owner(int32_t sock)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_OWNER, (uint32_t)sock, 0);
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_OWNER, (uint32_t)sock, 0);
 }
 
-static inline int32_t myrtos_sock_port(int32_t sock)
+static inline int32_t ubiqos_sock_port(int32_t sock)
 {
-    return myrtos_syscall(SYS_WIFISOCK, MYRTOS_SOCK_PORT, (uint32_t)sock, 0);
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_PORT, (uint32_t)sock, 0);
 }
 
-static inline const char *myrtos_tcp_state_name(uint32_t s)
+static inline const char *ubiqos_tcp_state_name(uint32_t s)
 {
     static const char *const names[11] = {
         "closed", "listen", "syn-sent", "syn-rcvd", "established",
@@ -2088,44 +2088,44 @@ static inline const char *myrtos_tcp_state_name(uint32_t s)
 // the power is cut. So SDIO has to be the first thing asked after power-up, or
 // it cannot be had at all -- which is why nothing touches the card at startup
 // any more, and why this is a choice the user makes rather than one we guess.
-#define MYRTOS_MOUNT_SPI  0u
-#define MYRTOS_MOUNT_SDIO 1u
+#define UBIQOS_MOUNT_SPI  0u
+#define UBIQOS_MOUNT_SDIO 1u
 
 // Ask which bus the card came up on without touching it. Asking used to mean
 // mounting, and since a bare mount defaulted to SPI, the question itself pulled
 // a four-bit card down to one bit -- a state that then costs a power cycle to
 // undo. A query has to be a query.
-#define MYRTOS_MOUNT_QUERY 2u
+#define UBIQOS_MOUNT_QUERY 2u
 
 // Returns 0 on success. -2 says the host has the card over USB. For
-// MYRTOS_MOUNT_QUERY the answer is the bus itself, MYRTOS_MOUNT_SPI or
-// MYRTOS_MOUNT_SDIO, and -1 means no card is mounted.
-static inline int32_t myrtos_mount(uint32_t bus)
+// UBIQOS_MOUNT_QUERY the answer is the bus itself, UBIQOS_MOUNT_SPI or
+// UBIQOS_MOUNT_SDIO, and -1 means no card is mounted.
+static inline int32_t ubiqos_mount(uint32_t bus)
 {
-    return myrtos_syscall(SYS_MOUNT, bus, 0, 0);
+    return ubiqos_syscall(SYS_MOUNT, bus, 0, 0);
 }
 
 // Set the console font. The grid reported back is the one that font gives.
-static inline int32_t myrtos_console_font(int32_t index, myrtos_confont_t *out)
+static inline int32_t ubiqos_console_font(int32_t index, ubiqos_confont_t *out)
 {
-    return myrtos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 0);
+    return ubiqos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 0);
 }
 
 // The same question without the answer taking effect. Pass -1 for whichever font
 // is current, or an index to find out what that one would give.
-static inline int32_t myrtos_console_font_info(int32_t index, myrtos_confont_t *out)
+static inline int32_t ubiqos_console_font_info(int32_t index, ubiqos_confont_t *out)
 {
-    return myrtos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 1);
+    return ubiqos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 1);
 }
 
-// Is there anything to read? myrtos_read blocks when there is not -- the caller
+// Is there anything to read? ubiqos_read blocks when there is not -- the caller
 // is put on WAIT_READ and its ecall re-executed when a byte turns up -- which is
 // what you want in a loop that has nothing else to do, and exactly what you do
 // not want in one that is waiting for an answer that may never come. Ask first
 // and a program can give up.
-static inline int32_t myrtos_readable(int32_t path)
+static inline int32_t ubiqos_readable(int32_t path)
 {
-    return myrtos_syscall(SYS_READABLE, (uint32_t)path, 0, 0);
+    return ubiqos_syscall(SYS_READABLE, (uint32_t)path, 0, 0);
 }
 
 // End another process. Refused for the kernel's own service threads, which the
@@ -2134,19 +2134,19 @@ static inline int32_t myrtos_readable(int32_t path)
 // A process blocked on a server does not go away at once: the server is holding
 // a pointer into its memory, so it stops running immediately and is taken apart
 // when the reply comes. It shows as "zomb" in ps until then.
-// Ask a process to end. One that called myrtos_catch_intr is told and given
+// Ask a process to end. One that called ubiqos_catch_intr is told and given
 // half a second to go on its own -- the same treatment Ctrl-C gives, and the
 // only way a background process can stop cleanly, since it is nobody's
 // foreground and the key cannot reach it. Everything else ends at once.
-static inline int32_t myrtos_kill(int32_t pid)
+static inline int32_t ubiqos_kill(int32_t pid)
 {
-    return myrtos_syscall(SYS_KILL, (uint32_t)pid, 0, 0);
+    return ubiqos_syscall(SYS_KILL, (uint32_t)pid, 0, 0);
 }
 
 // End it now, asking nothing. What -9 has always meant.
-static inline int32_t myrtos_kill_now(int32_t pid)
+static inline int32_t ubiqos_kill_now(int32_t pid)
 {
-    return myrtos_syscall(SYS_KILL, (uint32_t)pid, 1, 0);
+    return ubiqos_syscall(SYS_KILL, (uint32_t)pid, 1, 0);
 }
 
 // Say which process the interrupt key on this path's terminal should end, and
@@ -2156,14 +2156,14 @@ static inline int32_t myrtos_kill_now(int32_t pid)
 // arrives -- the process it is meant for is usually blocked and reading nothing
 // -- and at that moment the kernel has no way of telling which of several
 // processes the person typing had in mind. The shell knows: it started it.
-static inline int32_t myrtos_foreground(int32_t path, int32_t pid)
+static inline int32_t ubiqos_foreground(int32_t path, int32_t pid)
 {
-    return myrtos_syscall(SYS_FOREGRND, (uint32_t)path, (uint32_t)pid, 0);
+    return ubiqos_syscall(SYS_FOREGRND, (uint32_t)path, (uint32_t)pid, 0);
 }
 
-static inline int32_t myrtos_mkdir(const char *path)
+static inline int32_t ubiqos_mkdir(const char *path)
 {
-    return myrtos_syscall(SYS_MKDIR, (uint32_t)(uintptr_t)path, 0, 0);
+    return ubiqos_syscall(SYS_MKDIR, (uint32_t)(uintptr_t)path, 0, 0);
 }
 
 // Four arguments do not fit in a0-a2, so the request travels as a struct. Reads
@@ -2174,11 +2174,11 @@ typedef struct {
     uint32_t offset;
     uint8_t *buf;
     uint32_t len;
-} myrtos_fs_io_t;
+} ubiqos_fs_io_t;
 
 // Reading or writing through a descriptor, where the position is the
 // descriptor's and not the caller's. The struct is filled in by the kernel, not
-// by the module: myrtos_read and myrtos_write take a descriptor and know
+// by the module: ubiqos_read and ubiqos_write take a descriptor and know
 // nothing of messages, and it is the system call that discovers the descriptor
 // is a file and turns the request into one.
 typedef struct {
@@ -2186,7 +2186,7 @@ typedef struct {
     uint8_t *buf;
     uint32_t len;
     uint32_t write;                 // non-zero to write
-} myrtos_fs_fdio_t;
+} ubiqos_fs_fdio_t;
 
 // Seeking from the end, which is the one seek the trap cannot answer: it needs
 // the file's length. The descriptor rather than the name, because the server
@@ -2195,7 +2195,7 @@ typedef struct {
 typedef struct {
     int32_t fd;
     int32_t offset;
-} myrtos_fs_seek_t;
+} ubiqos_fs_seek_t;
 
 // Asking about one named file. The size comes back through the pointer because
 // the reply carries the attribute byte, and a directory is worth telling from a
@@ -2203,31 +2203,31 @@ typedef struct {
 typedef struct {
     const char *name;
     uint32_t   *size;
-} myrtos_fs_stat_t;
+} ubiqos_fs_stat_t;
 
 // Read a slice of a file. Returns bytes read, 0 at end of file, -1 if missing.
-static inline int32_t myrtos_fs_read(const char *name, uint32_t offset, void *buf, uint32_t len)
+static inline int32_t ubiqos_fs_read(const char *name, uint32_t offset, void *buf, uint32_t len)
 {
-    myrtos_fs_io_t r = {name, offset, (uint8_t *)buf, len};
-    return myrtos_syscall(SYS_FSREAD, (uint32_t)(uintptr_t)&r, 0, 0);
+    ubiqos_fs_io_t r = {name, offset, (uint8_t *)buf, len};
+    return ubiqos_syscall(SYS_FSREAD, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
 // Write a slice, creating and extending the file as needed. Returns bytes
 // written, or -1. There is no truncate: writing over a longer file leaves the
 // tail behind, so a utility that replaces a file removes it first.
-static inline int32_t myrtos_fs_write(const char *name, uint32_t offset, const void *buf, uint32_t len)
+static inline int32_t ubiqos_fs_write(const char *name, uint32_t offset, const void *buf, uint32_t len)
 {
-    myrtos_fs_io_t r = {name, offset, (uint8_t *)(uintptr_t)buf, len};
-    return myrtos_syscall(SYS_FSWRITE, (uint32_t)(uintptr_t)&r, 0, 0);
+    ubiqos_fs_io_t r = {name, offset, (uint8_t *)(uintptr_t)buf, len};
+    return ubiqos_syscall(SYS_FSWRITE, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
 // Delete a file. Returns 0, or -1 if it is missing or is a directory.
-// The attribute byte, or -1 when there is no such entry. MYRTOS_ATTR_DIRECTORY
+// The attribute byte, or -1 when there is no such entry. UBIQOS_ATTR_DIRECTORY
 // is the bit worth testing. Size may be null if only existence matters.
-static inline int32_t myrtos_fs_stat(const char *name, uint32_t *size_out)
+static inline int32_t ubiqos_fs_stat(const char *name, uint32_t *size_out)
 {
-    myrtos_fs_stat_t r = { name, size_out };
-    return myrtos_syscall(SYS_FSSTAT, (uint32_t)(uintptr_t)&r, 0, 0);
+    ubiqos_fs_stat_t r = { name, size_out };
+    return ubiqos_syscall(SYS_FSSTAT, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
 // Both names, because a syscall's arguments are registers and the server needs
@@ -2236,83 +2236,83 @@ static inline int32_t myrtos_fs_stat(const char *name, uint32_t *size_out)
 typedef struct {
     const char *from;
     const char *to;
-} myrtos_fs_rename_t;
+} ubiqos_fs_rename_t;
 
 // Rename, and on one volume that is also move. Refused across volumes: the
 // filesystems do not share a cluster chain, so it would have to be a copy --
 // and a copy that calls itself a move is how a full card loses a file.
-static inline int32_t myrtos_fs_rename(const char *from, const char *to)
+static inline int32_t ubiqos_fs_rename(const char *from, const char *to)
 {
-    myrtos_fs_rename_t r = { from, to };
-    return myrtos_syscall(SYS_FSRENAME, (uint32_t)(uintptr_t)&r, 0, 0);
+    ubiqos_fs_rename_t r = { from, to };
+    return ubiqos_syscall(SYS_FSRENAME, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
-static inline int32_t myrtos_fs_remove(const char *name)
+static inline int32_t ubiqos_fs_remove(const char *name)
 {
-    return myrtos_syscall(SYS_FSREMOVE, (uint32_t)(uintptr_t)name, 0, 0);
+    return ubiqos_syscall(SYS_FSREMOVE, (uint32_t)(uintptr_t)name, 0, 0);
 }
 
 // Wait for a process to exit. Returns at once if it already has, so there is no
 // race between starting something and waiting for it.
-static inline int32_t myrtos_wait(int32_t pid)
+static inline int32_t ubiqos_wait(int32_t pid)
 {
-    return myrtos_syscall(SYS_WAIT, (uint32_t)pid, 0, 0);
+    return ubiqos_syscall(SYS_WAIT, (uint32_t)pid, 0, 0);
 }
 
 // Sleep for a length of time. The tick is a millisecond, so that is the unit.
 // Zero yields: the process stays runnable but lets the next one go first.
-static inline int32_t myrtos_sleep(uint32_t ms)
+static inline int32_t ubiqos_sleep(uint32_t ms)
 {
-    return myrtos_syscall(SYS_SLEEP, ms, 0, 0);
+    return ubiqos_syscall(SYS_SLEEP, ms, 0, 0);
 }
 
 // Thirty-two levels. 0 belongs to the idle process and cannot be taken; 16 is
 // what a process starts with. Strict priority: nothing below the highest ready
 // level runs at all, so a process that neither blocks nor sleeps starves
 // everything under it for as long as it holds the processor.
-#define MYRTOS_PRIO_MAX     31
-#define MYRTOS_PRIO_DEFAULT 16
+#define UBIQOS_PRIO_MAX     31
+#define UBIQOS_PRIO_DEFAULT 16
 
 // Set this process's priority, returning the previous one. Zero asks without
 // changing anything: it is the idle process's level and cannot be taken, so it
 // is free to mean something else.
-static inline int32_t myrtos_setprio(uint32_t prio)
+static inline int32_t ubiqos_setprio(uint32_t prio)
 {
-    return myrtos_syscall(SYS_SETPRIO, prio, 0, 0);
+    return ubiqos_syscall(SYS_SETPRIO, prio, 0, 0);
 }
 
-static inline int32_t myrtos_getprio(void)
+static inline int32_t ubiqos_getprio(void)
 {
-    return myrtos_syscall(SYS_SETPRIO, 0, 0, 0);
+    return ubiqos_syscall(SYS_SETPRIO, 0, 0, 0);
 }
 
 // Milliseconds since the timer started. Wraps after 49 days; compare
 // differences rather than absolute values and the wrap takes care of itself.
-static inline uint32_t myrtos_ticks_now(void)
+static inline uint32_t ubiqos_ticks_now(void)
 {
-    return (uint32_t)myrtos_syscall(SYS_TICKS, 0, 0, 0);
+    return (uint32_t)ubiqos_syscall(SYS_TICKS, 0, 0, 0);
 }
 
 // What a process is doing. The states a reader cares about are the ones it can
 // be stuck in, so they are named rather than numbered in any output.
-#define MYRTOS_PS_FREE       0
-#define MYRTOS_PS_READY      1
-#define MYRTOS_PS_RUNNING    2
-#define MYRTOS_PS_WAIT_READ  3
-#define MYRTOS_PS_WAIT_WRITE 6
-#define MYRTOS_PS_WAIT_RECV  7
-#define MYRTOS_PS_WAIT_REPLY 8
-#define MYRTOS_PS_WAIT_CHILD 4
-#define MYRTOS_PS_SLEEPING   5
-#define MYRTOS_PS_ZOMBIE     9   // killed, waiting for a server to let go
+#define UBIQOS_PS_FREE       0
+#define UBIQOS_PS_READY      1
+#define UBIQOS_PS_RUNNING    2
+#define UBIQOS_PS_WAIT_READ  3
+#define UBIQOS_PS_WAIT_WRITE 6
+#define UBIQOS_PS_WAIT_RECV  7
+#define UBIQOS_PS_WAIT_REPLY 8
+#define UBIQOS_PS_WAIT_CHILD 4
+#define UBIQOS_PS_SLEEPING   5
+#define UBIQOS_PS_ZOMBIE     9   // killed, waiting for a server to let go
 
 typedef struct {
     uint32_t pid;
-    uint32_t state;   // MYRTOS_PS_*
+    uint32_t state;   // UBIQOS_PS_*
     uint32_t priority;
     uint32_t mem_size;            // data and stack together, as the header asked
-    char name[MYRTOS_NAME_LEN];   // the module's, or a kernel thread's stand-in
-} myrtos_psinfo_t;
+    char name[UBIQOS_NAME_LEN];   // the module's, or a kernel thread's stand-in
+} ubiqos_psinfo_t;
 
 // How many processes can exist, kernel included. This lived in three places --
 // the scheduler's table, the I/O manager's path table, and here -- with nothing
@@ -2338,7 +2338,7 @@ typedef struct {
 // so it goes up by half rather than doubling. Seven of the sixteen were always
 // spoken for: the kernel as idle, two shells, and the console, filesystem,
 // wifi and USB services.
-#define MYRTOS_MAX_PROCESSES 24
+#define UBIQOS_MAX_PROCESSES 24
 
 // How much memory each process running this module is given: the command line,
 // argv, the thread-local block and the data area at the bottom, the stack from
@@ -2347,7 +2347,7 @@ typedef struct {
 //
 // Write it once at file scope:
 //
-//     MYRTOS_MEM_SIZE(8192);
+//     UBIQOS_MEM_SIZE(8192);
 //
 // It becomes an ABSOLUTE symbol -- no data, no relocation, nothing in the image
 // at all -- and make_module.py reads its value with nm. That is why it can be
@@ -2357,23 +2357,23 @@ typedef struct {
 // The build refuses anything that is not a multiple of four between 1024 and
 // 65536: below that is not a process once a 128-byte trap frame is on the
 // stack, and above it cannot be satisfied out of the SRAM pool.
-#define MYRTOS_MEM_SIZE(n) \
-    __asm__(".globl __myrtos_mem_size\n.set __myrtos_mem_size, " #n "\n")
+#define UBIQOS_MEM_SIZE(n) \
+    __asm__(".globl __ubiqos_mem_size\n.set __ubiqos_mem_size, " #n "\n")
 
 // Ask about one slot. Slots are not compacted, so walk from 0 to the limit and
 // skip the ones that answer -1 rather than stopping at the first.
-#define MYRTOS_PS_SLOTS      MYRTOS_MAX_PROCESSES
+#define UBIQOS_PS_SLOTS      UBIQOS_MAX_PROCESSES
 
-static inline int32_t myrtos_psinfo(uint32_t slot, myrtos_psinfo_t *out)
+static inline int32_t ubiqos_psinfo(uint32_t slot, ubiqos_psinfo_t *out)
 {
-    return myrtos_syscall(SYS_PSINFO, slot, (uint32_t)(uintptr_t)out, 0);
+    return ubiqos_syscall(SYS_PSINFO, slot, (uint32_t)(uintptr_t)out, 0);
 }
 
 // Reboot into the bootloader, so new firmware can be loaded without reaching
 // for the board. Does not return.
-static inline void myrtos_bootsel(void)
+static inline void ubiqos_bootsel(void)
 {
-    myrtos_syscall(SYS_BOOTSEL, 0, 0, 0);
+    ubiqos_syscall(SYS_BOOTSEL, 0, 0, 0);
 }
 
 // --- MEMORY ---------------------------------------------------------------
@@ -2384,29 +2384,29 @@ static inline void myrtos_bootsel(void)
 // Where the pointer lives matters. A module may not have writable statics, so
 // `static void *buf;` is refused by the build. Keep it on the stack, or in the
 // data area the module header reserved.
-static inline void *myrtos_alloc(uint32_t size)
+static inline void *ubiqos_alloc(uint32_t size)
 {
-    return (void *)(uintptr_t)myrtos_syscall(SYS_ALLOC, size, 0, 0);
+    return (void *)(uintptr_t)ubiqos_syscall(SYS_ALLOC, size, 0, 0);
 }
 
 // Large and patient: from PSRAM when the board has it, so a framebuffer or a
 // file buffer does not eat the SRAM that module code and stacks run from.
 // Falls back to ordinary memory rather than failing.
-static inline void *myrtos_alloc_bulk(uint32_t size)
+static inline void *ubiqos_alloc_bulk(uint32_t size)
 {
-    return (void *)(uintptr_t)myrtos_syscall(SYS_ALLOCBULK, size, 0, 0);
+    return (void *)(uintptr_t)ubiqos_syscall(SYS_ALLOCBULK, size, 0, 0);
 }
 
 // Returns 0, or -1 for a pointer this process was not given.
-static inline int32_t myrtos_free(void *ptr)
+static inline int32_t ubiqos_free(void *ptr)
 {
-    return myrtos_syscall(SYS_FREE, (uint32_t)(uintptr_t)ptr, 0, 0);
+    return ubiqos_syscall(SYS_FREE, (uint32_t)(uintptr_t)ptr, 0, 0);
 }
 
 // NULL leaves the old block untouched, so the caller has not lost it.
-static inline void *myrtos_realloc(void *ptr, uint32_t size)
+static inline void *ubiqos_realloc(void *ptr, uint32_t size)
 {
-    return (void *)(uintptr_t)myrtos_syscall(SYS_REALLOC, (uint32_t)(uintptr_t)ptr, size, 0);
+    return (void *)(uintptr_t)ubiqos_syscall(SYS_REALLOC, (uint32_t)(uintptr_t)ptr, size, 0);
 }
 
 // This process's own data area, inside the block the module header asked for.
@@ -2426,23 +2426,23 @@ static inline void *myrtos_realloc(void *ptr, uint32_t size)
 // variables reach for `static __thread` instead: the linker gives those fixed
 // offsets from tp, so they cost one instruction and no call at all. This is for
 // bytes you want to lay out yourself.
-static inline void *myrtos_data_area(uint32_t *size_out)
+static inline void *ubiqos_data_area(uint32_t *size_out)
 {
-    return (void *)(uintptr_t)myrtos_syscall(SYS_DATAAREA, (uint32_t)(uintptr_t)size_out, 0, 0);
+    return (void *)(uintptr_t)ubiqos_syscall(SYS_DATAAREA, (uint32_t)(uintptr_t)size_out, 0, 0);
 }
 
 // Move a file descriptor's position, and answer where it ended up. Only files
 // have one: a device is a stream and seeking it means nothing, so it fails.
 //
-// myrtos_seek(fd, 0, MYRTOS_SEEK_CUR) is ftell, and costs nothing.
-static inline int32_t myrtos_seek(int32_t fd, int32_t offset, uint32_t whence)
+// ubiqos_seek(fd, 0, UBIQOS_SEEK_CUR) is ftell, and costs nothing.
+static inline int32_t ubiqos_seek(int32_t fd, int32_t offset, uint32_t whence)
 {
-    return myrtos_syscall(SYS_SEEK, (uint32_t)fd, (uint32_t)offset, whence);
+    return ubiqos_syscall(SYS_SEEK, (uint32_t)fd, (uint32_t)offset, whence);
 }
 
-static inline int32_t myrtos_tell(int32_t fd)
+static inline int32_t ubiqos_tell(int32_t fd)
 {
-    return myrtos_seek(fd, 0, MYRTOS_SEEK_CUR);
+    return ubiqos_seek(fd, 0, UBIQOS_SEEK_CUR);
 }
 
 // A second descriptor onto the same thing. -1 for the lowest free number.
@@ -2451,47 +2451,47 @@ static inline int32_t myrtos_tell(int32_t fd)
 // A buffer with two ends. fds[0] reads what is written to fds[1]. The reader
 // blocks while it is empty and a writer still holds the other end; once the
 // last writer has closed, an empty pipe reads as end of file instead.
-static inline int32_t myrtos_pipe(int32_t fds[2])
+static inline int32_t ubiqos_pipe(int32_t fds[2])
 {
-    return myrtos_syscall(SYS_PIPE, (uint32_t)(uintptr_t)fds, 0, 0);
+    return ubiqos_syscall(SYS_PIPE, (uint32_t)(uintptr_t)fds, 0, 0);
 }
 
-static inline int32_t myrtos_dup(int32_t path, int32_t new_path)
+static inline int32_t ubiqos_dup(int32_t path, int32_t new_path)
 {
-    return myrtos_syscall(SYS_DUP, (uint32_t)path, (uint32_t)new_path, 0);
+    return ubiqos_syscall(SYS_DUP, (uint32_t)path, (uint32_t)new_path, 0);
 }
 
 // Ask a device about itself, and tell it something. Both take the length so a
-// driver can check it: a caller that thinks MYRTOS_SS_VOLUME is a byte and a
+// driver can check it: a caller that thinks UBIQOS_SS_VOLUME is a byte and a
 // driver that thinks it is a word disagree once, loudly, rather than reading
 // three bytes of somebody's stack for ever after.
-static inline int32_t myrtos_getstat(int32_t path, uint32_t code, void *data, uint32_t len)
+static inline int32_t ubiqos_getstat(int32_t path, uint32_t code, void *data, uint32_t len)
 {
-    myrtos_stat_t s = { data, len };
-    return myrtos_syscall(SYS_GETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
+    ubiqos_stat_t s = { data, len };
+    return ubiqos_syscall(SYS_GETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
 }
 
-static inline int32_t myrtos_setstat(int32_t path, uint32_t code, const void *data, uint32_t len)
+static inline int32_t ubiqos_setstat(int32_t path, uint32_t code, const void *data, uint32_t len)
 {
-    myrtos_stat_t s = { (void *)data, len };
-    return myrtos_syscall(SYS_SETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
+    ubiqos_stat_t s = { (void *)data, len };
+    return ubiqos_syscall(SYS_SETSTAT, (uint32_t)path, code, (uint32_t)(uintptr_t)&s);
 }
 
 // Holds a kernel critical section for that many microseconds. A test
 // instrument, and nothing else should call it.
-static inline void myrtos_crit_hold(uint32_t us)
+static inline void ubiqos_crit_hold(uint32_t us)
 {
-    myrtos_syscall(SYS_CRITHOLD, us, 0, 0);
+    ubiqos_syscall(SYS_CRITHOLD, us, 0, 0);
 }
 
-static inline int32_t myrtos_close(int32_t path)
+static inline int32_t ubiqos_close(int32_t path)
 {
-    return myrtos_syscall(SYS_CLOSE, (uint32_t)path, 0, 0);
+    return ubiqos_syscall(SYS_CLOSE, (uint32_t)path, 0, 0);
 }
 
-static inline void myrtos_exit(void)
+static inline void ubiqos_exit(void)
 {
-    myrtos_syscall(SYS_EXIT, 0, 0, 0);
+    ubiqos_syscall(SYS_EXIT, 0, 0, 0);
 }
 
 // Convenience: write a NUL-terminated string in ONE call. Sending the whole
@@ -2515,25 +2515,25 @@ static inline void myrtos_exit(void)
 // away as unused.
 //
 //     __attribute__((used)) static void do_read(int a) { ... }
-//     MYRTOS_RELTAB_BEGIN(ops);
-//     MYRTOS_RELTAB_ENTRY(ops, do_read);
-//     MYRTOS_RELTAB_ENTRY(ops, do_write);
-//     MYRTOS_RELTAB_END();
+//     UBIQOS_RELTAB_BEGIN(ops);
+//     UBIQOS_RELTAB_ENTRY(ops, do_read);
+//     UBIQOS_RELTAB_ENTRY(ops, do_write);
+//     UBIQOS_RELTAB_END();
 //     ...
-//     MYRTOS_RELTAB_CALL(ops, i, void (*)(int))(arg);
+//     UBIQOS_RELTAB_CALL(ops, i, void (*)(int))(arg);
 
-#define MYRTOS_RELTAB_BEGIN(name)                                                                                      \
+#define UBIQOS_RELTAB_BEGIN(name)                                                                                      \
     extern const intptr_t name[];                                                                                      \
     __asm__(".pushsection .rodata." #name ",\"a\"\n"                                                                   \
             ".balign 4\n.globl " #name "\n" #name ":")
 
-#define MYRTOS_RELTAB_ENTRY(name, fn)         __asm__(".word " #fn " - " #name)
+#define UBIQOS_RELTAB_ENTRY(name, fn)         __asm__(".word " #fn " - " #name)
 
 // .popsection is not optional: without it the section switch stays in effect
 // and all following code lands in the table's section instead of .text.
-#define MYRTOS_RELTAB_END()                   __asm__(".popsection")
+#define UBIQOS_RELTAB_END()                   __asm__(".popsection")
 
-#define MYRTOS_RELTAB_CALL(name, index, type) ((type)((intptr_t)(name) + (name)[index]))
+#define UBIQOS_RELTAB_CALL(name, index, type) ((type)((intptr_t)(name) + (name)[index]))
 
 // A write is atomic, but a LINE only is if it goes out in one call. If a
 // utility builds its line from several writes, other processes get in between,
@@ -2542,26 +2542,26 @@ static inline void myrtos_exit(void)
 typedef struct {
     char buf[96];
     uint32_t len;
-} myrtos_line_t;
+} ubiqos_line_t;
 
-static inline void myrtos_line_reset(myrtos_line_t *l)
+static inline void ubiqos_line_reset(ubiqos_line_t *l)
 {
     l->len = 0;
 }
 
-static inline void myrtos_line_str(myrtos_line_t *l, const char *s)
+static inline void ubiqos_line_str(ubiqos_line_t *l, const char *s)
 {
     while (*s && l->len < sizeof(l->buf) - 1)
         l->buf[l->len++] = *s++;
 }
 
-static inline void myrtos_line_chars(myrtos_line_t *l, const char *s, uint32_t n)
+static inline void ubiqos_line_chars(ubiqos_line_t *l, const char *s, uint32_t n)
 {
     for (uint32_t i = 0; i < n && l->len < sizeof(l->buf) - 1; i++)
         l->buf[l->len++] = s[i];
 }
 
-static inline void myrtos_line_u32(myrtos_line_t *l, uint32_t v)
+static inline void ubiqos_line_u32(ubiqos_line_t *l, uint32_t v)
 {
     char tmp[11];
     int i = 10;
@@ -2572,14 +2572,14 @@ static inline void myrtos_line_u32(myrtos_line_t *l, uint32_t v)
         tmp[--i] = (char)('0' + (v % 10));
         v /= 10;
     }
-    myrtos_line_str(l, &tmp[i]);
+    ubiqos_line_str(l, &tmp[i]);
 }
 
 // An address is not a quantity, and printing one in decimal costs whoever reads
 // it a conversion before they can look it up. The kernel's assertion line was
 // decimal the first time it ever fired in front of a user, and that is exactly
 // what happened.
-static inline void myrtos_line_hex(myrtos_line_t *l, uint32_t v)
+static inline void ubiqos_line_hex(ubiqos_line_t *l, uint32_t v)
 {
     static const char digits[] = "0123456789abcdef";
     char tmp[11];
@@ -2588,14 +2588,14 @@ static inline void myrtos_line_hex(myrtos_line_t *l, uint32_t v)
     for (int i = 0; i < 8; i++)
         tmp[2 + i] = digits[(v >> (28 - i * 4)) & 0xfu];
     tmp[10] = 0;
-    myrtos_line_str(l, tmp);
+    ubiqos_line_str(l, tmp);
 }
 
-// One byte, two digits. myrtos_line_hex always prints eight, which is right for
+// One byte, two digits. ubiqos_line_hex always prints eight, which is right for
 // an address and wrong for anything smaller: usbstat read out its endpoint
 // addresses as 0x00000081, where the number everyone quotes -- the notes, the
 // USB specification, TinyUSB's own logs -- is 0x81.
-static inline void myrtos_line_hex_byte(myrtos_line_t *l, uint32_t v)
+static inline void ubiqos_line_hex_byte(ubiqos_line_t *l, uint32_t v)
 {
     static const char digits[] = "0123456789abcdef";
     char tmp[5];
@@ -2604,12 +2604,12 @@ static inline void myrtos_line_hex_byte(myrtos_line_t *l, uint32_t v)
     tmp[2] = digits[(v >> 4) & 0xfu];
     tmp[3] = digits[v & 0xfu];
     tmp[4] = 0;
-    myrtos_line_str(l, tmp);
+    ubiqos_line_str(l, tmp);
 }
 
 // Utilities need to print numbers, and a module has no printf. Ten lines here
 // saves them in every utility.
-static inline int32_t myrtos_write_u32(int32_t path, uint32_t v)
+static inline int32_t ubiqos_write_u32(int32_t path, uint32_t v)
 {
     char buf[11];
     int i = 10;
@@ -2620,18 +2620,18 @@ static inline int32_t myrtos_write_u32(int32_t path, uint32_t v)
         buf[--i] = (char)('0' + (v % 10));
         v /= 10;
     }
-    return myrtos_write(path, &buf[i], (uint32_t)(10 - i));
+    return ubiqos_write(path, &buf[i], (uint32_t)(10 - i));
 }
 
 // One entry of the module directory. The revision is what decides which copy of
 // a name the system keeps, so it belongs in any listing of them.
 typedef struct {
-    char name[MYRTOS_NAME_LEN];
+    char name[UBIQOS_NAME_LEN];
     uint32_t links;      // processes running it right now
     uint32_t revision;   // the highest of this name won
     uint32_t size;       // the whole module, header included
-    uint32_t type;       // MYRTOS_TYPE_*, out of the header's own byte
-} myrtos_modinfo_t;
+    uint32_t type;       // UBIQOS_TYPE_*, out of the header's own byte
+} ubiqos_modinfo_t;
 
 // Three letters for a listing. Not the name's extension, which says MOD on
 // every module ever made and so says nothing at all.
@@ -2639,20 +2639,20 @@ typedef struct {
 // compiles to a table of addresses and check_module.py refuses the module for
 // it -- which it did to lsmod the first time this was written, exactly as the
 // documentation says it would.
-static inline const char *myrtos_type_name(uint32_t type)
+static inline const char *ubiqos_type_name(uint32_t type)
 {
     static const char names[5][4] = { "???", "PRG", "DRV", "DAT", "LIB" };
     return names[type < 5 ? type : 0];
 }
 
-static inline int32_t myrtos_moddir_get(uint32_t index, myrtos_modinfo_t *out)
+static inline int32_t ubiqos_moddir_get(uint32_t index, ubiqos_modinfo_t *out)
 {
-    return myrtos_syscall(SYS_MODDIR, index, (uint32_t)(uintptr_t)out, 0);
+    return ubiqos_syscall(SYS_MODDIR, index, (uint32_t)(uintptr_t)out, 0);
 }
 
-static inline int32_t myrtos_meminfo(uint32_t what)
+static inline int32_t ubiqos_meminfo(uint32_t what)
 {
-    return myrtos_syscall(SYS_MEMINFO, what, 0, 0);
+    return ubiqos_syscall(SYS_MEMINFO, what, 0, 0);
 }
 
 // Random bytes, from the ring oscillator's own random bit with the microsecond
@@ -2674,24 +2674,24 @@ static inline int32_t myrtos_meminfo(uint32_t what)
 // Meant for a process that has something to undo. A scanner tells its dongle to
 // stop scanning; the dongle is otherwise left running into a machine that is no
 // longer listening.
-static inline int32_t myrtos_catch_intr(uint32_t pulse_type)
+static inline int32_t ubiqos_catch_intr(uint32_t pulse_type)
 {
-    return myrtos_syscall(SYS_CATCHINTR, pulse_type, 0, 0);
+    return ubiqos_syscall(SYS_CATCHINTR, pulse_type, 0, 0);
 }
 
-static inline int32_t myrtos_random(void *buf, uint32_t len)
+static inline int32_t ubiqos_random(void *buf, uint32_t len)
 {
-    return myrtos_syscall(SYS_RANDOM, (uint32_t)(uintptr_t)buf, len, 0);
+    return ubiqos_syscall(SYS_RANDOM, (uint32_t)(uintptr_t)buf, len, 0);
 }
 
-static inline uint32_t myrtos_usbinfo(uint32_t what)
+static inline uint32_t ubiqos_usbinfo(uint32_t what)
 {
-    return (uint32_t)myrtos_syscall(SYS_USBINFO, what, 0, 0);
+    return (uint32_t)ubiqos_syscall(SYS_USBINFO, what, 0, 0);
 }
 
-static inline int32_t myrtos_line_flush(int32_t path, myrtos_line_t *l)
+static inline int32_t ubiqos_line_flush(int32_t path, ubiqos_line_t *l)
 {
-    int32_t r = myrtos_write(path, l->buf, l->len);
+    int32_t r = ubiqos_write(path, l->buf, l->len);
     l->len = 0;
     return r;
 }
@@ -2702,60 +2702,60 @@ static inline int32_t myrtos_line_flush(int32_t path, myrtos_line_t *l)
 // until it is changed again or reset -- there is nothing to open and no call to
 // make:
 //
-//     myrtos_write_str(MYRTOS_STDOUT, "\x1b[33;44m");   // yellow on blue
+//     ubiqos_write_str(UBIQOS_STDOUT, "\x1b[33;44m");   // yellow on blue
 //
 // The catch is the one the line buffer above exists for. A write is atomic and
 // a pair of them is not, so a colour set in one write and the text printed in
 // the next will colour whatever another process printed in between. Build both
-// into one myrtos_line_t and the question does not arise.
-#define MYRTOS_BLACK   0u
-#define MYRTOS_RED     1u
-#define MYRTOS_GREEN   2u
-#define MYRTOS_YELLOW  3u
-#define MYRTOS_BLUE    4u
-#define MYRTOS_MAGENTA 5u
-#define MYRTOS_CYAN    6u
-#define MYRTOS_WHITE   7u
-#define MYRTOS_BRIGHT  8u    // add to any of the eight
-#define MYRTOS_KEEP    16u   // leave that half of it as it is
+// into one ubiqos_line_t and the question does not arise.
+#define UBIQOS_BLACK   0u
+#define UBIQOS_RED     1u
+#define UBIQOS_GREEN   2u
+#define UBIQOS_YELLOW  3u
+#define UBIQOS_BLUE    4u
+#define UBIQOS_MAGENTA 5u
+#define UBIQOS_CYAN    6u
+#define UBIQOS_WHITE   7u
+#define UBIQOS_BRIGHT  8u    // add to any of the eight
+#define UBIQOS_KEEP    16u   // leave that half of it as it is
 
-static inline void myrtos_line_colour(myrtos_line_t *l, uint32_t fg, uint32_t bg)
+static inline void ubiqos_line_colour(ubiqos_line_t *l, uint32_t fg, uint32_t bg)
 {
-    myrtos_line_str(l, "\x1b[");
+    ubiqos_line_str(l, "\x1b[");
     if (fg < 16)
-        myrtos_line_u32(l, ((fg & 8u) ? 90u : 30u) + (fg & 7u));
+        ubiqos_line_u32(l, ((fg & 8u) ? 90u : 30u) + (fg & 7u));
     if (bg < 16) {
         if (fg < 16)
-            myrtos_line_str(l, ";");
-        myrtos_line_u32(l, ((bg & 8u) ? 100u : 40u) + (bg & 7u));
+            ubiqos_line_str(l, ";");
+        ubiqos_line_u32(l, ((bg & 8u) ? 100u : 40u) + (bg & 7u));
     }
     if (fg >= 16 && bg >= 16)
-        myrtos_line_u32(l, 0);   // neither named: reset
-    myrtos_line_str(l, "m");
+        ubiqos_line_u32(l, 0);   // neither named: reset
+    ubiqos_line_str(l, "m");
 }
 
 // Back to the colours the console started in.
-static inline void myrtos_line_plain(myrtos_line_t *l)
+static inline void ubiqos_line_plain(ubiqos_line_t *l)
 {
-    myrtos_line_str(l, "\x1b[0m");
+    ubiqos_line_str(l, "\x1b[0m");
 }
 
 // When a whole write is one colour and nothing else is in flight. Two writes,
 // so it is the wrong tool for one line of coloured text -- use the two above.
-static inline int32_t myrtos_colour(int32_t path, uint32_t fg, uint32_t bg)
+static inline int32_t ubiqos_colour(int32_t path, uint32_t fg, uint32_t bg)
 {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_colour(&l, fg, bg);
-    return myrtos_line_flush(path, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_colour(&l, fg, bg);
+    return ubiqos_line_flush(path, &l);
 }
 
-static inline int32_t myrtos_write_str(int32_t path, const char *s)
+static inline int32_t ubiqos_write_str(int32_t path, const char *s)
 {
     uint32_t n = 0;
     while (s[n])
         n++;
-    return myrtos_write(path, s, n);
+    return ubiqos_write(path, s, n);
 }
 
 // --help, and -h, for a utility that takes arguments.
@@ -2763,7 +2763,7 @@ static inline int32_t myrtos_write_str(int32_t path, const char *s)
 // True when the caller asked, having already printed the text, so a module opens
 // with one line:
 //
-//     if (myrtos_help(argc, argv, "usage: rm FILE...\n")) return;
+//     if (ubiqos_help(argc, argv, "usage: rm FILE...\n")) return;
 //
 // Every argument is looked at rather than only the first: "rm -f --help" is a
 // question, and a utility that acted on -f before noticing would be surprising.
@@ -2771,7 +2771,7 @@ static inline int32_t myrtos_write_str(int32_t path, const char *s)
 // The text belongs beside the code it describes. Several of these utilities
 // already had a usage line and printed it only when something went wrong, which
 // is the one moment a person is least able to read it.
-static inline bool myrtos_help(int argc, char **argv, const char *usage)
+static inline bool ubiqos_help(int argc, char **argv, const char *usage)
 {
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -2782,7 +2782,7 @@ static inline bool myrtos_help(int argc, char **argv, const char *usage)
             while (*w && *q == *w) { w++; q++; }
             ask = !*w && !*q;
         }
-        if (ask) { myrtos_write_str(MYRTOS_STDOUT, usage); return true; }
+        if (ask) { ubiqos_write_str(UBIQOS_STDOUT, usage); return true; }
     }
     return false;
 }

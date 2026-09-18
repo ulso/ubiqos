@@ -1,7 +1,7 @@
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
 
-// TinyUSB configuration for myrtos. CFG_TUSB_MCU is normally set by TinyUSB's
+// TinyUSB configuration for UbiqOS. CFG_TUSB_MCU is normally set by TinyUSB's
 // own BSP, but we do not use it -- the kernel sets up USB itself.
 // The RP2350 uses the same port as the RP2040.
 #define CFG_TUSB_MCU            OPT_MCU_RP2040
@@ -9,7 +9,7 @@
 // The SDK's CMake puts CFG_TUSB_OS=OPT_OS_PICO on the command line, and this
 // deliberately disagrees: OPT_OS_PICO makes TinyUSB reach for the SDK's mutexes
 // and semaphores, which block, and every tud_task and tuh_task here runs in a
-// myrtos kernel thread whose blocking is the scheduler's business. OPT_OS_NONE
+// UbiqOS kernel thread whose blocking is the scheduler's business. OPT_OS_NONE
 // leaves it polling, which is what it is being called from a thread to do.
 //
 // The undef is not cosmetic. Without it the compiler warns on every TinyUSB
@@ -24,11 +24,11 @@
 // a keyboard on two PIO state machines. Two root ports, and the reason host
 // support costs as much RAM as it does.
 //
-// Or, built with MYRTOS_NATIVE_USB=host, the hardware controller is the host
+// Or, built with UBIQOS_NATIVE_USB=host, the hardware controller is the host
 // and there is no device side at all: no USB console, no usbdisk, no network
 // over the cable. The same host stack, on root port 0 instead of PIO.
 #define CFG_TUH_ENABLED         1
-#if MYRTOS_USB_NATIVE_HOST
+#if UBIQOS_USB_NATIVE_HOST
 #define CFG_TUH_RPI_PIO_USB     0
 #define CFG_TUH_RHPORT          0
 #else
@@ -69,7 +69,7 @@
 #define CFG_TUH_DEVICE_MAX      (CFG_TUH_HUB ? 5 : 1)
 #define CFG_TUH_ENUMERATION_BUFSIZE 256
 
-#if MYRTOS_USB_NATIVE_HOST
+#if UBIQOS_USB_NATIVE_HOST
 #define CFG_TUD_ENABLED         0
 #else
 #define CFG_TUD_ENABLED         1
@@ -92,13 +92,13 @@
 // NCM rather than ECM or RNDIS: it is what macOS, Linux and Windows 10 onward
 // all speak without a driver, and it is what the Rust bridges on this bench
 // already use, so the host side is known ground.
-// It follows MYRTOS_LWIP, because a network interface with no stack behind it
+// It follows UBIQOS_LWIP, because a network interface with no stack behind it
 // is worse than none: the host enumerates it, tries to use it and gets nothing.
-#ifndef MYRTOS_LWIP
-#define MYRTOS_LWIP             0
+#ifndef UBIQOS_LWIP
+#define UBIQOS_LWIP             0
 #endif
 #define CFG_TUD_ECM_RNDIS       0
-#define CFG_TUD_NCM             MYRTOS_LWIP
+#define CFG_TUD_NCM             UBIQOS_LWIP
 #define CFG_TUD_NET_MTU         1514
 #define CFG_TUD_VENDOR          0
 

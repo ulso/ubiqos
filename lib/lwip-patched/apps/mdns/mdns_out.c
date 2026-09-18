@@ -282,7 +282,7 @@ mdns_add_a_answer(struct mdns_outpacket *reply, struct mdns_outmsg *msg,
 }
 
 #if !LWIP_IPV6
-/* MYRTOS: the negative answer upstream lists under "things left to implement".
+/* UBIQOS: the negative answer upstream lists under "things left to implement".
  *
  * An mDNS querier asking for a host's AAAA gets nothing back from a host
  * without IPv6, and waits for its own timeout before it believes that --
@@ -294,7 +294,7 @@ mdns_add_a_answer(struct mdns_outpacket *reply, struct mdns_outmsg *msg,
  * rdata is the next domain name -- the name itself, as mDNS uses NSEC -- and a
  * bitmap: window 0, one byte, bit 1 set for type A (bits count from the most
  * significant, so type 1 is 0x40). The TTL is the A record's. */
-#define MYRTOS_DNS_RRTYPE_NSEC 47
+#define UBIQOS_DNS_RRTYPE_NSEC 47
 static err_t
 mdns_add_nsec_answer(struct mdns_outpacket *reply, struct mdns_outmsg *msg,
                      struct netif *netif)
@@ -322,7 +322,7 @@ mdns_add_nsec_answer(struct mdns_outpacket *reply, struct mdns_outmsg *msg,
     return ERR_MEM;
   }
 
-  mdns_add_question(reply, &host, MYRTOS_DNS_RRTYPE_NSEC, DNS_RRCLASS_IN, msg->cache_flush);
+  mdns_add_question(reply, &host, UBIQOS_DNS_RRTYPE_NSEC, DNS_RRCLASS_IN, msg->cache_flush);
   field32 = lwip_htonl(MDNS_TTL_120);
   res = pbuf_take_at(reply->pbuf, &field32, sizeof(field32), reply->write_offset);
   if (res != ERR_OK) {
@@ -681,7 +681,7 @@ mdns_create_outpacket(struct netif *netif, struct mdns_outmsg *msg,
     answers++;
   }
 #if !LWIP_IPV6
-  /* MYRTOS: without IPv6 this flag means "an AAAA was asked", and the answer
+  /* UBIQOS: without IPv6 this flag means "an AAAA was asked", and the answer
    * is that there is none -- see mdns_add_nsec_answer. */
   if (msg->host_replies & REPLY_HOST_AAAA) {
     res = mdns_add_nsec_answer(outpkt, msg, netif);

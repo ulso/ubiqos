@@ -1,4 +1,4 @@
-// Trap vector for myrtos on RISC-V (Hazard3, machine mode).
+// Trap vector for UbiqOS on RISC-V (Hazard3, machine mode).
 //
 // We do NOT own mtvec. The Pico SDK's crt0 installs a vector table whose
 // entries are weak symbols, meant to be replaced -- and we replace two of
@@ -17,7 +17,7 @@
 // register values instead. That is the entire context switch.
 
 .section .text
-.global myrtos_trap_vector
+.global ubiqos_trap_vector
 .global isr_riscv_machine_exception
 .global isr_riscv_machine_timer
 .align 4
@@ -28,7 +28,7 @@
 // hanteraren.
 isr_riscv_machine_exception:
 isr_riscv_machine_timer:
-myrtos_trap_vector:
+ubiqos_trap_vector:
     addi    sp, sp, -FRAME_SIZE
 
     sw      ra,   0(sp)
@@ -70,7 +70,7 @@ myrtos_trap_vector:
     sw      t0, 128(sp)
 
     mv      a0, sp
-    call    myrtos_trap_handler
+    call    ubiqos_trap_handler
 // The return value is the stack to resume. The same pointer means we continue
 // in the same process; a different one means the next process takes over.
     mv      sp, a0
@@ -112,4 +112,4 @@ myrtos_trap_vector:
     addi    sp, sp, FRAME_SIZE
     mret
 
-myrtos_trap_vector_end:
+ubiqos_trap_vector_end:

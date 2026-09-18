@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // vidstat -- whether the character generator is keeping ahead of the beam.
 //
@@ -7,29 +7,29 @@
 // not get there first. Everything else here is context for that one number.
 
 static void row(const char *label, uint32_t v, const char *unit) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, label);
-    myrtos_line_u32(&l, v);
-    myrtos_line_str(&l, unit);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, label);
+    ubiqos_line_u32(&l, v);
+    ubiqos_line_str(&l, unit);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 static void peek(uint32_t line) {
     uint8_t b[64];
-    myrtos_video_peek(line, b);
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "line ");
-    myrtos_line_u32(&l, line);
-    myrtos_line_str(&l, ": ");
+    ubiqos_video_peek(line, b);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "line ");
+    ubiqos_line_u32(&l, line);
+    ubiqos_line_str(&l, ": ");
     for (int i = 0; i < 32; i++) {
-        myrtos_line_hex_byte(&l, b[i]);
-        myrtos_line_str(&l, " ");
+        ubiqos_line_hex_byte(&l, b[i]);
+        ubiqos_line_str(&l, " ");
     }
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
 // One line per record. The body is rendered compactly -- <E> for escape, <r>
@@ -41,11 +41,11 @@ static void trace_dump(void)
     uint8_t b[64];
     uint32_t off = 0, left = 0, shown = 0;
     int state = 0;                       // 0 seeking, 1 pid, 2 length, 3 body
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
 
     for (;;) {
-        int32_t got = myrtos_console_trace(off, b);
+        int32_t got = ubiqos_console_trace(off, b);
         if (got <= 0) break;
 
         for (int32_t i = 0; i < got; i++) {
@@ -55,11 +55,11 @@ static void trace_dump(void)
                 if (c == 0xfe) state = 1;
                 break;
             case 1:
-                if (l.len) { myrtos_line_str(&l, "\n"); myrtos_line_flush(MYRTOS_STDOUT, &l); }
-                myrtos_line_reset(&l);
-                myrtos_line_str(&l, "pid ");
-                myrtos_line_u32(&l, c);
-                myrtos_line_str(&l, "  ");
+                if (l.len) { ubiqos_line_str(&l, "\n"); ubiqos_line_flush(UBIQOS_STDOUT, &l); }
+                ubiqos_line_reset(&l);
+                ubiqos_line_str(&l, "pid ");
+                ubiqos_line_u32(&l, c);
+                ubiqos_line_str(&l, "  ");
                 state = 2;
                 break;
             case 2:
@@ -74,11 +74,11 @@ static void trace_dump(void)
                     else if (c == '\r') rep = "<r>";
                     else if (c == '\n') rep = "<n>";
                     else if (c < 32 || c > 126) rep = ".";
-                    if (rep) myrtos_line_str(&l, rep);
-                    else     myrtos_line_chars(&l, &one, 1);
+                    if (rep) ubiqos_line_str(&l, rep);
+                    else     ubiqos_line_chars(&l, &one, 1);
                     shown++;
                 } else if (shown == 60) {
-                    myrtos_line_str(&l, "...");
+                    ubiqos_line_str(&l, "...");
                     shown++;
                 }
                 if (--left == 0) state = 0;
@@ -88,7 +88,7 @@ static void trace_dump(void)
         }
         off += (uint32_t)got;
     }
-    if (l.len) { myrtos_line_str(&l, "\n"); myrtos_line_flush(MYRTOS_STDOUT, &l); }
+    if (l.len) { ubiqos_line_str(&l, "\n"); ubiqos_line_flush(UBIQOS_STDOUT, &l); }
 }
 
 void module_main(int argc, char **argv) {
@@ -101,10 +101,10 @@ void module_main(int argc, char **argv) {
     bool show_screen = (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 's');
     if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 't') { trace_dump(); return; }
 
-    if (myrtos_video_stats(s) < 0) {
-        myrtos_write_str(MYRTOS_STDOUT,
+    if (ubiqos_video_stats(s) < 0) {
+        ubiqos_write_str(UBIQOS_STDOUT,
             "This build draws into a framebuffer; there is nothing to keep up with.\n"
-            "Configure with -DMYRTOS_VIDEO=chargen to use the character generator.\n");
+            "Configure with -DUBIQOS_VIDEO=chargen to use the character generator.\n");
         return;
     }
 
@@ -114,17 +114,17 @@ void module_main(int argc, char **argv) {
     // last column cannot be mistaken for trailing space.
     for (uint32_t r = 0; show_screen && r < 30; r++) {
         uint8_t b[80];
-        myrtos_console_peek_row(r, b);
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_u32(&l, r);
-        myrtos_line_str(&l, r < 10 ? "  |" : " |");
+        ubiqos_console_peek_row(r, b);
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_u32(&l, r);
+        ubiqos_line_str(&l, r < 10 ? "  |" : " |");
         for (int i = 0; i < 80; i++) {
             char ch = (char)b[i];
-            myrtos_line_chars(&l, (ch < 32 || ch > 126) ? "." : &ch, 1);
+            ubiqos_line_chars(&l, (ch < 32 || ch > 126) ? "." : &ch, 1);
         }
-        myrtos_line_str(&l, "|\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        ubiqos_line_str(&l, "|\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
 
     row("Scanline buffers:  ", s[3], "");
@@ -175,7 +175,7 @@ void module_main(int argc, char **argv) {
 
     // Three questions, in the order that makes the next one worth asking.
     if (s[1] == 0) {
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
             "\nThe pump has never run. The alarm is not reaching the handler,\n"
             "so nothing has been built since the buffers were filled at boot.\n");
         return;
@@ -185,10 +185,10 @@ void module_main(int argc, char **argv) {
     // is that it tracks the beam. 480 lines a frame at about 57 frames a second
     // is some 27000 a second, so this should climb by that and no faster.
     if (s[0] == 0)
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
             "\nThe generator has been ahead of the display every line so far.\n");
     else
-        myrtos_write_str(MYRTOS_STDOUT,
+        ubiqos_write_str(UBIQOS_STDOUT,
             "\nThe display has reached lines that were not built yet. Either the\n"
             "pump is being delayed past the ring's depth, or a line costs more\n"
             "than the budget allows.\n");

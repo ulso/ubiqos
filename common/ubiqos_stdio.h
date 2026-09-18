@@ -1,10 +1,10 @@
-#ifndef MYRTOS_STDIO_H
-#define MYRTOS_STDIO_H
+#ifndef UBIQOS_STDIO_H
+#define UBIQOS_STDIO_H
 
-#include "myrtos_posix.h"
-#include "myrtos_string.h"
-#include "myrtos_ctype.h"
-#include "myrtos_stdlib.h"
+#include "ubiqos_posix.h"
+#include "ubiqos_string.h"
+#include "ubiqos_ctype.h"
+#include "ubiqos_stdlib.h"
 
 // stdio, as far as it can honestly go here.
 //
@@ -25,7 +25,7 @@
 // card is a message to the filesystem server and a walk through the FAT.
 
 #define BUFSIZ 512
-#define MYRTOS_FOPEN_MAX 8
+#define UBIQOS_FOPEN_MAX 8
 #define EOF (-1)
 
 typedef struct {
@@ -45,31 +45,31 @@ typedef struct {
 // what strtok remembers between calls. The program owes one line, exactly as a
 // C library would have owed it:
 //
-//     MYRTOS_LIBC_DEFINE
+//     UBIQOS_LIBC_DEFINE
 //
 // It cannot live in the header: -fno-common makes a tentative definition in
 // several translation units a duplicate, and it cannot be static without every
 // file getting its own errno.
-#define MYRTOS_LIBC_DEFINE \
-    MYRTOS_STRING_DEFINE \
+#define UBIQOS_LIBC_DEFINE \
+    UBIQOS_STRING_DEFINE \
     __thread int errno; \
-    __thread FILE __myrtos_files[MYRTOS_FOPEN_MAX];
+    __thread FILE __ubiqos_files[UBIQOS_FOPEN_MAX];
 
-extern __thread FILE __myrtos_files[MYRTOS_FOPEN_MAX];
+extern __thread FILE __ubiqos_files[UBIQOS_FOPEN_MAX];
 
 // The three standard streams are the first three slots, bound to their
 // descriptors the first time anyone asks. Lazily, because there is no earlier
 // moment to do it in.
-static inline FILE *__myrtos_std(int32_t fd)
+static inline FILE *__ubiqos_std(int32_t fd)
 {
-    FILE *f = &__myrtos_files[fd];
+    FILE *f = &__ubiqos_files[fd];
     if (!f->used) { f->fd = fd; f->unget = -1; f->used = 1; }
     return f;
 }
 
-#define stdin  __myrtos_std(MYRTOS_STDIN)
-#define stdout __myrtos_std(MYRTOS_STDOUT)
-#define stderr __myrtos_std(MYRTOS_STDERR)
+#define stdin  __ubiqos_std(UBIQOS_STDIN)
+#define stdout __ubiqos_std(UBIQOS_STDOUT)
+#define stderr __ubiqos_std(UBIQOS_STDERR)
 
 // --- opening ---------------------------------------------------------------
 // "r", "w" and "a". Appending works because open can ask how long the file is
@@ -94,14 +94,14 @@ static inline FILE *fopen(const char *path, const char *mode)
                       : O_RDONLY);
     if (fd < 0) return 0;
 
-    for (int i = 3; i < MYRTOS_FOPEN_MAX; i++) {
-        FILE *f = &__myrtos_files[i];
+    for (int i = 3; i < UBIQOS_FOPEN_MAX; i++) {
+        FILE *f = &__ubiqos_files[i];
         if (f->used) continue;
         f->fd = (int32_t)fd;
         f->size = f->len = f->pos = 0;
         f->writing = (uint8_t)writing;
         f->eof = f->err = 0;
-        f->buf = (uint8_t *)myrtos_alloc_bulk(BUFSIZ);
+        f->buf = (uint8_t *)ubiqos_alloc_bulk(BUFSIZ);
         f->owned = f->buf ? 1 : 0;      // no buffer is slow, not broken
         f->size = f->buf ? BUFSIZ : 0;
         f->unget = -1;
@@ -128,7 +128,7 @@ static inline int fclose(FILE *f)
     if (!f || !f->used) { errno = EBADF; return EOF; }
     int rc = fflush(f);
     close(f->fd);
-    if (f->owned && f->buf) myrtos_free(f->buf);
+    if (f->owned && f->buf) ubiqos_free(f->buf);
     f->buf = 0; f->owned = 0; f->used = 0; f->size = 0;
     return rc;
 }
@@ -139,7 +139,7 @@ static inline int setvbuf(FILE *f, char *buf, int mode, uint32_t size)
 {
     (void)mode;
     if (!f || !f->used || f->len || f->pos) { errno = EINVAL; return -1; }
-    if (f->owned && f->buf) myrtos_free(f->buf);
+    if (f->owned && f->buf) ubiqos_free(f->buf);
     f->buf = (uint8_t *)buf;
     f->size = buf ? size : 0;
     f->owned = 0;
@@ -147,7 +147,7 @@ static inline int setvbuf(FILE *f, char *buf, int mode, uint32_t size)
 }
 
 // --- reading ---------------------------------------------------------------
-static inline int __myrtos_fill(FILE *f)
+static inline int __ubiqos_fill(FILE *f)
 {
     if (f->writing || f->eof || f->err) return -1;
     f->pos = f->len = 0;
@@ -163,7 +163,7 @@ static inline int fgetc(FILE *f)
 {
     if (!f || !f->used || f->writing) { errno = EBADF; return EOF; }
     if (f->unget >= 0) { int c = f->unget; f->unget = -1; return c; }
-    if (f->pos >= f->len && __myrtos_fill(f) < 0) {
+    if (f->pos >= f->len && __ubiqos_fill(f) < 0) {
         if (f->buf) return EOF;
         uint8_t c;                          // no buffer, so one byte at a time
         int32_t n = read(f->fd, &c, 1);
@@ -285,24 +285,24 @@ typedef struct {
     char     *buf;
     uint32_t  cap;
     uint32_t  len;
-} __myrtos_sink;
+} __ubiqos_sink;
 
-static inline void __myrtos_put(__myrtos_sink *k, int c)
+static inline void __ubiqos_put(__ubiqos_sink *k, int c)
 {
     k->len++;
     if (k->f) fputc(c, k->f);
     else if (k->buf && k->len < k->cap) k->buf[k->len - 1] = (char)c;
 }
 
-static inline void __myrtos_pad(__myrtos_sink *k, int n, char c)
+static inline void __ubiqos_pad(__ubiqos_sink *k, int n, char c)
 {
-    while (n-- > 0) __myrtos_put(k, c);
+    while (n-- > 0) __ubiqos_put(k, c);
 }
 
-static inline int vfprintf_sink(__myrtos_sink *k, const char *fmt, __builtin_va_list ap)
+static inline int vfprintf_sink(__ubiqos_sink *k, const char *fmt, __builtin_va_list ap)
 {
     for (; *fmt; fmt++) {
-        if (*fmt != '%') { __myrtos_put(k, *fmt); continue; }
+        if (*fmt != '%') { __ubiqos_put(k, *fmt); continue; }
         fmt++;
 
         int left = 0, zero = 0, plus = 0, space = 0;
@@ -338,7 +338,7 @@ static inline int vfprintf_sink(__myrtos_sink *k, const char *fmt, __builtin_va_
 
         switch (*fmt) {
         case 0: return (int)k->len;
-        case '%': __myrtos_put(k, '%'); continue;
+        case '%': __ubiqos_put(k, '%'); continue;
         case 'c': tmp[0] = (char)__builtin_va_arg(ap, int); str = tmp; n = 1; break;
         case 's': {
             str = __builtin_va_arg(ap, const char *);
@@ -357,7 +357,7 @@ static inline int vfprintf_sink(__myrtos_sink *k, const char *fmt, __builtin_va_
             v = (uint32_t)(neg ? -(int64_t)sv : sv);
             break;
         }
-        default: __myrtos_put(k, '%'); __myrtos_put(k, *fmt); continue;
+        default: __ubiqos_put(k, '%'); __ubiqos_put(k, *fmt); continue;
         }
 
         if (!str) {                                   // a number, built backwards
@@ -371,24 +371,24 @@ static inline int vfprintf_sink(__myrtos_sink *k, const char *fmt, __builtin_va_
 
         char sign = neg ? '-' : plus ? '+' : space ? ' ' : 0;
         int total = n + (sign ? 1 : 0);
-        if (!left && !zero) __myrtos_pad(k, width - total, ' ');
-        if (sign) __myrtos_put(k, sign);
-        if (!left && zero) __myrtos_pad(k, width - total, '0');
-        for (int i = 0; i < n; i++) __myrtos_put(k, str[i]);
-        if (left) __myrtos_pad(k, width - total, ' ');
+        if (!left && !zero) __ubiqos_pad(k, width - total, ' ');
+        if (sign) __ubiqos_put(k, sign);
+        if (!left && zero) __ubiqos_pad(k, width - total, '0');
+        for (int i = 0; i < n; i++) __ubiqos_put(k, str[i]);
+        if (left) __ubiqos_pad(k, width - total, ' ');
     }
     return (int)k->len;
 }
 
 static inline int vfprintf(FILE *f, const char *fmt, __builtin_va_list ap)
 {
-    __myrtos_sink k = { f, 0, 0, 0 };
+    __ubiqos_sink k = { f, 0, 0, 0 };
     return vfprintf_sink(&k, fmt, ap);
 }
 
 static inline int vsnprintf(char *buf, uint32_t cap, const char *fmt, __builtin_va_list ap)
 {
-    __myrtos_sink k = { 0, buf, cap, 0 };
+    __ubiqos_sink k = { 0, buf, cap, 0 };
     int n = vfprintf_sink(&k, fmt, ap);
     if (buf && cap) buf[k.len < cap ? k.len : cap - 1] = 0;
     return n;
@@ -436,35 +436,35 @@ typedef struct {
     FILE       *f;
     const char *s;
     uint32_t    i;
-} __myrtos_src;
+} __ubiqos_src;
 
-static inline int __myrtos_get(__myrtos_src *r)
+static inline int __ubiqos_get(__ubiqos_src *r)
 {
     if (r->f) return fgetc(r->f);
     return r->s[r->i] ? (int)(uint8_t)r->s[r->i++] : EOF;
 }
 
-static inline void __myrtos_unget(__myrtos_src *r, int c)
+static inline void __ubiqos_unget(__ubiqos_src *r, int c)
 {
     if (c == EOF) return;
     if (r->f) ungetc(c, r->f);
     else if (r->i) r->i--;
 }
 
-static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_list ap)
+static inline int vfscanf_src(__ubiqos_src *r, const char *fmt, __builtin_va_list ap)
 {
     int filled = 0;
 
     for (; *fmt; fmt++) {
         if (isspace((int)(uint8_t)*fmt)) {          // any run of space matches any
             int c;
-            while ((c = __myrtos_get(r)) != EOF && isspace(c)) { }
-            __myrtos_unget(r, c);
+            while ((c = __ubiqos_get(r)) != EOF && isspace(c)) { }
+            __ubiqos_unget(r, c);
             continue;
         }
         if (*fmt != '%') {
-            int c = __myrtos_get(r);
-            if (c != *fmt) { __myrtos_unget(r, c); return filled; }
+            int c = __ubiqos_get(r);
+            if (c != *fmt) { __ubiqos_unget(r, c); return filled; }
             continue;
         }
 
@@ -477,13 +477,13 @@ static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_lis
 
         int c;
         if (*fmt == 'c') {
-            c = __myrtos_get(r);
+            c = __ubiqos_get(r);
             if (c == EOF) return filled ? filled : EOF;
             if (!skip) { *__builtin_va_arg(ap, char *) = (char)c; filled++; }
             continue;
         }
 
-        while ((c = __myrtos_get(r)) != EOF && isspace(c)) { }   // leading space
+        while ((c = __ubiqos_get(r)) != EOF && isspace(c)) { }   // leading space
         if (c == EOF) return filled ? filled : EOF;
 
         if (*fmt == 's') {
@@ -492,9 +492,9 @@ static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_lis
             while (c != EOF && !isspace(c) && n < width) {
                 if (out) out[n] = (char)c;
                 n++;
-                c = __myrtos_get(r);
+                c = __ubiqos_get(r);
             }
-            __myrtos_unget(r, c);
+            __ubiqos_unget(r, c);
             if (out) { out[n] = 0; filled++; }
             continue;
         }
@@ -502,14 +502,14 @@ static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_lis
         int base = *fmt == 'x' || *fmt == 'X' ? 16 : *fmt == 'o' ? 8 : 10;
         if (*fmt != 'd' && *fmt != 'i' && *fmt != 'u'
             && *fmt != 'x' && *fmt != 'X' && *fmt != 'o') {
-            __myrtos_unget(r, c);
+            __ubiqos_unget(r, c);
             return filled;
         }
 
         int neg = 0, any = 0;
         long v = 0;
-        if (c == '+' || c == '-') { neg = (c == '-'); c = __myrtos_get(r); width--; }
-        for (; c != EOF && width > 0; c = __myrtos_get(r), width--) {
+        if (c == '+' || c == '-') { neg = (c == '-'); c = __ubiqos_get(r); width--; }
+        for (; c != EOF && width > 0; c = __ubiqos_get(r), width--) {
             int d;
             if (isdigit(c)) d = c - '0';
             else if (isxdigit(c)) d = tolower(c) - 'a' + 10;
@@ -518,7 +518,7 @@ static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_lis
             v = v * base + d;
             any = 1;
         }
-        __myrtos_unget(r, c);
+        __ubiqos_unget(r, c);
         if (!any) return filled;                    // a conversion that matched nothing
         if (!skip) { *__builtin_va_arg(ap, int *) = (int)(neg ? -v : v); filled++; }
     }
@@ -527,7 +527,7 @@ static inline int vfscanf_src(__myrtos_src *r, const char *fmt, __builtin_va_lis
 
 static inline int sscanf(const char *str, const char *fmt, ...)
 {
-    __myrtos_src r = { 0, str, 0 };
+    __ubiqos_src r = { 0, str, 0 };
     __builtin_va_list ap; __builtin_va_start(ap, fmt);
     int n = vfscanf_src(&r, fmt, ap);
     __builtin_va_end(ap);
@@ -536,7 +536,7 @@ static inline int sscanf(const char *str, const char *fmt, ...)
 
 static inline int fscanf(FILE *f, const char *fmt, ...)
 {
-    __myrtos_src r = { f, 0, 0 };
+    __ubiqos_src r = { f, 0, 0 };
     __builtin_va_list ap; __builtin_va_start(ap, fmt);
     int n = vfscanf_src(&r, fmt, ap);
     __builtin_va_end(ap);
@@ -545,7 +545,7 @@ static inline int fscanf(FILE *f, const char *fmt, ...)
 
 static inline int scanf(const char *fmt, ...)
 {
-    __myrtos_src r = { stdin, 0, 0 };
+    __ubiqos_src r = { stdin, 0, 0 };
     __builtin_va_list ap; __builtin_va_start(ap, fmt);
     int n = vfscanf_src(&r, fmt, ap);
     __builtin_va_end(ap);

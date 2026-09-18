@@ -1,4 +1,4 @@
-//! zhello -- the first myrtos module written in Zig.
+//! zhello -- the first UbiqOS module written in Zig.
 //!
 //! Like dhello it exists to prove a toolchain, so it uses only the things that
 //! could go wrong: the trap, the command line, a variable at module scope, and
@@ -14,12 +14,12 @@
 //! is still per process -- but a copy of the whole module is a poor way to buy
 //! four bytes. Zig has no way to make every variable thread-local; that remains
 //! D's alone.
-const m = @import("myrtos");
+const m = @import("ubiqos");
 
 comptime {
     asm (
-        \\.globl __myrtos_mem_size
-        \\.set __myrtos_mem_size, 4096
+        \\.globl __ubiqos_mem_size
+        \\.set __ubiqos_mem_size, 4096
     );
 }
 

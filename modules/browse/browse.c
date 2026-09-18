@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // browse -- what is on the network.
 //
@@ -14,7 +14,7 @@
 // on different networks, and a browse that picked one would be a browse that
 // found half the house.
 
-static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
+static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
 // "_services._dns-sd._udp" is the standing question "what kinds of thing are
 // there", and every responder answers it with the services it offers. It is
@@ -22,7 +22,7 @@ static void say(const char *s) { myrtos_write_str(MYRTOS_STDOUT, s); }
 #define SERVICE_TYPES "_services._dns-sd._udp.local"
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: browse [SERVICE]\n\nAsks the network what is on it. With no "
             "argument it lists the kinds of\nservice anybody offers; with one, "
             "such as _http._tcp, it lists who\noffers that.\n\nThe question goes "
@@ -45,28 +45,28 @@ void module_main(int argc, char **argv) {
     }
 
     say("asking");
-    if (myrtos_browse(service) < 0) {
+    if (ubiqos_browse(service) < 0) {
         say("\r\nbrowse: the network stack would not take it -- is lwIP up?\r\n");
         return;
     }
 
     for (int waited = 0; waited < 40; waited++) {
-        if (myrtos_browse_done() != 0) break;
+        if (ubiqos_browse_done() != 0) break;
         say(".");
-        myrtos_sleep(100);
+        ubiqos_sleep(100);
     }
     say("\r\n\r\n");
 
     uint32_t shown = 0;
-    for (uint32_t i = 0; i < MYRTOS_MDNS_MAX; i++) {
+    for (uint32_t i = 0; i < UBIQOS_MDNS_MAX; i++) {
         char name[64];
-        if (myrtos_browse_name(i, name, sizeof(name)) <= 0) break;
-        myrtos_line_t l;
-        myrtos_line_reset(&l);
-        myrtos_line_str(&l, "  ");
-        myrtos_line_str(&l, name);
-        myrtos_line_str(&l, "\r\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        if (ubiqos_browse_name(i, name, sizeof(name)) <= 0) break;
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "  ");
+        ubiqos_line_str(&l, name);
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
         shown++;
     }
 
@@ -75,10 +75,10 @@ void module_main(int argc, char **argv) {
         return;
     }
 
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, "\r\n");
-    myrtos_line_u32(&l, shown);
-    myrtos_line_str(&l, argc > 1 ? " answering\r\n" : " kinds of service\r\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "\r\n");
+    ubiqos_line_u32(&l, shown);
+    ubiqos_line_str(&l, argc > 1 ? " answering\r\n" : " kinds of service\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }

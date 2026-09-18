@@ -1,5 +1,5 @@
-#ifndef MYRTOS_TRAP_H
-#define MYRTOS_TRAP_H
+#ifndef UBIQOS_TRAP_H
+#define UBIQOS_TRAP_H
 
 #include <stdint.h>
 
@@ -18,13 +18,13 @@
 #elif defined(__arm__) || defined(__thumb__)
 #include "arm/trap.h"
 #else
-#error "myrtos does not know this machine"
+#error "UbiqOS does not know this machine"
 #endif
 
-uint32_t myrtos_switch(uint32_t current_sp);
-void myrtos_process_exit(void);
-void myrtos_timer_rearm(void);
-void myrtos_timer_init(uint32_t interval_ticks);
-uint64_t myrtos_timer_now(void);
+uint32_t ubiqos_switch(uint32_t current_sp);
+void ubiqos_process_exit(void);
+void ubiqos_timer_rearm(void);
+void ubiqos_timer_init(uint32_t interval_ticks);
+uint64_t ubiqos_timer_now(void);
 
 #endif

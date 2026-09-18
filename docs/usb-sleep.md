@@ -23,7 +23,7 @@ even noticed the host go away. It could not:
     tud_umount_cb      absent
     netif_set_link_up  called once at boot and never taken down
 
-So the link was pinned up from startup whatever the bus did. myrtos could not
+So the link was pinned up from startup whatever the bus did. UbiqOS could not
 notice a suspend, could not recover from one, and could not report one. That is
 the gap this closes -- the NOTICING. Recovering comes after, and only once the
 log says what actually happens.

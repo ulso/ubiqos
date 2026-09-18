@@ -13,7 +13,7 @@
 // pico-io-bridge Rust project, which has tests against captured frames.
 
 #include <stdbool.h>
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // The reference HibouAir reader, and the SDK's worked example of one.
 //
@@ -42,7 +42,7 @@
 #define HIBOU_BEACON   0x05u        // the frame that carries readings; there is
                                     // another that alternates with it and does not
 #define PULSE_ACM      1
-#define PULSE_INTR     2   // ctrl-C, asked for with myrtos_catch_intr
+#define PULSE_INTR     2   // ctrl-C, asked for with ubiqos_catch_intr
 #define MAX_SENSORS    8
 #define REDRAW_MS      2000
 
@@ -108,7 +108,7 @@ __thread sensor_t sensors[MAX_SENSORS];
 __thread uint32_t sensor_count;
 __thread uint32_t drawn_rows;
 
-MYRTOS_LIBC_DEFINE
+UBIQOS_LIBC_DEFINE
 
 __thread uint8_t buf[CHUNK];
 __thread char    line[LINE_MAX];
@@ -119,8 +119,8 @@ __thread uint32_t line_len;
  */
 static int32_t flush_input(int32_t dev)
 {
-    while (myrtos_readable(dev) > 0) {
-        int32_t n = myrtos_read(dev, buf, sizeof(buf));
+    while (ubiqos_readable(dev) > 0) {
+        int32_t n = ubiqos_read(dev, buf, sizeof(buf));
         if (n < 0)
             return -1;
     }
@@ -259,7 +259,7 @@ static void put_str(int32_t fd, const char *s)
 {
     uint32_t n = 0;
     while (s[n]) n++;
-    myrtos_write(fd, s, n);
+    ubiqos_write(fd, s, n);
 }
 
 // A tenths-of-a-unit integer as a decimal with one place. Every reading the
@@ -275,7 +275,7 @@ static void put_tenths(int32_t fd, int32_t v)
     while (m) b[n++] = t[--m];
     b[n++] = '.';
     b[n++] = (char)('0' + frac);
-    myrtos_write(fd, b, n);
+    ubiqos_write(fd, b, n);
 }
 
 static void put_u32(int32_t fd, uint32_t v)
@@ -284,22 +284,22 @@ static void put_u32(int32_t fd, uint32_t v)
     do { t[m++] = (char)('0' + v % 10); v /= 10; } while (v);
     char b[12]; uint32_t n = 0;
     while (m) b[n++] = t[--m];
-    myrtos_write(fd, b, n);
+    ubiqos_write(fd, b, n);
 }
 
 // Hundredths, as JSON's own decimal rather than a scaled integer.
 static void put_tenths100(int32_t fd, uint32_t v)
 {
     put_u32(fd, v / 100);
-    myrtos_write(fd, ".", 1);
+    ubiqos_write(fd, ".", 1);
     char b[2] = { (char)('0' + (v / 10) % 10), (char)('0' + v % 10) };
-    myrtos_write(fd, b, 2);
+    ubiqos_write(fd, b, 2);
 }
 
 static void publish(void)
 {
-    int32_t fd = myrtos_open_flags(SENSORS_PATH,
-                                   MYRTOS_O_WRONLY | MYRTOS_O_CREAT | MYRTOS_O_TRUNC);
+    int32_t fd = ubiqos_open_flags(SENSORS_PATH,
+                                   UBIQOS_O_WRONLY | UBIQOS_O_CREAT | UBIQOS_O_TRUNC);
     if (fd < 0)
         return;                      // no /tmp is not a reason to stop scanning
 
@@ -315,7 +315,7 @@ static void publish(void)
             static const char hex[] = "0123456789ABCDEF";
             char h[6];
             for (int k = 0; k < 6; k++) h[k] = hex[(e->board >> (20 - 4 * k)) & 0xf];
-            myrtos_write(fd, h, 6);
+            ubiqos_write(fd, h, 6);
         }
         put_str(fd, "\",\"addr\":\"");
         put_str(fd, e->addr);
@@ -326,7 +326,7 @@ static void publish(void)
             const char *t = board_type_name(e->type);
             uint32_t n = 0, last = 0;
             while (t[n]) { if (t[n] != ' ') last = n + 1; n++; }
-            myrtos_write(fd, t, last);
+            ubiqos_write(fd, t, last);
         }
         put_str(fd, "\",\"temp\":");     put_tenths(fd, e->temp);
         put_str(fd, ",\"humidity\":");   put_tenths(fd, (int32_t)e->hum);
@@ -347,7 +347,7 @@ static void publish(void)
     put_str(fd, "],\"count\":");
     put_u32(fd, sensor_count);
     put_str(fd, "}\n");
-    myrtos_close(fd);
+    ubiqos_close(fd);
 }
 
 static void redraw(void)
@@ -425,7 +425,7 @@ static void consume(const uint8_t *p, uint32_t n)
 
 void module_main(int argc, char **argv)
 {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: hibouair [-q]\n\n"
             "Scans for HibouAir sensors on the BleuIO dongle and shows a live\n"
             "table. Ctrl-C tells the dongle to stop and exits.\n\n"
@@ -440,15 +440,15 @@ void module_main(int argc, char **argv)
     for (int i = 1; i < argc; i++)
         if (argv[i][0] == '-' && argv[i][1] == 'q' && !argv[i][2]) quiet = true;
 
-    int32_t dev = myrtos_open("/dev/acm");
+    int32_t dev = ubiqos_open("/dev/acm");
     if (dev < 0) {
         printf("hibouair: no dongle on /dev/acm\n");
         return;
     }
 
-    send_command(dev, AT_ECHO_OFF);   myrtos_sleep(200);
-    send_command(dev, AT_VERBOSE_ON); myrtos_sleep(200);
-    send_command(dev, AT_CENTRAL);    myrtos_sleep(400);
+    send_command(dev, AT_ECHO_OFF);   ubiqos_sleep(200);
+    send_command(dev, AT_VERBOSE_ON); ubiqos_sleep(200);
+    send_command(dev, AT_CENTRAL);    ubiqos_sleep(400);
     flush_input(dev);
     if (send_command(dev, AT_SCAN) < 0) {
         printf("hibouair: the dongle will not start scanning\n");
@@ -459,21 +459,21 @@ void module_main(int argc, char **argv)
     // can be told to stop before we go. Killed outright it would keep scanning
     // and keep talking into a machine that is no longer listening -- and the
     // next program to open it would find a stream already running.
-    myrtos_catch_intr(PULSE_INTR);
+    ubiqos_catch_intr(PULSE_INTR);
 
     if (!quiet) printf("scanning; ctrl-C to stop\n\n");
 
-    uint32_t next_draw = myrtos_ticks_now() + REDRAW_MS;
+    uint32_t next_draw = ubiqos_ticks_now() + REDRAW_MS;
 
     // Armed rather than polled: the process is off the run queue until the
     // dongle actually says something, instead of asking it every couple of
     // milliseconds and being told no.
     for (;;) {
-        myrtos_arm(dev, PULSE_ACM);
+        ubiqos_arm(dev, PULSE_ACM);
 
-        myrtos_msg_t m;
-        int32_t from = myrtos_receive_tmo(&m, 30000);
-        if (from == MYRTOS_RECV_TIMEOUT) {
+        ubiqos_msg_t m;
+        int32_t from = ubiqos_receive_tmo(&m, 30000);
+        if (from == UBIQOS_RECV_TIMEOUT) {
             printf("hibouair: nothing heard for 30 s\n");
             continue;
         }
@@ -485,17 +485,17 @@ void module_main(int argc, char **argv)
             // brought us here. Half a second is what the kernel allows before
             // it ends the process regardless, which is far more than this needs.
             static const char stop[] = "\x03";
-            myrtos_write(dev, stop, 1);
-            myrtos_sleep(100);
+            ubiqos_write(dev, stop, 1);
+            ubiqos_sleep(100);
             if (!quiet) printf("\nhibouair: told the dongle to stop\n");
             // The readings are stale the moment the scan stops, and a page
             // showing yesterday's air as though it were now is worse than a
             // page showing nothing.
-            myrtos_fs_remove(SENSORS_PATH);
+            ubiqos_fs_remove(SENSORS_PATH);
             break;
         }
 
-        int32_t n = myrtos_read(dev, buf, sizeof(buf));
+        int32_t n = ubiqos_read(dev, buf, sizeof(buf));
         if (n < 0) {
             printf("hibouair: the dongle is gone\n");
             break;
@@ -506,12 +506,12 @@ void module_main(int argc, char **argv)
         // Redrawing on a timer rather than on every advertisement: four sensors
         // beaconing ten times a second would otherwise spend the whole console
         // on writing the same numbers again.
-        if ((int32_t)(myrtos_ticks_now() - next_draw) >= 0) {
+        if ((int32_t)(ubiqos_ticks_now() - next_draw) >= 0) {
             if (!quiet) redraw();
             publish();
-            next_draw = myrtos_ticks_now() + REDRAW_MS;
+            next_draw = ubiqos_ticks_now() + REDRAW_MS;
         }
     }
 
-    myrtos_disarm_all();
+    ubiqos_disarm_all();
 }

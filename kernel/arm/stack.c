@@ -6,7 +6,7 @@
 // have to be told apart, and given somewhere separate to live.
 //
 // The first attempt gave PSP the stack the kernel was already on and left MSP
-// pointing at the same address. myrtos's own vector survived that by moving MSP
+// pointing at the same address. UbiqOS's own vector survived that by moving MSP
 // down to the frame it had just saved, which was true to how RISC-V works and
 // wrong about everything else in the system: every SDK interrupt handler runs
 // on MSP too. The USB device interrupt arrived, the core stacked its frame just
@@ -15,7 +15,7 @@
 // through was gone. On hardware that read
 //
 //     USB device started, CDC console on the USB port
-//     *** MYRTOS TRAP: unhandled exception ***
+//     *** UBIQOS TRAP: unhandled exception ***
 //       pc 4294967292  cause 3
 //
 // -- pc 0xFFFFFFFC, a return into nothing. Two stack pointers need two stacks.
@@ -26,11 +26,11 @@
 // process stacks no longer carry any of it -- on this machine they hold the
 // 72-byte frame and nothing more, where on RISC-V they carry the kernel's work
 // as well. If this is ever too small the symptom will be a fault with a pc
-// inside the kernel and a stack pointer just below myrtos_irq_stack.
-#define MYRTOS_IRQ_STACK_WORDS 1024   // 4 kB
+// inside the kernel and a stack pointer just below ubiqos_irq_stack.
+#define UBIQOS_IRQ_STACK_WORDS 1024   // 4 kB
 
 __attribute__((aligned(8)))
-uint32_t myrtos_irq_stack[MYRTOS_IRQ_STACK_WORDS];
+uint32_t ubiqos_irq_stack[UBIQOS_IRQ_STACK_WORDS];
 
 // System handler priority registers. SVCall is the top byte of SHPR2; PendSV
 // and SysTick are the third and top bytes of SHPR3.
@@ -57,14 +57,14 @@ uint32_t myrtos_irq_stack[MYRTOS_IRQ_STACK_WORDS];
 // 0xFF is the lowest priority the machine offers whatever number of priority
 // bits it implements. Delaying a tick behind a device is the right trade: the
 // tick is a quantum boundary and can wait, and a USB packet cannot.
-#define MYRTOS_SCHED_PRIORITY  0xFFu
+#define UBIQOS_SCHED_PRIORITY  0xFFu
 
-void myrtos_arch_become_process(void)
+void ubiqos_arch_become_process(void)
 {
-    ARM_SCB_SHPR2 = (ARM_SCB_SHPR2 & 0x00FFFFFFu) | (MYRTOS_SCHED_PRIORITY << 24);
+    ARM_SCB_SHPR2 = (ARM_SCB_SHPR2 & 0x00FFFFFFu) | (UBIQOS_SCHED_PRIORITY << 24);
     ARM_SCB_SHPR3 = (ARM_SCB_SHPR3 & 0x0000FFFFu)
-                  | (MYRTOS_SCHED_PRIORITY << 16)     // PendSV
-                  | (MYRTOS_SCHED_PRIORITY << 24);    // SysTick
+                  | (UBIQOS_SCHED_PRIORITY << 16)     // PendSV
+                  | (UBIQOS_SCHED_PRIORITY << 24);    // SysTick
 
     // PSP takes the stack we are standing on, so nothing is copied and no local
     // goes out from under us -- only the name of the pointer changes. CONTROL
@@ -74,7 +74,7 @@ void myrtos_arch_become_process(void)
     //
     // MSP moves only after SPSEL has taken effect. Until then MSP is the stack
     // under our feet, and writing it would be writing the ground away.
-    register uint32_t *top = myrtos_irq_stack + MYRTOS_IRQ_STACK_WORDS;
+    register uint32_t *top = ubiqos_irq_stack + UBIQOS_IRQ_STACK_WORDS;
     __asm__ volatile(
         "mrs  r0, msp\n"
         "msr  psp, r0\n"

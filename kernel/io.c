@@ -5,9 +5,9 @@
 #include "hardware/gpio.h"
 #include "usbdev.h"
 
-void myrtos_print(const char *s);
-void myrtos_print_u32(uint32_t v);
-void myrtos_print_hex(uint32_t v);
+void ubiqos_print(const char *s);
+void ubiqos_print_u32(uint32_t v);
+void ubiqos_print_hex(uint32_t v);
 
 // --- DRIVER: serial terminal ----------------------------------------------
 // It was here, and it is modules/uartdrv now -- the first driver to be a module
@@ -16,7 +16,7 @@ void myrtos_print_hex(uint32_t v);
 // thing still compiled in was the code that read it.
 //
 // Nothing about the device changed: /dev/term is registered from the same
-// descriptor, by the same myrtos_io_add_descriptor, through the same vtable.
+// descriptor, by the same ubiqos_io_add_descriptor, through the same vtable.
 // What changed is where the vtable comes from.
 
 // --- DRIVER: USB CDC ------------------------------------------------------
@@ -34,31 +34,31 @@ static int32_t usb_close(void) { return 0; }
 static int32_t usb_write(const uint8_t *buf, uint32_t len) {
     // No attached host is not an error: the write is dropped, exactly as it
     // would be to a terminal nobody is watching.
-    int32_t n = myrtos_usb_write(buf, len);
+    int32_t n = ubiqos_usb_write(buf, len);
     return n < 0 ? (int32_t)len : n;
 }
 
 static int32_t usb_read(uint8_t *buf, uint32_t len) {
-    return myrtos_usb_read(buf, len);
+    return ubiqos_usb_read(buf, len);
 }
 
 static int32_t usb_readable(void) {
-    return (int32_t)myrtos_usb_available();
+    return (int32_t)ubiqos_usb_available();
 }
 
 // --- DRIVER: USB keyboard -------------------------------------------------
 // Read only, and no configuration: which pins the host uses is the host's
 // business, and there is only one of it. What makes this a device rather than a
 // special case is that a process opens it by name and reads it like any other.
-int32_t myrtos_usbhost_read(uint8_t *buf, uint32_t len);
-uint32_t myrtos_usbhost_available(void);
+int32_t ubiqos_usbhost_read(uint8_t *buf, uint32_t len);
+uint32_t ubiqos_usbhost_available(void);
 
-void myrtos_usbhost_set_keymap(const myrtos_keymap_t *k);
+void ubiqos_usbhost_set_keymap(const ubiqos_keymap_t *k);
 
 // The layout arrives with the descriptor, like the UART's pins and baud rate.
 static int32_t kbd_configure(const void *config, uint32_t size) {
-    if (size < sizeof(myrtos_keymap_t)) return -1;
-    myrtos_usbhost_set_keymap((const myrtos_keymap_t*)config);
+    if (size < sizeof(ubiqos_keymap_t)) return -1;
+    ubiqos_usbhost_set_keymap((const ubiqos_keymap_t*)config);
     return 0;
 }
 
@@ -69,10 +69,10 @@ static int32_t kbd_write(const uint8_t *buf, uint32_t len) {
     return -1;                      // a keyboard has nothing to say back
 }
 static int32_t kbd_read(uint8_t *buf, uint32_t len) {
-    return myrtos_usbhost_read(buf, len);
+    return ubiqos_usbhost_read(buf, len);
 }
 static int32_t kbd_readable(void) {
-    return (int32_t)myrtos_usbhost_available();
+    return (int32_t)ubiqos_usbhost_available();
 }
 
 // --- DRIVER: CDC-ACM ON THE HOST SIDE -------------------------------------
@@ -83,7 +83,7 @@ static int32_t kbd_readable(void) {
 //
 // Nothing is buffered on this side. TinyUSB keeps a packet each way and the USB
 // thread empties it every millisecond, which is far quicker than a shell reads.
-int32_t myrtos_usbhost_cdc_index(void);
+int32_t ubiqos_usbhost_cdc_index(void);
 
 static int32_t acm_configure(const void *config, uint32_t size) {
     (void)config; (void)size;
@@ -99,7 +99,7 @@ static int32_t acm_close(void) { return 0; }
 // still exists, and this does not. What it bought was an afternoon of a program
 // that said "connected" and swallowed everything in silence.
 static int32_t acm_write(const uint8_t *buf, uint32_t len) {
-    int32_t idx = myrtos_usbhost_cdc_index();
+    int32_t idx = ubiqos_usbhost_cdc_index();
     if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return -1;
     uint32_t room = tuh_cdc_write_available((uint8_t)idx);
     if (len > room) len = room;
@@ -110,24 +110,24 @@ static int32_t acm_write(const uint8_t *buf, uint32_t len) {
 }
 
 static int32_t acm_read(uint8_t *buf, uint32_t len) {
-    int32_t idx = myrtos_usbhost_cdc_index();
+    int32_t idx = ubiqos_usbhost_cdc_index();
     if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return 0;
     return (int32_t)tuh_cdc_read((uint8_t)idx, buf, len);
 }
 
 static int32_t acm_readable(void) {
-    int32_t idx = myrtos_usbhost_cdc_index();
+    int32_t idx = ubiqos_usbhost_cdc_index();
     if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return 0;
     return (int32_t)tuh_cdc_read_available((uint8_t)idx);
 }
 
 static int32_t acm_writable(void) {
-    int32_t idx = myrtos_usbhost_cdc_index();
+    int32_t idx = ubiqos_usbhost_cdc_index();
     if (idx < 0 || !tuh_cdc_mounted((uint8_t)idx)) return 1;   // swallowed, not blocked
     return (int32_t)tuh_cdc_write_available((uint8_t)idx);
 }
 
-static const myrtos_driver_t driver_acm = {
+static const ubiqos_driver_t driver_acm = {
     .module_name = "acm",
     .configure = acm_configure,
     .open = acm_open, .write = acm_write, .read = acm_read, .close = acm_close,
@@ -136,26 +136,26 @@ static const myrtos_driver_t driver_acm = {
 
 // The console: the display to write to, the keyboard to read from. Output never
 // blocks -- a screen is always ready -- so writable reports plenty of room.
-void myrtos_console_putc(char c);
+void ubiqos_console_putc(char c);
 
 static int32_t con_open(void)  { return 0; }
 static int32_t con_close(void) { return 0; }
 // The write only copies. A kernel thread draws, in process context, where it can
 // be preempted -- see console.c. Returning a short count is the contract, and
 // returning zero blocks the caller on WAIT_WRITE like any other full device.
-uint32_t myrtos_console_put(const uint8_t *buf, uint32_t len);
-uint32_t myrtos_console_room(void);
+uint32_t ubiqos_console_put(const uint8_t *buf, uint32_t len);
+uint32_t ubiqos_console_room(void);
 
 static int32_t con_write(const uint8_t *buf, uint32_t len) {
-    return (int32_t)myrtos_console_put(buf, len);
+    return (int32_t)ubiqos_console_put(buf, len);
 }
-static int32_t con_writable(void) { return (int32_t)myrtos_console_room(); }
+static int32_t con_writable(void) { return (int32_t)ubiqos_console_room(); }
 
 static int32_t con_read(uint8_t *buf, uint32_t len) {
-    return myrtos_usbhost_read(buf, len);
+    return ubiqos_usbhost_read(buf, len);
 }
 static int32_t con_readable(void) {
-    return (int32_t)myrtos_usbhost_available();
+    return (int32_t)ubiqos_usbhost_available();
 }
 
 // /dev/null. Everything written to it is taken and forgotten, and reading it is
@@ -168,21 +168,21 @@ static int32_t null_read(uint8_t *buf, uint32_t len) { (void)buf; (void)len; ret
 static int32_t null_readable(void) { return 1; }        // the end is always ready
 static int32_t null_at_eof(void)   { return 1; }
 
-static const myrtos_driver_t driver_null = {
+static const ubiqos_driver_t driver_null = {
     .module_name = "null",
     .configure = 0,
     .open = null_open, .write = null_write, .read = null_read, .close = null_close,
     .readable = null_readable, .at_eof = null_at_eof
 };
 
-static const myrtos_driver_t driver_console = {
+static const ubiqos_driver_t driver_console = {
     .module_name = "console",
     .configure = 0,
     .open = con_open, .write = con_write, .read = con_read, .close = con_close,
     .readable = con_readable, .writable = con_writable
 };
 
-static const myrtos_driver_t driver_kbd = {
+static const ubiqos_driver_t driver_kbd = {
     .module_name = "usbkbd",
     .configure = kbd_configure,
     .open = kbd_open, .write = kbd_write, .read = kbd_read, .close = kbd_close,
@@ -190,17 +190,17 @@ static const myrtos_driver_t driver_kbd = {
 };
 
 static int32_t usb_writable(void) {
-    return (int32_t)myrtos_usb_writable();
+    return (int32_t)ubiqos_usb_writable();
 }
 
-static const myrtos_driver_t driver_usb = {
+static const ubiqos_driver_t driver_usb = {
     .module_name = "usbcdc",
     .configure = usb_configure,
     .open = usb_open, .write = usb_write, .read = usb_read, .close = usb_close,
     .readable = usb_readable, .writable = usb_writable
 };
 
-static const myrtos_driver_t *drivers[MYRTOS_MAX_DRIVERS];
+static const ubiqos_driver_t *drivers[UBIQOS_MAX_DRIVERS];
 static uint32_t driver_count;
 
 // --- DRIVERS THAT ARE MODULES ---------------------------------------------
@@ -213,77 +213,77 @@ static uint32_t driver_count;
 // two devices separate copies of its state, so a driver that has been linked is
 // remembered in drivers[] alongside the compiled-in ones and found by the
 // ordinary search on the next descriptor.
-const myrtos_driver_module_t *myrtos_driver_link(const char *name, void **owned_out);
-extern const myrtos_kernel_api_t myrtos_kernel_api;
+const ubiqos_driver_module_t *ubiqos_driver_link(const char *name, void **owned_out);
+extern const ubiqos_kernel_api_t ubiqos_kernel_api;
 
-static const myrtos_driver_t *driver_from_module(const char *name)
+static const ubiqos_driver_t *driver_from_module(const char *name)
 {
     // Said out loud. Returning zero here reads to the caller exactly like "no
     // such driver", and the message it prints then sends the reader looking
     // for a missing module rather than a full table.
-    if (driver_count >= MYRTOS_MAX_DRIVERS) {
-        myrtos_print("  no room for another driver (MYRTOS_MAX_DRIVERS)\n");
+    if (driver_count >= UBIQOS_MAX_DRIVERS) {
+        ubiqos_print("  no room for another driver (UBIQOS_MAX_DRIVERS)\n");
         return 0;
     }
 
-    const myrtos_driver_module_t *m = myrtos_driver_link(name, 0);
+    const ubiqos_driver_module_t *m = ubiqos_driver_link(name, 0);
     if (!m) return 0;
-    if (!m->init || !m->init(&myrtos_kernel_api)) {
-        myrtos_print("  driver ");
-        myrtos_print(name);
-        myrtos_print(" would not start\n");
+    if (!m->init || !m->init(&ubiqos_kernel_api)) {
+        ubiqos_print("  driver ");
+        ubiqos_print(name);
+        ubiqos_print(" would not start\n");
         return 0;
     }
 
-    myrtos_print("  driver '");
-    myrtos_print(name);
-    myrtos_print("' linked, running from the module pool\n");
+    ubiqos_print("  driver '");
+    ubiqos_print(name);
+    ubiqos_print("' linked, running from the module pool\n");
     drivers[driver_count++] = &m->ops;
     return &m->ops;
 }
 
 // --- DEVICES AND PATHS ----------------------------------------------------
 typedef struct {
-    char name[MYRTOS_NAME_LEN];
-    const myrtos_driver_t *driver;
+    char name[UBIQOS_NAME_LEN];
+    const ubiqos_driver_t *driver;
     // The process this device's interrupt key should end. A terminal has one:
     // the command running in front of it, which is emphatically not the process
     // reading the keyboard -- while a command runs, nobody is reading. The
     // shell sets it, because the shell is the only thing that knows what it
     // started and on which device.
     int32_t foreground;
-} myrtos_device_t;
+} ubiqos_device_t;
 
 // Path numbers are PER-PROCESS, as in OS-9. Being global meant a child could
 // not inherit its parent's path 0 -- the number was taken by someone else.
 //
 // The table is indexed by pid, so it must be as tall as the scheduler's process
 // table. One definition, shared, rather than two numbers that have to agree.
-#define MYRTOS_MAX_PROCS MYRTOS_MAX_PROCESSES
+#define UBIQOS_MAX_PROCS UBIQOS_MAX_PROCESSES
 
 typedef struct {
-    const myrtos_device_t *device;
+    const ubiqos_device_t *device;
     int16_t file;                  // index into open_files, -1 for a device
     int16_t pipe;                  // index into pipes, -1 when not one
     uint8_t pipe_write;            // which end of it this descriptor is
-} myrtos_path_t;
+} ubiqos_path_t;
 
 // See io.h. A ring, and the counts of who still holds each end -- the second is
 // what tells an empty pipe apart from a finished one.
 typedef struct {
-    uint8_t  buf[MYRTOS_PIPE_BUF];
+    uint8_t  buf[UBIQOS_PIPE_BUF];
     uint32_t head, tail;
     int32_t  readers, writers;
 } pipe_t;
 
-static pipe_t pipes[MYRTOS_MAX_PIPES];
+static pipe_t pipes[UBIQOS_MAX_PIPES];
 
 static uint32_t pipe_used(const pipe_t *q) {
-    return (q->head - q->tail) % MYRTOS_PIPE_BUF;
+    return (q->head - q->tail) % UBIQOS_PIPE_BUF;
 }
 
-static myrtos_path_t *pipe_entry(int32_t path, int32_t owner_pid);
-static void pipe_release(myrtos_path_t *p);
+static ubiqos_path_t *pipe_entry(int32_t path, int32_t owner_pid);
+static void pipe_release(ubiqos_path_t *p);
 
 // See io.h. Written by the filesystem server, which is a thread, and read and
 // written by open and close, which are traps -- so every one of them holds
@@ -294,11 +294,11 @@ typedef struct {
     int32_t  refs;                 // a child inherits the position, as fork does
 } open_file_t;
 
-static open_file_t open_files[MYRTOS_MAX_OPEN_FILES];
+static open_file_t open_files[UBIQOS_MAX_OPEN_FILES];
 
-static myrtos_device_t devices[MYRTOS_MAX_DEVICES];
+static ubiqos_device_t devices[UBIQOS_MAX_DEVICES];
 static uint32_t device_count;
-static myrtos_path_t paths[MYRTOS_MAX_PROCS][MYRTOS_MAX_PATHS];
+static ubiqos_path_t paths[UBIQOS_MAX_PROCS][UBIQOS_MAX_PATHS];
 
 static bool str_eq(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }
@@ -320,7 +320,7 @@ static bool name_eq_ci(const char *a, const char *b) {
     }
 }
 
-void myrtos_io_init(void) {
+void ubiqos_io_init(void) {
     driver_count = 0;
     drivers[driver_count++] = &driver_usb;
     drivers[driver_count++] = &driver_kbd;
@@ -328,8 +328,8 @@ void myrtos_io_init(void) {
     drivers[driver_count++] = &driver_acm;
     drivers[driver_count++] = &driver_null;
     device_count = 0;
-    for (int p = 0; p < MYRTOS_MAX_PROCS; p++) {
-        for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
+    for (int p = 0; p < UBIQOS_MAX_PROCS; p++) {
+        for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
             paths[p][i].device = 0;
             paths[p][i].file = -1;
             paths[p][i].pipe = -1;
@@ -339,7 +339,7 @@ void myrtos_io_init(void) {
     // which driver; this one has no hardware to describe, and a data module
     // holding nothing but its own name would be ceremony rather than
     // configuration. So it is registered here, and it is the only one.
-    myrtos_device_t *n = &devices[device_count++];
+    ubiqos_device_t *n = &devices[device_count++];
     const char *nm = "null";
     // NUL-filled, as a descriptor's name arrives: the lookup compares C strings,
     // and a name padded with spaces would never match what anyone types.
@@ -349,17 +349,17 @@ void myrtos_io_init(void) {
     n->driver = &driver_null;
     n->foreground = -1;
 
-    myrtos_print("I/O manager ready, awaiting device descriptors\n");
+    ubiqos_print("I/O manager ready, awaiting device descriptors\n");
 }
 
-uint32_t myrtos_io_device_count(void) { return device_count; }
+uint32_t ubiqos_io_device_count(void) { return device_count; }
 
 // The nth device's name, so /dev can list what is registered. The order is
 // registration order and nothing more; nobody should depend on it.
-bool myrtos_io_device_nth(uint32_t index, char *name_out) {
+bool ubiqos_io_device_nth(uint32_t index, char *name_out) {
     if (index >= device_count) return false;
     int i = 0;
-    while (i < MYRTOS_NAME_LEN - 1 && devices[index].name[i]) { name_out[i] = devices[index].name[i]; i++; }
+    while (i < UBIQOS_NAME_LEN - 1 && devices[index].name[i]) { name_out[i] = devices[index].name[i]; i++; }
     name_out[i] = 0;
     return true;
 }
@@ -367,24 +367,24 @@ bool myrtos_io_device_nth(uint32_t index, char *name_out) {
 // Whether a named device was registered. Asked before starting a process that
 // would have nowhere to talk: there is no way to kill another process, so the
 // question has to come first.
-bool myrtos_io_has_device(const char *name) {
+bool ubiqos_io_has_device(const char *name) {
     for (uint32_t i = 0; i < device_count; i++)
         if (str_eq(devices[i].name, name)) return true;
     return false;
 }
 
-bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
+bool ubiqos_io_add_descriptor(const ubiqos_descriptor_t *desc) {
     // Also said out loud. This returned false in silence, and a device that
     // never appears in /dev with nothing printed anywhere is a thing you find
     // by counting the entries and wondering.
-    if (device_count >= MYRTOS_MAX_DEVICES) {
-        myrtos_print("  no room for device '");
-        myrtos_print(desc->device_name);
-        myrtos_print("' (MYRTOS_MAX_DEVICES)\n");
+    if (device_count >= UBIQOS_MAX_DEVICES) {
+        ubiqos_print("  no room for device '");
+        ubiqos_print(desc->device_name);
+        ubiqos_print("' (UBIQOS_MAX_DEVICES)\n");
         return false;
     }
 
-    const myrtos_driver_t *drv = 0;
+    const ubiqos_driver_t *drv = 0;
     for (uint32_t i = 0; i < driver_count; i++) {
         if (name_eq_ci(drivers[i]->module_name, desc->driver_name)) { drv = drivers[i]; break; }
     }
@@ -394,9 +394,9 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
     // built with by dropping two files on the card.
     if (!drv) drv = driver_from_module(desc->driver_name);
     if (!drv) {
-        myrtos_print("  no driver named ");
-        myrtos_print(desc->driver_name);
-        myrtos_print("\n");
+        ubiqos_print("  no driver named ");
+        ubiqos_print(desc->driver_name);
+        ubiqos_print("\n");
         return false;
     }
 
@@ -421,24 +421,24 @@ bool myrtos_io_add_descriptor(const myrtos_descriptor_t *desc) {
         if (drv->configure(tail, desc->config_size) != 0) return false;
     }
 
-    myrtos_device_t *d = &devices[device_count++];
+    ubiqos_device_t *d = &devices[device_count++];
     int i = 0;
-    while (i < MYRTOS_NAME_LEN - 1 && desc->device_name[i]) { d->name[i] = desc->device_name[i]; i++; }
+    while (i < UBIQOS_NAME_LEN - 1 && desc->device_name[i]) { d->name[i] = desc->device_name[i]; i++; }
     d->name[i] = 0;
     d->driver = drv;
     d->foreground = -1;
 
-    myrtos_print("  device '");
-    myrtos_print(d->name);
-    myrtos_print("' registered\n");
+    ubiqos_print("  device '");
+    ubiqos_print(d->name);
+    ubiqos_print("' registered\n");
     return true;
 }
 
-int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return -1;
+int32_t ubiqos_io_open(const char *name, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return -1;
     for (uint32_t i = 0; i < device_count; i++) {
         if (!str_eq(devices[i].name, name)) continue;
-        for (int p = 0; p < MYRTOS_MAX_PATHS; p++) {
+        for (int p = 0; p < UBIQOS_MAX_PATHS; p++) {
             // A slot is free when it holds NOTHING. Testing only for a device
             // was the bug: a descriptor onto a file has no device, so opening a
             // device took the slot a redirected stdout was sitting in and wrote
@@ -447,7 +447,7 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
             // no file was created, and nothing appeared on the console either,
             // which is exactly what it looked like from outside.
             //
-            // myrtos_io_open_file had it right all along, and the two now agree.
+            // ubiqos_io_open_file had it right all along, and the two now agree.
             if (paths[owner_pid][p].device) continue;
             if (paths[owner_pid][p].file >= 0) continue;
             if (paths[owner_pid][p].pipe >= 0) continue;
@@ -462,9 +462,9 @@ int32_t myrtos_io_open(const char *name, int32_t owner_pid) {
     return -1;
 }
 
-int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return -1;
-    if (path < 0 || path >= MYRTOS_MAX_PATHS) return -1;
+int32_t ubiqos_io_open_as(const char *name, int32_t owner_pid, int32_t path) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return -1;
+    if (path < 0 || path >= UBIQOS_MAX_PATHS) return -1;
     for (uint32_t i = 0; i < device_count; i++) {
         if (!str_eq(devices[i].name, name)) continue;
         if (devices[i].driver->open && devices[i].driver->open() != 0) return -1;
@@ -479,24 +479,24 @@ int32_t myrtos_io_open_as(const char *name, int32_t owner_pid, int32_t path) {
 // A file entry, or null. Deliberately separate from path_of, which answers for
 // devices only: every existing caller of that means "a device" and would be
 // wrong about a file.
-static myrtos_path_t *file_entry(int32_t path, int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
-    if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
+static ubiqos_path_t *file_entry(int32_t path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return 0;
+    if (path < 0 || path >= UBIQOS_MAX_PATHS) return 0;
     if (paths[owner_pid][path].file < 0) return 0;
     return &paths[owner_pid][path];
 }
 
-int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS || !abs_path) return -1;
-    uint32_t st = myrtos_critical_enter();
+int32_t ubiqos_io_open_file(const char *abs_path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS || !abs_path) return -1;
+    uint32_t st = ubiqos_critical_enter();
 
     int32_t slot = -1;
-    for (int i = 0; i < MYRTOS_MAX_OPEN_FILES; i++)
+    for (int i = 0; i < UBIQOS_MAX_OPEN_FILES; i++)
         if (!open_files[i].refs) { slot = i; break; }
     int32_t fd = -1;
-    for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+    for (int i = 0; i < UBIQOS_MAX_PATHS; i++)
         if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) { fd = i; break; }
-    if (slot < 0 || fd < 0) { myrtos_critical_exit(st); return -1; }
+    if (slot < 0 || fd < 0) { ubiqos_critical_exit(st); return -1; }
 
     uint32_t n = 0;
     while (abs_path[n] && n < sizeof(open_files[0].path) - 1) {
@@ -508,41 +508,41 @@ int32_t myrtos_io_open_file(const char *abs_path, int32_t owner_pid) {
     open_files[slot].refs = 1;
     paths[owner_pid][fd].file = (int16_t)slot;
 
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
     return fd;
 }
 
-bool myrtos_io_is_file(int32_t path, int32_t owner_pid) {
+bool ubiqos_io_is_file(int32_t path, int32_t owner_pid) {
     return file_entry(path, owner_pid) != 0;
 }
 
-bool myrtos_io_file_at(int32_t path, int32_t owner_pid,
+bool ubiqos_io_file_at(int32_t path, int32_t owner_pid,
                        const char **path_out, uint32_t *pos_out) {
-    myrtos_path_t *p = file_entry(path, owner_pid);
+    ubiqos_path_t *p = file_entry(path, owner_pid);
     if (!p) return false;
     if (path_out) *path_out = open_files[p->file].path;
     if (pos_out) *pos_out = open_files[p->file].pos;
     return true;
 }
 
-void myrtos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n) {
-    uint32_t st = myrtos_critical_enter();
-    myrtos_path_t *p = file_entry(path, owner_pid);
+void ubiqos_io_file_advance(int32_t path, int32_t owner_pid, uint32_t n) {
+    uint32_t st = ubiqos_critical_enter();
+    ubiqos_path_t *p = file_entry(path, owner_pid);
     if (p) open_files[p->file].pos += n;
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
 }
 
-int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid,
+int32_t ubiqos_io_file_seek(int32_t path, int32_t owner_pid,
                             int32_t offset, uint32_t whence) {
-    uint32_t st = myrtos_critical_enter();
-    myrtos_path_t *p = file_entry(path, owner_pid);
+    uint32_t st = ubiqos_critical_enter();
+    ubiqos_path_t *p = file_entry(path, owner_pid);
     int32_t result = -1;
     if (p) {
         uint32_t pos = open_files[p->file].pos;
         bool ok = true;
         switch (whence) {
-        case MYRTOS_SEEK_SET: pos = (uint32_t)offset; break;
-        case MYRTOS_SEEK_CUR: pos = (uint32_t)((int32_t)pos + offset); break;
+        case UBIQOS_SEEK_SET: pos = (uint32_t)offset; break;
+        case UBIQOS_SEEK_CUR: pos = (uint32_t)((int32_t)pos + offset); break;
         // SEEK_END never reaches here. It needs the file's length, which is
         // the filesystem's to give and long work to ask for, so the trap sends
         // it to the server and the server comes back through SEEK_SET. Anything
@@ -555,21 +555,21 @@ int32_t myrtos_io_file_seek(int32_t path, int32_t owner_pid,
             result = (int32_t)pos;
         }
     }
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
     return result;
 }
 
 // Dropping one reference to an open file. The slot goes when the last
 // descriptor on it does, which is what makes a child's copy safe.
-static void file_release(myrtos_path_t *p) {
+static void file_release(ubiqos_path_t *p) {
     if (p->file < 0) return;
     if (open_files[p->file].refs > 0) open_files[p->file].refs--;
     p->file = -1;
 }
 
-static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
-    if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
+static ubiqos_path_t *path_of(int32_t path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return 0;
+    if (path < 0 || path >= UBIQOS_MAX_PATHS) return 0;
     if (!paths[owner_pid][path].device) return 0;
     return &paths[owner_pid][path];
 }
@@ -577,11 +577,11 @@ static myrtos_path_t *path_of(int32_t path, int32_t owner_pid) {
 // A child inherits its parent's paths under the SAME numbers. That is how a
 // utility can write to path 1 without knowing which device the shell chose --
 // and why a utility's output lands on USB when the shell is there.
-void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
-    if (parent_pid < 0 || parent_pid >= MYRTOS_MAX_PROCS) return;
-    if (child_pid < 0 || child_pid >= MYRTOS_MAX_PROCS) return;
-    uint32_t st = myrtos_critical_enter();
-    for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
+void ubiqos_io_inherit(int32_t parent_pid, int32_t child_pid) {
+    if (parent_pid < 0 || parent_pid >= UBIQOS_MAX_PROCS) return;
+    if (child_pid < 0 || child_pid >= UBIQOS_MAX_PROCS) return;
+    uint32_t st = ubiqos_critical_enter();
+    for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
         paths[child_pid][i] = paths[parent_pid][i];
         // The child shares the open file, position and all, exactly as a fork's
         // descriptors do. Two processes appending to the same file interleave
@@ -594,27 +594,27 @@ void myrtos_io_inherit(int32_t parent_pid, int32_t child_pid) {
             else                                pipes[paths[child_pid][i].pipe].readers++;
         }
     }
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
 }
 
-int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid) {
-    myrtos_path_t *q = pipe_entry(path, owner_pid);
+int32_t ubiqos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
         if (!q->pipe_write) return -1;                  // the wrong end
-        uint32_t st = myrtos_critical_enter();
+        uint32_t st = ubiqos_critical_enter();
         pipe_t *r = &pipes[q->pipe];
         // Nobody to read it. Failing beats filling a buffer that will never be
         // emptied, which is what SIGPIPE is for elsewhere.
-        if (!r->readers) { myrtos_critical_exit(st); return -1; }
+        if (!r->readers) { ubiqos_critical_exit(st); return -1; }
         uint32_t n = 0;
-        while (n < len && pipe_used(r) < MYRTOS_PIPE_BUF - 1) {
+        while (n < len && pipe_used(r) < UBIQOS_PIPE_BUF - 1) {
             r->buf[r->head] = buf[n++];
-            r->head = (r->head + 1) % MYRTOS_PIPE_BUF;
+            r->head = (r->head + 1) % UBIQOS_PIPE_BUF;
         }
-        myrtos_critical_exit(st);
+        ubiqos_critical_exit(st);
         return (int32_t)n;                              // zero means wait for room
     }
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     return p->device->driver->write(buf, len);
 }
@@ -624,20 +624,20 @@ int32_t myrtos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t 
 // its data. Both refuse a pipe: a pipe has no device behind it and nothing to
 // answer with.
 
-int32_t myrtos_io_getstat(int32_t path, uint32_t code, void *data, uint32_t len,
+int32_t ubiqos_io_getstat(int32_t path, uint32_t code, void *data, uint32_t len,
                           int32_t owner_pid)
 {
     if (pipe_entry(path, owner_pid)) return -1;
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p || !p->device->driver->getstat) return -1;
     return p->device->driver->getstat(code, data, len);
 }
 
-int32_t myrtos_io_setstat(int32_t path, uint32_t code, const void *data, uint32_t len,
+int32_t ubiqos_io_setstat(int32_t path, uint32_t code, const void *data, uint32_t len,
                           int32_t owner_pid)
 {
     if (pipe_entry(path, owner_pid)) return -1;
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p || !p->device->driver->setstat) return -1;
     return p->device->driver->setstat(code, data, len);
 }
@@ -651,15 +651,15 @@ int32_t myrtos_io_setstat(int32_t path, uint32_t code, const void *data, uint32_
 // So it never becomes data while a command is running: the driver hands it here
 // instead, and here it ends the process the shell said was in front.
 
-int32_t myrtos_process_kill(int32_t pid);
-bool    myrtos_intr_request(int32_t pid);
+int32_t ubiqos_process_kill(int32_t pid);
+bool    ubiqos_intr_request(int32_t pid);
 
-int32_t myrtos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid) {
-    myrtos_path_t *p = path_of(path, owner_pid);
+int32_t ubiqos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid) {
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     // Cast away const: the device is shared, and this is a property of the
     // device rather than of the path that named it.
-    ((myrtos_device_t*)p->device)->foreground = pid > 0 ? pid : -1;
+    ((ubiqos_device_t*)p->device)->foreground = pid > 0 ? pid : -1;
     return 0;
 }
 
@@ -667,7 +667,7 @@ int32_t myrtos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid) {
 // consumed and should go through as an ordinary character -- with no command
 // running there is a shell reading, and it can do something better with it than
 // the kernel can.
-bool myrtos_io_interrupt(const char *name) {
+bool ubiqos_io_interrupt(const char *name) {
     for (uint32_t i = 0; i < device_count; i++) {
         if (!str_eq(devices[i].name, name)) continue;
         int32_t victim = devices[i].foreground;
@@ -687,66 +687,66 @@ bool myrtos_io_interrupt(const char *name) {
         // which killing outright would skip. The foreground stays set in that
         // case so a second press escalates, and the deadline in the scheduler
         // ends it regardless if it does not go.
-        uint32_t st = myrtos_critical_enter();
-        bool told = myrtos_intr_request(victim);
+        uint32_t st = ubiqos_critical_enter();
+        bool told = ubiqos_intr_request(victim);
         if (!told) {
             devices[i].foreground = -1;
-            myrtos_process_kill(victim);
+            ubiqos_process_kill(victim);
         }
-        myrtos_critical_exit(st);
+        ubiqos_critical_exit(st);
         return true;
     }
     return false;
 }
 
-bool myrtos_io_readable(int32_t path, int32_t owner_pid) {
-    return myrtos_io_readable_count(path, owner_pid) > 0;
+bool ubiqos_io_readable(int32_t path, int32_t owner_pid) {
+    return ubiqos_io_readable_count(path, owner_pid) > 0;
 }
 
 // How much, rather than whether. A device with no readable entry point is not
 // an error: it has nothing waiting, which is what zero says.
-int32_t myrtos_io_readable_count(int32_t path, int32_t owner_pid) {
-    myrtos_path_t *q = pipe_entry(path, owner_pid);
+int32_t ubiqos_io_readable_count(int32_t path, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
     // An exhausted pipe reads as ready, because what it has ready is the end of
     // itself: a reader that stayed blocked would wait for a writer that has
-    // gone. The read call sorts the two apart with myrtos_io_at_eof.
+    // gone. The read call sorts the two apart with ubiqos_io_at_eof.
     if (q) return q->pipe_write ? 0
          : (int32_t)pipe_used(&pipes[q->pipe]) + (pipes[q->pipe].writers ? 0 : 1);
 
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     if (!p->device->driver->readable) return 0;
     return p->device->driver->readable();
 }
 
-bool myrtos_io_writable(int32_t path, int32_t owner_pid) {
-    myrtos_path_t *q = pipe_entry(path, owner_pid);
+bool ubiqos_io_writable(int32_t path, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
     // Room, or nobody left to read it -- and the second counts as writable so
     // that a writer into a pipe nobody holds fails rather than waits for ever.
     if (q) return q->pipe_write
-        && (pipe_used(&pipes[q->pipe]) < MYRTOS_PIPE_BUF - 1 || !pipes[q->pipe].readers);
+        && (pipe_used(&pipes[q->pipe]) < UBIQOS_PIPE_BUF - 1 || !pipes[q->pipe].readers);
 
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return false;
     if (!p->device->driver->writable) return true;      // cannot fill up
     return p->device->driver->writable() > 0;
 }
 
-int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_pid) {
-    myrtos_path_t *q = pipe_entry(path, owner_pid);
+int32_t ubiqos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
         if (q->pipe_write) return -1;                   // the wrong end
-        uint32_t st = myrtos_critical_enter();
+        uint32_t st = ubiqos_critical_enter();
         pipe_t *r = &pipes[q->pipe];
         uint32_t n = 0;
         while (n < len && pipe_used(r)) {
             buf[n++] = r->buf[r->tail];
-            r->tail = (r->tail + 1) % MYRTOS_PIPE_BUF;
+            r->tail = (r->tail + 1) % UBIQOS_PIPE_BUF;
         }
-        myrtos_critical_exit(st);
+        ubiqos_critical_exit(st);
         return (int32_t)n;
     }
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p || !p->device->driver->read) return -1;
     return p->device->driver->read(buf, len);
 }
@@ -755,28 +755,28 @@ int32_t myrtos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_p
 // Two can, since dup, and closing the driver while one of them is still open
 // would take the device away from a descriptor that never asked.
 static bool device_shared(int32_t path, int32_t owner_pid) {
-    const myrtos_device_t *d = paths[owner_pid][path].device;
-    for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+    const ubiqos_device_t *d = paths[owner_pid][path].device;
+    for (int i = 0; i < UBIQOS_MAX_PATHS; i++)
         if (i != path && paths[owner_pid][i].device == d) return true;
     return false;
 }
 
-int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
-    myrtos_path_t *f = file_entry(path, owner_pid);
+int32_t ubiqos_io_close(int32_t path, int32_t owner_pid) {
+    ubiqos_path_t *f = file_entry(path, owner_pid);
     if (f) {
-        uint32_t st = myrtos_critical_enter();
+        uint32_t st = ubiqos_critical_enter();
         file_release(f);
-        myrtos_critical_exit(st);
+        ubiqos_critical_exit(st);
         return 0;
     }
-    myrtos_path_t *q = pipe_entry(path, owner_pid);
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
-        uint32_t st = myrtos_critical_enter();
+        uint32_t st = ubiqos_critical_enter();
         pipe_release(q);
-        myrtos_critical_exit(st);
+        ubiqos_critical_exit(st);
         return 0;
     }
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     // Guarded, like readable and at_eof beside it. close is optional: a device
     // with nothing to shut down leaves it out, and the first driver that did
@@ -790,28 +790,28 @@ int32_t myrtos_io_close(int32_t path, int32_t owner_pid) {
     return 0;
 }
 
-static myrtos_path_t *pipe_entry(int32_t path, int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return 0;
-    if (path < 0 || path >= MYRTOS_MAX_PATHS) return 0;
+static ubiqos_path_t *pipe_entry(int32_t path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return 0;
+    if (path < 0 || path >= UBIQOS_MAX_PATHS) return 0;
     if (paths[owner_pid][path].pipe < 0) return 0;
     return &paths[owner_pid][path];
 }
 
-int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS || !fds) return -1;
-    uint32_t st = myrtos_critical_enter();
+int32_t ubiqos_io_pipe(int32_t fds[2], int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS || !fds) return -1;
+    uint32_t st = ubiqos_critical_enter();
 
     int32_t q = -1;
-    for (int i = 0; i < MYRTOS_MAX_PIPES; i++)
+    for (int i = 0; i < UBIQOS_MAX_PIPES; i++)
         if (!pipes[i].readers && !pipes[i].writers) { q = i; break; }
 
     int32_t r = -1, w = -1;
-    for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
+    for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
         if (paths[owner_pid][i].device || paths[owner_pid][i].file >= 0
             || paths[owner_pid][i].pipe >= 0) continue;
         if (r < 0) r = i; else { w = i; break; }
     }
-    if (q < 0 || w < 0) { myrtos_critical_exit(st); return -1; }
+    if (q < 0 || w < 0) { ubiqos_critical_exit(st); return -1; }
 
     pipes[q].head = pipes[q].tail = 0;
     pipes[q].readers = pipes[q].writers = 1;
@@ -820,50 +820,50 @@ int32_t myrtos_io_pipe(int32_t fds[2], int32_t owner_pid) {
     fds[0] = r;
     fds[1] = w;
 
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
     return 0;
 }
 
-bool myrtos_io_at_eof(int32_t path, int32_t owner_pid) {
-    myrtos_path_t *q = pipe_entry(path, owner_pid);
+bool ubiqos_io_at_eof(int32_t path, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
     if (q) return !q->pipe_write
              && !pipe_used(&pipes[q->pipe]) && !pipes[q->pipe].writers;
 
-    myrtos_path_t *p = path_of(path, owner_pid);
+    ubiqos_path_t *p = path_of(path, owner_pid);
     return p && p->device->driver->at_eof && p->device->driver->at_eof();
 }
 
 // Letting go of one end. A reader blocked on an empty pipe is released by the
 // writer's last close, which is why the counts matter more than the buffer.
-static void pipe_release(myrtos_path_t *p) {
+static void pipe_release(ubiqos_path_t *p) {
     if (p->pipe < 0) return;
     if (p->pipe_write) { if (pipes[p->pipe].writers) pipes[p->pipe].writers--; }
     else               { if (pipes[p->pipe].readers) pipes[p->pipe].readers--; }
     p->pipe = -1;
 }
 
-int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return -1;
-    if (path < 0 || path >= MYRTOS_MAX_PATHS) return -1;
-    myrtos_path_t *src = &paths[owner_pid][path];
+int32_t ubiqos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return -1;
+    if (path < 0 || path >= UBIQOS_MAX_PATHS) return -1;
+    ubiqos_path_t *src = &paths[owner_pid][path];
     if (!src->device && src->file < 0 && src->pipe < 0) return -1;
     if (new_path == path) return path;                  // dup2 onto itself
 
-    uint32_t st = myrtos_critical_enter();
+    uint32_t st = ubiqos_critical_enter();
     if (new_path < 0) {
-        for (int i = 0; i < MYRTOS_MAX_PATHS; i++)
+        for (int i = 0; i < UBIQOS_MAX_PATHS; i++)
             if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) {
                 new_path = i;
                 break;
             }
-        if (new_path < 0) { myrtos_critical_exit(st); return -1; }
-    } else if (new_path >= MYRTOS_MAX_PATHS) {
-        myrtos_critical_exit(st);
+        if (new_path < 0) { ubiqos_critical_exit(st); return -1; }
+    } else if (new_path >= UBIQOS_MAX_PATHS) {
+        ubiqos_critical_exit(st);
         return -1;
     } else {
-        myrtos_critical_exit(st);
-        myrtos_io_close(new_path, owner_pid);           // dup2 closes it first
-        st = myrtos_critical_enter();
+        ubiqos_critical_exit(st);
+        ubiqos_io_close(new_path, owner_pid);           // dup2 closes it first
+        st = ubiqos_critical_enter();
     }
 
     paths[owner_pid][new_path] = *src;
@@ -872,14 +872,14 @@ int32_t myrtos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
         if (src->pipe_write) pipes[src->pipe].writers++;
         else                 pipes[src->pipe].readers++;
     }
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
     return new_path;
 }
 
-void myrtos_io_close_all(int32_t owner_pid) {
-    if (owner_pid < 0 || owner_pid >= MYRTOS_MAX_PROCS) return;
-    uint32_t st = myrtos_critical_enter();
-    for (int i = 0; i < MYRTOS_MAX_PATHS; i++) {
+void ubiqos_io_close_all(int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS) return;
+    uint32_t st = ubiqos_critical_enter();
+    for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
         if (paths[owner_pid][i].file >= 0) file_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].pipe >= 0) pipe_release(&paths[owner_pid][i]);
         if (paths[owner_pid][i].device) {
@@ -888,5 +888,5 @@ void myrtos_io_close_all(int32_t owner_pid) {
             paths[owner_pid][i].device = 0;
         }
     }
-    myrtos_critical_exit(st);
+    ubiqos_critical_exit(st);
 }

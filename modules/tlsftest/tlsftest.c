@@ -1,4 +1,4 @@
-#include "../../common/myrtos_stdio.h"
+#include "../../common/ubiqos_stdio.h"
 
 // tlsftest -- how long TLSF takes, and whether it survives being used.
 //
@@ -10,8 +10,8 @@
 // done many times over; survival wants many different things done in an order
 // nobody chose. Doing both at once measures neither.
 
-MYRTOS_LIBC_DEFINE
-MYRTOS_MEM_SIZE(8192);
+UBIQOS_LIBC_DEFINE
+UBIQOS_MEM_SIZE(8192);
 
 // Cycles, not the millisecond tick: an allocation is supposed to be O(1), which
 // at 125 MHz means the tick cannot see it at all.
@@ -63,11 +63,11 @@ static inline void start_counting(void)
 // data, and check_module.py refused this file until it said so.
 static __thread bool use_bulk;
 
-static void *take(uint32_t n) { return use_bulk ? myrtos_alloc_bulk(n) : myrtos_alloc(n); }
+static void *take(uint32_t n) { return use_bulk ? ubiqos_alloc_bulk(n) : ubiqos_alloc(n); }
 static uint32_t largest(void)
 {
-    return (uint32_t)myrtos_meminfo(use_bulk ? MYRTOS_MEM_BULK_FREE
-                                             : MYRTOS_MEM_LARGEST_FREE);
+    return (uint32_t)ubiqos_meminfo(use_bulk ? UBIQOS_MEM_BULK_FREE
+                                             : UBIQOS_MEM_LARGEST_FREE);
 }
 
 // --- how long it takes -----------------------------------------------------
@@ -89,7 +89,7 @@ static void time_one_size(uint32_t size)
     // Freed in the order taken. Freeing backwards is the easy case for a
     // coalescing allocator and would flatter it.
     t0 = cycles();
-    for (int i = 0; i < ROUNDS; i++) if (p[i]) myrtos_free(p[i]);
+    for (int i = 0; i < ROUNDS; i++) if (p[i]) ubiqos_free(p[i]);
     uint32_t t_free = cycles() - t0;
 
     if (!got) { printf("  %6u B   all %d refused\n", size, ROUNDS); return; }
@@ -134,7 +134,7 @@ static bool stress(uint32_t iterations, uint32_t max_size)
                            p[slot], i, k);
                     return false;
                 }
-            myrtos_free(p[slot]);
+            ubiqos_free(p[slot]);
             p[slot] = 0;
             freed++;
             continue;
@@ -148,7 +148,7 @@ static bool stress(uint32_t iterations, uint32_t max_size)
         taken++;
     }
 
-    for (int i = 0; i < HELD; i++) if (p[i]) { myrtos_free(p[i]); freed++; }
+    for (int i = 0; i < HELD; i++) if (p[i]) { ubiqos_free(p[i]); freed++; }
     printf("  %u operations: %u taken, %u freed, %u refused\n",
            iterations, taken, freed, refused);
     return true;
@@ -162,7 +162,7 @@ static bool digits_only(const char *s) {
 
 void module_main(int argc, char **argv)
 {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: tlsftest [bulk] [OPERATIONS]\n\n  (none)     the SRAM pool, which real-time modules get\n  bulk       the PSRAM pool, where large allocations live\n  OPERATIONS a longer run; two at once test the locking\n")) return;
 
     start_counting();
@@ -185,7 +185,7 @@ void module_main(int argc, char **argv)
     {
         void *q = take(1024);
         uint32_t held = largest();
-        int32_t rc = myrtos_free(q);
+        int32_t rc = ubiqos_free(q);
         uint32_t back = largest();
 
         // If the same address comes again, the block is on a free list and the
@@ -195,7 +195,7 @@ void module_main(int argc, char **argv)
                q, held, back, rc, back == before ? "-- returned" : "-- NOT RETURNED");
         printf("  taking 1024 again gives %p %s\n", again,
                again == q ? "-- the same block" : "-- a different one");
-        myrtos_free(again);
+        ubiqos_free(again);
     }
 
     // Largest is not total. A pool can be roomy and unable to give out a
@@ -211,7 +211,7 @@ void module_main(int argc, char **argv)
             held[n++] = q;
             total += 64;
         }
-        for (uint32_t i = 0; i < n; i++) myrtos_free(held[i]);
+        for (uint32_t i = 0; i < n; i++) ubiqos_free(held[i]);
         printf("  in 64-byte pieces it can give out %u bytes in %u of them\n", total, n);
     }
 

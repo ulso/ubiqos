@@ -1,6 +1,6 @@
 #include "vfs.h"
 #include "tlsf.h"
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 
 // /tmp -- files that live in PSRAM and go when the power does.
 //
@@ -16,9 +16,9 @@
 // those two are the redirection that already works, rather than a second
 // arrangement of descriptors that has to be got right again.
 
-extern tlsf_pool_t myrtos_bulk_pool;
-extern tlsf_pool_t myrtos_mem_pool;
-void myrtos_print(const char *s);
+extern tlsf_pool_t ubiqos_bulk_pool;
+extern tlsf_pool_t ubiqos_mem_pool;
+void ubiqos_print(const char *s);
 
 // Sixteen, up from eight. Eighty-four bytes an entry now that a name is a real
 // name rather than twelve characters -- see the note on the name field.
@@ -33,7 +33,7 @@ typedef struct {
     // whole name, so anything longer could never be found again and every open
     // with O_CREAT made another file. "/tmp/sensors.json" is twelve characters
     // and produced eight copies called "sensors.jso" before the table was full.
-    char     name[MYRTOS_DIRNAME_MAX];
+    char     name[UBIQOS_DIRNAME_MAX];
     uint8_t *data;
     uint32_t size;                // bytes written
     uint32_t cap;                 // bytes allocated
@@ -73,7 +73,7 @@ static tmpfile_t *create(const char *path) {
     // load_module_from_card, where cutting a name ran the wrong program.
     uint32_t len = 0;
     while (n[len]) len++;
-    if (len >= MYRTOS_DIRNAME_MAX) return 0;
+    if (len >= UBIQOS_DIRNAME_MAX) return 0;
 
     for (int i = 0; i < TMP_MAX_FILES; i++) {
         if (files[i].used) continue;
@@ -92,16 +92,16 @@ static tmpfile_t *create(const char *path) {
 // chip select should still have somewhere to put a scratch file, even a small
 // one.
 static tlsf_pool_t pool(void) {
-    return myrtos_bulk_pool ? myrtos_bulk_pool : myrtos_mem_pool;
+    return ubiqos_bulk_pool ? ubiqos_bulk_pool : ubiqos_mem_pool;
 }
 
 static bool reserve(tmpfile_t *f, uint32_t want) {
     if (want <= f->cap) return true;
     uint32_t cap = (want + TMP_GROW - 1) / TMP_GROW * TMP_GROW;
-    uint8_t *p = (uint8_t*)myrtos_tlsf_malloc(pool(), cap);
+    uint8_t *p = (uint8_t*)ubiqos_tlsf_malloc(pool(), cap);
     if (!p) return false;
     for (uint32_t i = 0; i < f->size; i++) p[i] = f->data[i];
-    if (f->data) myrtos_tlsf_free(pool(), f->data);
+    if (f->data) ubiqos_tlsf_free(pool(), f->data);
     f->data = p;
     f->cap = cap;
     return true;
@@ -132,7 +132,7 @@ static int32_t tmp_write_at(const char *path, uint32_t offset, const uint8_t *bu
 static bool tmp_remove(const char *path) {
     tmpfile_t *f = find(path);
     if (!f) return false;
-    if (f->data) myrtos_tlsf_free(pool(), f->data);
+    if (f->data) ubiqos_tlsf_free(pool(), f->data);
     f->data = 0;
     f->size = f->cap = 0;
     f->used = false;
@@ -141,7 +141,7 @@ static bool tmp_remove(const char *path) {
 
 static int32_t tmp_stat(const char *path, uint32_t *size_out) {
     if (size_out) *size_out = 0;
-    if (path && path[0] == '/' && !path[1]) return MYRTOS_ATTR_DIRECTORY;
+    if (path && path[0] == '/' && !path[1]) return UBIQOS_ATTR_DIRECTORY;
     tmpfile_t *f = find(path);
     if (!f) return -1;
     if (size_out) *size_out = f->size;
@@ -164,7 +164,7 @@ static int32_t tmp_stat_nth(const char *dirpath, uint32_t index,
     return -1;
 }
 
-const myrtos_fsops_t myrtos_tmpfs_ops = {
+const ubiqos_fsops_t ubiqos_tmpfs_ops = {
     .read_at  = tmp_read_at,
     .write_at = tmp_write_at,
     .remove   = tmp_remove,
@@ -172,10 +172,10 @@ const myrtos_fsops_t myrtos_tmpfs_ops = {
     .stat     = tmp_stat,
 };
 
-// No find_nth, so myrtos_vfs_module_volume passes it over: nobody should be
+// No find_nth, so ubiqos_vfs_module_volume passes it over: nobody should be
 // looking for modules in scratch space.
-void myrtos_tmpfs_init(void) {
+void ubiqos_tmpfs_init(void) {
     for (int i = 0; i < TMP_MAX_FILES; i++) files[i].used = false;
-    if (!myrtos_vfs_add("tmp", &myrtos_tmpfs_ops))
-        myrtos_print("tmp: no room in the volume table\n");
+    if (!ubiqos_vfs_add("tmp", &ubiqos_tmpfs_ops))
+        ubiqos_print("tmp: no room in the volume table\n");
 }

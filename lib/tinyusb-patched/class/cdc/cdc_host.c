@@ -670,7 +670,7 @@ void cdch_close(uint8_t daddr) {
   }
 }
 
-// --- myrtos: the only change in this file ----------------------------------
+// --- UbiqOS: the only change in this file ----------------------------------
 //
 // Upstream opened here with TU_ASSERT(event == XFER_RESULT_SUCCESS), under its
 // own "TODO handle stall response, retry failed transfer". Two things follow
@@ -695,16 +695,16 @@ void cdch_close(uint8_t daddr) {
 //
 // Everything else in this file is upstream's, byte for byte. See
 // lib/tinyusb-patched/README.md for how to re-sync it.
-#define MYRTOS_RX_RETRY 4
-static uint8_t myrtos_rx_fails[CFG_TUH_CDC];
+#define UBIQOS_RX_RETRY 4
+static uint8_t ubiqos_rx_fails[CFG_TUH_CDC];
 
 bool cdch_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t event, uint32_t xferred_bytes) {
   if (event != XFER_RESULT_SUCCESS) {
     uint8_t const bad_idx = get_idx_by_ep_addr(daddr, ep_addr);
     if (bad_idx != TUSB_INDEX_INVALID_8) {
       cdch_interface_t* p_bad = &cdch_data[bad_idx];
-      if (ep_addr == p_bad->stream.rx.ep_addr && myrtos_rx_fails[bad_idx] < MYRTOS_RX_RETRY) {
-        myrtos_rx_fails[bad_idx]++;
+      if (ep_addr == p_bad->stream.rx.ep_addr && ubiqos_rx_fails[bad_idx] < UBIQOS_RX_RETRY) {
+        ubiqos_rx_fails[bad_idx]++;
         tu_edpt_stream_read_xfer(daddr, &p_bad->stream.rx);
       }
     }
@@ -727,7 +727,7 @@ bool cdch_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t event, uint32_t 
       tu_edpt_stream_write_zlp_if_needed(daddr, &p_cdc->stream.tx, xferred_bytes);
     }
   } else if ( ep_addr == p_cdc->stream.rx.ep_addr ) {
-    myrtos_rx_fails[idx] = 0;      // myrtos: it answered, so start the count again
+    ubiqos_rx_fails[idx] = 0;      // UbiqOS: it answered, so start the count again
     #if CFG_TUH_CDC_FTDI
     if (p_cdc->serial_drid == SERIAL_DRIVER_FTDI) {
       // FTDI reserve 2 bytes for status

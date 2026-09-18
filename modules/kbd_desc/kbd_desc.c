@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // Device descriptor for the USB keyboard, with a Swedish layout in its
 // configuration tail.
@@ -16,8 +16,8 @@
 // hundred and twelve bytes in the right order is not something to check by eye.
 
 typedef struct {
-    myrtos_descriptor_t desc;
-    myrtos_keymap_t     keymap;
+    ubiqos_descriptor_t desc;
+    ubiqos_keymap_t     keymap;
 } kbd_descriptor_t;
 
 __attribute__((section(".rodata.descriptor"), used))
@@ -25,10 +25,10 @@ const kbd_descriptor_t kbd_descriptor = {
     .desc = {
         .device_name   = "kbd",
         .driver_name   = "usbkbd",
-        .device_class  = MYRTOS_CLASS_CHAR,
+        .device_class  = UBIQOS_CLASS_CHAR,
         .reserved      = 0,
         .config_offset = (uint32_t)__builtin_offsetof(kbd_descriptor_t, keymap),
-        .config_size   = (uint32_t)sizeof(myrtos_keymap_t),
+        .config_size   = (uint32_t)sizeof(ubiqos_keymap_t),
     },
     // Return is 0x0d at usage 0x28, not 0x0a. Every terminal has sent a
     // carriage return on that key since the teletype, and the shell takes

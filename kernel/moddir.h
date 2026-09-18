@@ -1,7 +1,7 @@
-#ifndef MYRTOS_MODDIR_H
-#define MYRTOS_MODDIR_H
+#ifndef UBIQOS_MODDIR_H
+#define UBIQOS_MODDIR_H
 
-#include "../common/myrtos_abi.h"
+#include "../common/ubiqos_abi.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include "../common/modules.h"
@@ -36,43 +36,43 @@
 // The descriptors still come first in the resident image, and still should:
 // they are registered eagerly, and the thing a system cannot boot without
 // should not be what a full directory turns away.
-#define MYRTOS_MAX_MODULES 32
+#define UBIQOS_MAX_MODULES 32
 
 typedef struct {
-    const myrtos_module_header_t *header;
+    const ubiqos_module_header_t *header;
     uint32_t links;             // how many processes are running it
     void    *owned;             // heap memory to give back, NULL if resident
-    char     name[MYRTOS_NAME_LEN];
+    char     name[UBIQOS_NAME_LEN];
     bool     transient;         // adopted from flash for as long as it is in use
-} myrtos_module_entry_t;
+} ubiqos_module_entry_t;
 
-void  myrtos_moddir_init(void);
+void  ubiqos_moddir_init(void);
 
 // Register a module already readable in memory -- in flash, or in a buffer that
 // will not be freed. No copying takes place.
-bool  myrtos_moddir_add_resident(const myrtos_module_header_t *header, const char *name);
+bool  ubiqos_moddir_add_resident(const ubiqos_module_header_t *header, const char *name);
 
 // Copy a module onto the heap once and register it.
-bool  myrtos_moddir_add_image(uint8_t *image, uint32_t len, const char *name);
+bool  ubiqos_moddir_add_image(uint8_t *image, uint32_t len, const char *name);
 
 // Look up and bump the link count. Returns NULL if the module does not exist.
-const myrtos_module_header_t *myrtos_moddir_link(const char *name);
+const ubiqos_module_header_t *ubiqos_moddir_link(const char *name);
 
 // Look up by a user-typed name: case-insensitive, without padding and without
 // extension. "lsmod", "LSMOD" and "Lsmod" all find the same module.
-const char *myrtos_moddir_match(const char *user_name);
-void  myrtos_moddir_unlink(const myrtos_module_header_t *header);
+const char *ubiqos_moddir_match(const char *user_name);
+void  ubiqos_moddir_unlink(const ubiqos_module_header_t *header);
 
-uint32_t myrtos_moddir_count(void);
-const myrtos_module_entry_t *myrtos_moddir_entry(uint32_t index);
+uint32_t ubiqos_moddir_count(void);
+const ubiqos_module_entry_t *ubiqos_moddir_entry(uint32_t index);
 
 // Link a module the kernel calls rather than runs, and hand back its table.
 // owned_out receives the allocation to give back, or NULL if the library runs
 // where it lies. See the note beside the definition.
-const myrtos_lib_table_t *myrtos_lib_link(const char *name, void **owned_out);
+const ubiqos_lib_table_t *ubiqos_lib_link(const char *name, void **owned_out);
 
 // A device driver as a module. Asked for by the I/O manager when a descriptor
 // names a driver that is not compiled into the kernel.
-const myrtos_driver_module_t *myrtos_driver_link(const char *name, void **owned_out);
+const ubiqos_driver_module_t *ubiqos_driver_link(const char *name, void **owned_out);
 
 #endif

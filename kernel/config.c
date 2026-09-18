@@ -30,7 +30,7 @@
 //     for; anybody who can type that command can read the card in a reader
 //     anyway.
 //
-// The password never leaves this file's statics except into myrtos_wifi_join.
+// The password never leaves this file's statics except into ubiqos_wifi_join.
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -38,11 +38,11 @@
 #include "fat32.h"
 #include "clock.h"
 
-void myrtos_print(const char *s);
+void ubiqos_print(const char *s);
 
 #define CONFIG_PATH "config.txt"
 
-static char host[32] = "myrtos";
+static char host[32] = "ubiqos";
 static char ssid[33];
 static char pass[64];
 static bool done;
@@ -52,15 +52,15 @@ static bool done;
 // kernel/lwipdhcpd.c for why 169.254 was not one.
 #define USB_ADDRESS_DEFAULT ((192u << 24) | (168u << 16) | (7u << 8) | 1u)
 static uint32_t usb_address = USB_ADDRESS_DEFAULT;
-uint32_t myrtos_config_usb_address(void) { return usb_address; }
+uint32_t ubiqos_config_usb_address(void) { return usb_address; }
 
-bool myrtos_config_done(void) { return done; }
-void myrtos_config_give_up(void) { done = true; }
-const char *myrtos_config_hostname(void) { return host; }
-const char *myrtos_config_ssid(void)     { return ssid; }
-bool myrtos_config_has_password(void)    { return pass[0] != 0; }
+bool ubiqos_config_done(void) { return done; }
+void ubiqos_config_give_up(void) { done = true; }
+const char *ubiqos_config_hostname(void) { return host; }
+const char *ubiqos_config_ssid(void)     { return ssid; }
+bool ubiqos_config_has_password(void)    { return pass[0] != 0; }
 
-const char *myrtos_config_credentials(void)
+const char *ubiqos_config_credentials(void)
 {
     if (!ssid[0] || !pass[0]) return 0;
 
@@ -119,7 +119,7 @@ static void take_timezone(const char *v, uint32_t n) {
     int32_t hours = 0, mins = 0;
     uint32_t digits = 0;
     while (i < n && v[i] >= '0' && v[i] <= '9') { hours = hours * 10 + (v[i++] - '0'); digits++; }
-    if (!digits) { myrtos_print("config: that timezone is not a number; staying on UTC\n"); return; }
+    if (!digits) { ubiqos_print("config: that timezone is not a number; staying on UTC\n"); return; }
 
     if (i < n && v[i] == ':') {
         i++;
@@ -129,10 +129,10 @@ static void take_timezone(const char *v, uint32_t n) {
     }
 
     if (i != n || hours > 14 || mins > 59) {
-        myrtos_print("config: that timezone is not an offset; staying on UTC\n");
+        ubiqos_print("config: that timezone is not an offset; staying on UTC\n");
         return;
     }
-    myrtos_clock_set_offset(sign * (hours * 60 + mins));
+    ubiqos_clock_set_offset(sign * (hours * 60 + mins));
 }
 
 // "usb_address = 10.0.5.1": four numbers, each 0 to 255, and nothing else. Not
@@ -159,7 +159,7 @@ static void take_usb_address(const char *v, uint32_t n) {
     usb_address = a;
     return;
 bad:
-    myrtos_print("config: that usb_address is not one to use; keeping 192.168.7.1\n");
+    ubiqos_print("config: that usb_address is not one to use; keeping 192.168.7.1\n");
 }
 
 // One line, already stripped of its newline.
@@ -201,7 +201,7 @@ static void take_line(char *l, uint32_t n) {
 
     if (key_is(l + key, keylen, "hostname")) {
         if (valid_hostname(l + val, vallen)) copy_into(host, sizeof(host), l + val, vallen);
-        else myrtos_print("config: that hostname is not a name; keeping myrtos\n");
+        else ubiqos_print("config: that hostname is not a name; keeping ubiqos\n");
     } else if (key_is(l + key, keylen, "ssid")) {
         copy_into(ssid, sizeof(ssid), l + val, vallen);
     } else if (key_is(l + key, keylen, "password")) {
@@ -215,15 +215,15 @@ static void take_line(char *l, uint32_t n) {
     // refusing the rest of the file over.
 }
 
-// The reading itself. myrtos_config_read wraps it and is the only thing that
+// The reading itself. ubiqos_config_read wraps it and is the only thing that
 // says the card has been looked at -- see the note there.
 static void read_the_file(void)
 {
-    const myrtos_fsops_t *ops = myrtos_fat_ops_ptr();
+    const ubiqos_fsops_t *ops = ubiqos_fat_ops_ptr();
     if (!ops || !ops->read_at) return;
 
     uint32_t size = 0;
-    if (myrtos_fat_stat(CONFIG_PATH, &size) < 0) return;   // no file, nothing to say
+    if (ubiqos_fat_stat(CONFIG_PATH, &size) < 0) return;   // no file, nothing to say
 
     // Read in pieces and assemble lines, rather than the whole file at once:
     // this runs on the filesystem server's four kilobytes of stack, and a
@@ -251,14 +251,14 @@ static void read_the_file(void)
     }
     if (fill && !overlong) take_line(line, fill);        // no newline at the end
 
-    myrtos_print("config: hostname ");
-    myrtos_print(host);
-    if (!ssid[0])       myrtos_print(", no network named\n");
-    else if (!pass[0])  myrtos_print(", a network but no password\n");
-    else                myrtos_print(", network and password\n");
+    ubiqos_print("config: hostname ");
+    ubiqos_print(host);
+    if (!ssid[0])       ubiqos_print(", no network named\n");
+    else if (!pass[0])  ubiqos_print(", a network but no password\n");
+    else                ubiqos_print(", network and password\n");
 }
 
-void myrtos_config_read(void)
+void ubiqos_config_read(void)
 {
     read_the_file();
 
@@ -269,7 +269,7 @@ void myrtos_config_read(void)
     // card takes milliseconds and this thread blocks for them, so the USB task
     // ran in between, saw "done", and started lwIP with the hostname nobody
     // had read yet. mDNS announces once and cannot unsay a name: the log
-    // showed "answering to myrtos.local" three lines ABOVE "config: hostname
+    // showed "answering to ubiqos.local" three lines ABOVE "config: hostname
     // jamboree", and jamboree.local did not exist.
     //
     // A race that usually wins is worse than one that never does. It was right

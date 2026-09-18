@@ -1,6 +1,6 @@
 #include "tusb.h"
 
-// USB descriptors for myrtos. Two functions on one device: a CDC-ACM serial
+// USB descriptors for UbiqOS. Two functions on one device: a CDC-ACM serial
 // port, which replaced the FTDI cable on GP44, and a mass storage device that
 // hands the SD card to the host.
 //
@@ -40,11 +40,11 @@ const uint8_t *tud_descriptor_device_cb(void) {
     return (const uint8_t *)&desc_device;
 }
 
-#ifndef MYRTOS_LWIP
-#define MYRTOS_LWIP 0
+#ifndef UBIQOS_LWIP
+#define UBIQOS_LWIP 0
 #endif
 
-#if MYRTOS_LWIP
+#if UBIQOS_LWIP
 enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC,
        ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
 #else
@@ -70,7 +70,7 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
 // declaring it went from 3 recoveries in 9 attachments to 0 in 19. What macOS
 // needs is the capability DECLARED; whether the request then succeeds or
 // stalls does not matter.
-#define MYRTOS_NCM_DESCRIPTOR(_itfnum, _desc_stridx, _mac_stridx, _ep_notif, _ep_notif_size, _epout, _epin, _epsize, _maxsegmentsize) \
+#define UBIQOS_NCM_DESCRIPTOR(_itfnum, _desc_stridx, _mac_stridx, _ep_notif, _ep_notif_size, _epout, _epin, _epsize, _maxsegmentsize) \
   8, TUSB_DESC_INTERFACE_ASSOCIATION, _itfnum, 2, TUSB_CLASS_CDC, CDC_COMM_SUBCLASS_NETWORK_CONTROL_MODEL, 0, 0,\
   9, TUSB_DESC_INTERFACE, _itfnum, 0, 1, TUSB_CLASS_CDC, CDC_COMM_SUBCLASS_NETWORK_CONTROL_MODEL, 0, _desc_stridx,\
   5, TUSB_DESC_CS_INTERFACE, CDC_FUNC_DESC_HEADER, U16_TO_U8S_LE(0x0110),\
@@ -83,7 +83,7 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
   7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0,\
   7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0
 
-#if MYRTOS_LWIP
+#if UBIQOS_LWIP
 #define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN \
                            + TUD_CDC_NCM_DESC_LEN)
 #else
@@ -94,8 +94,8 @@ static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
-#if MYRTOS_LWIP
-    MYRTOS_NCM_DESCRIPTOR(ITF_NUM_NCM, 6, 7, EPNUM_NCM_NOTIF, 64,
+#if UBIQOS_LWIP
+    UBIQOS_NCM_DESCRIPTOR(ITF_NUM_NCM, 6, 7, EPNUM_NCM_NOTIF, 64,
                           EPNUM_NCM_OUT, EPNUM_NCM_IN, 64, CFG_TUD_NET_MTU),
 #endif
 };
@@ -107,12 +107,12 @@ const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
 
 static const char *string_desc_arr[] = {
     (const char[]){ 0x09, 0x04 },   // 0: engelska (0x0409)
-    "myrtos",                        // 1: manufacturer
-    "myrtos console",                // 2: product
+    "UbiqOS",                        // 1: manufacturer
+    "UbiqOS console",                // 2: product
     // 3: serial number, replaced at startup by the chip's own unique id.
     //
     // It was "000001" on every board, and that is not a cosmetic fault. Two
-    // myrtos boards on one Mac then differ in nothing the host can see -- same
+    // UbiqOS boards on one Mac then differ in nothing the host can see -- same
     // vendor, same product, same serial -- so macOS cannot keep them apart: the
     // port names churn (usbmodem0000011, usbmodem6, usbmodem2013102 in one
     // afternoon), one console can vanish when the other is reflashed, and a
@@ -123,9 +123,9 @@ static const char *string_desc_arr[] = {
     // comment saying it is so two boards on one desk do not collide. The serial
     // needed the same and did not have it.
     "000001",
-    "myrtos CDC",                    // 4: the CDC interface
-    "myrtos SD card",                // 5: the mass storage interface
-    "myrtos network",                // 6: the NCM interface
+    "UbiqOS CDC",                    // 4: the CDC interface
+    "UbiqOS SD card",                // 5: the mass storage interface
+    "UbiqOS network",                // 6: the NCM interface
     // 7: the MAC address, which the class requires as TWELVE HEX DIGITS and
     // not as six bytes. It is filled in at startup from the chip's own unique
     // id, so two boards on one desk do not collide -- see below.
@@ -135,7 +135,7 @@ static const char *string_desc_arr[] = {
 // The MAC. Locally administered (bit 1 of the first byte) and not multicast
 // (bit 0 clear), which is what the 0x02 is for: 02:xx:xx:xx:xx:xx belongs to
 // whoever made the device and is guaranteed not to clash with a real vendor.
-#if MYRTOS_LWIP
+#if UBIQOS_LWIP
 uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
 #else
 static uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
@@ -144,7 +144,7 @@ static uint8_t tud_network_mac_address[6] = { 0x02, 0, 0, 0, 0, 0 };
 static char mac_string[13];
 static char serial_string[17];
 
-void myrtos_usb_net_id(const uint8_t *unique, uint32_t n)
+void ubiqos_usb_net_id(const uint8_t *unique, uint32_t n)
 {
     static const char hex[] = "0123456789abcdef";
     for (uint32_t i = 0; i < 5 && i < n; i++)

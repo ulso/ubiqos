@@ -1,6 +1,6 @@
 # Applications as .wasm files
 
-A program here is an ordinary program. It is not a myrtos module, and none of
+A program here is an ordinary program. It is not a UbiqOS module, and none of
 the rules in [writing-modules.md](../../../docs/writing-modules.md) apply to it:
 no `__thread`, no ban on writable statics, no position independence, no module
 header. A wasm program has its own linear memory and its own globals, so what
@@ -31,7 +31,7 @@ counts from boot: there is no calendar on this machine and nothing sets a date.
 
 A read of a device blocks until there is something. That is why none of these
 examples poll: the loop simply reads. On the module side the same wait is
-`myrtos_arm` and a pulse; here it is one blocking call, and shorter for it.
+`ubiqos_arm` and a pulse; here it is one blocking call, and shorter for it.
 
 A program gets its arguments: `wasm /sd/argrand.wasm one two three` arrives as
 four, with the path as `argv[0]`. And `getentropy()` works -- the kernel reads
@@ -317,5 +317,5 @@ is not plugged in. libc does that stripping for you; by hand you must.
 
 A device wants time between commands. The BleuIO echoes the first and ignores
 the rest if `ATE0`, `AT+CENTRAL` and `AT+FINDSCANDATA` go out back to back. The
-module had `myrtos_sleep(200)` between them all along, and the first wasm port
+module had `ubiqos_sleep(200)` between them all along, and the first wasm port
 had nothing to sleep with. That is what `poll_oneoff` is for.

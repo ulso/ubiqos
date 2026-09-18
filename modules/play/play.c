@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 #include "sinc_table.h"
 
 // play -- a WAV file out of /dev/audio.
@@ -10,7 +10,7 @@
 // out exact from a 120 MHz system clock and an integer PIO divider. Most of
 // the free WAV files on the internet are 44100. So the player resamples rather
 // than refusing, and it asks the device what rate to resample TO -- see
-// MYRTOS_SS_RATE -- instead of having 48000 written in a second time. Point it
+// UBIQOS_SS_RATE -- instead of having 48000 written in a second time. Point it
 // at a device that runs at 32000 and it plays there.
 //
 // The resampler is a polyphase FIR: a Kaiser-windowed sinc, ten zero crossings
@@ -25,7 +25,7 @@
 // above the new Nyquist folding back into the band, and what the linear
 // interpolation and box average that came before could not do.
 
-MYRTOS_MEM_SIZE(24576);
+UBIQOS_MEM_SIZE(24576);
 
 #define IN_FRAMES   512u          // read this many source frames at a time
 #define OUT_FRAMES  704u          // more than IN_FRAMES: upsampling makes more
@@ -107,12 +107,12 @@ typedef struct {
 } wav_t;
 
 static void say(const char *a, const char *b) {
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, a);
-    if (b) myrtos_line_str(&l, b);
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDERR, &l);
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, a);
+    if (b) ubiqos_line_str(&l, b);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDERR, &l);
 }
 
 // Walks the chunks rather than trusting the layout. A WAV written by anything
@@ -121,7 +121,7 @@ static void say(const char *a, const char *b) {
 // as audio -- which is a loud noise, not a quiet bug.
 static bool wav_open(int32_t fd, wav_t *w) {
     uint8_t hdr[16];
-    if (myrtos_read(fd, hdr, 12) != 12) { say("play: too short to be a WAV", 0); return false; }
+    if (ubiqos_read(fd, hdr, 12) != 12) { say("play: too short to be a WAV", 0); return false; }
     if (!tag_is(hdr, "RIFF") || !tag_is(hdr + 8, "WAVE")) {
         say("play: not a RIFF/WAVE file", 0);
         return false;
@@ -129,7 +129,7 @@ static bool wav_open(int32_t fd, wav_t *w) {
 
     bool have_fmt = false;
     for (;;) {
-        if (myrtos_read(fd, hdr, 8) != 8) { say("play: no data chunk in the file", 0); return false; }
+        if (ubiqos_read(fd, hdr, 8) != 8) { say("play: no data chunk in the file", 0); return false; }
         uint32_t size = u32le(hdr + 4);
 
         if (tag_is(hdr, "fmt ")) {
@@ -139,7 +139,7 @@ static bool wav_open(int32_t fd, wav_t *w) {
             // integers or floats.
             uint8_t f[26];
             uint32_t want = size < 26u ? size : 26u;
-            if (myrtos_read(fd, f, want) != (int32_t)want) return false;
+            if (ubiqos_read(fd, f, want) != (int32_t)want) return false;
             uint32_t format = u16le(f);
             // 0xfffe is EXTENSIBLE, which nearly every recent encoder writes
             // even for plain PCM.
@@ -155,7 +155,7 @@ static bool wav_open(int32_t fd, wav_t *w) {
             have_fmt = true;
             // Whatever is left of a longer fmt chunk, plus its pad byte.
             uint32_t rest = size - want + (size & 1u);
-            if (rest && myrtos_seek(fd, (int32_t)rest, MYRTOS_SEEK_CUR) < 0) return false;
+            if (rest && ubiqos_seek(fd, (int32_t)rest, UBIQOS_SEEK_CUR) < 0) return false;
             continue;
         }
 
@@ -168,7 +168,7 @@ static bool wav_open(int32_t fd, wav_t *w) {
         // Something else -- skip it whole. Seeking rather than reading,
         // because a LIST chunk of album art is megabytes and there is no
         // buffer here that wants to see it.
-        if (myrtos_seek(fd, (int32_t)(size + (size & 1u)), MYRTOS_SEEK_CUR) < 0) {
+        if (ubiqos_seek(fd, (int32_t)(size + (size & 1u)), UBIQOS_SEEK_CUR) < 0) {
             say("play: cannot skip a chunk in this file", 0);
             return false;
         }
@@ -216,13 +216,13 @@ static inline int16_t clamp16(int64_t v) {
 static bool push(int32_t fd, const int16_t *frames, uint32_t n) {
     uint32_t done = 0, bytes = n * 4u;
     while (done < bytes) {
-        int32_t w = myrtos_write(fd, (const uint8_t *)frames + done, bytes - done);
+        int32_t w = ubiqos_write(fd, (const uint8_t *)frames + done, bytes - done);
         if (w < 0) return false;
         // Ring full: let the DMA drain some. One millisecond rather than two,
         // because the wait is a whole scheduler tick either way and the ring
         // holds only twenty of them -- sleeping longer than necessary here is
         // sleeping through the time the reader needed to get ahead again.
-        if (w == 0) { myrtos_sleep(1); continue; }
+        if (w == 0) { ubiqos_sleep(1); continue; }
         done += (uint32_t)w;
     }
     return true;
@@ -234,27 +234,27 @@ static __thread uint8_t ringbuf[4096];
 
 static void dump_ring(int32_t dev)
 {
-    if (myrtos_getstat(dev, MYRTOS_SS_RINGDUMP, ringbuf, sizeof ringbuf) < 0) {
+    if (ubiqos_getstat(dev, UBIQOS_SS_RINGDUMP, ringbuf, sizeof ringbuf) < 0) {
         say("play: the device will not show its ring", 0);
         return;
     }
-    myrtos_write_str(MYRTOS_STDOUT, "RING\n");
-    // Sixteen bytes a line, not more. myrtos_line_t holds 96 characters and
+    ubiqos_write_str(UBIQOS_STDOUT, "RING\n");
+    // Sixteen bytes a line, not more. ubiqos_line_t holds 96 characters and
     // hex_byte writes four of them, so 24 bytes is the most that fits -- and a
     // line that does not fit is silently cut, which came out as a dump that
     // was almost right and therefore worse than one that failed.
-    myrtos_line_t l;
+    ubiqos_line_t l;
     for (uint32_t i = 0; i < sizeof ringbuf; i += 16) {
-        myrtos_line_reset(&l);
-        for (uint32_t j = 0; j < 16; j++) myrtos_line_hex_byte(&l, ringbuf[i + j]);
-        myrtos_line_str(&l, "\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &l);
+        ubiqos_line_reset(&l);
+        for (uint32_t j = 0; j < 16; j++) ubiqos_line_hex_byte(&l, ringbuf[i + j]);
+        ubiqos_line_str(&l, "\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
-    myrtos_write_str(MYRTOS_STDOUT, "ENDRING\n");
+    ubiqos_write_str(UBIQOS_STDOUT, "ENDRING\n");
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: play [-i] [-v] FILE\n\nPlays a PCM WAV file. 8- and 16-bit, mono or stereo, any rate --\n"
             "it is resampled to whatever /dev/audio runs at.\n-i says what the file is without playing it.\n"))
         return;
@@ -269,49 +269,49 @@ void module_main(int argc, char **argv) {
     }
     if (argc < 2) { say("usage: play [-i] FILE", 0); return; }
 
-    int32_t f = myrtos_open_flags(argv[1], MYRTOS_O_RDONLY);
+    int32_t f = ubiqos_open_flags(argv[1], UBIQOS_O_RDONLY);
     if (f < 0) { say("play: cannot open ", argv[1]); return; }
 
     wav_t w;
-    if (!wav_open(f, &w)) { myrtos_close(f); return; }
+    if (!wav_open(f, &w)) { ubiqos_close(f); return; }
 
     if (w.channels < 1u || w.channels > 2u) {
         say("play: only mono and stereo", 0);
-        myrtos_close(f); return;
+        ubiqos_close(f); return;
     }
     if (w.bits != 8u && w.bits != 16u && w.bits != 24u && w.bits != 32u) {
         say("play: only 8, 16, 24 and 32 bits a sample", 0);
-        myrtos_close(f); return;
+        ubiqos_close(f); return;
     }
 
-    int32_t dev = myrtos_open("/dev/audio");
-    if (dev < 0) { say("play: no /dev/audio", 0); myrtos_close(f); return; }
+    int32_t dev = ubiqos_open("/dev/audio");
+    if (dev < 0) { say("play: no /dev/audio", 0); ubiqos_close(f); return; }
 
     // What to resample to, asked rather than assumed. This is the whole reason
     // the device can be asked anything at all.
     uint32_t dst_rate = 0;
-    if (myrtos_getstat(dev, MYRTOS_SS_RATE, &dst_rate, sizeof dst_rate) < 0 || !dst_rate) {
+    if (ubiqos_getstat(dev, UBIQOS_SS_RATE, &dst_rate, sizeof dst_rate) < 0 || !dst_rate) {
         say("play: the device will not say what rate it runs at", 0);
-        myrtos_close(dev); myrtos_close(f); return;
+        ubiqos_close(dev); ubiqos_close(f); return;
     }
 
     uint32_t frame_bytes = w.channels * (w.bits / 8u);
-    myrtos_line_t l;
-    myrtos_line_reset(&l);
-    myrtos_line_str(&l, argv[1]);
-    myrtos_line_str(&l, ": "); myrtos_line_u32(&l, w.rate);
-    myrtos_line_str(&l, " Hz, "); myrtos_line_u32(&l, w.bits);
-    myrtos_line_str(&l, "-bit, "); myrtos_line_str(&l, w.channels == 1u ? "mono" : "stereo");
-    myrtos_line_str(&l, ", "); myrtos_line_u32(&l, w.data_bytes / (frame_bytes ? frame_bytes : 1u) / (w.rate ? w.rate : 1u));
-    myrtos_line_str(&l, " s");
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, argv[1]);
+    ubiqos_line_str(&l, ": "); ubiqos_line_u32(&l, w.rate);
+    ubiqos_line_str(&l, " Hz, "); ubiqos_line_u32(&l, w.bits);
+    ubiqos_line_str(&l, "-bit, "); ubiqos_line_str(&l, w.channels == 1u ? "mono" : "stereo");
+    ubiqos_line_str(&l, ", "); ubiqos_line_u32(&l, w.data_bytes / (frame_bytes ? frame_bytes : 1u) / (w.rate ? w.rate : 1u));
+    ubiqos_line_str(&l, " s");
     if (w.rate != dst_rate) {
-        myrtos_line_str(&l, " (resampled to "); myrtos_line_u32(&l, dst_rate);
-        myrtos_line_str(&l, ")");
+        ubiqos_line_str(&l, " (resampled to "); ubiqos_line_u32(&l, dst_rate);
+        ubiqos_line_str(&l, ")");
     }
-    myrtos_line_str(&l, "\n");
-    myrtos_line_flush(MYRTOS_STDOUT, &l);
+    ubiqos_line_str(&l, "\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
-    if (info_only) { myrtos_close(dev); myrtos_close(f); return; }
+    if (info_only) { ubiqos_close(dev); ubiqos_close(f); return; }
 
     // How far the source position moves per output frame, in 16.16. Written in
     // two parts on purpose: (rate << 16) overflows 32 bits above 65535 Hz, and
@@ -345,7 +345,7 @@ void module_main(int argc, char **argv) {
     uint32_t have = GUARD;
     uint32_t pos = GUARD << 16;
 
-    uint32_t t0 = myrtos_ticks_now(), frames_in = 0, frames_out = 0;
+    uint32_t t0 = ubiqos_ticks_now(), frames_in = 0, frames_out = 0;
     uint32_t left = w.data_bytes;
     int kind = w.is_float ? K_F32
              : w.bits == 8u  ? K_U8
@@ -360,7 +360,7 @@ void module_main(int argc, char **argv) {
         if (left && room) {
             uint32_t want = (room < IN_FRAMES ? room : IN_FRAMES) * frame_bytes;
             if (want > left) want = left;
-            int32_t got = myrtos_read(f, raw, want);
+            int32_t got = ubiqos_read(f, raw, want);
             if (got > 0) {
                 n = (uint32_t)got / frame_bytes;
                 left -= n * frame_bytes;
@@ -479,17 +479,17 @@ void module_main(int argc, char **argv) {
         // serial line measures the serial line. Expected is what the output
         // frames are worth at the device's rate; anything much over it is the
         // ring running dry, which is heard as a stutter.
-        uint32_t ms = myrtos_ticks_now() - t0;
-        myrtos_line_t v;
-        myrtos_line_reset(&v);
-        myrtos_line_str(&v, "in "); myrtos_line_u32(&v, frames_in);
-        myrtos_line_str(&v, ", out "); myrtos_line_u32(&v, frames_out);
-        myrtos_line_str(&v, ", "); myrtos_line_u32(&v, ms);
-        myrtos_line_str(&v, " ms for "); myrtos_line_u32(&v, frames_out / (dst_rate / 1000u));
-        myrtos_line_str(&v, " ms of audio\n");
-        myrtos_line_flush(MYRTOS_STDOUT, &v);
+        uint32_t ms = ubiqos_ticks_now() - t0;
+        ubiqos_line_t v;
+        ubiqos_line_reset(&v);
+        ubiqos_line_str(&v, "in "); ubiqos_line_u32(&v, frames_in);
+        ubiqos_line_str(&v, ", out "); ubiqos_line_u32(&v, frames_out);
+        ubiqos_line_str(&v, ", "); ubiqos_line_u32(&v, ms);
+        ubiqos_line_str(&v, " ms for "); ubiqos_line_u32(&v, frames_out / (dst_rate / 1000u));
+        ubiqos_line_str(&v, " ms of audio\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &v);
     }
     if (!ok) say("play: the device stopped taking audio", 0);
-    myrtos_close(dev);
-    myrtos_close(f);
+    ubiqos_close(dev);
+    ubiqos_close(f);
 }

@@ -1,4 +1,4 @@
-#include "../../common/myrtos_abi.h"
+#include "../../common/ubiqos_abi.h"
 
 // leds -- the five RGB lamps.
 //
@@ -25,7 +25,7 @@ static uint32_t to_u32(const char *s, bool *ok) {
 }
 
 void module_main(int argc, char **argv) {
-    if (myrtos_help(argc, argv,
+    if (ubiqos_help(argc, argv,
             "usage: leds [off | R G B | N R G B]\n\n"
             "  off        all five dark\n"
             "  R G B      all five, each 0-255\n"
@@ -33,26 +33,26 @@ void module_main(int argc, char **argv) {
             "  (none)     what they are showing\n"))
         return;
 
-    int32_t fd = myrtos_open("/dev/leds");
-    if (fd < 0) { myrtos_write_str(MYRTOS_STDERR, "leds: no /dev/leds\n"); return; }
+    int32_t fd = ubiqos_open("/dev/leds");
+    if (fd < 0) { ubiqos_write_str(UBIQOS_STDERR, "leds: no /dev/leds\n"); return; }
 
     uint8_t px[15];
-    int32_t got = myrtos_read(fd, px, sizeof px);
+    int32_t got = ubiqos_read(fd, px, sizeof px);
     if (got != (int32_t)sizeof px) for (int i = 0; i < 15; i++) px[i] = 0;
 
     if (argc == 1) {
-        myrtos_line_t l;
+        ubiqos_line_t l;
         for (int i = 0; i < 5; i++) {
-            myrtos_line_reset(&l);
-            myrtos_line_u32(&l, (uint32_t)i);
-            myrtos_line_str(&l, ": ");
+            ubiqos_line_reset(&l);
+            ubiqos_line_u32(&l, (uint32_t)i);
+            ubiqos_line_str(&l, ": ");
             for (int c = 0; c < 3; c++) {
-                myrtos_line_u32(&l, px[i * 3 + c]);
-                myrtos_line_str(&l, c < 2 ? " " : "\n");
+                ubiqos_line_u32(&l, px[i * 3 + c]);
+                ubiqos_line_str(&l, c < 2 ? " " : "\n");
             }
-            myrtos_line_flush(MYRTOS_STDOUT, &l);
+            ubiqos_line_flush(UBIQOS_STDOUT, &l);
         }
-        myrtos_close(fd);
+        ubiqos_close(fd);
         return;
     }
 
@@ -74,11 +74,11 @@ void module_main(int argc, char **argv) {
     }
 
     if (!ok) {
-        myrtos_write_str(MYRTOS_STDERR, "usage: leds [off | R G B | N R G B]\n");
-        myrtos_close(fd);
+        ubiqos_write_str(UBIQOS_STDERR, "usage: leds [off | R G B | N R G B]\n");
+        ubiqos_close(fd);
         return;
     }
 
-    myrtos_write(fd, px, sizeof px);
-    myrtos_close(fd);
+    ubiqos_write(fd, px, sizeof px);
+    ubiqos_close(fd);
 }

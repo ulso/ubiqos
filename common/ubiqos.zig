@@ -1,5 +1,5 @@
-//! The myrtos system call interface for Zig, the same one common/myrtos.d gives
-//! D and common/myrtos_abi.h gives C.
+//! The UbiqOS system call interface for Zig, the same one common/ubiqos.d gives
+//! D and common/ubiqos_abi.h gives C.
 //!
 //! Why Zig is here at all: a shareable module may have no writable statics, and
 //! Zig's `threadlocal var` gives exactly the relocations that needs --
@@ -105,7 +105,7 @@ pub fn u32ToDec(v: u32, out: []u8) []const u8 {
 // library: the first build of zhello failed on an undefined `strlen`, from a
 // loop that never mentioned it. clang does the same, which is what -fno-builtin
 // is for in the wasm examples -- but a freestanding module has no libc to fall
-// back on, so the names are simply provided here. common/myrtos.d carries the
+// back on, so the names are simply provided here. common/ubiqos.d carries the
 // same three for LDC.
 export fn strlen(s: [*:0]const u8) usize {
     var n: usize = 0;

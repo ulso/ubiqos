@@ -298,7 +298,7 @@ check_host(struct netif *netif, struct mdns_rr_info *rr, u8_t *reverse_v6_reply)
       replies |= REPLY_HOST_AAAA;
     }
 #elif LWIP_IPV4
-    /* MYRTOS: an AAAA question is answered even without IPv6, with an NSEC
+    /* UBIQOS: an AAAA question is answered even without IPv6, with an NSEC
      * record saying the name has only an A -- see mdns_add_nsec_answer in
      * mdns_out.c and lib/lwip-patched/README.md. The flag is otherwise unused
      * in a build without IPv6, so it carries this meaning here. */

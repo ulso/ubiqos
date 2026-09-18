@@ -103,11 +103,11 @@ HEADER = '''// A %(name)s fixed-width font covering 32..255 -- ASCII and Latin-1
 // SDK's own linker script puts it -- and six kilobytes of glyphs in a machine
 // whose framebuffer already takes three hundred is six kilobytes that a process
 // does not get. The accident the SDK warns about cannot happen here: nothing
-// writes flash while myrtos is running, so reading it is always safe.
+// writes flash while ubiqos is running, so reading it is always safe.
 #include <stdint.h>
 
 __attribute__((section(".flashdata.font%(name)s")))
-const uint8_t myrtos_font%(name)s[224][%(h)d] = {
+const uint8_t ubiqos_font%(name)s[224][%(h)d] = {
 '''
 
 

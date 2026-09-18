@@ -1,6 +1,6 @@
 # Writing modules
 
-A myrtos module is loaded at an address nobody knew when it was compiled. It may
+A UbiqOS module is loaded at an address nobody knew when it was compiled. It may
 still contain absolute addresses and writable data -- the loader fixes the first
 and gives the module a copy of its own for the second -- but a module that has
 neither is markedly cheaper, and most are written that way on purpose.
@@ -10,7 +10,7 @@ nothing is allocated, and starting it cannot fail for want of memory. Forty-nine
 of the fifty-three modules in this tree are like that.
 
 **A module with either gets a copy per process.** `make_module.py` marks it
-`MYRTOS_ATTR_PRIVATE` -- for writable data, for addresses to relocate, or for a
+`UBIQOS_ATTR_PRIVATE` -- for writable data, for addresses to relocate, or for a
 `.bss` to zero -- and the kernel copies it out of flash and fixes it up before
 the process starts. That is what makes a `static` variable an ordinary variable
 and a C++ vtable an ordinary vtable, at the price of the module's own size in
@@ -93,8 +93,8 @@ to end in one string and count NULs -- `modules/ps/ps.c` does this.
 
 For function tables that genuinely need a runtime choice, store the *distance*
 from the table to each function rather than its address, and add the table's own
-address when calling. The `MYRTOS_RELTAB_*` macros in
-[`common/myrtos_abi.h`](../common/myrtos_abi.h) do this; the differences are
+address when calling. The `UBIQOS_RELTAB_*` macros in
+[`common/ubiqos_abi.h`](../common/ubiqos_abi.h) do this; the differences are
 computed by the assembler, because C rejects them as initialisers.
 
 ## It depends on the optimisation level
@@ -135,7 +135,7 @@ relocation looks like something the checker does not recognise.
 ## Memory, and where the pointer lives
 
 A module gets one block from the kernel: `mem_size` in its header, holding its
-data and its stack. `myrtos_alloc`, `myrtos_free` and `myrtos_realloc` ask for
+data and its stack. `ubiqos_alloc`, `ubiqos_free` and `ubiqos_realloc` ask for
 more. The kernel records which process each block belongs to, so a process that
 dies -- including one that dies without tidying up -- returns everything.
 
@@ -143,7 +143,7 @@ A writable static is allowed and costs the module a copy per process:
 
 ```c
 static void *buffer;            // .sbss -- the module now needs a copy
-void module_main(void) { buffer = myrtos_alloc(1000); }
+void module_main(void) { buffer = ubiqos_alloc(1000); }
 ```
 
 For a pointer used inside one function that is a poor trade -- the module's whole
@@ -152,19 +152,19 @@ the data area the header reserved:
 
 ```c
 void module_main(void) {
-    void *buffer = myrtos_alloc(1000);
+    void *buffer = ubiqos_alloc(1000);
     /* ... */
-    myrtos_free(buffer);
+    ubiqos_free(buffer);
 }
 ```
 
-`myrtos_free` refuses a pointer this process was not given, so one module cannot
+`ubiqos_free` refuses a pointer this process was not given, so one module cannot
 release another's memory, or the kernel's.
 
 ## Several source files, and where state goes
 
 A module can be split across files -- pass the extra sources to
-`myrtos_add_module` after the first. There are two ways to give a variable one
+`ubiqos_add_module` after the first. There are two ways to give a variable one
 value per process, and they differ by about a thousand to one:
 
 ```c
@@ -200,14 +200,14 @@ values sit; the kernel copies those in and zeroes the rest for every process.
 and still hides the name.
 
 Where the state is not a simple variable but a block of bytes you want to lay
-out yourself, `myrtos_data_area` hands out what is left after the thread-local
+out yourself, `ubiqos_data_area` hands out what is left after the thread-local
 block. That is a system call, so fetch it once. This is a pimpl, and it behaves
 like one:
 
 ```c
 // state.h -- private to the module, not exported
 typedef struct { uint32_t counter; char label[16]; } state_t;
-static inline state_t *state(void) { return (state_t *)myrtos_data_area(0); }
+static inline state_t *state(void) { return (state_t *)ubiqos_data_area(0); }
 ```
 
 ```c
@@ -224,7 +224,7 @@ into every call.
 `modules/pimpl/` is this, built from two files. Two instances running at once
 keep separate counters.
 
-Fetch the pointer once and keep it. `myrtos_data_area` is a system call, so
+Fetch the pointer once and keep it. `ubiqos_data_area` is a system call, so
 `state()->counter++` inside a loop compiles to an `ecall` per iteration -- a
 full trap into the kernel and back to add one to an integer:
 
@@ -253,7 +253,7 @@ A normal program addresses its globals PC-relative, because the linker puts
 `.text` and `.bss` in one image at a fixed distance apart. The compiler bakes
 that distance in.
 
-myrtos breaks exactly that assumption: the code may be in flash and the data
+UbiqOS breaks exactly that assumption: the code may be in flash and the data
 area on the heap, at a distance decided at runtime and different for every
 process. So the distance the compiler computed points into the module image,
 not into anyone's data.
@@ -340,7 +340,7 @@ bother: `sh`, `ls`, `cat` and `hibouair` have zero `gp` accesses between them,
 which is why this sat undisturbed until something the size of wasm3 arrived.
 
 The data area sits inside the block `mem_size` asked for, after the command
-line and its argv vector. `myrtos_data_area(&size)` reports what is there --
+line and its argv vector. `ubiqos_data_area(&size)` reports what is there --
 but the stack grows down into the same span, so that is what exists, not what
 is safe. A module that wants a lot should ask for a larger `mem_size` rather
 than assume.
@@ -350,16 +350,16 @@ than assume.
 A member variable is addressed through `this`, which is a runtime pointer. That
 is the base-relative addressing the data area needs, and the compiler emits it
 without being asked -- it is OS-9's U register, arrived at from a different
-direction. Put every variable in a class, derive from `MyrtosModule`, and there
+direction. Put every variable in a class, derive from `UbiqOSModule`, and there
 is nothing left to remember:
 
 ```cpp
-struct Pimpl : MyrtosModule<Pimpl> {
+struct Pimpl : UbiqOSModule<Pimpl> {
     uint32_t counter;
     void bump(uint32_t times);          // another file
     void run(int argc, char **argv);
 };
-MYRTOS_MODULE(Pimpl)
+UBIQOS_MODULE(Pimpl)
 ```
 
 `bump` in the second file compiles to this, with `this` in `a0`:
@@ -385,7 +385,7 @@ storage -- laid out by us rather than by the compiler, which is why `.tdata` and
 `.tbss` are empty and nothing else wants the register. It is also OS-9's U
 register, in the register RISC-V set aside for the purpose.
 
-Only asking for the *size* costs a system call, which `MYRTOS_MODULE` does once
+Only asking for the *size* costs a system call, which `UBIQOS_MODULE` does once
 at entry to check the class fits.
 
 `modules/pimpl/` is exactly this, built from two files.
@@ -432,10 +432,10 @@ fail, and they fail for the reasons above rather than for being nested.
 
 A module's process memory -- its data, stack and thread-local block -- comes
 from PSRAM by default, because SRAM is the scarce one and PSRAM is eight
-megabytes. Mark a module `RT` in `myrtos_add_module` and it gets SRAM instead:
+megabytes. Mark a module `RT` in `ubiqos_add_module` and it gets SRAM instead:
 
 ```cmake
-myrtos_add_module(sh modules/sh/sh.c RT)
+ubiqos_add_module(sh modules/sh/sh.c RT)
 ```
 
 It sets a bit in the attributes byte of the header, which already existed and
@@ -511,7 +511,7 @@ There is no phase in which a constructor could run -- nothing happens before
 **What it costs.** The thread-local block is carved out of the process's memory
 and charged whether the variable is touched or not. `errno` and eight `FILE`
 objects come to 228 bytes; `strtok`'s saved pointer takes it to 232. Against the
-default four kilobytes that is small, and `MYRTOS_MEM_SIZE` raises the ceiling
+default four kilobytes that is small, and `UBIQOS_MEM_SIZE` raises the ceiling
 when it is not.
 
 **strtok is the one that catches people out.** Written the usual way it keeps a
@@ -521,7 +521,7 @@ module private:
       d.elf: writable section .sbss is present -- needs a copy per process
 
 A program that brings its own `strtok` pays that for four bytes.
-`myrtos_string.h` keeps the state in `__thread` instead, and offers `strtok_r`,
+`ubiqos_string.h` keeps the state in `__thread` instead, and offers `strtok_r`,
 which keeps it in the caller's own variable and needs nothing hidden at all.
 
 **The rule of thumb: `__thread` for code you write, `SINGLE` for code you
@@ -567,7 +567,7 @@ like this:
 `.bss` is NOBITS: no file content, just an address and a size, placed six bytes
 past the end of what `objcopy -O binary` extracts. Nothing reserves those six
 bytes. `module_size` in the header is the file's length, and
-`myrtos_moddir_add_copy` allocates exactly that and copies exactly that.
+`ubiqos_moddir_add_copy` allocates exactly that and copies exactly that.
 
 So the variable does not land in shared memory. It lands **outside the module's
 memory altogether** -- for a card module, in whatever the heap put after the
@@ -606,7 +606,7 @@ What each of these costs is the same under both:
 The two are different in kind and it is worth keeping them apart. The
 relocation is fixed by the loader and costs eight bytes on the card. The
 writable static is not a relocation problem and no compiler flag touches it: it
-decides whether the module can be shared, which is a property of how myrtos
+decides whether the module can be shared, which is a property of how UbiqOS
 loads it rather than of how the code was built.
 
 ### Clang, and the relative vtables that were the way round this
@@ -637,7 +637,7 @@ devirtualise:
 
 `R_RISCV_PLT32` is PC-relative: what is stored is the distance from the vtable
 slot to the function, so the table needs no fixing up wherever it lands. It is
-`MYRTOS_RELTAB_*` in the ABI header, done by the compiler instead of by hand.
+`UBIQOS_RELTAB_*` in the ABI header, done by the compiler instead of by hand.
 
 **GNU ld cannot link it** -- "internal error: unsupported relocation error".
 `ld.lld` links it without complaint, and the result is what it claims to be: no
@@ -698,14 +698,14 @@ on the card in exchange for the code the compiler wanted to generate.
 
 ## Choosing the compiler, per module
 
-Both toolchains are wired in. `myrtos_add_module` is GCC and is the default;
-`myrtos_add_clang_module` takes the same arguments, including `RT` and `SINGLE`,
+Both toolchains are wired in. `ubiqos_add_module` is GCC and is the default;
+`ubiqos_add_clang_module` takes the same arguments, including `RT` and `SINGLE`,
 and builds with clang and `ld.lld` instead. The two produce the same `${name}.mod`
 through the same `check_module.py`, `objcopy` and `make_module.py` -- nothing
 downstream can tell which compiler made one.
 
-    myrtos_add_module(echo modules/echo/echo.c)              # gcc
-    myrtos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
+    ubiqos_add_module(echo modules/echo/echo.c)              # gcc
+    ubiqos_add_clang_module(cxxdemo modules/cxxdemo/cxxdemo.cpp)
 
 **There is one reason to choose clang and it is virtual functions.** For plain C
 there is nothing to gain, and GCC is the road everything else travels.
@@ -726,11 +726,11 @@ GNU ld needs: it does not warn about them at all.
 Verified on the board rather than at the build: a clang-built module was made
 resident, flashed and run, and printed what it should.
 
-## Ordinary C, through myrtos_posix.h
+## Ordinary C, through ubiqos_posix.h
 
-`common/myrtos_posix.h` gives `open`, `read`, `write`, `close` and `lseek` their
+`common/ubiqos_posix.h` gives `open`, `read`, `write`, `close` and `lseek` their
 POSIX names and shapes, so a file-handling loop can be built here unchanged.
-`modules/cat/cat.c` is written against it and has nothing myrtos-shaped in its
+`modules/cat/cat.c` is written against it and has nothing ubiqos-shaped in its
 loop at all.
 
 **Functions, not macros, and the difference is not taste.** A macro rewrites
@@ -763,10 +763,10 @@ process, and only its size decides whether that matters.
 
 ## stdio, and where a FILE lives
 
-`common/myrtos_stdio.h` gives `fopen`, `fclose`, `fread`, `fwrite`, `fgetc`,
+`common/ubiqos_stdio.h` gives `fopen`, `fclose`, `fread`, `fwrite`, `fgetc`,
 `fputc`, `fgets`, `fputs`, `puts`, `fflush`, `fseek`, `ftell`, `setvbuf`,
 `feof` and `ferror`. `modules/head/head.c` is written against it and has nothing
-myrtos-shaped in it but the include and the entry point's name.
+ubiqos-shaped in it but the include and the entry point's name.
 
 **The FILE objects are thread-local and the buffers are not**, and that split is
 the whole design. A FILE is twenty-eight bytes; eight of them plus errno cost
@@ -777,13 +777,13 @@ could not be printed to.
 
 A buffer is another matter: it is charged to the process whether it opens a file
 or not, and 512 bytes is an eighth of the default four kilobytes. So buffers
-come from PSRAM through `myrtos_alloc_bulk`, which is the bulk data that pool
+come from PSRAM through `ubiqos_alloc_bulk`, which is the bulk data that pool
 exists for, and a stream whose buffer cannot be had still works a byte at a
 time. `setvbuf` takes the program's own array instead.
 
 The program owes one line, as it owes a C library one:
 
-    MYRTOS_LIBC_DEFINE
+    UBIQOS_LIBC_DEFINE
 
 which defines errno, the stream table, and what strtok remembers between calls.
 
@@ -795,16 +795,16 @@ program that asks to append and is given the start of the file destroys it.
 mid-way, and this one holds a single direction at a time -- which is what keeps
 the buffer arithmetic simple enough to be right.
 
-**The flags are the kernel's, not the shim's.** `myrtos_open_flags(path, flags)`
+**The flags are the kernel's, not the shim's.** `ubiqos_open_flags(path, flags)`
 takes POSIX's own numbers, and the filesystem server acts on them: it refuses a
 file that is not there unless one of the creating flags is given, empties one
 for `O_TRUNC`, and puts the descriptor at the end for `O_APPEND` -- all before
-the caller ever holds it. `myrtos_posix.h` aliases the constants rather than
+the caller ever holds it. `ubiqos_posix.h` aliases the constants rather than
 translating them, and its `open` is a pass-through.
 
 That matters beyond tidiness. A caller that arranges truncation and appending
 for itself holds, for a moment, a descriptor pointing at the wrong place; and
-`myrtos_open` on its own could not refuse a missing file, so `cat` had to tell
+`ubiqos_open` on its own could not refuse a missing file, so `cat` had to tell
 one from an empty file by the sign of a return value. Both are gone.
 
 `stat(path, &st)` gives `st_size` and `st_mode`, with `S_ISDIR`. There are no
@@ -815,7 +815,7 @@ nothing to ask about. `fopen` knows its path, which is why `"a"` works.
 
 ## The rest of the C library
 
-`myrtos_string.h`, `myrtos_ctype.h` and `myrtos_stdlib.h` alongside the stdio
+`ubiqos_string.h`, `ubiqos_ctype.h` and `ubiqos_stdlib.h` alongside the stdio
 header, all inline and none of them holding state -- so a module pays only for
 what it calls and there is nothing for the position-independence check to
 object to.
@@ -869,8 +869,8 @@ Measured, and the mechanism is there:
   `riscv32-unknown-elf-ld -m elf32lriscv --verbose` prints the real one, which
   is what to trust if the copy has aged.
 
-`myrtos_module.h` has `myrtos_run_constructors`, `myrtos_run_destructors` and
-`MYRTOS_CXX_MAIN(fn)`, which writes a `module_main` that runs the first, calls
+`ubiqos_module.h` has `ubiqos_run_constructors`, `ubiqos_run_destructors` and
+`UBIQOS_CXX_MAIN(fn)`, which writes a `module_main` that runs the first, calls
 your function, and runs the second -- backwards, as the standard requires. A
 ported program needs a shim like that anyway, since the entry point is not
 called `main` here.
@@ -895,9 +895,9 @@ child, and puts its own descriptor back. The child is told nothing and needs to
 know nothing -- it writes to 1 as it always did.
 
 That works because a child inherits its parent's numbered paths, and because
-files got descriptors. `myrtos_dup(fd, new)` is `dup` and `dup2` in one: -1 for
+files got descriptors. `ubiqos_dup(fd, new)` is `dup` and `dup2` in one: -1 for
 the lowest free number, or a specific one, closing whatever was there. `dup` and
-`dup2` themselves are in `myrtos_posix.h`.
+`dup2` themselves are in `ubiqos_posix.h`.
 
 Two descriptors can now name one device, so closing one no longer closes the
 driver if another still refers to it. Two naming one open file share its
@@ -917,11 +917,11 @@ The price is that it does not stream: all of the left side exists before the
 right side starts. With eight megabytes of PSRAM and no `yes` to run for ever
 that is a fair trade, and the streaming version is an upgrade of this same shape.
 
-**The kernel's real pipe is still there and still unproven.** The kernel has them: `myrtos_pipe(fds)` gives two
+**The kernel's real pipe is still there and still unproven.** The kernel has them: `ubiqos_pipe(fds)` gives two
 descriptors onto a 128-byte ring, a descriptor can name a pipe beside a device
 and a file, the reader blocks while it is empty, and an empty pipe whose writers
 have all gone reads as end of file rather than blocking for ever -- which the
-read system call asks about with `myrtos_io_at_eof` before deciding to wait.
+read system call asks about with `ubiqos_io_at_eof` before deciding to wait.
 
 **The shell half is not finished**, and `|` is refused rather than accepted.
 It hung the shell twice. One real cause was found and fixed: a child inherits
@@ -932,7 +932,7 @@ the writing end waits for itself. Closing each end as soon as the child's
 descriptor has it fixes that, and it is in the code. It was not enough; whatever
 else is wrong is not yet known.
 
-The parts that redirection needs and pipes share -- `myrtos_dup`, the device use
+The parts that redirection needs and pipes share -- `ubiqos_dup`, the device use
 count, the open file reference count -- are all proven, because redirection
 uses them.
 
@@ -958,7 +958,7 @@ had exactly this with CON for twenty years.
 `/var/dmesg` is everything the kernel has said, as a file. The boot messages go
 to the screen and the UART, and a session on the USB console never sees them:
 by the time that console exists the kernel has finished talking. The ring is a
-static buffer in `main.c` beside `myrtos_print`, because the first line is
+static buffer in `main.c` beside `ubiqos_print`, because the first line is
 written before any pool exists -- and the earliest lines are exactly the ones an
 allocation could not have held. It is read by position rather than as a stream,
 so two readers do not interfere and `cat` can be run twice.
@@ -1003,7 +1003,7 @@ Zig has no way to make every variable thread-local -- that is D's alone, below.
 What it has is `threadlocal var`, which is `__thread` by another name:
 
 ```zig
-const m = @import("myrtos");
+const m = @import("ubiqos");
 
 threadlocal var calls: u32 = 0;      // per-process
 var shared: u32 = 0;                 // .data, and the checker refuses it
@@ -1017,7 +1017,7 @@ export fn module_main(argc: i32, argv: [*][*:0]const u8) void {
 So the discipline is the same as C's, and the difference is in what the language
 encourages. `const` is the ordinary thing at module scope in Zig; a `var` there
 is unusual enough to notice in review, where a `static` in C is not. Declare it
-with `myrtos_add_zig_module` and everything downstream is identical.
+with `ubiqos_add_zig_module` and everything downstream is identical.
 
 Zig needs `zig` and nothing else -- no sysroot, no separate linker -- and it
 already emits `TPREL_HI20`, `TPREL_ADD` and `TPREL_LO12_I` for a thread-local on
@@ -1036,7 +1036,7 @@ handler from pulling in formatting machinery that has nowhere to print.
 
 ### What the compiler assumes is there
 
-`common/myrtos.zig` supplies `strlen`, `memcpy`, `memmove` and `memset`. Zig
+`common/ubiqos.zig` supplies `strlen`, `memcpy`, `memmove` and `memset`. Zig
 recognises a hand-written loop and replaces it with a call to the C library, so
 the first build of zhello failed on an undefined `strlen` that appears nowhere
 in its source. clang does the same, and a freestanding module has no libc to
@@ -1056,7 +1056,7 @@ nothing at all.
 
 ```d
 module dhello;
-import myrtos;
+import ubiqos;
 @nogc: nothrow:
 
 uint calls;                    // thread-local, without being asked
@@ -1069,7 +1069,7 @@ extern(C) void module_main(int argc, char** argv) {
 
 That compiles to `.text`, `.rodata` and `.tbss`, with no `.data` and no `.bss`,
 and `check_module.py` calls it position independent and shareable. Declare it
-with `myrtos_add_d_module` and it takes the same `RT` and `SINGLE` options as
+with `ubiqos_add_d_module` and it takes the same `RT` and `SINGLE` options as
 any other module, goes through the same checker and the same `make_module.py`,
 and comes out as the same `.mod`. Nothing downstream can tell which compiler
 made it.
@@ -1095,7 +1095,7 @@ CRC table can be computed by the compiler instead of pasted in as literals --
 `scope(exit)`, and `@nogc`/`nothrow` as contracts the compiler checks rather
 than comments. No classes with a runtime, no exceptions, no `new`.
 
-Array bounds are still checked. `common/myrtos.d` supplies the `__assert` that
+Array bounds are still checked. `common/ubiqos.d` supplies the `__assert` that
 a failed check calls, so an out-of-range slice says so on the console and ends
 the process instead of reading whatever came next in memory. It also supplies
 `memset`, `memcpy` and `strlen`, which LDC emits calls to and which a hosted
@@ -1104,8 +1104,8 @@ because the optimiser recognises them.
 
 ### Importing is not linking
 
-`import myrtos;` brings in the declarations. The definitions exist only if that
-file was compiled too, so `myrtos_add_d_module` puts `common/myrtos.d` and every
+`import ubiqos;` brings in the declarations. The definitions exist only if that
+file was compiled too, so `ubiqos_add_d_module` puts `common/ubiqos.d` and every
 `.d` source of the module into one `ldc2` invocation with `--singleobj`. A C
 file listed alongside is compiled with gcc on the same terms as any other
 module's, and linked in with it.
@@ -1113,6 +1113,6 @@ module's, and linked in with it.
 ### Arguments
 
 `module_main(int argc, char** argv)`, exactly as in C -- the kernel builds the
-vector. There is a `myrtos.args()` because the system call exists, but it gives
+vector. There is a `ubiqos.args()` because the system call exists, but it gives
 the first word only: by the time a module runs, the kernel has split the stored
 argument string in place to build `argv`, and the call copies to the first NUL.
