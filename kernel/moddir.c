@@ -65,9 +65,31 @@ static ubiqos_module_entry_t *entry_named(const char *name) {
 // True when the newcomer should be registered. An entry that is beaten is
 // released here if nothing is using it; if it is in use it stays, because a
 // process is running that code right now.
-static bool supersedes(const ubiqos_module_header_t *fresh, const char *name) {
+static bool supersedes(const ubiqos_module_header_t *fresh, const char *name,
+                       bool from_card) {
     ubiqos_module_entry_t *old = entry_named(name);
-    if (!old) return true;
+    if (!old) {
+        // Nothing in the directory -- but flash may still hold one, adopted
+        // only while something uses it. A copy from the card must beat THAT,
+        // or an older module on the card would quietly replace a newer system.
+        // Only a copy from the card: the boot scan registers the flash modules
+        // themselves, and one compared with itself would refuse itself.
+        if (!from_card) return true;
+        const ubiqos_module_header_t *f = ubiqos_flash_lookup(name);
+        if (!f || fresh->revision > f->revision) return true;
+        ubiqos_print("  ");
+        ubiqos_print(name);
+        ubiqos_print(": revision ");
+        ubiqos_print_u32(fresh->revision);
+        ubiqos_print(" on the card does not beat ");
+        ubiqos_print_u32(f->revision);
+        ubiqos_print(" in flash, ignored\n");
+        return false;
+    }
+
+    // The same revision the directory already holds from the card: asked for
+    // again rather than offered anew, and not worth a line on the console.
+    if (old->owned && fresh->revision == old->header->revision) return false;
 
     if (fresh->revision <= old->header->revision) {
         ubiqos_print("  ");
@@ -133,7 +155,7 @@ static void commit_entry(void) {
 
 bool ubiqos_moddir_add_resident(const ubiqos_module_header_t *header, const char *name) {
     if (!verify_ubiqos_header((ubiqos_module_header_t*)header)) return false;
-    if (!supersedes(header, name)) return false;
+    if (!supersedes(header, name, false)) return false;
     ubiqos_module_entry_t *e = alloc_entry();
     if (!e) return false;
     e->header = header;
@@ -160,7 +182,7 @@ bool ubiqos_moddir_add_resident(const ubiqos_module_header_t *header, const char
 bool ubiqos_moddir_add_image(uint8_t *image, uint32_t len, const char *name) {
     (void)len;
     if (!verify_ubiqos_header((ubiqos_module_header_t*)image)) return false;
-    if (!supersedes((const ubiqos_module_header_t*)image, name)) return false;
+    if (!supersedes((const ubiqos_module_header_t*)image, name, true)) return false;
 
     ubiqos_module_entry_t *e = alloc_entry();
     if (!e) return false;
