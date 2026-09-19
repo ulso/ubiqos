@@ -387,13 +387,9 @@ static void do_peek(int32_t dev) {
 // THE PASSWORD IS TYPED HERE AND NOWHERE ELSE. Not an argument -- argv lives in
 // this process's memory and the shell keeps sixteen lines of history -- not
 // echoed, and wiped before this returns. It is the same rule `wifi connect` has
-// always had, and it survives the change of radio.
-//
-// What does NOT work yet is taking it from /sd/config.txt. The kernel holds
-// those bytes and will not hand them to a process, which is the whole point of
-// how that file is treated: the NINA path got round it by having the kernel do
-// the joining. The same will have to happen here -- the message built where the
-// password already is -- and that is a change to the driver rather than to this.
+// always had, and it survives the change of radio. /sd/config.txt is the other
+// way in, and it never reaches a process: the kernel reads that file and hands
+// the password to the driver, which does the joining for both.
 // Everything that needs no secret: the radio initialised, put in station mode
 // and started. Separate because it is the half that can be tested from a
 // serial session, and because a scan will want exactly this and no password.

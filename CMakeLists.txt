@@ -1477,6 +1477,9 @@ ubiqos_add_module(ehstat modules/ehstat/ehstat.c)
 ubiqos_add_module(ping modules/ping/ping.c)
 ubiqos_add_module(browse modules/browse/browse.c)
 ubiqos_add_module(ehrpc modules/ehrpc/ehrpc.c)
+# `wifi` again, as a front for ehrpc: the NINA client of that name retired with
+# the NINA firmware, and `wifi connect` is what people still type.
+ubiqos_add_module(wifi modules/wifi/wifi.c)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card/sd_card.c
     TARGET_DIRECTORY sdlib_app
     PROPERTIES COMPILE_DEFINITIONS "printf=ubiqos_printf")
@@ -1593,8 +1596,6 @@ target_include_directories(lwipd_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/include)
 #
 
-# Retired with the NINA firmware -- see the note beside wifilib above.
-#ubiqos_add_module(wifi modules/wifi/wifi.c)
 ubiqos_add_module(pwd modules/pwd/pwd.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
@@ -1652,8 +1653,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/gt911.mod
             ${CMAKE_CURRENT_BINARY_DIR}/touchdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/touch.mod
-            # wifi.mod: retired with the NINA firmware, see the note above. An old
-            # build tree still had the file, so only a clean one saw this.
+            ${CMAKE_CURRENT_BINARY_DIR}/wifi.mod
             ${CMAKE_CURRENT_BINARY_DIR}/lwipd.mod
             ${CMAKE_CURRENT_BINARY_DIR}/rmdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mount.mod
@@ -1749,7 +1749,7 @@ set(UBIQOS_RESIDENT
     fetch
     tlsroots
     mount
-#    wifi
+    wifi
     font
     color
     kill
