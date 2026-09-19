@@ -17,6 +17,8 @@ int32_t ubiqos_console_trace_at(uint32_t offset);
 #include "tlsf.h"
 #include "crashlog.h"
 #include "hardware/structs/rosc.h"
+#include "hardware/structs/trng.h"
+#include "hardware/resets.h"
 #include "pico/time.h"
 #include "critical.h"
 #include "config.h"
@@ -116,6 +118,40 @@ volatile uint32_t ubiqos_last_pc = 0;
 
 // The return value is the stack pointer to resume. Same in as out means we
 // continue in the same process; a different one is a context switch.
+// Raw samples from the RP2350's TRNG, for keys. Taken the way pico_rand takes
+// them on this chip: the decorrelators bypassed, one ring-oscillator sample
+// into the 192-bit EHR per clock, read out six words at a time. They are NOT
+// uniform bits and are not handed out as if they were -- the caller hashes
+// them, and the TLS code folds eight raw bytes into each byte it counts.
+//
+// Sixty-four bytes a call at most, because this runs in a trap with
+// interrupts off: that is three EHR fills, microseconds. A TRNG that never
+// finishes a fill gives back what it had rather than holding the trap.
+static int32_t trng_raw(uint8_t *out, uint32_t want)
+{
+    static bool up;
+    if (!up) {
+        unreset_block_num_wait_blocking(RESET_TRNG);
+        up = true;
+    }
+    if (want > 64) want = 64;
+    uint32_t n = 0;
+    while (n < want) {
+        trng_hw->sample_cnt1 = 0;
+        trng_hw->trng_debug_control = -1u;       // raw: no decorrelator, no checks
+        trng_hw->rnd_source_enable = -1u;
+        trng_hw->rng_icr = -1u;
+        uint32_t spins = 0;
+        while (trng_hw->trng_busy && ++spins < 100000u) {}
+        if (trng_hw->trng_busy) break;
+        for (uint32_t w = 0; w < 6 && n < want; w++) {
+            const uint32_t v = trng_hw->ehr_data[w];
+            for (int b = 0; b < 4 && n < want; b++) out[n++] = (uint8_t)(v >> (8 * b));
+        }
+    }
+    return (int32_t)n;
+}
+
 uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
     uint32_t sp = (uint32_t)(uintptr_t)frame;
 
@@ -819,6 +855,10 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             uint8_t *out = (uint8_t*)(uintptr_t)frame->a0;
             uint32_t want = frame->a1;
             if (!out) { frame->a0 = 0; break; }
+            if (frame->a2 & UBIQOS_RANDOM_TRNG) {
+                frame->a0 = (uint32_t)trng_raw(out, want);
+                break;
+            }
             if (want > 256) want = 256;          // see the note in the header
             uint32_t n = 0;
             while (n < want) {

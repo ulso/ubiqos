@@ -846,7 +846,7 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 #define SYS_KILL      40u   // a0 = pid -> a0 = 0 ok, -1 no such process or refused
 #define SYS_FOREGRND  41u   // a0 = path, a1 = pid or 0 -> a0 = 0 ok, -1 no path
 #define SYS_USBINFO   55u   // a0 = what -> a0 = that field of the USB host state
-#define SYS_RANDOM    56u   // a0 = buffer, a1 = length -> a0 = bytes filled
+#define SYS_RANDOM    56u   // a0 = buffer, a1 = length, a2 = UBIQOS_RANDOM_* -> a0 = bytes filled
 #define SYS_CATCHINTR 57u   // a0 = pulse type, 0 to go back to being killed
 #define SYS_GETSTAT   61u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
 #define SYS_SETSTAT   62u   // a0 = path, a1 = code, a2 = &{data,len} -> a0 = 0, -1
@@ -2682,6 +2682,16 @@ static inline int32_t ubiqos_catch_intr(uint32_t pulse_type)
 static inline int32_t ubiqos_random(void *buf, uint32_t len)
 {
     return ubiqos_syscall(SYS_RANDOM, (uint32_t)(uintptr_t)buf, len, 0);
+}
+
+// Raw samples from the RP2350's TRNG instead: the source a key is made from.
+// Not uniform -- ring-oscillator phase noise, a sample per clock -- so they
+// must be hashed before use, and a caller counting entropy should count far
+// less than a bit a bit. At most 64 bytes a call, for the same reason as above.
+#define UBIQOS_RANDOM_TRNG 1u
+static inline int32_t ubiqos_random_trng(void *buf, uint32_t len)
+{
+    return ubiqos_syscall(SYS_RANDOM, (uint32_t)(uintptr_t)buf, len, UBIQOS_RANDOM_TRNG);
 }
 
 static inline uint32_t ubiqos_usbinfo(uint32_t what)
