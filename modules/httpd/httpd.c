@@ -353,6 +353,23 @@ static void serve(int32_t sock, const char *req) {
         return;
     }
     if (starts(path, "/api/sensors")) {
+        // One read, and the length is what that read returned. Served like any
+        // file, the size came from a stat and the body from later reads, and
+        // the scanner replacing the file in between made the two disagree --
+        // a body cut short, or one longer than it was said to be. The file is
+        // swapped whole now (hibouair renames a new one over it), so a single
+        // read is a single version. One larger than the buffer is served the
+        // old way.
+        int32_t fd = ubiqos_open_flags(SENSORS_PATH, UBIQOS_O_RDONLY);
+        if (fd >= 0) {
+            int32_t got = ubiqos_read(fd, (uint8_t *)page, sizeof page);
+            ubiqos_close(fd);
+            if (got > 0 && got < (int32_t)sizeof page) {
+                send_head(sock, "200 OK", "application/json", (uint32_t)got);
+                send_all(sock, (const uint8_t *)page, (uint32_t)got);
+                return;
+            }
+        }
         if (send_file(sock, SENSORS_PATH, "application/json")) return;
         // Nothing is scanning, which is not an error and should not read as
         // one: the page says so rather than showing an empty table as though
@@ -485,10 +502,12 @@ void module_main(int argc, char **argv) {
         uint32_t quiet_since;
         bool     served;               // has this connection answered anything
         bool     asked;                // whether the chip has been asked if it is still there
+        uint8_t  match;                // how much of the blank line ending a request is seen
         char     req[REQ_MAX];
     } conn[MAX_CONNS];
     for (uint32_t i = 0; i < MAX_CONNS; i++) {
         conn[i].sock = -1; conn[i].n = 0; conn[i].served = false; conn[i].asked = false;
+        conn[i].match = 0;
     }
 
     uint32_t last_request_ms = 0;
@@ -505,7 +524,7 @@ void module_main(int argc, char **argv) {
             int32_t c = ubiqos_sock_accept(server);
             if (c >= 0) {
                 conn[i].sock = c; conn[i].n = 0; conn[i].served = false;
-                conn[i].asked = false; conn[i].quiet_since = now;
+                conn[i].asked = false; conn[i].quiet_since = now; conn[i].match = 0;
                 worked = true;
             }
             break;
@@ -513,8 +532,8 @@ void module_main(int argc, char **argv) {
 
         for (uint32_t i = 0; i < MAX_CONNS; i++) {
             if (conn[i].sock < 0) continue;
-            int32_t got = ubiqos_sock_recv(conn[i].sock, (uint8_t *)conn[i].req + conn[i].n,
-                                           REQ_MAX - 1 - conn[i].n);
+            uint8_t chunk[REQ_MAX];
+            int32_t got = ubiqos_sock_recv(conn[i].sock, chunk, sizeof chunk);
             if (got < 0) {
                 // A receive that fails is the client gone, or the fault nobody
                 // has explained yet -- six requests in a thousand come back
@@ -566,22 +585,35 @@ void module_main(int argc, char **argv) {
             }
 
             worked = true;
-            conn[i].n += (uint32_t)got;
-            conn[i].req[conn[i].n] = 0;
             conn[i].quiet_since = now;
 
-            bool done = false;
-            for (uint32_t k = 3; k < conn[i].n; k++)
-                if (conn[i].req[k - 3] == '\r' && conn[i].req[k - 2] == '\n' &&
-                    conn[i].req[k - 1] == '\r' && conn[i].req[k] == '\n') done = true;
-            if (!done && conn[i].n < REQ_MAX - 1) continue;   // more to come
+            // A request ends at its blank line, however long it is, and only
+            // the first REQ_MAX bytes are kept -- the request line is in them,
+            // and nothing past it is looked at. The rest is read and dropped.
+            //
+            // It used to end at the blank line OR a full buffer, and a browser's
+            // request is 300 to 700 bytes of headers. The first 255 were served,
+            // the rest arrived as a request of their own, and got a 405: two
+            // answers to one question. On a kept-alive connection every answer
+            // after that belonged to the request before it -- the sensor poll
+            // was handed the status, the status the sensors, and a click on
+            // "files on the card" either the 405 or somebody's JSON.
+            for (int32_t k = 0; k < got; k++) {
+                const char ch = (char)chunk[k];
+                if (conn[i].n < REQ_MAX - 1) conn[i].req[conn[i].n++] = ch;
+                if (ch == "\r\n\r\n"[conn[i].match]) conn[i].match++;
+                else conn[i].match = (ch == '\r') ? 1 : 0;
+                if (conn[i].match < 4) continue;
 
-            last_request_ms = now;
-            serve(conn[i].sock, conn[i].req);
-            conn[i].n = 0;
-            conn[i].served = true;
-            conn[i].asked = false;
-            conn[i].quiet_since = ubiqos_ticks_now();
+                conn[i].req[conn[i].n] = 0;
+                last_request_ms = now;
+                serve(conn[i].sock, conn[i].req);
+                conn[i].n = 0;
+                conn[i].match = 0;
+                conn[i].served = true;
+                conn[i].asked = false;
+                conn[i].quiet_since = ubiqos_ticks_now();
+            }
         }
 
         // Only when there was nothing to do anywhere. Fast while the board is
