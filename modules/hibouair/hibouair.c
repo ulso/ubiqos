@@ -255,6 +255,7 @@ static void remember(const uint8_t *b, uint32_t n, const char *addr)
 // Two writers of this path would race. There is one scanner, because there is
 // one dongle.
 #define SENSORS_PATH "/tmp/sensors.json"
+#define SENSORS_NEW  "/tmp/sensors.new"   // written, then renamed over SENSORS_PATH
 
 static void put_str(int32_t fd, const char *s)
 {
@@ -297,12 +298,12 @@ static void put_tenths100(int32_t fd, uint32_t v)
     ubiqos_write(fd, b, 2);
 }
 
-static void publish(void)
+static bool publish_to(const char *path)
 {
-    int32_t fd = ubiqos_open_flags(SENSORS_PATH,
+    int32_t fd = ubiqos_open_flags(path,
                                    UBIQOS_O_WRONLY | UBIQOS_O_CREAT | UBIQOS_O_TRUNC);
     if (fd < 0)
-        return;                      // no /tmp is not a reason to stop scanning
+        return false;                // no /tmp is not a reason to stop scanning
 
     put_str(fd, "{\"sensors\":[");
     for (uint32_t i = 0; i < sensor_count; i++) {
@@ -349,6 +350,21 @@ static void publish(void)
     put_u32(fd, sensor_count);
     put_str(fd, "}\n");
     ubiqos_close(fd);
+    return true;
+}
+
+// Written under another name and renamed over the old one, so that httpd
+// never reads it half written. In place it was rewritten with O_TRUNC, which
+// removes the file first, and a poll landing in that moment was told nothing
+// was scanning; one landing mid-write got a truncated answer. Renaming is one
+// step for the filesystem server, and a reader sees the old file or the new.
+// A /tmp that cannot rename gets the file written in place, as before.
+static void publish(void)
+{
+    if (publish_to(SENSORS_NEW) && ubiqos_fs_rename(SENSORS_NEW, SENSORS_PATH) == 0)
+        return;
+    ubiqos_fs_remove(SENSORS_NEW);
+    publish_to(SENSORS_PATH);
 }
 
 static void redraw(void)
