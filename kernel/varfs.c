@@ -30,6 +30,7 @@ static bool name_is(const char *path, const char *want) {
 
 static bool is_dmesg(const char *path) { return name_is(path, "/dmesg"); }
 static bool is_time(const char *path)  { return name_is(path, "/time"); }
+static bool is_utc(const char *path)   { return name_is(path, "/utc"); }
 
 // The line /var/time holds. Regenerated on every read, which is the point of
 // it: two reads a minute apart differ.
@@ -41,10 +42,25 @@ static uint32_t time_line(char *out, uint32_t cap) {
     return n;
 }
 
+// /utc is the same clock for a program rather than a person: seconds since
+// 1970 in UTC, which is what a certificate's dates are compared with. Empty
+// until the network has said what time it is -- an empty file cannot be
+// mistaken for a date, and a zero could be.
+static uint32_t utc_line(char *out, uint32_t cap) {
+    if (!ubiqos_clock_is_set() || cap < 12) { if (cap) out[0] = 0; return 0; }
+    uint32_t v = ubiqos_clock_utc(), n = 0;
+    char tmp[11];
+    do { tmp[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+    for (uint32_t i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
+    out[n++] = '\n';
+    out[n] = 0;
+    return n;
+}
+
 static int32_t var_read_at(const char *path, uint32_t offset, uint8_t *buf, uint32_t len) {
-    if (is_time(path)) {
+    if (is_time(path) || is_utc(path)) {
         char line[24];
-        const uint32_t n = time_line(line, sizeof line);
+        const uint32_t n = is_utc(path) ? utc_line(line, sizeof line) : time_line(line, sizeof line);
         if (offset >= n) return 0;
         uint32_t k = 0;
         while (k < len && offset + k < n) { buf[k] = (uint8_t)line[offset + k]; k++; }
@@ -63,9 +79,10 @@ static int32_t var_read_at(const char *path, uint32_t offset, uint8_t *buf, uint
 static int32_t var_stat(const char *path, uint32_t *size_out) {
     if (size_out) *size_out = 0;
     if (path[0] == '/' && !path[1]) return UBIQOS_ATTR_DIRECTORY;
-    if (is_time(path)) {
+    if (is_time(path) || is_utc(path)) {
         char line[24];
-        if (size_out) *size_out = time_line(line, sizeof line);
+        if (size_out) *size_out = is_utc(path) ? utc_line(line, sizeof line)
+                                               : time_line(line, sizeof line);
         return 0;
     }
     if (!is_dmesg(path)) return -1;
@@ -76,14 +93,17 @@ static int32_t var_stat(const char *path, uint32_t *size_out) {
 static int32_t var_stat_nth(const char *dirpath, uint32_t index,
                             char *name_out, uint32_t *size_out) {
     if (dirpath[0] != '/' || dirpath[1]) return -1;
-    if (index > 1) return -1;
-    const char *n = index ? "time" : "dmesg";
+    if (index > 2) return -1;
+    static const char names[3][6] = { "dmesg", "time", "utc" };
+    const char *n = names[index];
     int i = 0;
     while (n[i]) { name_out[i] = n[i]; i++; }
     name_out[i] = 0;
     if (size_out) {
-        if (index) { char line[24]; *size_out = time_line(line, sizeof line); }
-        else       { *size_out = ubiqos_dmesg_size(); }
+        char line[24];
+        if (index == 2)      *size_out = utc_line(line, sizeof line);
+        else if (index == 1) *size_out = time_line(line, sizeof line);
+        else                 *size_out = ubiqos_dmesg_size();
     }
     return 0;
 }
