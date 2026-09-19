@@ -31,7 +31,8 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 - **Shell**: arguments, pipes, redirection with `>` and `>>`, and `&`
 - **Network**: lwIP over USB CDC-NCM -- the board is 192.168.7.1 on the cable
   and hands the computer an address by DHCP -- and over WiFi through Espressif's
-  ESP-Hosted; mDNS, SNTP, `ping`, `fetch`, and a web server, `httpd`
+  ESP-Hosted; mDNS, SNTP, `ping`, a web server, `httpd`, and a TLS client:
+  `fetch https://...` checks the server's certificate as a browser does
 - **Programs**: about ninety modules, among them an editor (Atto emacs), a
   WAV player, `hibouair` for BLE air-quality sensors through a BleuIO dongle,
   and the usual `ls`, `cat`, `cp`, `mv`, `rm`, `ps`, `kill`
@@ -93,6 +94,7 @@ languages when they are found, and skipped when they are not.
 | [docs/the-sdk.md](docs/the-sdk.md) | building a module or an application outside this tree |
 | [docs/config.md](docs/config.md) | `/sd/config.txt`: name, WiFi, time zone, the cable's address |
 | [docs/esp-hosted](docs/esp-hosted/README.md) | the WiFi co-processor and how its firmware gets there |
+| [docs/tls.md](docs/tls.md) | https: what is checked, the roots, and using it from a module |
 | [docs/usb-sleep.md](docs/usb-sleep.md) | the USB network after the computer sleeps |
 | [docs/the-board-stopped.md](docs/the-board-stopped.md) | a hang with the picture still on the screen, and what it was |
 
@@ -109,7 +111,7 @@ includes keeps its own licence, as below.
 
 ## Third-party code
 
-UbiqOS is built on the Pico SDK, TinyUSB, Pico-PIO-USB, lwIP, wasm3, Atto and
-the Terminus font. What each one is, where it lives and its licence are in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which should travel with any
-UF2 passed on.
+UbiqOS is built on the Pico SDK, TinyUSB, Pico-PIO-USB, lwIP, Mbed TLS, wasm3,
+Atto and the Terminus font. What each one is, where it lives and its licence
+are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which should travel
+with any UF2 passed on.
