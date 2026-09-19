@@ -139,6 +139,27 @@ static bool tmp_remove(const char *path) {
     return true;
 }
 
+// A new name, replacing whatever already had it, as rename(2) does. That is
+// what makes it the way to publish a file somebody else reads: write it under
+// another name, then rename it over the old one. The filesystem server takes
+// one message at a time, so a reader sees the old file or the new one and
+// never the moment between -- which a rewrite in place cannot promise, and
+// O_TRUNC even less, since it removes the file first. hibouair's sensors.json
+// is why this exists.
+static bool tmp_rename(const char *from, const char *to) {
+    tmpfile_t *f = find(from);
+    const char *n = leaf(to);
+    if (!f || !n) return false;
+    uint32_t len = 0;
+    while (n[len]) len++;
+    if (len >= UBIQOS_DIRNAME_MAX) return false;
+    tmpfile_t *old = find(to);
+    if (old == f) return true;
+    if (old) tmp_remove(to);
+    for (uint32_t k = 0; k <= len; k++) f->name[k] = n[k];
+    return true;
+}
+
 static int32_t tmp_stat(const char *path, uint32_t *size_out) {
     if (size_out) *size_out = 0;
     if (path && path[0] == '/' && !path[1]) return UBIQOS_ATTR_DIRECTORY;
@@ -168,6 +189,7 @@ const ubiqos_fsops_t ubiqos_tmpfs_ops = {
     .read_at  = tmp_read_at,
     .write_at = tmp_write_at,
     .remove   = tmp_remove,
+    .rename   = tmp_rename,
     .stat_nth = tmp_stat_nth,
     .stat     = tmp_stat,
 };
