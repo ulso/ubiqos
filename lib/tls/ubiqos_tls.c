@@ -218,8 +218,8 @@ ubiqos_tls_t *ubiqos_tls_open(const char *host, uint16_t port, char *err, size_t
     }
 
     if (load_roots(&t->ca) == 0) {
-        snprintf(err, errcap, "no root certificates: the tlsroots module is missing, "
-                              "and /sd/certs.pem has none");
+        snprintf(err, errcap, "no root certificates: tlsroots is missing or not a set "
+                              "of roots, and /sd/certs.pem has none");
         goto fail;
     }
 
