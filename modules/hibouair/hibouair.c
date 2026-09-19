@@ -45,6 +45,7 @@
 #define PULSE_INTR     2   // ctrl-C, asked for with ubiqos_catch_intr
 #define MAX_SENSORS    8
 #define REDRAW_MS      2000
+#define DONGLE_WAIT_S  30   // how long to wait for the dongle to turn up
 
 // The board types, from dxbleuio/src/models/hibouair.rs. What a sensor does not
 // have it reports as zero, which is why one of these will show CO2 0 for ever
@@ -431,7 +432,9 @@ void module_main(int argc, char **argv)
             "table. Ctrl-C tells the dongle to stop and exits.\n\n"
             "Either way the readings are written to /tmp/sensors.json, which is\n"
             "what httpd serves at /api/sensors. -q draws no table, which is what\n"
-            "it wants in the background: 'hibouair -q &'.\n")) return;
+            "it wants in the background: 'hibouair -q &'.\n\n"
+            "A dongle that is not there yet is waited for, up to 30 seconds, so\n"
+            "this can be started from /sd/startup. 'kill hibouair' stops it.\n")) return;
 
     // Quiet is for the background. A table drawn by a process nobody is looking
     // at is not merely wasted -- it lands on whatever terminal the shell was
@@ -442,9 +445,30 @@ void module_main(int argc, char **argv)
 
     int32_t dev = ubiqos_open("/dev/acm");
     if (dev < 0) {
-        printf("hibouair: no dongle on /dev/acm\n");
+        printf("hibouair: no /dev/acm on this machine\n");
         return;
     }
+
+    // The dongle may not be there yet. Started from /sd/startup, this runs
+    // while the USB host is still finding what sits behind the hub, and a
+    // scanner that gave up at once would need somebody to start it again by
+    // hand. /dev/acm opens whether or not anything is plugged in; a write is
+    // what tells, and a lone CR is one the dongle's AT parser ignores.
+    uint32_t waited = 0;
+    while (write(dev, "\r", 1) < 0) {
+        if (waited == 0)
+            printf("hibouair: waiting for the dongle on /dev/acm\n");
+        if (waited >= DONGLE_WAIT_S) {
+            printf("hibouair: no dongle on /dev/acm after %lu s\n", (unsigned long)waited);
+            ubiqos_close(dev);
+            return;
+        }
+        ubiqos_sleep(1000);
+        waited++;
+    }
+    // One that has only just enumerated gets a moment before it is spoken to.
+    if (waited)
+        ubiqos_sleep(1000);
 
     send_command(dev, AT_ECHO_OFF);   ubiqos_sleep(200);
     send_command(dev, AT_VERBOSE_ON); ubiqos_sleep(200);
