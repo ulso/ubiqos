@@ -297,6 +297,35 @@ function(ubiqos_add_module name source)
 endfunction()
 
 
+# --- TLS ------------------------------------------------------------------
+#
+# ubiqos_module_use_tls(name) gives a NEWLIB module a TLS client: lib/tls, and
+# the Pico SDK's mbedTLS built as a module would build it. mbedTLS is an
+# archive, built once per build tree, so a module links only the parts it
+# calls -- the configuration (lib/tls/ubiqos_mbedtls_config.h) is a TLS 1.2
+# client and nothing else, and much of the library compiles to nothing.
+function(ubiqos_module_use_tls name)
+    set(mbedtls_dir ${PICO_SDK_PATH}/lib/mbedtls)
+    set(tls_config  -DMBEDTLS_CONFIG_FILE="ubiqos_mbedtls_config.h")
+    if(NOT TARGET ubiqos_mbedtls)
+        file(GLOB mbedtls_sources ${mbedtls_dir}/library/*.c)
+        add_library(ubiqos_mbedtls STATIC ${mbedtls_sources})
+        target_include_directories(ubiqos_mbedtls PRIVATE
+            ${UBIQOS_ROOT}/lib/tls ${mbedtls_dir}/include ${mbedtls_dir}/library)
+        target_compile_options(ubiqos_mbedtls PRIVATE
+            -fno-pic ${UBIQOS_MODULE_CFLAGS} -fno-common --specs=nano.specs -O2
+            ${tls_config})
+    endif()
+    target_sources(${name}_app PRIVATE
+        ${UBIQOS_ROOT}/lib/tls/ubiqos_tls.c
+        ${UBIQOS_ROOT}/lib/tls/ubiqos_tls_roots.c)
+    target_include_directories(${name}_app PRIVATE
+        ${UBIQOS_ROOT}/lib/tls ${mbedtls_dir}/include)
+    target_compile_options(${name}_app PRIVATE ${tls_config})
+    target_link_libraries(${name}_app PRIVATE ubiqos_mbedtls)
+endfunction()
+
+
 # --- Shipping an application ----------------------------------------------
 #
 # ubiqos_app_image(<name> <module>...) concatenates modules into an image for
