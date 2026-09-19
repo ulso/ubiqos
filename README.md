@@ -53,9 +53,9 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 4. The cable is also a network: `ping ubiqos.local`.
 
 WiFi needs the ESP32-C6 reflashed with ESP-Hosted once, and a `config.txt` on
-the card naming the network -- see [docs/config.md](docs/config.md) and
-[docs/esp-hosted](docs/esp-hosted/README.md). After that, `httpd &` serves the
-card and the board's status to a browser.
+the card naming the network. [docs/fruit-jam.md](docs/fruit-jam.md) goes
+through all of it: the card, the WiFi firmware, `config.txt`, the web server,
+the sensors, and having them start by themselves.
 
 ## Building
 
@@ -97,6 +97,7 @@ languages when they are found, and skipped when they are not.
 
 | | |
 |---|---|
+| [docs/fruit-jam.md](docs/fruit-jam.md) | setting up a Fruit Jam, step by step, as far as WiFi and the sensor page |
 | [docs/design.md](docs/design.md) | the long account: modules, display, console, shell, system calls, audio, pins, interrupts, scheduling |
 | [docs/writing-modules.md](docs/writing-modules.md) | writing a module |
 | [docs/the-sdk.md](docs/the-sdk.md) | building a module or an application outside this tree |
