@@ -286,6 +286,7 @@ add_executable(os_kernel
     kernel/vfs.c
     kernel/tmpfs.c
     kernel/varfs.c
+    kernel/memcmp.c
     kernel/main.c 
     kernel/tlsf.c
     kernel/scheduler.c 

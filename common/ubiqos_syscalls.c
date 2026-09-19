@@ -232,3 +232,16 @@ __attribute__((weak)) void module_main(int argc, char **argv)
     extern int main(int argc, char **argv);
     main(argc, argv);
 }
+
+// memcmp, one byte at a time, in place of newlib's -- see kernel/memcmp.c.
+// The RISC-V newlib compares a word at a time without checking alignment and
+// Hazard3 traps on that; mbedTLS and ported code compare buffers at whatever
+// offset they happen to sit. Defined here, a NEWLIB module finds it first.
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+int memcmp(const void *a, const void *b, size_t n)
+{
+    const unsigned char *p = a, *q = b;
+    for (; n; n--, p++, q++)
+        if (*p != *q) return (int)*p - (int)*q;
+    return 0;
+}
