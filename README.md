@@ -84,6 +84,11 @@ configurations are chosen when configuring:
 | Waveshare 4.3B | `-DUBIQOS_BOARD=ws43b` |
 | Waveshare 4.3B, USB-C as host | `-DUBIQOS_BOARD=ws43b -DUBIQOS_NATIVE_USB=host` |
 
+**The framebuffer builds do not work at present**, on Arm or RISC-V: they boot
+to a shell on the HDMI screen, but the 300 kB framebuffer leaves too little
+SRAM for the rest, so there is no USB console, no SD card and no WiFi. They
+still build, and are left out of releases until that is fixed.
+
 Use a separate build directory for each. Only Release builds fit in RAM, and
 that is forced. clang, `ldc2`, `zig` and `rustc` are used for modules in those
 languages when they are found, and skipped when they are not.
