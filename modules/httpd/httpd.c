@@ -45,6 +45,9 @@ UBIQOS_MEM_SIZE(16384);
 // serves what it has written. See the note at /api/sensors.
 #define SENSORS_PATH "/tmp/sensors.json"
 
+// How long to wait for a network stack that has not started yet.
+#define NET_WAIT_S 30
+
 static bool starts(const char *s, const char *pre) {
     while (*pre) { if (*s != *pre) return false; s++; pre++; }
     return true;
@@ -148,6 +151,20 @@ static const char SENSOR_PAGE[] =
     "\n";
 
 static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
+
+// How many processes are running this module, this one included.
+static uint32_t running_as(const char *name)
+{
+    uint32_t n = 0;
+    for (uint32_t slot = 0; slot < UBIQOS_PS_SLOTS; slot++) {
+        ubiqos_psinfo_t p;
+        if (ubiqos_psinfo(slot, &p) < 0) continue;
+        uint32_t i = 0;
+        while (name[i] && p.name[i] == name[i]) i++;
+        if (!name[i] && !p.name[i]) n++;
+    }
+    return n;
+}
 
 // A whole answer, headers and body, in as few writes as the chip will take.
 // Every send costs a command, a wait and a poll for "did it go", so a header
@@ -372,7 +389,9 @@ void module_main(int argc, char **argv) {
             "The stack is 1, lwIP, by default: the USB cable and the WiFi both.\n"
             "0 is the WiFi coprocessor's own stack, which only NINA firmware has.\n"
             "Asking for one that is not there is refused rather than served\n"
-            "on a different network.\n"))
+            "on a different network.\n\n"
+            "A stack still starting is waited for, up to 30 seconds, so this can\n"
+            "be started from /sd/startup. 'kill httpd' stops it.\n"))
         return;
 
     uint32_t port = 80;
@@ -401,17 +420,33 @@ void module_main(int argc, char **argv) {
         say("httpd: not on a network. 'wifi connect <ssid>' first.\r\n");
         return;
     }
-    // The likeliest reason by far is a server already on the port -- a second
-    // `httpd &` -- so that is what is said first. It used to lead with "no such
-    // network stack", which on a board whose stack was plainly up and serving
-    // the very browser asking read as a fault.
+    // A listen fails for one of two reasons, and they want opposite answers.
+    // Another httpd on the port is final, and it is said at once -- it used to
+    // lead with "no such network stack", which on a board whose stack was
+    // plainly up and serving the very browser asking read as a fault. A stack
+    // that has not started yet is not final at all: from /sd/startup this runs
+    // while lwIP is still being brought up, so it is waited for.
     int32_t server = ubiqos_sock_listen_on(stack, (uint16_t)port);
+    if (server < 0 && running_as("httpd") > 1) {
+        ubiqos_line_t e;
+        ubiqos_line_reset(&e);
+        ubiqos_line_str(&e, "httpd: could not listen on port ");
+        ubiqos_line_u32(&e, port);
+        ubiqos_line_str(&e, " -- another httpd is running (ps; kill httpd)\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &e);
+        return;
+    }
+    for (uint32_t waited = 0; server < 0 && waited < NET_WAIT_S; waited++) {
+        if (!waited) say("httpd: waiting for the network stack\r\n");
+        ubiqos_sleep(1000);
+        server = ubiqos_sock_listen_on(stack, (uint16_t)port);
+    }
     if (server < 0) {
         ubiqos_line_t e;
         ubiqos_line_reset(&e);
         ubiqos_line_str(&e, "httpd: could not listen on port ");
         ubiqos_line_u32(&e, port);
-        ubiqos_line_str(&e, " -- is another httpd already running? (ps)\r\n");
+        ubiqos_line_str(&e, " -- no stack came up, or something else holds the port\r\n");
         ubiqos_line_flush(UBIQOS_STDOUT, &e);
         return;
     }
