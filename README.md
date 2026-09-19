@@ -43,7 +43,10 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 
 1. Hold **button 1** (BOOT), press and release **reset**, and let go of button 1
    when a drive called `RP2350` appears.
-2. Copy `ubiqos.uf2` onto it. The board restarts into UbiqOS.
+2. Copy `ubiqos.uf2` onto it, and press **reset** when the copy is done: the
+   board may stay in the bootloader rather than restart by itself. Copy the
+   file rather than using `picotool load`, which writes only the first of the
+   file's two block families and leaves the old system in place.
 3. Talk to it on the HDMI screen with a USB keyboard in one of the host ports,
    or over the USB-C cable: `screen /dev/cu.usbmodem… 115200` on a Mac, PuTTY
    on the COM port on Windows.
