@@ -1,6 +1,6 @@
 #include "../../common/ubiqos_abi.h"
 
-// kill -- end a process by number.
+// kill -- end a process by number, or every process running a module by name.
 //
 // The kernel's own service threads are refused. The machine needs the console,
 // the filesystem and the radio, and nobody chose to start them, so nobody
@@ -17,9 +17,32 @@ static uint32_t to_u32(const char *s, bool *ok) {
     return v;
 }
 
+static bool same(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+// By name, every one of them: `kill httpd` is what somebody who started it
+// with & in /sd/startup can type without first asking ps for a number. The
+// table is read once, before anything is ended, so a process that is given
+// its half second to stop is not found a second time and asked again.
+static int32_t kill_by_name(const char *name, bool now) {
+    int32_t pids[UBIQOS_PS_SLOTS];
+    uint32_t n = 0;
+    for (uint32_t slot = 0; slot < UBIQOS_PS_SLOTS; slot++) {
+        ubiqos_psinfo_t p;
+        if (ubiqos_psinfo(slot, &p) < 0) continue;
+        if (same(p.name, name)) pids[n++] = (int32_t)p.pid;
+    }
+    int32_t ended = 0;
+    for (uint32_t i = 0; i < n; i++)
+        if ((now ? ubiqos_kill_now(pids[i]) : ubiqos_kill(pids[i])) == 0) ended++;
+    return n ? ended : -1;
+}
+
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: kill [-9] <pid> ...\n\nAsks the process to end. One that catches the interrupt is told and\nhas half a second to stop itself.\n  -9   end it at once, asking nothing\n")) return;
+            "usage: kill [-9] <pid|name> ...\n\nAsks the process to end -- by number, or every one running the module\nof that name, as ps shows it: 'kill httpd'. One that catches the interrupt is told and\nhas half a second to stop itself.\n  -9   end it at once, asking nothing\n")) return;
 
     ubiqos_line_t l;
 
@@ -36,22 +59,31 @@ void module_main(int argc, char **argv) {
     }
 
     if (argc < first + 1) {
-        ubiqos_write_str(UBIQOS_STDOUT, "usage: kill [-9] <pid> ...\r\n");
+        ubiqos_write_str(UBIQOS_STDOUT, "usage: kill [-9] <pid|name> ...\r\n");
         return;
     }
 
     for (int i = first; i < argc; i++) {
         bool ok;
         uint32_t pid = to_u32(argv[i], &ok);
-        int32_t r = ok ? (now ? ubiqos_kill_now((int32_t)pid)
-                              : ubiqos_kill((int32_t)pid)) : -1;
+        if (!ok) {
+            int32_t r = kill_by_name(argv[i], now);
+            if (r > 0) continue;
+            ubiqos_line_reset(&l);
+            ubiqos_line_str(&l, "kill: ");
+            ubiqos_line_str(&l, argv[i]);
+            ubiqos_line_str(&l, r < 0 ? ": nothing running by that name\r\n"
+                                      : ": the kernel needs it\r\n");
+            ubiqos_line_flush(UBIQOS_STDOUT, &l);
+            continue;
+        }
+        int32_t r = now ? ubiqos_kill_now((int32_t)pid) : ubiqos_kill((int32_t)pid);
         if (r == 0) continue;
 
         ubiqos_line_reset(&l);
         ubiqos_line_str(&l, "kill: ");
         ubiqos_line_str(&l, argv[i]);
-        ubiqos_line_str(&l, ok ? ": no such process, or the kernel needs it\r\n"
-                               : ": not a number\r\n");
+        ubiqos_line_str(&l, ": no such process, or the kernel needs it\r\n");
         ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
 }
