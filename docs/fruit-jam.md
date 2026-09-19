@@ -24,8 +24,8 @@ that prints "myrtos" anywhere is running an older version.
 - **A way to type commands**: an HDMI screen and a USB keyboard on the Fruit Jam,
   or the serial console over the USB-C cable -- `screen /dev/cu.usbmodem… 115200`
   on a Mac, PuTTY on the board's COM port on Windows.
-- **For WiFi**: the ESP-Hosted firmware for the board's ESP32-C6, as one file
-  called `ehcp.bin`. See step 2.
+- **For WiFi**: `ehcp.bin`, the ESP-Hosted firmware for the board's ESP32-C6,
+  from the same release, with `ehcp-NOTICES.md` beside it. See step 2.
 
 ## 1. Put UbiqOS on the board
 
@@ -59,9 +59,17 @@ Espressif's ESP-Hosted instead: the chip becomes a radio and nothing more, and
 UbiqOS runs the network itself. Without it everything works except WiFi, and
 the network is the cable alone.
 
-**Building the file.** [`esp/fruitjam-c6/build.sh`](../esp/fruitjam-c6/build.sh)
-builds ESP-Hosted 3.0.7 with this board's wiring; it needs ESP-IDF 5.5 or later.
-It leaves four images, which go together into the one file the board reads:
+**The file** is `ehcp.bin` in the
+[latest release](https://github.com/ulso/ubiqos/releases/latest): ESP-Hosted
+3.0.7 built for this board's wiring, one merged image. It is Espressif's code,
+not UbiqOS's, and `ehcp-NOTICES.md` beside it -- also in the repository as
+[`esp/fruitjam-c6/NOTICES.md`](../esp/fruitjam-c6/NOTICES.md) -- says what is in
+it and under which licences.
+
+**To build it yourself** instead,
+[`esp/fruitjam-c6/build.sh`](../esp/fruitjam-c6/build.sh) builds the same thing;
+it needs ESP-IDF 5.5 or later. It leaves four images, which go together into
+the one file the board reads:
 
     esptool --chip esp32c6 merge_bin -o ehcp.bin \
         --flash_mode dio --flash_freq 80m --flash_size 4MB \

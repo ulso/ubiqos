@@ -39,11 +39,14 @@ names each one.
 
 ## Built separately
 
-The ESP32-C6 firmware is Espressif's ESP-Hosted, `esp-hosted-mcu`, under the
-Apache License 2.0. `esp/fruitjam-c6/build.sh` fetches and builds it; none of its
-source is in this tree, and UbiqOS's side of the protocol (`modules/ehspi`,
-`modules/ehrpc`) is written here from the protocol description. Whoever passes
-on a built `ehcp.bin` should include Espressif's `LICENSE` from that checkout.
+The ESP32-C6 firmware, `ehcp.bin`, is Espressif's ESP-Hosted built on ESP-IDF.
+None of its source is in this tree -- `esp/fruitjam-c6/build.sh` fetches and
+builds it -- and UbiqOS's side of the protocol (`modules/ehspi`,
+`modules/ehrpc`) is written here from the protocol description. Releases carry
+a built `ehcp.bin`, and with it `ehcp-NOTICES.md`
+([`esp/fruitjam-c6/NOTICES.md`](esp/fruitjam-c6/NOTICES.md)): what the image is
+built from, the components in it, and their licence texts. Those notices travel
+with `ehcp.bin`, as this file travels with a UF2.
 
 ## Licence texts
 
