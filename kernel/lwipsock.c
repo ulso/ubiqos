@@ -282,7 +282,16 @@ static int32_t do_send(int i, const uint8_t *buf, uint32_t len)
 static int32_t do_close(int i)
 {
     if (i < 0 || i >= NSOCK || !sk[i].used) return -1;
-    if (sk[i].pcb) {
+    if (sk[i].pcb && sk[i].pcb->state == LISTEN) {
+        // A listening pcb is the smaller tcp_pcb_listen, and lwIP asserts if
+        // it is given a recv or err callback -- clearing one included. That
+        // assertion is a panic here: the first `kill httpd` took the whole
+        // machine with it, from the reaper, because httpd's one socket is a
+        // listener. Its only callback is accept, and closing one cannot fail.
+        tcp_arg(sk[i].pcb, NULL);
+        tcp_accept(sk[i].pcb, NULL);
+        tcp_close(sk[i].pcb);
+    } else if (sk[i].pcb) {
         tcp_arg(sk[i].pcb, NULL);
         tcp_recv(sk[i].pcb, NULL);
         tcp_err(sk[i].pcb, NULL);
