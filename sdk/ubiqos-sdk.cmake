@@ -316,9 +316,7 @@ function(ubiqos_module_use_tls name)
             -fno-pic ${UBIQOS_MODULE_CFLAGS} -fno-common --specs=nano.specs -O2
             ${tls_config})
     endif()
-    target_sources(${name}_app PRIVATE
-        ${UBIQOS_ROOT}/lib/tls/ubiqos_tls.c
-        ${UBIQOS_ROOT}/lib/tls/ubiqos_tls_roots.c)
+    target_sources(${name}_app PRIVATE ${UBIQOS_ROOT}/lib/tls/ubiqos_tls.c)
     target_include_directories(${name}_app PRIVATE
         ${UBIQOS_ROOT}/lib/tls ${mbedtls_dir}/include)
     target_compile_options(${name}_app PRIVATE ${tls_config})

@@ -63,6 +63,14 @@
 // module that predates it has it clear.
 #define UBIQOS_ATTR_AUTOSTART 0x08
 
+// A data module that is plain data and not a device descriptor. At boot every
+// data module in flash was taken for a descriptor and given to the I/O manager;
+// one holding certificates would have been read as a device with a nonsense
+// name. This bit says "leave me alone": a program reaches it with
+// ubiqos_data_link instead. A kernel that predates it would misread such a
+// module, which is why it ships with the kernel that knows it.
+#define UBIQOS_ATTR_PLAIN     0x10
+
 // Which machine the code in a module is for, in the high nibble of type_lang's
 // low byte -- the language keeps the low nibble, as it did, and nothing has
 // ever read more than four bits of it.
@@ -866,6 +874,8 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 // What /sd/config.txt said. a0 says which setting, a1 and a2 are where to put
 // it -- except for the password, which is never handed out: asking for it says
 // only whether there is one. See kernel/config.c for why that is the shape.
+#define SYS_DATALINK  69u   // a0 = name, a1 = &size -> a0 = the data, 0 if none
+#define SYS_DATAUNLINK 70u  // a0 = what SYS_DATALINK returned
 #define SYS_CONFIG    68u   // a0 = UBIQOS_CFG_*, a1 = buffer, a2 = length
                             //   -> a0 = the length written, or for the password
                             //      1 when one is set and 0 when it is not
@@ -2643,6 +2653,31 @@ static inline const char *ubiqos_type_name(uint32_t type)
 {
     static const char names[5][4] = { "???", "PRG", "DRV", "DAT", "LIB" };
     return names[type < 5 ? type : 0];
+}
+
+// A data module's contents, by name: the bytes after its header, and how many.
+// The module is linked, so it stays where it is until unlinked -- a newer one
+// arriving from the card does not replace one in use. NULL when there is no
+// data module of that name. Read what is needed and unlink it again.
+//
+// Call ubiqos_loadmod first to ask the card for the name. A module there
+// replaces the one in flash only if its revision is higher, which is how data built
+// into a system -- certificates, say -- is brought up to date without
+// rebuilding anything: a newer revision on the card.
+static inline const void *ubiqos_data_link(const char *name, uint32_t *size)
+{
+    return (const void *)(uintptr_t)ubiqos_syscall(SYS_DATALINK, (uint32_t)(uintptr_t)name,
+                                                   (uint32_t)(uintptr_t)size, 0);
+}
+
+static inline void ubiqos_data_unlink(const void *data)
+{
+    (void)ubiqos_syscall(SYS_DATAUNLINK, (uint32_t)(uintptr_t)data, 0, 0);
+}
+
+static inline int32_t ubiqos_loadmod(const char *name)
+{
+    return ubiqos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)name, 0, 0);
 }
 
 static inline int32_t ubiqos_moddir_get(uint32_t index, ubiqos_modinfo_t *out)

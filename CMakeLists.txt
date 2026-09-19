@@ -1242,6 +1242,20 @@ endfunction()
 
 # A data module has no entry point: it IS its bytes.
 function(ubiqos_add_data_module name source)
+    # PLAIN: data for a program, not a device descriptor -- see UBIQOS_ATTR_PLAIN.
+    # REV n: the module revision, which is what lets a newer copy on the card
+    # replace this one without anything being rebuilt.
+    set(data_flags --data)
+    if("PLAIN" IN_LIST ARGN)
+        list(APPEND data_flags --plain)
+        list(REMOVE_ITEM ARGN "PLAIN")
+    endif()
+    list(FIND ARGN "REV" rev_at)
+    if(NOT rev_at EQUAL -1)
+        math(EXPR rev_value_at "${rev_at} + 1")
+        list(GET ARGN ${rev_value_at} rev_value)
+        list(APPEND data_flags --rev ${rev_value})
+    endif()
     add_executable(${name}_app ${source})
     target_compile_options(${name}_app PRIVATE
         -fno-pic ${UBIQOS_MODULE_CFLAGS} -fno-common -ffreestanding -nostdlib -O2)
@@ -1269,7 +1283,7 @@ function(ubiqos_add_data_module name source)
                 ${single_flag}
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}.mod
-                "${name}" --data
+                "${name}" ${data_flags}
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${name}_app.bin
                 ${CMAKE_CURRENT_SOURCE_DIR}/make_module.py
                 ${CMAKE_CURRENT_SOURCE_DIR}/common/ubiqos_abi.h
@@ -1585,6 +1599,10 @@ ubiqos_add_module(pwd modules/pwd/pwd.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
 ubiqos_module_use_tls(fetch)
+# The roots every TLS client trusts, as a data module of their own: one copy in
+# flash for all of them, and brought up to date by putting a higher revision on
+# the card. Raise REV whenever tools/make_roots.py changes the list.
+ubiqos_add_data_module(tlsroots modules/tlsroots/tlsroots.c PLAIN REV 1)
 ubiqos_add_module(rmdir modules/rmdir/rmdir.c)
 ubiqos_add_module(mount modules/mount/mount.c)
 ubiqos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
@@ -1729,6 +1747,7 @@ set(UBIQOS_RESIDENT
     pwd
     date
     fetch
+    tlsroots
     mount
 #    wifi
     font

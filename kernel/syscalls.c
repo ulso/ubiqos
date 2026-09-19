@@ -411,6 +411,27 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             return ubiqos_switch(sp);
+        case SYS_DATALINK: {
+            // F$Link without the fork, for a data module: its bytes, and the
+            // link that keeps them where they are until the caller lets go.
+            const char *stored = ubiqos_moddir_match((const char*)(uintptr_t)frame->a0);
+            const ubiqos_module_header_t *m = stored ? ubiqos_moddir_link(stored) : 0;
+            if (m && (m->type_lang >> 8) != UBIQOS_TYPE_DATA) {
+                ubiqos_moddir_unlink(m);
+                m = 0;
+            }
+            if (!m) { frame->a0 = 0; break; }
+            uint32_t *size = (uint32_t*)(uintptr_t)frame->a1;
+            if (size) *size = m->module_size - (uint32_t)sizeof(ubiqos_module_header_t);
+            frame->a0 = (uint32_t)(uintptr_t)m + (uint32_t)sizeof(ubiqos_module_header_t);
+            break;
+        }
+        case SYS_DATAUNLINK:
+            if (frame->a0 > sizeof(ubiqos_module_header_t))
+                ubiqos_moddir_unlink((const ubiqos_module_header_t*)(uintptr_t)
+                                     (frame->a0 - sizeof(ubiqos_module_header_t)));
+            frame->a0 = 0;
+            break;
         case SYS_LOADMOD:
             if (!fs_request(UBIQOS_MSG_FS_LOADMOD, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;

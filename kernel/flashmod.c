@@ -131,7 +131,10 @@ static uint32_t scan_region(uintptr_t p, uintptr_t stop)
         // where it lies and found by name when somebody runs it -- which is
         // what the sync word is for, and what keeps a directory of thirty-two
         // entries from bounding how many modules the system may have.
-        if ((m->type_lang >> 8) == UBIQOS_TYPE_DATA) {
+        // A plain data module is not a descriptor and waits to be asked for
+        // like a program, rather than taking one of the directory's slots.
+        if ((m->type_lang >> 8) == UBIQOS_TYPE_DATA
+                && !((m->attr_rev >> 8) & UBIQOS_ATTR_PLAIN)) {
             if (ubiqos_moddir_add_resident(m, name)) {
                 ubiqos_print("  descriptor ");
                 ubiqos_print(name);

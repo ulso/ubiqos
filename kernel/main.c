@@ -650,6 +650,7 @@ void ubiqos_kernel_main(void) {
     for (uint32_t i = 0; i < nmodules; i++) {
         const ubiqos_module_entry_t *e = ubiqos_moddir_entry(i);
         if ((e->header->type_lang >> 8) != UBIQOS_TYPE_DATA) continue;
+        if ((e->header->attr_rev >> 8) & UBIQOS_ATTR_PLAIN) continue;   // data, not a device
         ubiqos_print("Descriptor ");
         ubiqos_print(e->name);
         ubiqos_print("\n");

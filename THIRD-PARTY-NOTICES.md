@@ -26,9 +26,10 @@ so libgcc needs no notice. newlib is a collection of many small licences, nearly
 all BSD-style; the full list is `COPYING.NEWLIB` in the newlib sources, and in
 the Arm and RISC-V toolchains the Pico SDK installs.
 
-The root certificates built into the TLS client (`lib/tls/ubiqos_tls_roots.c`)
-are the certificate authorities' own published certificates, taken from macOS's
-trust store by `tools/make_roots.py`, which names each one.
+The root certificates the TLS client trusts (the `tlsroots` module,
+`modules/tlsroots/tlsroots.c`) are the certificate authorities' own published
+certificates, taken from macOS's trust store by `tools/make_roots.py`, which
+names each one.
 
 ## In this repository only
 

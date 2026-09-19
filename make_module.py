@@ -346,7 +346,7 @@ def collect_relocs(elf_path, nm_tool, load_base, image_len, header_size, bss_siz
 def create_module(input_bin_path, output_mod_path, module_name,
                   elf_path=None, nm_tool=None, entry_symbol="module_main",
                   revision=1, realtime=False, single=False,
-                  module_type="program", autostart=False):
+                  module_type="program", autostart=False, plain=False):
     with open(input_bin_path, "rb") as f:
         code_bytes = f.read()
 
@@ -468,6 +468,11 @@ def create_module(input_bin_path, output_mod_path, module_name,
         if module_type != "program":
             sys.exit(f"{module_name}: --autostart is for programs, not a {module_type}")
         attrs |= 8
+    # Bit 4: plain data, not a device descriptor -- see UBIQOS_ATTR_PLAIN.
+    if plain:
+        if module_type != "data":
+            sys.exit(f"{module_name}: --plain is for data modules, not a {module_type}")
+        attrs |= 0x10
 
     # Three reasons for one answer: writable data, addresses to fix, or a .bss
     # to zero. Any of them means the module cannot run where it lies.
@@ -545,7 +550,8 @@ if __name__ == "__main__":
     realtime  = "--rt" in argv
     single    = "--single" in argv
     autostart = "--autostart" in argv
-    argv = [a for a in argv if a not in ("--rt", "--single", "--autostart")]
+    plain     = "--plain" in argv
+    argv = [a for a in argv if a not in ("--rt", "--single", "--autostart", "--plain")]
 
     revision = 1
     if "--rev" in argv:
@@ -554,4 +560,4 @@ if __name__ == "__main__":
         del argv[i:i + 2]
 
     create_module(*argv, module_type=module_type, revision=revision,
-                  realtime=realtime, single=single, autostart=autostart)
+                  realtime=realtime, single=single, autostart=autostart, plain=plain)

@@ -5,11 +5,11 @@
 //   while ((n = ubiqos_tls_read(t, buf, sizeof buf, 5000)) > 0) ...
 //   ubiqos_tls_close(t);
 //
-// The server's certificate is checked against the roots built into the module
-// (lib/tls/ubiqos_tls_roots.c), plus any in /sd/certs.pem, and against the
-// host name. A connection that fails that check is not opened at all: there is
-// no way to ask for one anyway, because the one time that matters is the time
-// somebody would.
+// The server's certificate is checked against the roots in the tlsroots data
+// module (a newer revision on the card replaces the one in flash), plus any in
+// /sd/certs.pem, and against the host name. A connection that fails that
+// check is not opened at all: there is no way to ask for one anyway, because
+// the one time that matters is the time somebody would.
 //
 // Link it with ubiqos_module_use_tls(name) in CMake; the module must be NEWLIB.
 
