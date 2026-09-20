@@ -680,6 +680,11 @@ typedef struct {
 // That is the same arrangement modules/wifilib has had since the NINA days:
 // the caller asks to join, not to be told the password.
 #define UBIQOS_SS_EH_JOIN    0x0414u   // char[], "ssid\0password"
+// Join using the password in the key store, under the name "wifi.<ssid>".
+// data is the network name alone: the password goes from the store to the
+// driver inside the kernel, and no process sees it. -2 means there is no such
+// key, or the store is locked -- ask the keyboard instead.
+#define UBIQOS_SS_EH_JOIN_KEY 0x0416u   // char[], the ssid
 #define UBIQOS_SS_EH_JOINED  0x0415u   // getstat -> uint32_t: 0 idle, 1 trying,
                                        //   2 joined, 3 the last attempt failed
 
@@ -2701,7 +2706,9 @@ static inline int32_t ubiqos_loadmod(const char *name)
 // A board found switched off gives up nothing without the passphrase -- and a
 // board left running and unlocked gives up everything, which is what having no
 // memory protection means.
-#define UBIQOS_KEY_NAME_MAX   24
+// Long enough for "wifi." and a 32-character network name, which is the
+// longest an SSID may be.
+#define UBIQOS_KEY_NAME_MAX   40
 #define UBIQOS_KEY_VALUE_MAX  96
 
 #define UBIQOS_KEY_OP_COUNT   0u

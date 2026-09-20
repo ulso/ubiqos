@@ -23,8 +23,10 @@ static bool is(const char *a, const char *b) {
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
             "usage: wifi connect <ssid> | rssi | mode | ps\n\n"
-            "  connect <ssid>  join a network. The password is asked for,\n"
-            "                  never echoed and never an argument\n"
+            "  connect <ssid>  join a network. A password kept in the key store\n"
+            "                  under 'wifi.<ssid>' is used without asking; failing\n"
+            "                  that the password is asked for, never echoed and\n"
+            "                  never an argument\n"
             "  rssi            the access point's signal strength\n"
             "  mode, ps        which mode and power saving the radio is in\n\n"
             "The same as ehrpc, which does the work. To join at every boot\n"

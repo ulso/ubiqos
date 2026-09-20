@@ -72,6 +72,32 @@ nothing readable from it. So it happens in the filesystem server rather than
 in a system call, core 1 parks in a RAM loop first, and the new image is built
 in SRAM -- never in PSRAM, which shares the QMI bus with the flash.
 
+## The WiFi password
+
+A password kept under **`wifi.<network name>`** is what `wifi connect` uses:
+
+```
+ubiqos:/> key unlock
+ubiqos:/> key set wifi.my-network
+value:
+stored
+ubiqos:/> wifi connect my-network
+using the password kept for this network
+joining.....
+joined
+```
+
+The password goes from the store to the radio's driver inside the kernel. The
+`wifi` command asks for the network by name and never sees the bytes -- which
+is what "the kernel uses the key on your behalf" means, and it is the shape
+anything else the kernel can do for itself should take.
+
+With the store locked, or with no key for that network, `wifi connect` asks at
+the keyboard as it always has. `/sd/config.txt` is unchanged and is still what
+makes a board join by itself at boot: the store is sealed then, and nothing can
+open it until somebody types the passphrase. A board that must come back on its
+own after a power cut therefore still keeps its password on the card.
+
 ## Using a key
 
 The kernel reads the values; programs do not. Where the kernel can do the work

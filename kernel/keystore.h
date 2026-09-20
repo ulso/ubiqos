@@ -22,7 +22,7 @@
 
 // The name and value limits are the ABI's; the number of slots is what fits
 // in a sector once sealed.
-#define UBIQOS_KEY_SLOTS      30
+#define UBIQOS_KEY_SLOTS      28
 
 void     ubiqos_keys_init(void);           // read what is in flash, once
 uint32_t ubiqos_keys_state(void);          // UBIQOS_KEYS_EMPTY/LOCKED/OPEN

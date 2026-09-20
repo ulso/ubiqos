@@ -68,6 +68,10 @@ one `cat`, so it does not:
 
 * the kernel reads config.txt itself, through the FAT library, and hands the
   bytes to nothing;
+* the password can live in the key store instead, under `wifi.<network name>`,
+  and then it is not on the card at all -- see [keys.md](keys.md). It is sealed
+  there, so it is for a board somebody unlocks, not for one that must join by
+  itself at boot;
 * the filesystem server refuses to open or read that one path for any process.
   `cat` says "this one is not readable" -- a refusal has an answer of its own,
   `UBIQOS_FS_REFUSED`, precisely so it is not confused with a missing file;

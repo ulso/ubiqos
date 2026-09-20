@@ -404,7 +404,33 @@ static void do_peek(int32_t dev) {
 // THE PASSWORD IS TYPED AND NOWHERE ELSE. Not an argument -- argv lives in this
 // process's memory and the shell keeps sixteen lines of history -- not echoed,
 // and wiped before this returns.
+// Wait for the radio to say what happened, however the joining was asked for.
+static void watch_join(int32_t dev) {
+    say("joining");
+    for (int waited = 0; waited < 400; waited++) {
+        uint32_t state = 0;
+        ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof(state));
+        if (state == 2) { say("\r\njoined\r\n"); return; }
+        if (state == 3) { say("\r\nit did not join -- the console log says why\r\n"); return; }
+        if ((waited % 20) == 0) say(".");
+        ubiqos_sleep(100);
+    }
+    say("\r\nstill trying after forty seconds\r\n");
+}
+
 static void do_connect(int32_t dev, const char *ssid) {
+    // The key store first: a password kept under "wifi.<ssid>" goes from the
+    // store to the driver inside the kernel, and this program never sees it.
+    // -2 is "no such key, or the store is locked", and then the keyboard it is.
+    uint32_t n0 = 0;
+    while (ssid[n0]) n0++;
+    const int32_t stored = ubiqos_setstat(dev, UBIQOS_SS_EH_JOIN_KEY, ssid, n0 + 1);
+    if (stored == 0) {
+        say("using the password kept for this network\r\n");
+        watch_join(dev);
+        return;
+    }
+
     char creds[100];
     uint32_t n = 0;
     while (ssid[n] && n < 32) { creds[n] = ssid[n]; n++; }
@@ -431,17 +457,9 @@ static void do_connect(int32_t dev, const char *ssid) {
     for (uint32_t i = 0; i < sizeof(creds); i++) creds[i] = 0;
     if (r < 0) { say("the driver would not take it\r\n"); return; }
 
-    say("joining");
-    for (int waited = 0; waited < 400; waited++) {
-        uint32_t state = 0;
-        ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof(state));
-        if (state == 2) { say("\r\njoined\r\n"); return; }
-        if (state == 3) { say("\r\nit did not join -- the console log says why\r\n"); return; }
-        if ((waited % 20) == 0) say(".");
-        ubiqos_sleep(100);
-    }
-    say("\r\nstill trying after forty seconds\r\n");
+    watch_join(dev);
 }
+
 
 // Which power-saving mode the radio is actually in, as opposed to the one it
 // was told to be in. esp_wifi_set_ps answers ok whether or not the setting
@@ -516,10 +534,11 @@ void module_main(int argc, char **argv) {
             "  ps      which power-saving mode it is actually in\n"
             "  rssi    how strong the signal from the access point is\n"
             "  peek    whatever the chip has said that nobody has taken\n"
-            "  connect <ssid>  bring the radio up and join. The password is\n"
-            "          typed here, never echoed and never an argument -- and\n"
-            "          put it in /sd/config.txt to have the board do this\n"
-            "          for itself at boot\n")) return;
+            "  connect <ssid>  bring the radio up and join. A password kept in\n"
+            "          the key store as 'wifi.<ssid>' is used without asking and\n"
+            "          without this program seeing it; otherwise it is typed\n"
+            "          here, never echoed and never an argument. /sd/config.txt\n"
+            "          is what makes the board join by itself at boot\n")) return;
 
     bool mode = argc == 2 && is(argv[1], "mode");
     bool peek = argc == 2 && is(argv[1], "peek");

@@ -1,4 +1,5 @@
 #include "io.h"
+#include "keystore.h"
 #include "critical.h"
 #include "tusb.h"          // the CDC host class, for the acm driver
 #include "hardware/uart.h"
@@ -639,6 +640,37 @@ int32_t ubiqos_io_setstat(int32_t path, uint32_t code, const void *data, uint32_
     if (pipe_entry(path, owner_pid)) return -1;
     ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p || !p->device->driver->setstat) return -1;
+
+    // "Join this network with the password you are keeping for it." The
+    // password goes from the key store to the driver without leaving the
+    // kernel: a process asks by name and never sees the bytes, which is the
+    // whole point of the store. Anything else goes straight through.
+    if (code == UBIQOS_SS_EH_JOIN_KEY) {
+        const char *ssid = data;
+        if (!ssid || !len || !ssid[0]) return -1;
+
+        char name[UBIQOS_KEY_NAME_MAX];
+        uint32_t n = 0;
+        for (const char *k = "wifi."; *k; k++) name[n++] = *k;
+        for (uint32_t i = 0; i < len && ssid[i] && n < sizeof name - 1; i++) name[n++] = ssid[i];
+        name[n] = 0;
+
+        uint32_t plen = 0;
+        const uint8_t *pass = ubiqos_keys_value(name, &plen);
+        if (!pass) return -2;                   // no such key, or locked
+
+        char creds[UBIQOS_KEY_NAME_MAX + UBIQOS_KEY_VALUE_MAX + 2];
+        uint32_t c = 0;
+        for (uint32_t i = 0; i < len && ssid[i] && c < sizeof creds - 2; i++) creds[c++] = ssid[i];
+        creds[c++] = 0;
+        for (uint32_t i = 0; i < plen && c < sizeof creds - 1; i++) creds[c++] = (char)pass[i];
+        creds[c++] = 0;
+
+        const int32_t rc = p->device->driver->setstat(UBIQOS_SS_EH_JOIN, creds, c);
+        for (uint32_t i = 0; i < sizeof creds; i++) creds[i] = 0;
+        return rc;
+    }
+
     return p->device->driver->setstat(code, data, len);
 }
 
