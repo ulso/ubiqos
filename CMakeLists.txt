@@ -287,6 +287,7 @@ add_executable(os_kernel
     kernel/tmpfs.c
     kernel/varfs.c
     kernel/memcmp.c
+    kernel/keystore.c
     kernel/main.c 
     kernel/tlsf.c
     kernel/scheduler.c 
@@ -354,7 +355,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
 target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardware_uart hardware_gpio hardware_spi pico_time
-    pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram
+    pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram hardware_flash
     hardware_pwm
     hardware_i2c hardware_adc ${ubiqosUsbLibrary})
 
@@ -472,7 +473,9 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # Worth writing down because the next change will do it again. The
         # number to watch is not how much was added but how close `end` is to
         # the next page -- and check_heap is what notices.
-        set(ubiqosHeapKB 36)
+        # 32 since 20 Sep 2026: that day's kernel additions, the key store
+        # among them, left the riscv framebuffer build 772 bytes of C heap.
+        set(ubiqosHeapKB 32)
     else()
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
@@ -509,7 +512,11 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # (kernel/lwipdhcpd.c, 1.3 kB of code on RISC-V): with it the riscv
         # chargen C heap was 2640 bytes and check_heap refused the link. The
         # Fruit Jam's `free` showed 58 kB of this pool unused at the time.
-        set(ubiqosHeapKB 116)
+        #
+        # 112 since 20 Sep 2026, for the key store and the rest of that day's
+        # kernel: the riscv chargen heap was down to 2624 bytes. The pool is
+        # still far larger than anything has used.
+        set(ubiqosHeapKB 112)
     endif()
 else()
     set(ubiqosHeapKB ${UBIQOS_HEAP_KB})
@@ -1597,6 +1604,7 @@ target_include_directories(lwipd_app PRIVATE
 #
 
 ubiqos_add_module(pwd modules/pwd/pwd.c)
+ubiqos_add_module(key modules/key/key.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
 ubiqos_module_use_tls(fetch)
@@ -1750,6 +1758,7 @@ set(UBIQOS_RESIDENT
     tlsroots
     mount
     wifi
+    key
     font
     color
     kill

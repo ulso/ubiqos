@@ -27,6 +27,7 @@
 #include "usbdev.h"
 #include "sdcard.h"
 #include "moddir.h"
+#include "keystore.h"
 #include "flashmod.h"
 #include "tlsf.h"
 #include "config.h"
@@ -166,6 +167,13 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
         make_abs(from, (const char*)m->data, abs, sizeof(abs));
         VOLUME_OR_FAIL(remove);
         return ops->remove(rest) ? 0 : -1;
+    }
+    case UBIQOS_MSG_FS_KEYSET: {
+        // Here rather than in the trap: an erase holds the flash for tens of
+        // milliseconds, and this thread can afford that while a trap cannot.
+        ubiqos_keyreq_t *r = (ubiqos_keyreq_t*)m->data;
+        return r->len ? ubiqos_keys_set(r->name, r->value, r->len)
+                      : ubiqos_keys_remove(r->name);
     }
     case UBIQOS_MSG_FS_RENAME: {
         const ubiqos_fs_rename_t *r = (const ubiqos_fs_rename_t*)m->data;

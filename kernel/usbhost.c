@@ -12,6 +12,7 @@
 #include "chargen.h"
 #include "hardware/sync.h"
 #include "pico/multicore.h"
+#include "keystore.h"
 
 void ubiqos_print(const char *s);
 void ubiqos_print_u32(uint32_t v);
@@ -199,6 +200,7 @@ static void core1_main(void)
         core1_beats++;
         core1_last_ms = tusb_time_millis_api();
 
+        ubiqos_keys_park_here();     // core 0 wants the flash to itself
         tuh_task();
         ubiqos_usbhost_repeat();
         ubiqos_usbhost_rearm();
@@ -208,6 +210,7 @@ static void core1_main(void)
 
 void ubiqos_usbhost_start_core1(void)
 {
+    ubiqos_keys_core1_running = true;
     multicore_launch_core1(core1_main);
 }
 

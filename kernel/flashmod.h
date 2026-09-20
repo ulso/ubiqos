@@ -23,6 +23,18 @@
 #define UBIQOS_FLASH_APP_BASE    0x10800000u
 #define UBIQOS_FLASH_END         0x11000000u
 
+// The key store: two 4 kB sectors, written alternately so that losing power in
+// the middle of a write leaves the older copy whole. It is the one thing in
+// flash that must survive a system update, so it sits past the application
+// region rather than inside anything a UF2 writes.
+//
+// NOT in the last sector, deliberately. A UF2 built here carries an
+// RP2350-E10 block addressed at 0x10ffff00, and the boot ROM writes it -- so
+// the last sector is erased every time a system is copied onto the board, and
+// anything kept there would go with it.
+#define UBIQOS_FLASH_KEYS_BASE   0x10FE0000u
+#define UBIQOS_FLASH_KEYS_SIZE   0x2000u
+
 // Scan the flash region for module headers and register what is found as
 // resident modules. They run where they lie and are never copied -- exactly
 // what OS-9 did with ROM modules, and the reason a module system needs no

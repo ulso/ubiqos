@@ -16,6 +16,7 @@ int32_t ubiqos_console_trace_at(uint32_t offset);
 #include "moddir.h"
 #include "tlsf.h"
 #include "crashlog.h"
+#include "keystore.h"
 #include "hardware/structs/rosc.h"
 #include "hardware/structs/trng.h"
 #include "hardware/resets.h"
@@ -411,6 +412,31 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             return ubiqos_switch(sp);
+        case SYS_KEYS: {
+            // Reading is cheap and answered here. Writing erases a sector, so
+            // it goes to the filesystem server like every other long job --
+            // the caller blocks in send, and the trap is over in a moment.
+            ubiqos_keyreq_t *r = (ubiqos_keyreq_t*)(uintptr_t)frame->a1;
+            if (!r) { frame->a0 = (uint32_t)-1; break; }
+            switch (frame->a0) {
+            case UBIQOS_KEY_OP_COUNT:
+                frame->a0 = ubiqos_keys_count();
+                break;
+            case UBIQOS_KEY_OP_NTH:
+                frame->a0 = ubiqos_keys_nth(r->index, r->name, &r->len) ? 0u : (uint32_t)-1;
+                break;
+            case UBIQOS_KEY_OP_PRINT:
+                frame->a0 = ubiqos_keys_fingerprint(r->name, &r->fingerprint) ? 0u : (uint32_t)-1;
+                break;
+            case UBIQOS_KEY_OP_SET:
+                if (!fs_request(UBIQOS_MSG_FS_KEYSET, r)) { frame->a0 = (uint32_t)-1; break; }
+                return ubiqos_switch(sp);
+            default:
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            break;
+        }
         case SYS_DATALINK: {
             // F$Link without the fork, for a data module: its bytes, and the
             // link that keeps them where they are until the caller lets go.

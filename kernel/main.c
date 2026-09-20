@@ -10,6 +10,7 @@
 #include "fat32.h"
 #include "moddir.h"
 #include "flashmod.h"
+#include "keystore.h"
 #include "pico/bootrom.h"
 #include "pico/unique_id.h"
 #include "hardware/watchdog.h"
@@ -538,6 +539,7 @@ void ubiqos_kernel_main(void) {
     // After the bulk pool, not with the other volumes: /tmp puts its files in
     // PSRAM, and there is no PSRAM to put them in until now.
     { extern void ubiqos_tmpfs_init(void); ubiqos_tmpfs_init(); }
+    ubiqos_keys_init();
     ubiqos_pio_probe();
     // The network device's MAC, from the chip's own unique id, so that two of
     // these boards on one desk do not answer to the same address.

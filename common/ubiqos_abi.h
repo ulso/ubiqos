@@ -876,6 +876,7 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 // only whether there is one. See kernel/config.c for why that is the shape.
 #define SYS_DATALINK  69u   // a0 = name, a1 = &size -> a0 = the data, 0 if none
 #define SYS_DATAUNLINK 70u  // a0 = what SYS_DATALINK returned
+#define SYS_KEYS      71u   // a0 = UBIQOS_KEY_OP_*, a1 = &ubiqos_keyreq_t
 #define SYS_CONFIG    68u   // a0 = UBIQOS_CFG_*, a1 = buffer, a2 = length
                             //   -> a0 = the length written, or for the password
                             //      1 when one is set and 0 when it is not
@@ -1092,6 +1093,10 @@ typedef struct {
 #define UBIQOS_MSG_FS_EXEC   15u   // data = ubiqos_fs_exec_t -> the new pid
 #define UBIQOS_MSG_FS_SEEK   16u   // data = ubiqos_fs_seek_t
 #define UBIQOS_MSG_FS_RENAME 17u   // data = ubiqos_fs_rename_t
+// Writing the key store erases a flash sector, which takes tens of
+// milliseconds with the flash unreadable throughout. That is the filesystem
+// server's kind of work -- long, and not to be done in a trap.
+#define UBIQOS_MSG_FS_KEYSET 18u   // data = ubiqos_keyreq_t
 
 // How long a name a directory listing may hand back, terminator included. FAT's
 // 8.3 needed twelve; VFAT's long names are read now, and ".wasm" alone does not
@@ -2678,6 +2683,39 @@ static inline void ubiqos_data_unlink(const void *data)
 static inline int32_t ubiqos_loadmod(const char *name)
 {
     return ubiqos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)name, 0, 0);
+}
+
+// --- the key store ----------------------------------------------------------
+//
+// Named secrets in flash: the WiFi password, an API key -- what must not sit
+// on the card in clear text. A value goes in and does not come out. There is
+// no call that returns one: the kernel keeps them for its own use, the way it
+// already keeps the password in /sd/config.txt from every process. What a
+// program may have is the names, the lengths, and a fingerprint to compare
+// with the one whoever owns the key has written down.
+//
+// Nothing is encrypted yet; lock and unlock come next. Until then this keeps
+// a secret off the card and out of argv, the shell's history and any log --
+// which is where secrets are actually lost.
+#define UBIQOS_KEY_NAME_MAX   24
+#define UBIQOS_KEY_VALUE_MAX  96
+
+#define UBIQOS_KEY_OP_COUNT   0u
+#define UBIQOS_KEY_OP_NTH     1u
+#define UBIQOS_KEY_OP_SET     2u   // len 0 removes
+#define UBIQOS_KEY_OP_PRINT   3u   // the fingerprint, not the value
+
+typedef struct {
+    char     name[UBIQOS_KEY_NAME_MAX];
+    uint32_t index;                    // for NTH
+    uint32_t len;                      // in for SET, out for NTH
+    uint32_t fingerprint;              // out for PRINT
+    uint8_t  value[UBIQOS_KEY_VALUE_MAX];
+} ubiqos_keyreq_t;
+
+static inline int32_t ubiqos_key_op(uint32_t op, ubiqos_keyreq_t *r)
+{
+    return ubiqos_syscall(SYS_KEYS, op, (uint32_t)(uintptr_t)r, 0);
 }
 
 static inline int32_t ubiqos_moddir_get(uint32_t index, ubiqos_modinfo_t *out)
