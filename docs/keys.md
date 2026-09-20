@@ -24,7 +24,8 @@ ubiqos:/> key check typesafe.api
 fingerprint 0x2e0a1877
 ```
 
-`key lock` seals it again, `key remove NAME` forgets one key, and
+`key lock` seals it again, `key remove NAME` forgets one key (see
+[Taking one out](#taking-one-out) for what "forgets" is worth), and
 `key destroy` erases the store, passphrase and all.
 
 ## What it protects, and what it does not
@@ -71,6 +72,31 @@ Writing means erasing, which holds the flash for tens of milliseconds with
 nothing readable from it. So it happens in the filesystem server rather than
 in a system call, core 1 parks in a RAM loop first, and the new image is built
 in SRAM -- never in PSRAM, which shares the QMI bus with the flash.
+
+## Taking one out
+
+`key remove NAME` takes a single key out. There is nothing partial about it
+afterwards -- the name is gone from the listing, `key check` says there is no
+such key, and it is still gone after a power cut, because what happens is not
+an edit but a rewrite: the slot is cleared in SRAM and the whole store is
+sealed again into the OTHER of the two sectors, which then becomes the live
+one. Nothing can be edited in place here; the names are inside the ciphertext
+with the values. If the write fails, the key goes back into the SRAM copy, so
+the listing and the flash cannot end up saying different things.
+
+**The sector that was live still holds the older sealed copy, key and all.**
+It is ciphertext and the passphrase is what opens it, so this is not a hole so
+much as a lifetime: it lasts until the next write, which erases that sector
+before using it. Any write will do -- another `key set`, another `key remove`.
+So a key that has to be gone from the chip rather than merely gone from the
+store is gone after the next write, and `key destroy` erases both sectors at
+once.
+
+Nothing stops one module from removing a key that another put there. There is
+no owner recorded and no permission asked: `key remove` is `key set` with a
+length of zero, and while there is no memory protection a module that wanted to
+could do it anyway. It is the same fact as the one above about an unlocked
+board, seen from the writing side.
 
 ## The WiFi password
 
