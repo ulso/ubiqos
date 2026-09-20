@@ -42,6 +42,16 @@ void ubiqos_print(const char *s);
 
 #define CONFIG_PATH "config.txt"
 
+// The network's name and password, kept apart from everything else.
+//
+// They were in config.txt and are still read from there, because cards exist
+// that were written before this file did and a board that stops joining after
+// a software update is a bad trade for tidiness. This one is read afterwards
+// and wins. What it buys is that the file holding the secret can be handled as
+// one thing -- taken out, replaced, and one day written sealed -- while the
+// settings that are nobody's secret stay in a file anybody may read.
+#define WIFI_PATH "wificfg.txt"
+
 static char host[32] = "ubiqos";
 static char ssid[33];
 static char pass[64];
@@ -217,13 +227,13 @@ static void take_line(char *l, uint32_t n) {
 
 // The reading itself. ubiqos_config_read wraps it and is the only thing that
 // says the card has been looked at -- see the note there.
-static void read_the_file(void)
+static bool read_the_file(const char *path)
 {
     const ubiqos_fsops_t *ops = ubiqos_fat_ops_ptr();
-    if (!ops || !ops->read_at) return;
+    if (!ops || !ops->read_at) return false;
 
     uint32_t size = 0;
-    if (ubiqos_fat_stat(CONFIG_PATH, &size) < 0) return;   // no file, nothing to say
+    if (ubiqos_fat_stat(path, &size) < 0) return false;    // no file, nothing to say
 
     // Read in pieces and assemble lines, rather than the whole file at once:
     // this runs on the filesystem server's four kilobytes of stack, and a
@@ -235,7 +245,7 @@ static void read_the_file(void)
     bool overlong = false;
 
     while (at < size) {
-        int32_t got = ops->read_at(CONFIG_PATH, at, chunk, sizeof(chunk));
+        int32_t got = ops->read_at(path, at, chunk, sizeof(chunk));
         if (got <= 0) break;
         at += (uint32_t)got;
         for (int32_t i = 0; i < got; i++) {
@@ -250,17 +260,26 @@ static void read_the_file(void)
         }
     }
     if (fill && !overlong) take_line(line, fill);        // no newline at the end
+    return true;
+}
+
+void ubiqos_config_read(void)
+{
+    read_the_file(CONFIG_PATH);
+
+    // And then the network's own file, which wins: a card that has both is one
+    // where the credentials have been moved out and the old lines forgotten,
+    // and the file that was written on purpose is the one to believe.
+    const bool named_by_config = ssid[0] != 0;
+    const bool has_wifi_file   = read_the_file(WIFI_PATH);
 
     ubiqos_print("config: hostname ");
     ubiqos_print(host);
     if (!ssid[0])       ubiqos_print(", no network named\n");
     else if (!pass[0])  ubiqos_print(", a network but no password\n");
+    else if (named_by_config && !has_wifi_file)
+                        ubiqos_print(", network and password (from config.txt)\n");
     else                ubiqos_print(", network and password\n");
-}
-
-void ubiqos_config_read(void)
-{
-    read_the_file();
 
     // LAST, and this is the whole point of the wrapper.
     //

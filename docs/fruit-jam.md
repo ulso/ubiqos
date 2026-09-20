@@ -99,20 +99,28 @@ The details, and how this came to work, are in
 
 ## 3. Tell the board which network to join
 
-Create `config.txt` in the root of the card:
+Create two files in the root of the card. `config.txt`, for what the machine
+is:
 
     hostname = fruit-jam
+
+and `wificfg.txt`, for the network it joins:
+
     ssid     = your-network
     password = your-password
 
-- The password is in clear text on the card. UbiqOS never hands the file to a
-  program or to the web server, but whoever holds the card can read it.
+- The password is in clear text on the card. UbiqOS never hands either file to
+  a program or to the web server, but whoever holds the card can read it.
+- Both lines may also go in `config.txt`, which is where they used to live and
+  where they are still read from. A card that has both is believed on
+  `wificfg.txt`.
 - A `#` directly after a space starts a comment. In the middle of a word it is
   an ordinary character.
 - Without `hostname` the board is called `ubiqos` on the network.
-- With no card, or a `config.txt` without a password, join by hand with
+- With no card, or with no password anywhere, join by hand with
   `wifi connect your-network`. The password is asked for and not shown. It is
-  not kept either, so it is asked for again after every start.
+  not kept either, so it is asked for again after every start -- unless it is
+  in the key store, which is [docs/keys.md](keys.md).
 
 All the keys, and why they behave as they do, are in [docs/config.md](config.md).
 

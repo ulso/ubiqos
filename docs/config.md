@@ -1,13 +1,27 @@
-# /sd/config.txt
+# /sd/config.txt and /sd/wificfg.txt
 
 What this machine is called, and what network it belongs to. Read once at boot,
 by the filesystem server, as soon as the card is up and before `/sd/startup`
 runs.
 
-    # ubiqos
+    # /sd/config.txt -- what this machine is
     hostname = jamboree
+    timezone = +2
+
+    # /sd/wificfg.txt -- what network it joins
     ssid     = the-network
     password = ...
+
+**Two files, because one of them is a secret.** The network's name and password
+were in config.txt and are still read from there, so a card written before this
+split keeps working. `wificfg.txt` is read afterwards and wins. What the split
+buys is that the file holding the password can be handled as one thing -- taken
+out, replaced, put back -- while the settings nobody needs to hide stay in a
+file that can be read, copied and shown.
+
+Both are refused to processes all the same, because either may hold the
+password. A card with the credentials in both files says so at boot, by naming
+the one it used.
 
 Keys are case-insensitive and a value runs to the end of the line with the
 spaces either side trimmed.
@@ -66,15 +80,17 @@ echoed, never an argument, never over the serial port. (Since the ESP32-C6 runs
 ESP-Hosted, `wifi` is a front for `ehrpc`, which asks.) A file could undo all of that in
 one `cat`, so it does not:
 
-* the kernel reads config.txt itself, through the FAT library, and hands the
+* the kernel reads both files itself, through the FAT library, and hands the
   bytes to nothing;
 * the password can live in the key store instead, under `wifi.<network name>`,
   and then it is not on the card at all -- see [keys.md](keys.md). It is sealed
   there, so it is for a board somebody unlocks, not for one that must join by
   itself at boot;
-* the filesystem server refuses to open or read that one path for any process.
-  `cat` says "this one is not readable" -- a refusal has an answer of its own,
-  `UBIQOS_FS_REFUSED`, precisely so it is not confused with a missing file;
+* the filesystem server refuses to open or read those two paths for any
+  process. `cat` says "this one is not readable" -- a refusal has an answer of
+  its own, `UBIQOS_FS_REFUSED`, precisely so it is not confused with a missing
+  file. Both paths, not just the old one: a rule that covered only config.txt
+  would have made the new file the hole;
 * writing is still allowed, so an editor can replace it, and so is `rm`;
 * the board joins the network named there by itself at boot. The kernel hands
   the password to the WiFi driver, which does the joining, so no process ever
@@ -101,6 +117,6 @@ says what it found --
 
 -- and leaves it there. `wifi connect` in `/sd/startup` is not the way to fill
 the gap either: that shell's standard input is the script, so a prompt would
-read the next line of the file. Put both settings in config.txt for a machine
+read the next line of the file. Put both settings in wificfg.txt for a machine
 that should connect by itself, and type `wifi connect <ssid>` at whatever
 console you have for a machine that should not.

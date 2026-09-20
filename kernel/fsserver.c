@@ -126,15 +126,18 @@ static void drop_card_if_dead(void) {
     ubiqos_print("SD: the card stopped answering; /sd is unmounted\n");
 }
 
-// The one file a process may not read. The kernel reads it at boot -- see
-// kernel/config.c -- and what is in it is a password, so `cat /sd/config.txt`
+// The files a process may not read. The kernel reads them at boot -- see
+// kernel/config.c -- and what is in them is a password, so `cat /sd/config.txt`
 // must not be the way round the rule that a password is typed and never shown.
 //
-// Writing is still allowed, so an editor can replace it, and so is removing it.
+// Both, not one: the network's credentials moved to /sd/wificfg.txt and are
+// still read from config.txt for cards written before that. A rule that
+// covered only the old place would have made the new one the hole.
+//
+// Writing is still allowed, so an editor can replace them, and so is removing.
 // This is not a permission system: UbiqOS has no users to have permissions. It
-// is one path with one rule, which is what the one secret on the card needs.
-static bool is_secret(const char *abs) {
-    static const char *secret = "/sd/config.txt";
+// is two paths with one rule, which is what the secrets on the card need.
+static bool is_path(const char *abs, const char *secret) {
     uint32_t i = 0;
     for (; secret[i]; i++) {
         char c = abs[i];
@@ -142,6 +145,10 @@ static bool is_secret(const char *abs) {
         if (c != secret[i]) return false;
     }
     return abs[i] == 0;
+}
+
+static bool is_secret(const char *abs) {
+    return is_path(abs, "/sd/config.txt") || is_path(abs, "/sd/wificfg.txt");
 }
 
 static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
