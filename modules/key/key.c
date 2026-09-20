@@ -2,10 +2,16 @@
 
 // key -- what the board keeps secret.
 //
+//   key unlock          type the passphrase; the store opens until the power goes
+//   key lock            forget it again
 //   key                 the names, and how long each value is
 //   key set NAME        type the value; it is not shown
 //   key remove NAME
 //   key check NAME      a fingerprint, to compare with the one you have
+//
+// The store is sealed: locked, there is nothing to list, because the names are
+// inside the ciphertext with the values. The first unlock on a board with no
+// store makes one, and what is typed then is the passphrase from then on.
 //
 // The value is typed here and nowhere else: not as an argument, because argv
 // is a process's memory and the shell keeps sixteen lines of history; not
@@ -31,6 +37,55 @@ static void copy_name(char *dst, const char *src) {
     dst[i] = 0;
 }
 
+// The passphrase or a value: read a character at a time, never drawn.
+// Ctrl-C abandons it.
+static uint32_t ask(const char *what, uint8_t *out, uint32_t cap) {
+    say(what);
+    uint32_t n = 0;
+    for (;;) {
+        uint8_t ch;
+        if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
+        if (ch == '\r' || ch == '\n') break;
+        if (ch == 3) { n = 0; break; }
+        if (ch == 8 || ch == 127) { if (n) n--; continue; }
+        if (ch >= ' ' && n < cap) out[n++] = ch;
+    }
+    say("\r\n");
+    return n;
+}
+
+static bool locked(void) {
+    ubiqos_keyreq_t r;
+    const int32_t st = ubiqos_key_op(UBIQOS_KEY_OP_STATE, &r);
+    if (st == (int32_t)UBIQOS_KEYS_OPEN) return false;
+    say(st == (int32_t)UBIQOS_KEYS_EMPTY
+            ? "no store yet -- 'key unlock' makes one\r\n"
+            : "the store is locked -- 'key unlock' opens it\r\n");
+    return true;
+}
+
+static void unlock(void) {
+    ubiqos_keyreq_t r;
+    for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
+    const int32_t st = ubiqos_key_op(UBIQOS_KEY_OP_STATE, &r);
+    if (st == (int32_t)UBIQOS_KEYS_OPEN) { say("already unlocked\r\n"); return; }
+    if (st == (int32_t)UBIQOS_KEYS_EMPTY)
+        say("no store yet: what you type now becomes the passphrase.\r\n");
+
+    r.len = ask("passphrase: ", r.value, sizeof r.value);
+    if (!r.len) { say("nothing typed\r\n"); return; }
+    say("working");                       // PBKDF2 takes about a second
+    const int32_t rc = ubiqos_key_op(UBIQOS_KEY_OP_UNLOCK, &r);
+    for (uint32_t i = 0; i < sizeof r.value; i++) r.value[i] = 0;
+    say("\r\n");
+
+    if (rc == 0)       say("unlocked\r\n");
+    else if (rc == 1)  say("a new store, unlocked\r\n");
+    else if (rc == -6) say("key: that is not the passphrase, or the store has been changed\r\n");
+    else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
+    else               say("key: could not open the store\r\n");
+}
+
 static void list(void) {
     ubiqos_keyreq_t r;
     const int32_t n = ubiqos_key_op(UBIQOS_KEY_OP_COUNT, &r);
@@ -54,39 +109,59 @@ static void list(void) {
     }
 }
 
-// The value, read a character at a time and never drawn. Ctrl-C abandons it.
-static uint32_t ask(uint8_t *out, uint32_t cap) {
-    say("value: ");
-    uint32_t n = 0;
-    for (;;) {
-        uint8_t ch;
-        if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
-        if (ch == '\r' || ch == '\n') break;
-        if (ch == 3) { n = 0; break; }
-        if (ch == 8 || ch == 127) { if (n) n--; continue; }
-        if (ch >= ' ' && n < cap) out[n++] = ch;
-    }
-    say("\r\n");
-    return n;
-}
-
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: key [set NAME | remove NAME | check NAME]\n\n"
+            "usage: key [unlock | lock | set NAME | remove NAME | check NAME]\n\n"
+            "  unlock        type the passphrase; on a board with no store yet,\n"
+            "                what you type becomes the passphrase\n"
+            "  lock          forget it; the store is sealed again\n"
+            "  destroy       erase the store: every key and the passphrase\n"
             "  (none)        the names of the keys stored, and their lengths\n"
             "  set NAME      type the value; it is not shown and never an argument\n"
             "  remove NAME   forget it\n"
             "  check NAME    a fingerprint of the value, to compare with your own\n\n"
-            "Values cannot be read back. They are kept in flash, outside anything\n"
-            "a system update writes, and the kernel uses them on a program's\n"
-            "behalf rather than handing them over.\n"))
+            "Values cannot be read back. The store is sealed in flash, outside\n"
+            "anything a system update writes, and is opened by a passphrase --\n"
+            "which must be typed again after every power-up, because the key\n"
+            "derived from it is kept only in RAM.\n"))
         return;
 
-    if (argc == 1) { list(); return; }
+    if (argc == 2 && is(argv[1], "unlock")) { unlock(); return; }
+    if (argc == 2 && is(argv[1], "destroy")) {
+        ubiqos_keyreq_t r;
+        for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
+        say("This erases every key and the passphrase. Type 'destroy' to go on: ");
+        uint8_t answer[16];
+        uint32_t n = 0;
+        for (;;) {
+            uint8_t ch;
+            if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
+            if (ch == '\r' || ch == '\n') break;
+            if (ch == 3) { n = 0; break; }
+            if (ch >= ' ' && n < sizeof answer - 1) { answer[n++] = ch; ubiqos_write(UBIQOS_STDOUT, &ch, 1); }
+        }
+        answer[n] = 0;
+        say("\r\n");
+        if (!is((const char *)answer, "destroy")) { say("left alone\r\n"); return; }
+        say(ubiqos_key_op(UBIQOS_KEY_OP_DESTROY, &r) == 0 ? "destroyed\r\n"
+                                                          : "key: the erase did not take\r\n");
+        return;
+    }
+    if (argc == 2 && is(argv[1], "lock")) {
+        ubiqos_keyreq_t r;
+        ubiqos_key_op(UBIQOS_KEY_OP_LOCK, &r);
+        say("locked\r\n");
+        return;
+    }
+    if (argc == 1) { if (!locked()) list(); return; }
     const bool set = argc == 3 && is(argv[1], "set");
     const bool rem = argc == 3 && is(argv[1], "remove");
     const bool chk = argc == 3 && is(argv[1], "check");
-    if (!set && !rem && !chk) { say("usage: key [set NAME | remove NAME | check NAME]\r\n"); return; }
+    if (!set && !rem && !chk) {
+        say("usage: key [unlock | lock | destroy | set NAME | remove NAME | check NAME]\r\n");
+        return;
+    }
+    if (locked()) return;
 
     ubiqos_keyreq_t r;
     for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
@@ -104,7 +179,7 @@ void module_main(int argc, char **argv) {
     }
 
     if (set) {
-        r.len = ask(r.value, sizeof r.value);
+        r.len = ask("value: ", r.value, sizeof r.value);
         if (!r.len) { say("nothing typed\r\n"); return; }
     }
 
@@ -114,6 +189,7 @@ void module_main(int argc, char **argv) {
     for (uint32_t i = 0; i < sizeof r.value; i++) r.value[i] = 0;
 
     if (rc == 0)       say(set ? "stored\r\n" : "removed\r\n");
+    else if (rc == -5) say("key: the store is locked\r\n");
     else if (rc == -1) say("key: no such key, or the value is too long\r\n");
     else if (rc == -2) say("key: the store is full\r\n");
     else if (rc == -3) say("key: the other core would not stand still; try again\r\n");

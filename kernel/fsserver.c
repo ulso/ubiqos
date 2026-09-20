@@ -172,6 +172,12 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
         // Here rather than in the trap: an erase holds the flash for tens of
         // milliseconds, and this thread can afford that while a trap cannot.
         ubiqos_keyreq_t *r = (ubiqos_keyreq_t*)m->data;
+        if (r->op == UBIQOS_KEY_OP_DESTROY) return ubiqos_keys_destroy();
+        if (r->op == UBIQOS_KEY_OP_UNLOCK) {
+            const int32_t rc = ubiqos_keys_unlock(r->value, r->len);
+            for (uint32_t i = 0; i < sizeof r->value; i++) r->value[i] = 0;
+            return rc;
+        }
         return r->len ? ubiqos_keys_set(r->name, r->value, r->len)
                       : ubiqos_keys_remove(r->name);
     }

@@ -2694,9 +2694,13 @@ static inline int32_t ubiqos_loadmod(const char *name)
 // program may have is the names, the lengths, and a fingerprint to compare
 // with the one whoever owns the key has written down.
 //
-// Nothing is encrypted yet; lock and unlock come next. Until then this keeps
-// a secret off the card and out of argv, the shell's history and any log --
-// which is where secrets are actually lost.
+// The store is sealed with a passphrase: ChaCha20-Poly1305 over the lot, with
+// the key from PBKDF2 over the passphrase and the chip's own id. `key unlock`
+// asks for the passphrase once after each power-up and keeps the derived key
+// in SRAM, where nothing survives the power going off; `key lock` wipes it.
+// A board found switched off gives up nothing without the passphrase -- and a
+// board left running and unlocked gives up everything, which is what having no
+// memory protection means.
 #define UBIQOS_KEY_NAME_MAX   24
 #define UBIQOS_KEY_VALUE_MAX  96
 
@@ -2704,11 +2708,22 @@ static inline int32_t ubiqos_loadmod(const char *name)
 #define UBIQOS_KEY_OP_NTH     1u
 #define UBIQOS_KEY_OP_SET     2u   // len 0 removes
 #define UBIQOS_KEY_OP_PRINT   3u   // the fingerprint, not the value
+#define UBIQOS_KEY_OP_UNLOCK  4u   // value = the passphrase
+#define UBIQOS_KEY_OP_LOCK    5u
+#define UBIQOS_KEY_OP_STATE   6u   // -> UBIQOS_KEYS_*
+#define UBIQOS_KEY_OP_DESTROY 7u   // erase the store, keys and passphrase alike
+
+// The store is sealed. Until it is unlocked there is nothing to list and
+// nothing to use: the names are inside the ciphertext with the values.
+#define UBIQOS_KEYS_EMPTY     0u   // no store yet; unlocking makes one
+#define UBIQOS_KEYS_LOCKED    1u
+#define UBIQOS_KEYS_OPEN      2u
 
 typedef struct {
     char     name[UBIQOS_KEY_NAME_MAX];
+    uint32_t op;                       // what the filesystem server is to do
     uint32_t index;                    // for NTH
-    uint32_t len;                      // in for SET, out for NTH
+    uint32_t len;                      // in for SET and UNLOCK, out for NTH
     uint32_t fingerprint;              // out for PRINT
     uint8_t  value[UBIQOS_KEY_VALUE_MAX];
 } ubiqos_keyreq_t;

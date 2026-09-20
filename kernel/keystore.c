@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "keystore.h"
+#include "crypto.h"
 #include "flashmod.h"
 #include "tlsf.h"
 #include "critical.h"
@@ -8,8 +9,10 @@
 #include "hardware/sync.h"
 #include "pico/platform.h"
 #include "hardware/regs/addressmap.h"
+#include "pico/unique_id.h"
 
 extern tlsf_pool_t ubiqos_mem_pool;
+void ubiqos_random_bytes(uint8_t *out, uint32_t len);   // kernel/syscalls.c, the TRNG
 void ubiqos_print(const char *s);
 void ubiqos_print_u32(uint32_t v);
 
@@ -21,7 +24,16 @@ void ubiqos_print_u32(uint32_t v);
 // power-cut story -- there is no moment when neither is readable.
 
 #define KEYS_MAGIC   0x59454b55u     // "UKEY", little endian
-#define KEYS_FORMAT  1u              // 2 will be the sealed one
+#define KEYS_FORMAT  2u              // 1 was the same records in the clear
+// PBKDF2 iterations: what about two seconds of this chip buys, measured with
+// the hardware SHA-256 (roughly 12500 iterations a second). It is stored with
+// each copy, so raising it later leaves older stores openable.
+//
+// Two seconds here is nothing like two seconds for somebody who has taken the
+// flash away: a desktop does this hundreds of times faster and a graphics card
+// faster still. The iterations buy a factor, not safety. What makes a store
+// hard to open is the length of the passphrase.
+#define KEYS_ROUNDS  25000u
 
 typedef struct {
     char     name[UBIQOS_KEY_NAME_MAX];
@@ -31,16 +43,30 @@ typedef struct {
 } key_slot_t;
 
 typedef struct {
+    key_slot_t slot[UBIQOS_KEY_SLOTS];
+} key_plain_t;
+
+// What is in flash: the records sealed, and what is needed to open them again
+// -- everything except the passphrase.
+typedef struct {
     uint32_t magic;
     uint32_t format;
     uint32_t seq;                    // the higher of the two copies is the live one
-    uint32_t crc;                    // over the slots that follow
-    key_slot_t slot[UBIQOS_KEY_SLOTS];
+    uint32_t rounds;                 // PBKDF2 iterations this copy was sealed with
+    uint8_t  salt[16];
+    uint8_t  nonce[12];
+    uint8_t  tag[16];
+    uint8_t  sealed[sizeof(key_plain_t)];
 } key_store_t;
 
 _Static_assert(sizeof(key_store_t) <= FLASH_SECTOR_SIZE, "the store must fit a sector");
 
 static const key_store_t *live;      // in flash, or NULL when there is none
+
+// Unlocked means these exist: the derived key and the records in the clear,
+// both in SRAM, both gone when the power goes.
+static uint8_t     unlocked_key[32];
+static key_plain_t *plain;
 
 static uint32_t crc32(const uint8_t *p, uint32_t n)
 {
@@ -52,11 +78,6 @@ static uint32_t crc32(const uint8_t *p, uint32_t n)
     return ~c;
 }
 
-static uint32_t store_crc(const key_store_t *s)
-{
-    return crc32((const uint8_t *)s->slot, sizeof s->slot);
-}
-
 static const key_store_t *copy_at(uint32_t which)
 {
     return (const key_store_t *)(uintptr_t)(UBIQOS_FLASH_KEYS_BASE + which * FLASH_SECTOR_SIZE);
@@ -64,7 +85,7 @@ static const key_store_t *copy_at(uint32_t which)
 
 static bool copy_is_good(const key_store_t *s)
 {
-    return s->magic == KEYS_MAGIC && s->format == KEYS_FORMAT && s->crc == store_crc(s);
+    return s->magic == KEYS_MAGIC && s->format == KEYS_FORMAT && s->rounds >= 1000u;
 }
 
 void ubiqos_keys_init(void)
@@ -72,14 +93,41 @@ void ubiqos_keys_init(void)
     const key_store_t *a = copy_at(0), *b = copy_at(1);
     const bool ga = copy_is_good(a), gb = copy_is_good(b);
     live = (ga && gb) ? (a->seq >= b->seq ? a : b) : (ga ? a : (gb ? b : 0));
+    ubiqos_print(live ? "Keys: a sealed store; 'key unlock' opens it\n"
+                      : "Keys: none stored\n");
+}
 
-    ubiqos_print("Keys: ");
-    if (!live) {
-        ubiqos_print("none stored\n");
-        return;
+uint32_t ubiqos_keys_state(void)
+{
+    if (plain) return UBIQOS_KEYS_OPEN;
+    return live ? UBIQOS_KEYS_LOCKED : UBIQOS_KEYS_EMPTY;
+}
+
+// The passphrase is not the whole of it: the chip's own id goes into the salt,
+// so the same passphrase on two boards gives two different keys and a stolen
+// store cannot be attacked alongside anybody else's. The id is a serial
+// number, not a secret -- anyone holding the board can read it -- which is
+// exactly why it is salt and not key.
+static void derive(const key_store_t *st, const uint8_t *pass, uint32_t plen, uint8_t out[32])
+{
+    uint8_t salt[16 + PICO_UNIQUE_BOARD_ID_SIZE_BYTES];
+    memcpy(salt, st->salt, 16);
+    pico_unique_board_id_t id;
+    pico_get_unique_board_id(&id);
+    memcpy(salt + 16, id.id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+    ubiqos_pbkdf2_sha256(pass, plen, salt, sizeof salt, st->rounds, out);
+    memset(salt, 0, sizeof salt);
+    memset(&id, 0, sizeof id);
+}
+
+void ubiqos_keys_lock(void)
+{
+    if (plain) {
+        memset(plain, 0, sizeof *plain);
+        ubiqos_tlsf_free(ubiqos_mem_pool, plain);
+        plain = 0;
     }
-    ubiqos_print_u32(ubiqos_keys_count());
-    ubiqos_print(" stored\n");
+    memset(unlocked_key, 0, sizeof unlocked_key);
 }
 
 static bool name_eq(const char *a, const char *b)
@@ -91,40 +139,40 @@ static bool name_eq(const char *a, const char *b)
     return false;
 }
 
+// Everything below needs the store open: the names are sealed with the values.
 static const key_slot_t *find(const char *name)
 {
-    if (!live || !name || !name[0]) return 0;
+    if (!plain || !name || !name[0]) return 0;
     for (uint32_t i = 0; i < UBIQOS_KEY_SLOTS; i++)
-        if (live->slot[i].len && name_eq(live->slot[i].name, name)) return &live->slot[i];
+        if (plain->slot[i].len && name_eq(plain->slot[i].name, name)) return &plain->slot[i];
     return 0;
 }
 
 uint32_t ubiqos_keys_count(void)
 {
-    if (!live) return 0;
+    if (!plain) return 0;
     uint32_t n = 0;
-    for (uint32_t i = 0; i < UBIQOS_KEY_SLOTS; i++) if (live->slot[i].len) n++;
+    for (uint32_t i = 0; i < UBIQOS_KEY_SLOTS; i++) if (plain->slot[i].len) n++;
     return n;
 }
 
 bool ubiqos_keys_nth(uint32_t index, char *name_out, uint32_t *len_out)
 {
-    if (!live) return false;
+    if (!plain) return false;
     uint32_t seen = 0;
     for (uint32_t i = 0; i < UBIQOS_KEY_SLOTS; i++) {
-        if (!live->slot[i].len) continue;
+        if (!plain->slot[i].len) continue;
         if (seen++ != index) continue;
-        for (uint32_t k = 0; k < UBIQOS_KEY_NAME_MAX; k++) name_out[k] = live->slot[i].name[k];
-        if (len_out) *len_out = live->slot[i].len;
+        for (uint32_t k = 0; k < UBIQOS_KEY_NAME_MAX; k++) name_out[k] = plain->slot[i].name[k];
+        if (len_out) *len_out = plain->slot[i].len;
         return true;
     }
     return false;
 }
 
 // Enough of the value to recognise it by, and not enough to be it: a CRC of
-// the bytes. Somebody who has the key in their password manager can compare
-// the same four bytes; somebody who has only this cannot work backwards to a
-// secret of any length.
+// the bytes. Whoever has the key in their password manager can work out the
+// same four bytes; whoever has only these cannot work back to a secret.
 bool ubiqos_keys_fingerprint(const char *name, uint32_t *out)
 {
     const key_slot_t *s = find(name);
@@ -146,9 +194,8 @@ const uint8_t *ubiqos_keys_value(const char *name, uint32_t *len_out)
 // An erase takes tens of milliseconds, and for all of it the flash cannot be
 // read -- so no instruction may be fetched from it. The kernel is linked
 // copy_to_ram and runs from SRAM, which is most of the answer; the rest is
-// core 1, which runs kernel code too but must not be inside the writing
-// function's caller when it is asked to wait. It parks in a loop of its own,
-// in RAM, and core 0 waits for it to say so.
+// core 1, which runs kernel code too and parks in a loop of its own, in RAM,
+// while core 0 writes.
 
 static volatile bool park_wanted;
 static volatile bool parked;
@@ -181,50 +228,31 @@ static void release_core1(void)
     while (parked) tight_loop_contents();
 }
 
+// A NULL image erases and writes nothing back, which is how a store is
+// destroyed.
 static void __not_in_flash_func(do_write)(uint32_t offset, const uint8_t *data)
 {
     const uint32_t st = save_and_disable_interrupts();
     flash_range_erase(offset, FLASH_SECTOR_SIZE);
-    flash_range_program(offset, data, FLASH_SECTOR_SIZE);
+    if (data) flash_range_program(offset, data, FLASH_SECTOR_SIZE);
     restore_interrupts(st);
 }
 
-// The new store is built in SRAM -- never in PSRAM, which shares the QMI with
-// the flash and is no more readable than the flash is during an erase.
-static int32_t commit(const key_store_t *from, const char *name,
-                      const uint8_t *value, uint32_t len)
+// Seal what is in SRAM and put it in the copy that is not live, so that the
+// live one stays whole until this one is complete. A fresh nonce every time,
+// because a nonce used twice with one key is the way ChaCha20 is broken.
+static int32_t seal_and_write(void)
 {
+    if (!plain || !live) return -1;
+
     key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *img);
     if (!img) return -1;
+    memcpy(img, live, sizeof *img);
+    img->seq = live->seq + 1;
+    ubiqos_random_bytes(img->nonce, sizeof img->nonce);
+    ubiqos_seal(unlocked_key, img->nonce, (const uint8_t *)plain, img->sealed,
+                sizeof(key_plain_t), img->tag);
 
-    if (from) memcpy(img, from, sizeof *img);
-    else      memset(img, 0, sizeof *img);
-    img->magic  = KEYS_MAGIC;
-    img->format = KEYS_FORMAT;
-    img->seq    = from ? from->seq + 1 : 1;
-
-    // The named slot, or the first free one. Setting a name that is there
-    // replaces it in place, so a key keeps its slot across changes.
-    key_slot_t *slot = 0, *spare = 0;
-    for (uint32_t i = 0; i < UBIQOS_KEY_SLOTS; i++) {
-        if (img->slot[i].len && name_eq(img->slot[i].name, name)) { slot = &img->slot[i]; break; }
-        if (!img->slot[i].len && !spare) spare = &img->slot[i];
-    }
-    if (!slot) slot = spare;
-    if (!slot) { ubiqos_tlsf_free(ubiqos_mem_pool, img); return -2; }   // full
-
-    memset(slot, 0, sizeof *slot);
-    if (len) {                                  // len 0 means remove
-        uint32_t k = 0;
-        while (k < UBIQOS_KEY_NAME_MAX - 1 && name[k]) { slot->name[k] = name[k]; k++; }
-        slot->name[k] = 0;
-        memcpy(slot->value, value, len);
-        slot->len = (uint16_t)len;
-    }
-    img->crc = store_crc(img);
-
-    // Into the copy that is not live, so that the live one is whole until this
-    // one is complete.
     const uint32_t which = (live == copy_at(0)) ? 1u : 0u;
     const uint32_t offset = (UBIQOS_FLASH_KEYS_BASE - XIP_BASE) + which * FLASH_SECTOR_SIZE;
 
@@ -237,22 +265,132 @@ static int32_t commit(const key_store_t *from, const char *name,
         if (copy_is_good(fresh) && fresh->seq == img->seq) live = fresh;
         else rc = -4;
     }
-    memset(img, 0, sizeof *img);                // the value was in this buffer
+    memset(img, 0, sizeof *img);
     ubiqos_tlsf_free(ubiqos_mem_pool, img);
     return rc;
 }
 
 int32_t ubiqos_keys_set(const char *name, const uint8_t *value, uint32_t len)
 {
+    if (!plain) return -5;                       // locked
     if (!name || !name[0] || !len || len > UBIQOS_KEY_VALUE_MAX) return -1;
     uint32_t n = 0;
     while (name[n]) n++;
     if (n >= UBIQOS_KEY_NAME_MAX) return -1;
-    return commit(live, name, value, len);
+
+    key_slot_t *slot = 0, *spare = 0;
+    for (uint32_t i = 0; i < UBIQOS_KEY_SLOTS; i++) {
+        if (plain->slot[i].len && name_eq(plain->slot[i].name, name)) { slot = &plain->slot[i]; break; }
+        if (!plain->slot[i].len && !spare) spare = &plain->slot[i];
+    }
+    if (!slot) slot = spare;
+    if (!slot) return -2;                        // full
+
+    key_slot_t keep;
+    memcpy(&keep, slot, sizeof keep);            // to put back if the write fails
+    memset(slot, 0, sizeof *slot);
+    uint32_t k = 0;
+    while (k < UBIQOS_KEY_NAME_MAX - 1 && name[k]) { slot->name[k] = name[k]; k++; }
+    slot->name[k] = 0;
+    memcpy(slot->value, value, len);
+    slot->len = (uint16_t)len;
+
+    const int32_t rc = seal_and_write();
+    if (rc != 0) memcpy(slot, &keep, sizeof keep);
+    memset(&keep, 0, sizeof keep);
+    return rc;
 }
 
 int32_t ubiqos_keys_remove(const char *name)
 {
-    if (!find(name)) return -1;
-    return commit(live, name, 0, 0);
+    if (!plain) return -5;
+    key_slot_t *slot = (key_slot_t *)find(name);
+    if (!slot) return -1;
+
+    key_slot_t keep;
+    memcpy(&keep, slot, sizeof keep);
+    memset(slot, 0, sizeof *slot);
+    const int32_t rc = seal_and_write();
+    if (rc != 0) memcpy(slot, &keep, sizeof keep);
+    memset(&keep, 0, sizeof keep);
+    return rc;
+}
+
+// Open the store, or make one. Both take the same second of PBKDF2, which is
+// the point of it: a passphrase guessed at a thousand a second on a desktop
+// is guessed at one a second against this.
+// Forget the whole store: both copies erased, and with them every key and the
+// passphrase that opened them. There is no way back, which is the point --
+// a board being passed on should not carry anybody's secrets.
+int32_t ubiqos_keys_destroy(void)
+{
+    ubiqos_keys_lock();
+    if (!park_core1()) return -3;
+    do_write((UBIQOS_FLASH_KEYS_BASE - XIP_BASE), 0);
+    do_write((UBIQOS_FLASH_KEYS_BASE - XIP_BASE) + FLASH_SECTOR_SIZE, 0);
+    release_core1();
+    live = 0;
+    return 0;
+}
+
+int32_t ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen)
+{
+    if (!pass || !plen) return -1;
+    if (plain) return 0;                         // already open
+
+    key_plain_t *fresh = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *fresh);
+    if (!fresh) return -1;
+
+    if (!live) {
+        // No store yet: this passphrase becomes the one, and an empty store is
+        // written so that the next unlock has something to check against.
+        key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *img);
+        if (!img) { ubiqos_tlsf_free(ubiqos_mem_pool, fresh); return -1; }
+        memset(img, 0, sizeof *img);
+        img->magic  = KEYS_MAGIC;
+        img->format = KEYS_FORMAT;
+        img->seq    = 1;
+        img->rounds = KEYS_ROUNDS;
+        ubiqos_random_bytes(img->salt, sizeof img->salt);
+        ubiqos_random_bytes(img->nonce, sizeof img->nonce);
+        memset(fresh, 0, sizeof *fresh);
+        derive(img, pass, plen, unlocked_key);
+        ubiqos_seal(unlocked_key, img->nonce, (const uint8_t *)fresh, img->sealed,
+                    sizeof *fresh, img->tag);
+
+        const uint32_t offset = UBIQOS_FLASH_KEYS_BASE - XIP_BASE;
+        int32_t rc = 0;
+        if (!park_core1()) rc = -3;
+        else {
+            do_write(offset, (const uint8_t *)img);
+            release_core1();
+            const key_store_t *w = copy_at(0);
+            if (copy_is_good(w) && w->seq == 1) live = w;
+            else rc = -4;
+        }
+        memset(img, 0, sizeof *img);
+        ubiqos_tlsf_free(ubiqos_mem_pool, img);
+        if (rc != 0) {
+            memset(unlocked_key, 0, sizeof unlocked_key);
+            ubiqos_tlsf_free(ubiqos_mem_pool, fresh);
+            return rc;
+        }
+        plain = fresh;
+        return 1;                                // made a new one
+    }
+
+    uint8_t key[32];
+    derive(live, pass, plen, key);
+    const bool ok = ubiqos_unseal(key, live->nonce, live->sealed, (uint8_t *)fresh,
+                                  sizeof *fresh, live->tag);
+    if (!ok) {
+        memset(key, 0, sizeof key);
+        memset(fresh, 0, sizeof *fresh);
+        ubiqos_tlsf_free(ubiqos_mem_pool, fresh);
+        return -6;                               // the passphrase, or a changed store
+    }
+    memcpy(unlocked_key, key, sizeof unlocked_key);
+    memset(key, 0, sizeof key);
+    plain = fresh;
+    return 0;
 }

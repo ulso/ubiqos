@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "../common/ubiqos_abi.h"
+
 // The key store: named secrets in flash, for things that must not sit on the
 // card in clear text -- the WiFi password, an API key.
 //
@@ -13,18 +15,20 @@
 // of names, how long each value is, and a fingerprint to compare with the one
 // its owner has -- never the bytes.
 //
-// Nothing here is encrypted yet. This is the storage; lock and unlock come
-// next, and the layout leaves room for them: the header carries a format
-// number, and a sealed store will be the same records behind a nonce and a
-// tag.
+// The store is sealed with ChaCha20-Poly1305, under a key from PBKDF2 over the
+// passphrase and the chip's id. Locked, there is nothing to list: the names
+// are inside the ciphertext with the values. Unlocked, the records are in
+// SRAM and go when the power does.
 
-#define UBIQOS_KEY_NAME_MAX   24     // including the terminator
-#define UBIQOS_KEY_VALUE_MAX  96     // a 512-bit key in hex is 128; this is
-                                     // enough for the tokens in use and keeps
-                                     // a slot to 128 bytes
+// The name and value limits are the ABI's; the number of slots is what fits
+// in a sector once sealed.
 #define UBIQOS_KEY_SLOTS      30
 
 void     ubiqos_keys_init(void);           // read what is in flash, once
+uint32_t ubiqos_keys_state(void);          // UBIQOS_KEYS_EMPTY/LOCKED/OPEN
+int32_t  ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen);  // 1 = a new store
+void     ubiqos_keys_lock(void);
+int32_t  ubiqos_keys_destroy(void);        // both copies erased; no way back
 uint32_t ubiqos_keys_count(void);
 bool     ubiqos_keys_nth(uint32_t index, char *name_out, uint32_t *len_out);
 bool     ubiqos_keys_fingerprint(const char *name, uint32_t *out);

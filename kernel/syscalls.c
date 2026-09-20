@@ -17,6 +17,7 @@ int32_t ubiqos_console_trace_at(uint32_t offset);
 #include "tlsf.h"
 #include "crashlog.h"
 #include "keystore.h"
+#include "crypto.h"
 #include "hardware/structs/rosc.h"
 #include "hardware/structs/trng.h"
 #include "hardware/resets.h"
@@ -128,6 +129,34 @@ volatile uint32_t ubiqos_last_pc = 0;
 // Sixty-four bytes a call at most, because this runs in a trap with
 // interrupts off: that is three EHR fills, microseconds. A TRNG that never
 // finishes a fill gives back what it had rather than holding the trap.
+static int32_t trng_raw(uint8_t *out, uint32_t want);
+
+// For the kernel's own use -- salts and nonces. Raw TRNG samples are not
+// uniform, so they are hashed: the store's nonce must not repeat, and that is
+// what this is for.
+void ubiqos_random_bytes(uint8_t *out, uint32_t len)
+{
+    static uint32_t counter;
+    while (len) {
+        uint8_t raw[64];
+        const int32_t got = trng_raw(raw, sizeof raw);
+        uint8_t mix[32];
+        ubiqos_sha256_t s;
+        ubiqos_sha256_init(&s);
+        ubiqos_sha256_update(&s, raw, got > 0 ? (uint32_t)got : 0);
+        counter++;
+        ubiqos_sha256_update(&s, &counter, sizeof counter);
+        const uint32_t now = (uint32_t)time_us_64();
+        ubiqos_sha256_update(&s, &now, sizeof now);
+        ubiqos_sha256_final(&s, mix);
+        const uint32_t take = len < sizeof mix ? len : sizeof mix;
+        for (uint32_t i = 0; i < take; i++) out[i] = mix[i];
+        out += take; len -= take;
+        for (uint32_t i = 0; i < sizeof raw; i++) raw[i] = 0;
+        for (uint32_t i = 0; i < sizeof mix; i++) mix[i] = 0;
+    }
+}
+
 static int32_t trng_raw(uint8_t *out, uint32_t want)
 {
     static bool up;
@@ -428,7 +457,19 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             case UBIQOS_KEY_OP_PRINT:
                 frame->a0 = ubiqos_keys_fingerprint(r->name, &r->fingerprint) ? 0u : (uint32_t)-1;
                 break;
+            case UBIQOS_KEY_OP_STATE:
+                frame->a0 = ubiqos_keys_state();
+                break;
+            case UBIQOS_KEY_OP_LOCK:
+                ubiqos_keys_lock();
+                frame->a0 = 0;
+                break;
             case UBIQOS_KEY_OP_SET:
+            case UBIQOS_KEY_OP_UNLOCK:
+            case UBIQOS_KEY_OP_DESTROY:
+                // Both are slow: a sector erase, or a second of PBKDF2. The
+                // server does them with interrupts on.
+                r->op = frame->a0;
                 if (!fs_request(UBIQOS_MSG_FS_KEYSET, r)) { frame->a0 = (uint32_t)-1; break; }
                 return ubiqos_switch(sp);
             default:

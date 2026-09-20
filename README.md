@@ -33,6 +33,8 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
   and hands the computer an address by DHCP -- and over WiFi through Espressif's
   ESP-Hosted; mDNS, SNTP, `ping`, a web server, `httpd`, and a TLS client:
   `fetch https://...` checks the server's certificate as a browser does
+- **Secrets**: named keys sealed in flash with a passphrase
+  (ChaCha20-Poly1305, PBKDF2), typed at a console and never readable back
 - **Programs**: about ninety modules, among them an editor (Atto emacs), a
   WAV player, `hibouair` for BLE air-quality sensors through a BleuIO dongle,
   and the usual `ls`, `cat`, `cp`, `mv`, `rm`, `ps`, `kill`
@@ -104,6 +106,7 @@ languages when they are found, and skipped when they are not.
 | [docs/config.md](docs/config.md) | `/sd/config.txt`: name, WiFi, time zone, the cable's address |
 | [docs/esp-hosted](docs/esp-hosted/README.md) | the WiFi co-processor and how its firmware gets there |
 | [docs/tls.md](docs/tls.md) | https: what is checked, the roots, and using it from a module |
+| [docs/keys.md](docs/keys.md) | the key store: secrets sealed in flash, and what that does and does not protect |
 | [docs/usb-sleep.md](docs/usb-sleep.md) | the USB network after the computer sleeps |
 | [docs/the-board-stopped.md](docs/the-board-stopped.md) | a hang with the picture still on the screen, and what it was |
 

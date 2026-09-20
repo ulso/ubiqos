@@ -288,6 +288,7 @@ add_executable(os_kernel
     kernel/varfs.c
     kernel/memcmp.c
     kernel/keystore.c
+    kernel/crypto.c
     kernel/main.c 
     kernel/tlsf.c
     kernel/scheduler.c 
@@ -354,7 +355,7 @@ pico_generate_pio_header(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/pio/probe.
 # pico_standard_link provides only linker scripts and link flags. The startup
 # code crt0, which defines _entry_point and calls main, comes with pico_runtime.
 # hardware_uart and hardware_gpio are for the diagnostic port.
-target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardware_uart hardware_gpio hardware_spi pico_time
+target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardware_uart hardware_gpio hardware_spi hardware_sha256 pico_time
     pico_bootrom hardware_pio hardware_dma hardware_clocks pico_stdlib hardware_psram hardware_flash
     hardware_pwm
     hardware_i2c hardware_adc ${ubiqosUsbLibrary})
@@ -475,7 +476,10 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # the next page -- and check_heap is what notices.
         # 32 since 20 Sep 2026: that day's kernel additions, the key store
         # among them, left the riscv framebuffer build 772 bytes of C heap.
-        set(ubiqosHeapKB 32)
+        # 24 later the same day, for the key store's cryptography -- SHA-256,
+        # PBKDF2 and ChaCha20-Poly1305 are kernel code, and kernel code is
+        # SRAM here because the kernel is linked copy_to_ram.
+        set(ubiqosHeapKB 24)
     else()
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
@@ -516,7 +520,9 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # 112 since 20 Sep 2026, for the key store and the rest of that day's
         # kernel: the riscv chargen heap was down to 2624 bytes. The pool is
         # still far larger than anything has used.
-        set(ubiqosHeapKB 112)
+        #
+        # 104 later the same day, for the cryptography that seals the store.
+        set(ubiqosHeapKB 104)
     endif()
 else()
     set(ubiqosHeapKB ${UBIQOS_HEAP_KB})
@@ -542,6 +548,9 @@ else()
 endif()
 math(EXPR ubiqosDmesgBytes "${ubiqosDmesgKB} * 1024")
 target_compile_definitions(os_kernel PRIVATE DMESG_SIZE=${ubiqosDmesgBytes})
+# The RP2350 hashes in hardware; kernel/crypto.c keeps a software SHA-256 for
+# the desktop, where it is checked against the published vectors.
+target_compile_definitions(os_kernel PRIVATE UBIQOS_SHA256_HW=1)
 message(STATUS "Kernel log: ${ubiqosDmesgKB} kB")
 
 # lwIP, and it does not fit beside a framebuffer. That is not a limitation of
