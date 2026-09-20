@@ -43,7 +43,11 @@
                                     // another that alternates with it and does not
 #define PULSE_ACM      1
 #define PULSE_INTR     2   // ctrl-C, asked for with ubiqos_catch_intr
-#define MAX_SENSORS    8
+// Thirty, which is 1920 bytes of this module's data and more sensors than
+// anybody has put in a flat. It was eight, which is the kind of number that
+// works until the day somebody has nine -- and the ninth was dropped without
+// a word, so the only symptom was a sensor missing from a web page.
+#define MAX_SENSORS    30
 #define REDRAW_MS      2000
 #define DONGLE_WAIT_S  30   // how long to wait for the dongle to turn up
 
@@ -105,8 +109,16 @@ typedef struct {
     bool     used;
 } sensor_t;
 
+// Eight kilobytes, because the table above is now most of a kilobyte and the
+// default four have to hold the thread-local data AND the stack. Raising the
+// number of sensors without raising this would have paid for the thirtieth
+// sensor with the stack, and a module's stack has no guard: it would have
+// written through whatever was under it and said nothing.
+UBIQOS_MEM_SIZE(8192);
+
 __thread sensor_t sensors[MAX_SENSORS];
 __thread uint32_t sensor_count;
+__thread bool     said_full;
 __thread uint32_t drawn_rows;
 
 UBIQOS_LIBC_DEFINE
@@ -203,8 +215,16 @@ static void remember(const uint8_t *b, uint32_t n, const char *addr)
     for (uint32_t i = 0; i < sensor_count; i++)
         if (sensors[i].board == board) { e = &sensors[i]; break; }
     if (!e) {
-        if (sensor_count >= MAX_SENSORS)
+        if (sensor_count >= MAX_SENSORS) {
+            // Once, and then never again: this runs for every beacon, and a
+            // room full of sensors would otherwise fill the screen with it.
+            if (!said_full) {
+                said_full = true;
+                printf("hibouair: more than %d sensors here; the rest are not shown\n",
+                       MAX_SENSORS);
+            }
             return;
+        }
         e = &sensors[sensor_count++];
         e->board = board;
         e->used = true;
