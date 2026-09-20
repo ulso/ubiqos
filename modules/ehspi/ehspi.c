@@ -589,6 +589,9 @@ static void eh_thread(void)
 #define REQ_WIFI_CONNECT 282u
 #define REQ_WIFI_SET_CONFIG 284u
 #define REQ_STA_GET_AP_INFO 294u
+#define REQ_SCAN_START      286u
+#define REQ_SCAN_AP_NUM     288u
+#define REQ_SCAN_AP_RECORD  351u    // one at a time; see the scan below
 
 #define WIFI_INIT_MAGIC 0x1f2f3f4fu
 #define WIFI_MODE_STA   1u
@@ -606,6 +609,15 @@ static volatile uint32_t join_state;            // UBIQOS_SS_EH_JOINED's answer
 static char join_creds[100];
 static volatile bool join_wanted;
 static bool join_running;
+static bool radio_started;                      // esp_wifi_start has been run
+
+// The scan's side of the same thread. A scan and a join never run at once:
+// both are RPC sequences that take seconds, and the thread does one thing.
+#define SCAN_MAX 12
+static volatile bool     scan_wanted;
+static volatile uint32_t scan_state;            // UBIQOS_SCAN_*
+static volatile uint32_t scan_found;
+static ubiqos_eh_ap_t    scan_list[SCAN_MAX];
 
 static uint32_t put_varint(uint8_t *p, uint32_t v) {
     uint32_t n = 0;
@@ -626,22 +638,29 @@ static uint32_t put_bytes(uint8_t *p, uint32_t field, const uint8_t *b, uint32_t
     return n + len;
 }
 
+// A varint, of which the low thirty-two bits are kept.
+//
+// Every byte of it is consumed, however many there are. protobuf writes a
+// NEGATIVE int32 as ten bytes -- the sign extended to sixty-four -- and an
+// earlier version of this stopped after five, leaving the rest to be read as
+// the next field. Nothing noticed while the only fields read were small and
+// positive; an access point's rssi is neither.
 static uint32_t get_varint(const uint8_t *p, uint32_t len, uint32_t *at) {
     uint32_t v = 0, shift = 0;
     while (*at < len) {
         uint8_t b = p[(*at)++];
-        v |= (uint32_t)(b & 0x7fu) << shift;
+        if (shift < 32) v |= (uint32_t)(b & 0x7fu) << shift;
         if (!(b & 0x80u)) break;
         shift += 7;
-        if (shift > 28) break;
     }
     return v;
 }
 
 // One RPC out and its answer back. Returns the chip's esp_err_t, or -1 for no
 // answer at all -- a different failure, and worth telling apart.
-static int32_t rpc(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
-                   uint32_t ms, uint8_t *mac_out) {
+static int32_t rpc_full(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
+                        uint32_t ms, uint8_t *mac_out,
+                        uint8_t *pl_out, uint32_t pl_cap, uint32_t *pl_len) {
     // Anything already waiting is not the answer to a question not yet asked.
     while (inbox_tail != inbox_head) inbox_tail = (inbox_tail + 1u) % INBOX_SLOTS;
 
@@ -702,6 +721,14 @@ static int32_t rpc(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
         }
         if (type != RPC_RESP || id != msg_id + RESP_OFFSET) continue;
 
+        // The answer as it arrived, for a caller that wants more out of it
+        // than one number -- a scan's list of access points, say.
+        if (pl_out && pl_len) {
+            uint32_t k = payload_len < pl_cap ? payload_len : pl_cap;
+            for (uint32_t i = 0; i < k; i++) pl_out[i] = payload[i];
+            *pl_len = k;
+        }
+
         // An ACTION answers int32 resp = 1. A GETTER puts what it was asked
         // for there and its result at field 2, which is the opposite way round
         // and has to be read that way.
@@ -727,6 +754,11 @@ static int32_t rpc(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
     return -1;
 }
 
+static int32_t rpc(uint32_t msg_id, const uint8_t *body, uint32_t body_len,
+                   uint32_t ms, uint8_t *mac_out) {
+    return rpc_full(msg_id, body, body_len, ms, mac_out, 0, 0, 0);
+}
+
 static bool rpc_ok(const char *what, uint32_t msg_id, const uint8_t *body,
                    uint32_t len, uint32_t ms) {
     int32_t r = rpc(msg_id, body, len, ms, 0);
@@ -738,56 +770,186 @@ static bool rpc_ok(const char *what, uint32_t msg_id, const uint8_t *body,
     return false;
 }
 
+// The radio's scratch buffer. One thread builds requests, so there is one.
+static uint8_t rbody[400];
+
+// Up as far as a radio goes without a network: initialised, in station mode,
+// not asleep. The joining needed this first and so does the scan, which is
+// why it is here rather than inside either of them.
+static bool radio_prepare(void)
+{
+    uint8_t *body = rbody;
+    uint32_t n;
+
+    // esp_wifi_init's configuration, every field of it: the far side
+    // starts from its own defaults and then overwrites all of them with
+    // what arrives, so a field left out is a zero rather than a default.
+    {
+        uint8_t c[128];
+        uint32_t k = 0;
+        k += put_field(c + k,  1, 20);      // static rx buffers
+        k += put_field(c + k,  2, 64);      // dynamic rx
+        k += put_field(c + k,  3, 1);       // tx buffers are dynamic
+        k += put_field(c + k,  5, 64);      // dynamic tx
+        k += put_field(c + k,  8, 1);       // AMPDU rx
+        k += put_field(c + k,  9, 1);       // AMPDU tx
+        // NVS OFF, and it was on.
+        //
+        // esp_wifi writes the network's configuration to the
+        // co-processor's NVS partition at every SetConfig, and after a day
+        // of joining and rejoining that partition stopped being usable:
+        // esp_wifi_init began answering 4353, which is 0x1101,
+        // ESP_ERR_NVS_NOT_INITIALIZED. The radio would not start at all.
+        //
+        // We have nothing to remember. The SSID and the password come off
+        // the card at every boot, so a copy in the chip's flash is a second
+        // source of truth that can only ever disagree -- and, as it turned
+        // out, can break the first one.
+        k += put_field(c + k, 11, 0);       // no NVS
+        k += put_field(c + k, 13, 32);      // block-ack window
+        k += put_field(c + k, 15, 752);     // beacon length
+        k += put_field(c + k, 16, 32);      // management buffers
+        k += put_field(c + k, 19, 7);       // espnow peers
+        k += put_field(c + k, 20, WIFI_INIT_MAGIC);
+        n = put_bytes(body, 1, c, k);
+    }
+    if (!rpc_ok("starting the radio", REQ_WIFI_INIT, body, n, 15000)) return false;
+
+    n = put_field(body, 1, WIFI_MODE_STA);
+    if (!rpc_ok("station mode", REQ_SET_MODE, body, n, 5000)) return false;
+
+    // Power save off. esp_wifi_init leaves the station asleep between DTIM
+    // beacons, which put 232 milliseconds on a ping that takes 74 without.
+    n = put_field(body, 1, 0);                  // WIFI_PS_NONE
+    if (!rpc_ok("power save off", REQ_SET_PS, body, n, 5000)) return false;
+    return true;
+}
+
+// --- THE SCAN ---------------------------------------------------------------
+//
+// The co-processor already knows how: esp_wifi_scan_start and its results are
+// part of the RPC this firmware serves, so nothing had to be added to the
+// chip. What is here is the asking.
+//
+// The records come back ONE AT A TIME. esp_wifi_scan_get_ap_records hands over
+// the whole list in a single reply, and a dozen access points do not fit in
+// the frame this driver reads into -- and that reply also frees the list, so a
+// truncated one cannot be asked for again. The singular call gives the next
+// record each time, which keeps every reply small and costs an RPC per network.
+static void parse_ap(const uint8_t *p, uint32_t len, ubiqos_eh_ap_t *out)
+{
+    uint32_t at = 0;
+    while (at < len) {
+        uint32_t tag = get_varint(p, len, &at);
+        uint32_t field = tag >> 3, wire = tag & 7u;
+        if (!field) break;
+        if (wire == 0) {
+            uint32_t v = get_varint(p, len, &at);
+            if (field == 3) out->channel = v;
+            else if (field == 5) out->rssi = (int32_t)v;   // negative, sign extended
+            else if (field == 6) out->auth = v;
+        } else if (wire == 2) {
+            uint32_t k = get_varint(p, len, &at);
+            if (at + k > len) break;
+            if (field == 1 && k == 6)
+                for (uint32_t i = 0; i < 6; i++) out->bssid[i] = p[at + i];
+            else if (field == 2) {
+                uint32_t c = k < sizeof(out->ssid) - 1 ? k : sizeof(out->ssid) - 1;
+                for (uint32_t i = 0; i < c; i++) out->ssid[i] = (char)p[at + i];
+                out->ssid[c] = 0;
+            }
+            at += k;
+        } else break;
+    }
+}
+
+static void do_scan(void)
+{
+    uint8_t *body = rbody;
+    uint32_t n;
+
+    scan_found = 0;
+    scan_state = UBIQOS_SCAN_RUNNING;
+
+    if (!radio_started) {
+        if (!radio_prepare()) { scan_state = UBIQOS_SCAN_FAILED; return; }
+        if (!rpc_ok("start", REQ_WIFI_START, body, 0, 15000)) {
+            scan_state = UBIQOS_SCAN_FAILED;
+            return;
+        }
+        radio_started = true;
+    }
+
+    // block = true, so the answer arrives when the scan is over rather than
+    // when it has begun; config_set = 0 leaves the chip its own defaults,
+    // which is every channel, actively.
+    n = put_field(body, 2, 1);
+    n += put_field(body + n, 3, 0);
+    if (!rpc_ok("the scan", REQ_SCAN_START, body, n, 20000)) {
+        scan_state = UBIQOS_SCAN_FAILED;
+        return;
+    }
+
+    for (uint32_t i = 0; i < SCAN_MAX; i++) {
+        uint8_t pl[256];
+        uint32_t pl_len = 0;
+        if (rpc_full(REQ_SCAN_AP_RECORD, body, 0, 5000, 0, pl, sizeof(pl), &pl_len) != 0)
+            break;                      // the list is out, which is not a failure
+
+        ubiqos_eh_ap_t *ap = &scan_list[i];
+        for (uint32_t k = 0; k < sizeof(*ap); k++) ((uint8_t*)ap)[k] = 0;
+        ap->index = i;
+
+        // The record sits at field 2 of the answer; field 1 is the result,
+        // which rpc_full has already read for us.
+        uint32_t at = 0;
+        while (at < pl_len) {
+            uint32_t tag = get_varint(pl, pl_len, &at);
+            uint32_t field = tag >> 3, wire = tag & 7u;
+            if (!field) break;
+            if (wire == 0) { get_varint(pl, pl_len, &at); continue; }
+            if (wire != 2) break;
+            uint32_t k = get_varint(pl, pl_len, &at);
+            if (at + k > pl_len) break;
+            if (field == 2) parse_ap(pl + at, k, ap);
+            at += k;
+        }
+        if (!ap->ssid[0]) continue;     // hidden: no name to choose it by
+        scan_found = i + 1;
+    }
+
+    scan_state = UBIQOS_SCAN_DONE;
+    K->print("wifi: the scan found ");
+    K->print_u32(scan_found);
+    K->print("\n");
+}
+
+static void join_thread(void);
+
+// The thread is made the first time somebody asks, not at boot: a machine
+// that never uses its radio should not carry a stack for it.
+static bool start_radio_thread(void)
+{
+    if (join_running) return true;
+    if (K->kernel_thread(join_thread, 3072, UBIQOS_PRIO_EH) < 0) {
+        K->print("wifi: could not start the radio thread\n");
+        return false;
+    }
+    join_running = true;
+    return true;
+}
+
 static void join_thread(void)
 {
     for (;;) {
-        while (!join_wanted) ubiqos_sleep(50);
+        while (!join_wanted && !scan_wanted) ubiqos_sleep(50);
+        if (scan_wanted) { scan_wanted = false; do_scan(); continue; }
         join_wanted = false;
 
-        static uint8_t body[400];
-        uint32_t n;
+        uint8_t *body = rbody;
+        uint32_t n = 0;
 
-        // esp_wifi_init's configuration, every field of it: the far side
-        // starts from its own defaults and then overwrites all of them with
-        // what arrives, so a field left out is a zero rather than a default.
-        {
-            uint8_t c[128];
-            uint32_t k = 0;
-            k += put_field(c + k,  1, 20);      // static rx buffers
-            k += put_field(c + k,  2, 64);      // dynamic rx
-            k += put_field(c + k,  3, 1);       // tx buffers are dynamic
-            k += put_field(c + k,  5, 64);      // dynamic tx
-            k += put_field(c + k,  8, 1);       // AMPDU rx
-            k += put_field(c + k,  9, 1);       // AMPDU tx
-            // NVS OFF, and it was on.
-            //
-            // esp_wifi writes the network's configuration to the
-            // co-processor's NVS partition at every SetConfig, and after a day
-            // of joining and rejoining that partition stopped being usable:
-            // esp_wifi_init began answering 4353, which is 0x1101,
-            // ESP_ERR_NVS_NOT_INITIALIZED. The radio would not start at all.
-            //
-            // We have nothing to remember. The SSID and the password come off
-            // the card at every boot, so a copy in the chip's flash is a second
-            // source of truth that can only ever disagree -- and, as it turned
-            // out, can break the first one.
-            k += put_field(c + k, 11, 0);       // no NVS
-            k += put_field(c + k, 13, 32);      // block-ack window
-            k += put_field(c + k, 15, 752);     // beacon length
-            k += put_field(c + k, 16, 32);      // management buffers
-            k += put_field(c + k, 19, 7);       // espnow peers
-            k += put_field(c + k, 20, WIFI_INIT_MAGIC);
-            n = put_bytes(body, 1, c, k);
-        }
-        if (!rpc_ok("starting the radio", REQ_WIFI_INIT, body, n, 15000)) { join_state = 3; continue; }
-
-        n = put_field(body, 1, WIFI_MODE_STA);
-        if (!rpc_ok("station mode", REQ_SET_MODE, body, n, 5000)) { join_state = 3; continue; }
-
-        // Power save off. esp_wifi_init leaves the station asleep between DTIM
-        // beacons, which put 232 milliseconds on a ping that takes 74 without.
-        n = put_field(body, 1, 0);              // WIFI_PS_NONE
-        if (!rpc_ok("power save off", REQ_SET_PS, body, n, 5000)) { join_state = 3; continue; }
+        if (!radio_prepare()) { join_state = 3; continue; }
 
         {
             const char *ssid = join_creds;
@@ -812,11 +974,12 @@ static void join_thread(void)
             bool ok = rpc_ok("the network", REQ_WIFI_SET_CONFIG, body, n, 8000);
             for (uint32_t i = 0; i < sizeof(sta); i++) sta[i] = 0;
             for (uint32_t i = 0; i < sizeof(cfg); i++) cfg[i] = 0;
-            for (uint32_t i = 0; i < sizeof(body); i++) body[i] = 0;
+            for (uint32_t i = 0; i < sizeof(rbody); i++) body[i] = 0;
             if (!ok) { join_state = 3; continue; }
         }
 
         if (!rpc_ok("start", REQ_WIFI_START, body, 0, 15000)) { join_state = 3; continue; }
+        radio_started = true;
         if (!rpc_ok("connect", REQ_WIFI_CONNECT, body, 0, 15000)) { join_state = 3; continue; }
 
         // And then ASK, because connect does not answer the question.
@@ -1010,6 +1173,24 @@ static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
         return 0;
     }
 
+    if (code == UBIQOS_SS_EH_SCAN) {
+        if (len < sizeof(uint32_t)) return -1;
+        *(uint32_t*)data = scan_state;
+        return 0;
+    }
+
+    // One access point of the last scan. The caller says which; -1 says that
+    // is past the end, which is how a list with no count at the front is read.
+    if (code == UBIQOS_SS_EH_SCAN_AP) {
+        if (len < sizeof(ubiqos_eh_ap_t)) return -1;
+        ubiqos_eh_ap_t *out = (ubiqos_eh_ap_t*)data;
+        if (scan_state != UBIQOS_SCAN_DONE || out->index >= scan_found) return -1;
+        const uint8_t *from = (const uint8_t*)&scan_list[out->index];
+        uint8_t *to = (uint8_t*)out;
+        for (uint32_t i = 0; i < sizeof(*out); i++) to[i] = from[i];
+        return 0;
+    }
+
     if (code == UBIQOS_SS_EH_MAC) {
         if (len < 6 || !sta_mac_known) return -1;
         uint8_t *out = (uint8_t*)data;
@@ -1037,6 +1218,16 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         return 0;
     }
 
+    // Start a scan. It runs in the radio's thread, because it takes seconds
+    // and a trap may not: this returns the moment the thread has been asked.
+    if (code == UBIQOS_SS_EH_SCAN) {
+        if (join_state == 1 || scan_state == UBIQOS_SCAN_RUNNING) return -1;
+        if (!start_radio_thread()) return -1;
+        scan_state = UBIQOS_SCAN_RUNNING;      // from THIS moment, as with joining
+        scan_wanted = true;
+        return 0;
+    }
+
     if (code == UBIQOS_SS_EH_JOIN) {
         if (len < 3 || len > sizeof(join_creds)) return -1;
         if (join_state == 1) return -1;                    // already trying
@@ -1044,15 +1235,7 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         for (uint32_t i = 0; i < len; i++) join_creds[i] = in[i];
         join_creds[sizeof(join_creds) - 1] = 0;
 
-        // The thread is made the first time somebody asks, not at boot: a
-        // machine that never joins a network should not carry a stack for it.
-        if (!join_running) {
-            if (K->kernel_thread(join_thread, 3072, UBIQOS_PRIO_EH) < 0) {
-                K->print("wifi: could not start the join thread\n");
-                return -1;
-            }
-            join_running = true;
-        }
+        if (!start_radio_thread()) return -1;
         // Trying, from THIS moment -- not from whenever the thread next looks.
         //
         // The thread wakes on a fifty millisecond poll and set the state there,

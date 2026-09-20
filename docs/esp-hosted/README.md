@@ -569,6 +569,47 @@ answers with an error until there is an access point to name:
 
 A status line that says joined when it is not is worse than no status line.
 
+### Looking around
+
+Nothing had to be added to the co-processor. The stock firmware's RPC already
+carries `esp_wifi_scan_start` and its results -- ids 286 and 351 in the v2
+message set, beside the 259 and 341 this has been using all along -- so the
+scan is host-side work only:
+
+    ubiqos:/> wifi scan
+    looking around....
+    signal  ch  network
+      -46    2  usmesh          (key)
+      -59    6  usmesh
+      -82    2  HK Citation     (open)
+      -85    1  Hamrin
+
+It runs in the driver's thread, beside the joining and never at the same time:
+a scan visits every channel and waits on each, which is seconds, and seconds
+may not be spent in a trap. A scan does not disturb a connection that is
+already up -- pings across one keep answering, with a single late one while
+the radio is off its home channel.
+
+**The records come back one at a time.** `esp_wifi_scan_get_ap_records` hands
+over the whole list in a single reply, and a dozen access points do not fit in
+the frame this driver reads into -- and that same call frees the list, so a
+truncated answer cannot be asked for again. `esp_wifi_scan_get_ap_record`,
+singular, gives the next one each time: every reply is small and the cost is
+one RPC per network.
+
+**A negative varint is ten bytes.** An access point's signal strength is the
+first negative number this protocol has had to read, and the varint reader
+stopped after five bytes -- leaving the other five to be read as the next
+field, which turned a record into nonsense. It consumes the whole varint now
+and keeps the low thirty-two bits.
+
+The names are not secrets, so any program may read the list. What it is for is
+choosing: `wifi auto` joins the strongest network the key store has a password
+for, and the ones that are somewhere else are never tried. A mesh answers under
+one name from each of its radios, so the same name appears several times -- the
+password is the same for all of them, and a name that has been refused once is
+not tried again.
+
 ### The remaining latency is not the transport's
 
 The driver now counts what an outbound frame waits between being handed over

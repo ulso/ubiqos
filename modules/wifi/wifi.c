@@ -4,6 +4,7 @@
 //
 //   wifi connect <ssid>    join a network; the password is asked for
 //   wifi auto              join whichever network the key store has a key for
+//   wifi scan              which networks are in earshot
 //   wifi rssi              how strong the access point's signal is
 //   wifi mode | ps         what the radio is doing
 //
@@ -23,14 +24,16 @@ static bool is(const char *a, const char *b) {
 
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: wifi connect <ssid> | auto | rssi | mode | ps\n\n"
+            "usage: wifi connect <ssid> | auto | scan | rssi | mode | ps\n\n"
             "  connect <ssid>  join a network. A password kept in the key store\n"
             "                  under 'wifi.<ssid>' is used without asking; failing\n"
             "                  that the password is asked for, never echoed and\n"
             "                  never an argument\n"
-            "  auto            try each 'wifi.<ssid>' key in the unlocked store\n"
-            "                  in turn, and stop at the first network that lets\n"
-            "                  the board in -- one board, several places\n"
+            "  auto            of the networks in earshot, join the strongest\n"
+            "                  one the unlocked store has a key for -- one board,\n"
+            "                  several places\n"
+            "  scan            which networks are in earshot, strongest first,\n"
+            "                  and which of them there is a key for\n"
             "  rssi            the access point's signal strength\n"
             "  mode, ps        which mode and power saving the radio is in\n\n"
             "The same as ehrpc, which does the work. To join at every boot\n"
@@ -39,9 +42,11 @@ void module_main(int argc, char **argv) {
 
     const bool connect = argc == 3 && is(argv[1], "connect");
     const bool simple  = argc == 2 && (is(argv[1], "rssi") || is(argv[1], "mode")
-                                       || is(argv[1], "ps") || is(argv[1], "auto"));
+                                       || is(argv[1], "ps") || is(argv[1], "auto")
+                                       || is(argv[1], "scan"));
     if (!connect && !simple) {
-        ubiqos_write_str(UBIQOS_STDOUT, "usage: wifi connect <ssid> | auto | rssi | mode | ps\r\n");
+        ubiqos_write_str(UBIQOS_STDOUT,
+                         "usage: wifi connect <ssid> | auto | scan | rssi | mode | ps\r\n");
         return;
     }
 

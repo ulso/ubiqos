@@ -92,24 +92,24 @@ The password goes from the store to the radio's driver inside the kernel. The
 is what "the kernel uses the key on your behalf" means, and it is the shape
 anything else the kernel can do for itself should take.
 
-**`wifi auto`** does not even ask for the name. It takes every key called
-`wifi.something`, tries them one after another, and stops at the first network
-that lets the board in -- so one board can be carried between places and find
-whichever of them it is in:
+**`wifi auto`** does not even ask for the name. It looks around, and of the
+networks that are actually in earshot it joins the strongest one there is a
+key for -- so one board can be carried between places and find whichever of
+them it is in:
 
 ```
 ubiqos:/> key unlock
 ubiqos:/> wifi auto
-trying home...........
-not here
+looking around...
 trying the-workshop...
 joined
 ```
 
-There is no scan behind it: the radio cannot do one yet, so the order is the
-order the keys happen to be in, and a network that is not there costs the
-twenty seconds the radio takes to give up on it. A scan would fix both and
-nothing else would have to change, because the joining is the same call.
+The looking is what makes it quick: the networks that are somewhere else are
+not tried at all, and a whole store of keys costs one scan of about three
+seconds. `wifi scan` shows the same list, with a mark against the ones there
+is a key for. A hidden network broadcasts no name and is in no scan, so that
+one is still `wifi connect <ssid>`.
 
 With the store locked, or with no key for that network, `wifi connect` asks at
 the keyboard as it always has. `/sd/config.txt` is unchanged and is still what

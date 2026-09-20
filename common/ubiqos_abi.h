@@ -688,6 +688,38 @@ typedef struct {
 #define UBIQOS_SS_EH_JOINED  0x0415u   // getstat -> uint32_t: 0 idle, 1 trying,
                                        //   2 joined, 3 the last attempt failed
 
+// Look around: which networks are in earshot.
+//
+// setstat starts one and returns at once; getstat says how it is going. A
+// scan takes seconds -- the radio visits every channel and waits on each --
+// and seconds may not be spent in a trap, so it runs in the driver's thread
+// beside the joining, and only one of the two happens at a time.
+//
+// The list is not secret and any program may read it. What it is FOR is
+// choosing: a board that is carried between places can see which of the
+// networks it has a password for is actually here, instead of trying each in
+// turn and waiting out the ones that are not.
+#define UBIQOS_SS_EH_SCAN    0x0417u   // setstat: start; getstat -> uint32_t
+#define UBIQOS_SS_EH_SCAN_AP 0x0418u   // getstat: ubiqos_eh_ap_t, .index in
+
+#define UBIQOS_SCAN_NEVER    0u        // nobody has asked yet
+#define UBIQOS_SCAN_RUNNING  1u
+#define UBIQOS_SCAN_DONE     2u
+#define UBIQOS_SCAN_FAILED   3u
+
+// One access point, as the radio heard it. `index` is what the caller fills
+// in; everything else comes back. -1 means there is no entry with that number,
+// which is how a list with no count at the front is read to its end.
+typedef struct __attribute__((packed, aligned(4))) {
+    uint32_t index;
+    int32_t  rssi;         // dBm, negative
+    uint32_t channel;
+    uint32_t auth;         // the chip's authmode; 0 is an open network
+    char     ssid[33];     // 32 and a terminator; empty when hidden
+    uint8_t  bssid[6];
+    uint8_t  pad;
+} ubiqos_eh_ap_t;
+
 // The tail for the ESP32-C6 link. The UART part is the same shape as the one
 // below, and the two pins after it are the ones the chip's ROM cares about at
 // reset. Read out of the board's schematic -- see docs/esp-hosted.

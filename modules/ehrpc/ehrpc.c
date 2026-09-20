@@ -425,16 +425,107 @@ static void watch_join(int32_t dev) {
     else                 say("\r\nstill trying after forty seconds\r\n");
 }
 
+
+// --- LOOKING AROUND ---------------------------------------------------------
+//
+// The driver does the scanning; this asks for it and reads the list out. The
+// list is not secret -- an access point broadcasts its name to anyone with an
+// aerial -- so an ordinary program may have it.
+//
+// The records live here rather than on the stack: a module gets four kilobytes
+// of stack and no guard, and twelve of these are seven hundred bytes.
+#define SCAN_MAX 12
+static ubiqos_eh_ap_t aps[SCAN_MAX];
+static uint32_t ap_count;
+
+// True when the key store has a password for this network. It answers with a
+// fingerprint, which is not the value, and 0 only means "there is such a key".
+static bool have_key_for(const char *ssid) {
+    ubiqos_keyreq_t r;
+    for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
+    if (ubiqos_key_op(UBIQOS_KEY_OP_STATE, &r) != (int32_t)UBIQOS_KEYS_OPEN) return false;
+    uint32_t n = 0;
+    const char *k = "wifi.";
+    while (*k && n < UBIQOS_KEY_NAME_MAX - 1) r.name[n++] = *k++;
+    for (uint32_t i = 0; ssid[i] && n < UBIQOS_KEY_NAME_MAX - 1; i++) r.name[n++] = ssid[i];
+    r.name[n] = 0;
+    return ubiqos_key_op(UBIQOS_KEY_OP_PRINT, &r) == 0;
+}
+
+// Ask, wait, and read the list into aps[]. Returns false if the scan did not
+// happen at all -- which is different from a scan that found nothing.
+static bool collect_scan(int32_t dev, bool tell) {
+    ap_count = 0;
+    if (ubiqos_setstat(dev, UBIQOS_SS_EH_SCAN, 0, 0) < 0) {
+        if (tell) say("the radio is busy\r\n");
+        return false;
+    }
+    if (tell) say("looking around");
+    for (int waited = 0; waited < 300; waited++) {       // thirty seconds
+        uint32_t state = 0;
+        ubiqos_getstat(dev, UBIQOS_SS_EH_SCAN, &state, sizeof(state));
+        if (state == UBIQOS_SCAN_DONE) break;
+        if (state == UBIQOS_SCAN_FAILED) {
+            if (tell) say("\r\nthe radio would not scan -- the console log says why\r\n");
+            return false;
+        }
+        if (tell && (waited % 10) == 0) say(".");
+        ubiqos_sleep(100);
+    }
+    if (tell) say("\r\n");
+
+    for (uint32_t i = 0; i < SCAN_MAX; i++) {
+        aps[ap_count].index = i;
+        if (ubiqos_getstat(dev, UBIQOS_SS_EH_SCAN_AP, &aps[ap_count], sizeof(aps[0])) < 0) break;
+        ap_count++;
+    }
+
+    // Strongest first, whatever order the chip kept them in. A selection sort
+    // over a dozen entries is the whole of it.
+    for (uint32_t i = 0; i + 1 < ap_count; i++) {
+        uint32_t best = i;
+        for (uint32_t j = i + 1; j < ap_count; j++)
+            if (aps[j].rssi > aps[best].rssi) best = j;
+        if (best != i) {
+            ubiqos_eh_ap_t t = aps[i]; aps[i] = aps[best]; aps[best] = t;
+        }
+    }
+    return true;
+}
+
+static void do_scan(int32_t dev) {
+    if (!collect_scan(dev, true)) return;
+    if (!ap_count) { say("nothing in earshot\r\n"); return; }
+
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "signal  ch  network\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
+    for (uint32_t i = 0; i < ap_count; i++) {
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "  -");
+        ubiqos_line_u32(&l, (uint32_t)(-aps[i].rssi));
+        ubiqos_line_str(&l, aps[i].channel < 10 ? "    " : "   ");
+        ubiqos_line_u32(&l, aps[i].channel);
+        ubiqos_line_str(&l, "  ");
+        ubiqos_line_str(&l, aps[i].ssid);
+        if (!aps[i].auth) ubiqos_line_str(&l, "  (open)");
+        if (have_key_for(aps[i].ssid)) ubiqos_line_str(&l, "  (key)");
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
+    }
+}
+
 // Whichever of the networks the store has a password for answers here.
 //
-// No scan: the radio cannot do one yet, so this tries the names it knows, one
-// after another, and stops at the first that lets it in. That makes the order
-// arbitrary rather than strongest-first, and a network that is not here costs
-// the few seconds the radio takes to give up on it. A scan would fix both, and
-// nothing else would have to change -- the joining is the same call.
+// Look first, then try: the scan says which networks are actually in earshot,
+// so the strongest of the ones there is a key for is the one to try, and the
+// ones that are somewhere else are not tried at all. Before the scan existed
+// this walked the whole store blindly and spent twenty seconds on each network
+// that was not here.
 //
-// The names are not secrets and this program may list them; the passwords stay
-// in the kernel, as they do for `connect`.
+// A name is not a secret and this program may read the list; the passwords
+// stay in the kernel, as they do for `connect`.
 static void do_auto(int32_t dev) {
     ubiqos_keyreq_t r;
     for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
@@ -446,35 +537,49 @@ static void do_auto(int32_t dev) {
     ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof(state));
     if (state == 2) { say("already joined\r\n"); return; }
 
-    const int32_t keys = ubiqos_key_op(UBIQOS_KEY_OP_COUNT, &r);
+    if (!collect_scan(dev, true)) return;
+    if (!ap_count) { say("nothing in earshot\r\n"); return; }
+
     uint32_t tried = 0;
-    for (int32_t i = 0; i < keys; i++) {
-        r.index = (uint32_t)i;
-        if (ubiqos_key_op(UBIQOS_KEY_OP_NTH, &r) != 0) continue;
-        const char *p = r.name;
-        for (const char *k = "wifi."; *k; k++) { if (*p != *k) { p = 0; break; } p++; }
-        if (!p || !*p) continue;                 // not a network's password
+    for (uint32_t i = 0; i < ap_count; i++) {
+        const char *ssid = aps[i].ssid;
+        if (!have_key_for(ssid)) continue;
+
+        // A mesh answers under one name from every one of its radios, so the
+        // list holds that name several times. The password is the same each
+        // time: if the strongest of them would not have us, a weaker one with
+        // the same name will not either.
+        bool again = false;
+        for (uint32_t j = 0; j < i; j++) if (is(aps[j].ssid, ssid)) again = true;
+        if (again) continue;
 
         tried++;
         say("trying ");
-        say(p);
+        say(ssid);
         uint32_t n = 0;
-        while (p[n]) n++;
-        if (ubiqos_setstat(dev, UBIQOS_SS_EH_JOIN_KEY, p, n + 1) < 0) {
+        while (ssid[n]) n++;
+        if (ubiqos_setstat(dev, UBIQOS_SS_EH_JOIN_KEY, ssid, n + 1) < 0) {
             say(" -- the driver would not take it\r\n");
             continue;
         }
-        // Each one is waited out to the end. The driver refuses a second
-        // attempt while the first is still running, so cutting one short does
-        // not save time -- it only makes the next network report a failure
-        // that never happened.
+        // Each attempt is waited out to the end. The driver refuses a second
+        // one while the first is still running, so cutting it short does not
+        // save time -- it only makes the next network report a failure that
+        // never happened.
         const uint32_t got = wait_join(dev, 400);
         if (got == 2) { say("\r\njoined\r\n"); return; }
         if (got == 0) { say("\r\nstill trying -- stopping here\r\n"); return; }
-        say("\r\nnot here\r\n");
+        say("\r\nthat password is not the one it wants\r\n");
     }
-    if (!tried) say("no passwords for any network -- 'key set wifi.<ssid>' first\r\n");
-    else        say("none of them answered\r\n");
+
+    if (!tried) {
+        // Which is worth saying plainly, because the store may well be full of
+        // keys -- for networks that are all somewhere else.
+        say("no key for any network here -- 'wifi scan' shows what there is,\r\n"
+            "and a hidden network is not in that list: 'wifi connect <ssid>'\r\n");
+    } else {
+        say("none of them let us in\r\n");
+    }
 }
 
 static void do_connect(int32_t dev, const char *ssid) {
@@ -587,7 +692,7 @@ static void do_rssi(int32_t dev) {
 
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: ehrpc mode | peek | connect <ssid> | auto\n\n"
+            "usage: ehrpc mode | peek | connect <ssid> | auto | scan\n\n"
             "Asks the ESP32-C6 a question on ESP-Hosted's control plane.\n\n"
             "  mode    which WiFi mode the radio is in\n"
             "  ps      which power-saving mode it is actually in\n"
@@ -598,24 +703,27 @@ void module_main(int argc, char **argv) {
             "          without this program seeing it; otherwise it is typed\n"
             "          here, never echoed and never an argument. /sd/config.txt\n"
             "          is what makes the board join by itself at boot\n"
-            "  auto    try every network the unlocked key store has a password\n"
-            "          for, and stop at the first that answers\n")) return;
+            "  scan    which networks are in earshot, strongest first\n"
+            "  auto    of the networks in earshot, join the strongest one the\n"
+            "          unlocked key store has a password for\n")) return;
 
     bool mode = argc == 2 && is(argv[1], "mode");
     bool peek = argc == 2 && is(argv[1], "peek");
     bool conn = argc == 3 && is(argv[1], "connect");
     const bool automatic = argc == 2 && is(argv[1], "auto");
+    const bool scanning  = argc == 2 && is(argv[1], "scan");
     bool ps   = argc == 2 && is(argv[1], "ps");
     bool rssi = argc == 2 && is(argv[1], "rssi");
-    if (!mode && !peek && !conn && !ps && !rssi && !automatic) {
-        say("usage: ehrpc mode | ps | rssi | peek | connect <ssid> | auto\r\n");
+    if (!mode && !peek && !conn && !ps && !rssi && !automatic && !scanning) {
+        say("usage: ehrpc mode | ps | rssi | peek | connect <ssid> | auto | scan\r\n");
         return;
     }
 
     int32_t dev = ubiqos_open("/dev/eh");
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
-    if (automatic) do_auto(dev);
-    else if (mode) do_mode(dev);
+    if (automatic)      do_auto(dev);
+    else if (scanning)  do_scan(dev);
+    else if (mode)      do_mode(dev);
     else if (ps)   do_ps(dev);
     else if (rssi) do_rssi(dev);
     else if (peek) do_peek(dev);
