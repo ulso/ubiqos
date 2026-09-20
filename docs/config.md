@@ -23,6 +23,13 @@ Both are refused to processes all the same, because either may hold the
 password. A card with the credentials in both files says so at boot, by naming
 the one it used.
 
+Everything else -- `hostname`, `timezone`, `usb_address` -- stays in
+config.txt, and the split changed nothing about any of it. The same parser
+reads both files, so it does not actually police which setting goes where;
+what the files mean is a convention, and the one rule the code has is that the
+second file wins. Putting a hostname in wificfg.txt would work and would be a
+way to confuse yourself later.
+
 Keys are case-insensitive and a value runs to the end of the line with the
 spaces either side trimmed.
 
