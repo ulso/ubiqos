@@ -64,6 +64,36 @@ static bool locked(void) {
     return true;
 }
 
+// A store with a network's password in it is nearly always unlocked BECAUSE of
+// that password: the clock wants the network and so does anything that calls
+// out, and forgetting to ask for it afterwards is how a board sits there with
+// the right key and no link.
+//
+// So `wifi auto` is RUN here -- the command, as a person would type it. There
+// is no radio code in this program and nothing links the two: a machine
+// without `wifi` has nothing to run, and nothing happens. What comes out on
+// the screen is that command's own account of itself, which is the difference
+// between doing something for somebody and doing something behind their back.
+//
+// Only when the store actually holds a network's password. A board whose keys
+// are all for web services has no business turning a radio on.
+static void join_if_networks(void) {
+    ubiqos_keyreq_t r;
+    const int32_t n = ubiqos_key_op(UBIQOS_KEY_OP_COUNT, &r);
+    bool any = false;
+    for (int32_t i = 0; i < n && !any; i++) {
+        r.index = (uint32_t)i;
+        if (ubiqos_key_op(UBIQOS_KEY_OP_NTH, &r) != 0) continue;
+        const char *p = r.name;
+        for (const char *k = "wifi."; *k; k++) { if (*p != *k) { p = 0; break; } p++; }
+        if (p && *p) any = true;
+    }
+    if (!any) return;
+
+    const int32_t pid = ubiqos_exec("wifi", "auto");
+    if (pid >= 0) ubiqos_wait(pid);
+}
+
 static void unlock(void) {
     ubiqos_keyreq_t r;
     for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
@@ -79,9 +109,12 @@ static void unlock(void) {
     for (uint32_t i = 0; i < sizeof r.value; i++) r.value[i] = 0;
     say("\r\n");
 
-    if (rc == 0)       say("unlocked\r\n");
-    else if (rc == 1)  say("a new store, unlocked\r\n");
-    else if (rc == -6) say("key: that is not the passphrase, or the store has been changed\r\n");
+    if (rc == 0 || rc == 1) {
+        say(rc ? "a new store, unlocked\r\n" : "unlocked\r\n");
+        join_if_networks();
+        return;
+    }
+    if (rc == -6)      say("key: that is not the passphrase, or the store has been changed\r\n");
     else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
     else               say("key: could not open the store\r\n");
 }
@@ -113,7 +146,9 @@ void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
             "usage: key [unlock | lock | set NAME | remove NAME | check NAME]\n\n"
             "  unlock        type the passphrase; on a board with no store yet,\n"
-            "                what you type becomes the passphrase\n"
+            "                what you type becomes the passphrase. If the store\n"
+            "                holds a password for a network, 'wifi auto' is run\n"
+            "                afterwards -- which is what it was unlocked for\n"
             "  lock          forget it; the store is sealed again\n"
             "  destroy       erase the store: every key and the passphrase\n"
             "  (none)        the names of the keys stored, and their lengths\n"

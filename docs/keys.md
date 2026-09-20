@@ -131,6 +131,14 @@ trying the-workshop...
 joined
 ```
 
+**Unlocking does this by itself** when the store holds a password for a
+network. That is what the store was opened for: the clock wants the network,
+and so does anything that calls out, and a board sitting there with the right
+key and no link is the failure this avoids. `key unlock` runs the `wifi auto`
+command afterwards -- the command, as you would have typed it, with its own
+output on the screen. No radio code went into the key program, nothing links
+the two, and a store with none of these keys leaves the radio alone.
+
 The looking is what makes it quick: the networks that are somewhere else are
 not tried at all, and a whole store of keys costs one scan of about three
 seconds. `wifi scan` shows the same list, with a mark against the ones there
