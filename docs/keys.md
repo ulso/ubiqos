@@ -92,6 +92,25 @@ The password goes from the store to the radio's driver inside the kernel. The
 is what "the kernel uses the key on your behalf" means, and it is the shape
 anything else the kernel can do for itself should take.
 
+**`wifi auto`** does not even ask for the name. It takes every key called
+`wifi.something`, tries them one after another, and stops at the first network
+that lets the board in -- so one board can be carried between places and find
+whichever of them it is in:
+
+```
+ubiqos:/> key unlock
+ubiqos:/> wifi auto
+trying home...........
+not here
+trying the-workshop...
+joined
+```
+
+There is no scan behind it: the radio cannot do one yet, so the order is the
+order the keys happen to be in, and a network that is not there costs the
+twenty seconds the radio takes to give up on it. A scan would fix both and
+nothing else would have to change, because the joining is the same call.
+
 With the store locked, or with no key for that network, `wifi connect` asks at
 the keyboard as it always has. `/sd/config.txt` is unchanged and is still what
 makes a board join by itself at boot: the store is sealed then, and nothing can

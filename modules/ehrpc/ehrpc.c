@@ -405,17 +405,76 @@ static void do_peek(int32_t dev) {
 // process's memory and the shell keeps sixteen lines of history -- not echoed,
 // and wiped before this returns.
 // Wait for the radio to say what happened, however the joining was asked for.
-static void watch_join(int32_t dev) {
-    say("joining");
-    for (int waited = 0; waited < 400; waited++) {
+// Returns 2 joined, 3 refused, 0 still trying when the time is up.
+static uint32_t wait_join(int32_t dev, int tenths) {
+    for (int waited = 0; waited < tenths; waited++) {
         uint32_t state = 0;
         ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof(state));
-        if (state == 2) { say("\r\njoined\r\n"); return; }
-        if (state == 3) { say("\r\nit did not join -- the console log says why\r\n"); return; }
+        if (state == 2 || state == 3) return state;
         if ((waited % 20) == 0) say(".");
         ubiqos_sleep(100);
     }
-    say("\r\nstill trying after forty seconds\r\n");
+    return 0;
+}
+
+static void watch_join(int32_t dev) {
+    say("joining");
+    const uint32_t state = wait_join(dev, 400);
+    if (state == 2)      say("\r\njoined\r\n");
+    else if (state == 3) say("\r\nit did not join -- the console log says why\r\n");
+    else                 say("\r\nstill trying after forty seconds\r\n");
+}
+
+// Whichever of the networks the store has a password for answers here.
+//
+// No scan: the radio cannot do one yet, so this tries the names it knows, one
+// after another, and stops at the first that lets it in. That makes the order
+// arbitrary rather than strongest-first, and a network that is not here costs
+// the few seconds the radio takes to give up on it. A scan would fix both, and
+// nothing else would have to change -- the joining is the same call.
+//
+// The names are not secrets and this program may list them; the passwords stay
+// in the kernel, as they do for `connect`.
+static void do_auto(int32_t dev) {
+    ubiqos_keyreq_t r;
+    for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
+    if (ubiqos_key_op(UBIQOS_KEY_OP_STATE, &r) != (int32_t)UBIQOS_KEYS_OPEN) {
+        say("the key store is locked -- 'key unlock' first\r\n");
+        return;
+    }
+    uint32_t state = 0;
+    ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof(state));
+    if (state == 2) { say("already joined\r\n"); return; }
+
+    const int32_t keys = ubiqos_key_op(UBIQOS_KEY_OP_COUNT, &r);
+    uint32_t tried = 0;
+    for (int32_t i = 0; i < keys; i++) {
+        r.index = (uint32_t)i;
+        if (ubiqos_key_op(UBIQOS_KEY_OP_NTH, &r) != 0) continue;
+        const char *p = r.name;
+        for (const char *k = "wifi."; *k; k++) { if (*p != *k) { p = 0; break; } p++; }
+        if (!p || !*p) continue;                 // not a network's password
+
+        tried++;
+        say("trying ");
+        say(p);
+        uint32_t n = 0;
+        while (p[n]) n++;
+        if (ubiqos_setstat(dev, UBIQOS_SS_EH_JOIN_KEY, p, n + 1) < 0) {
+            say(" -- the driver would not take it\r\n");
+            continue;
+        }
+        // Each one is waited out to the end. The driver refuses a second
+        // attempt while the first is still running, so cutting one short does
+        // not save time -- it only makes the next network report a failure
+        // that never happened.
+        const uint32_t got = wait_join(dev, 400);
+        if (got == 2) { say("\r\njoined\r\n"); return; }
+        if (got == 0) { say("\r\nstill trying -- stopping here\r\n"); return; }
+        say("\r\nnot here\r\n");
+    }
+    if (!tried) say("no passwords for any network -- 'key set wifi.<ssid>' first\r\n");
+    else        say("none of them answered\r\n");
 }
 
 static void do_connect(int32_t dev, const char *ssid) {
@@ -528,7 +587,7 @@ static void do_rssi(int32_t dev) {
 
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: ehrpc mode | peek | connect <ssid>\n\n"
+            "usage: ehrpc mode | peek | connect <ssid> | auto\n\n"
             "Asks the ESP32-C6 a question on ESP-Hosted's control plane.\n\n"
             "  mode    which WiFi mode the radio is in\n"
             "  ps      which power-saving mode it is actually in\n"
@@ -538,21 +597,25 @@ void module_main(int argc, char **argv) {
             "          the key store as 'wifi.<ssid>' is used without asking and\n"
             "          without this program seeing it; otherwise it is typed\n"
             "          here, never echoed and never an argument. /sd/config.txt\n"
-            "          is what makes the board join by itself at boot\n")) return;
+            "          is what makes the board join by itself at boot\n"
+            "  auto    try every network the unlocked key store has a password\n"
+            "          for, and stop at the first that answers\n")) return;
 
     bool mode = argc == 2 && is(argv[1], "mode");
     bool peek = argc == 2 && is(argv[1], "peek");
     bool conn = argc == 3 && is(argv[1], "connect");
+    const bool automatic = argc == 2 && is(argv[1], "auto");
     bool ps   = argc == 2 && is(argv[1], "ps");
     bool rssi = argc == 2 && is(argv[1], "rssi");
-    if (!mode && !peek && !conn && !ps && !rssi) {
-        say("usage: ehrpc mode | ps | rssi | peek | connect <ssid>\r\n");
+    if (!mode && !peek && !conn && !ps && !rssi && !automatic) {
+        say("usage: ehrpc mode | ps | rssi | peek | connect <ssid> | auto\r\n");
         return;
     }
 
     int32_t dev = ubiqos_open("/dev/eh");
     if (dev < 0) { say("ehrpc: no /dev/eh\r\n"); return; }
-    if (mode)      do_mode(dev);
+    if (automatic) do_auto(dev);
+    else if (mode) do_mode(dev);
     else if (ps)   do_ps(dev);
     else if (rssi) do_rssi(dev);
     else if (peek) do_peek(dev);
