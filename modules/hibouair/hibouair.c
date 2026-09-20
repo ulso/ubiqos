@@ -43,11 +43,11 @@
                                     // another that alternates with it and does not
 #define PULSE_ACM      1
 #define PULSE_INTR     2   // ctrl-C, asked for with ubiqos_catch_intr
-// Thirty, which is 1920 bytes of this module's data and more sensors than
-// anybody has put in a flat. It was eight, which is the kind of number that
-// works until the day somebody has nine -- and the ninth was dropped without
-// a word, so the only symptom was a sensor missing from a web page.
-#define MAX_SENSORS    30
+// Twenty, which is 1280 bytes of this module's data and four times what this
+// flat holds. It was eight, which is the kind of number that works until the
+// day somebody has nine -- and the ninth was dropped without a word, so the
+// only symptom was a sensor missing from a web page.
+#define MAX_SENSORS    20
 #define REDRAW_MS      2000
 #define DONGLE_WAIT_S  30   // how long to wait for the dongle to turn up
 
@@ -109,11 +109,13 @@ typedef struct {
     bool     used;
 } sensor_t;
 
-// Eight kilobytes, because the table above is now most of a kilobyte and the
-// default four have to hold the thread-local data AND the stack. Raising the
-// number of sensors without raising this would have paid for the thirtieth
-// sensor with the stack, and a module's stack has no guard: it would have
-// written through whatever was under it and said nothing.
+// Eight kilobytes, because the table above is over a kilobyte and the default
+// four have to hold the thread-local data AND the stack. Raising the number of
+// sensors without raising this would have paid for the last of them with the
+// stack, and a module's stack has no guard: it would have written through
+// whatever sat under it and said nothing. Kept at eight after the table came
+// back down to twenty -- what the stack actually needs has not been measured,
+// and four kilobytes minus a kilobyte and a half is not where to find out.
 UBIQOS_MEM_SIZE(8192);
 
 __thread sensor_t sensors[MAX_SENSORS];
