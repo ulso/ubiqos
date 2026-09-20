@@ -10,6 +10,7 @@
 #include "fat32.h"
 #include "moddir.h"
 #include "flashmod.h"
+#include "ubiqos_version.h"
 #include "keystore.h"
 #include "pico/bootrom.h"
 #include "pico/unique_id.h"
@@ -395,8 +396,12 @@ bool verify_ubiqos_header(ubiqos_module_header_t *header) {
 
 // --- THE SYSTEM'S ENTRY POINT ---
 void ubiqos_kernel_main(void) {
+    // The version comes from `git describe` at build time -- see
+    // cmake/version.cmake. A board that says 0.1.6 is running that release;
+    // one that says 0.1.6-3-g1849a48 is three commits past it, which is worth
+    // being able to read off the log rather than guess from a file date.
     ubiqos_print("\n========================================\n");
-    ubiqos_print("      UBIQOS KERNEL v0.1 STARTING       \n");
+    ubiqos_print("  UBIQOS KERNEL " UBIQOS_VERSION " STARTING\n");
     ubiqos_print("========================================\n");
 #ifdef __riscv
     ubiqos_print("System: RISC-V 32-bit (Hazard3)\n");

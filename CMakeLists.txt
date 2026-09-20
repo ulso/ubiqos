@@ -281,6 +281,14 @@ endif()
 message(STATUS "Native USB port: ${UBIQOS_NATIVE_USB}")
 
 
+# The version string, rebuilt before the kernel is -- see cmake/version.cmake.
+add_custom_target(ubiqos_version ALL
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUT=${CMAKE_CURRENT_BINARY_DIR}/ubiqos_version.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/ubiqos_version.h
+    COMMENT "Asking git what this build is called")
+
 add_executable(os_kernel 
     kernel/crashlog.c
     kernel/vfs.c
@@ -600,7 +608,10 @@ endif()
 # asks for its board through kernel/board.h and never by name.
 target_compile_definitions(os_kernel PRIVATE UBIQOS_BOARD_HEADER=${ubiqosBoardHeader})
 
+add_dependencies(os_kernel ubiqos_version)
+
 target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}          # ubiqos_version.h, written by git
     ${CMAKE_CURRENT_SOURCE_DIR}/kernel
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pico_sd_card
