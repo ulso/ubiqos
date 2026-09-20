@@ -579,10 +579,10 @@ scan is host-side work only:
     ubiqos:/> wifi scan
     looking around....
     signal  ch  network
-      -46    2  usmesh          (key)
-      -59    6  usmesh
-      -82    2  HK Citation     (open)
-      -85    1  Hamrin
+      -46    2  the-mesh        (key)
+      -59    6  the-mesh
+      -82    2  a-loudspeaker   (open)
+      -85    1  next-door
 
 It runs in the driver's thread, beside the joining and never at the same time:
 a scan visits every channel and waits on each, which is seconds, and seconds
