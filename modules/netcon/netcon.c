@@ -249,7 +249,22 @@ void module_main(int argc, char **argv) {
         server = ubiqos_sock_listen_on(UBIQOS_NET_LWIP, (uint16_t)port);
     }
     if (server < 0) {
-        say("netcon: the network stack would not take the port\r\n");
+        {
+            // The stack knows why and has always known: 10 is a full socket
+            // table, 20 and up are lwIP's own bind errors -- 28 is the port
+            // being in use. Printing "would not" and stopping there sent two
+            // people looking in the wrong place twice.
+            const int32_t why = ubiqos_syscall(SYS_MEMINFO, UBIQOS_MEM_SOCKETS, 102, 0);
+            ubiqos_line_t l;
+            ubiqos_line_reset(&l);
+            ubiqos_line_str(&l, "netcon: the network stack would not take port ");
+            ubiqos_line_u32(&l, port);
+            ubiqos_line_str(&l, why == 10 ? " -- no free socket" :
+                                why == 28 ? " -- something else is on it" : " -- reason ");
+            if (why != 10 && why != 28) ubiqos_line_u32(&l, (uint32_t)why);
+            ubiqos_line_str(&l, "\r\n");
+            ubiqos_line_flush(UBIQOS_STDOUT, &l);
+        }
         return;
     }
 

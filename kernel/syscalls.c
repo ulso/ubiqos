@@ -938,15 +938,22 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             }
             if (frame->a0 == UBIQOS_MEM_PIPES)   { frame->a0 = ubiqos_io_pipes_used(); break; }
             if (frame->a0 == UBIQOS_MEM_SOCKETS) {
+#if UBIQOS_LWIP
                 extern uint32_t ubiqos_lwipsock_used(void);
                 extern uint32_t ubiqos_lwipsock_slot(uint32_t);
-                // a1 nought asks how many; a1 = n + 1 asks about slot n.
                 extern uint32_t ubiqos_lwipsock_counts(uint32_t);
                 // a1 nought asks how many are in use; 1..8 ask about a slot;
                 // 100 and 101 are how many lwIP has queued and we have taken.
                 frame->a0 = frame->a1 >= 100 ? ubiqos_lwipsock_counts(frame->a1 - 100)
                           : frame->a1 ? ubiqos_lwipsock_slot(frame->a1 - 1)
                                       : ubiqos_lwipsock_used();
+#else
+                // A kernel without lwIP has no sockets to count. The ws43b and
+                // the framebuffer builds leave it out, and this branch is why
+                // they stopped linking: a counter added for one configuration
+                // and built in six.
+                frame->a0 = 0;
+#endif
                 break;
             }
             if (frame->a0 == UBIQOS_MEM_ASSERTS)     { frame->a0 = ubiqos_asserts_seen; break; }

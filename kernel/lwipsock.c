@@ -290,6 +290,7 @@ uint32_t ubiqos_lwipsock_used(void)
 // connecting, whether lwIP still has a pcb, who owns it and on which port.
 uint32_t ubiqos_lwipsock_counts(uint32_t which)
 {
+    if (which == 2) return ubiqos_lwipsock_why;   // why the last call failed
     return which == 0 ? ubiqos_lwipsock_queued : ubiqos_lwipsock_taken;
 }
 

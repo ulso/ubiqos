@@ -72,8 +72,18 @@
 #define MEM_SIZE                    8000
 #define MEMP_NUM_PBUF               8
 #define MEMP_NUM_UDP_PCB            7    // a responder on each interface, and the cable's DHCP server
-#define MEMP_NUM_TCP_PCB            4
-#define MEMP_NUM_TCP_PCB_LISTEN     2
+// Six connections and four things listening.
+//
+// It was two listeners, which is how many the board had when this was written:
+// the web server and nothing else. It now has a web server, an SSH server and
+// a shell over TCP, and the third to start got "the network stack would not
+// take the port" -- twice, on two different days, looking like a different
+// fault each time. lwIP said why all along: tcp_listen had no pcb left.
+//
+// A listening pcb is about forty bytes and a connected one about a hundred and
+// sixty, and the socket table above them holds eight either way.
+#define MEMP_NUM_TCP_PCB            6
+#define MEMP_NUM_TCP_PCB_LISTEN     4
 #define MEMP_NUM_TCP_SEG            8
 // Twenty-four, and it was twelve.
 //
