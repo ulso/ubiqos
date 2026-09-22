@@ -487,6 +487,21 @@ static ubiqos_path_t *file_entry(int32_t path, int32_t owner_pid) {
     return &paths[owner_pid][path];
 }
 
+// A descriptor slot nobody is using.
+//
+// A PIPE END COUNTS AS USED, and did not until now: the two tests this
+// replaces looked for a slot with no device and no file, and a slot holding a
+// pipe has neither. So the first free descriptor found after a pipe() was the
+// pipe's own, and dup(fd, -1) quietly wrote over it. The program that found
+// this was netcon, which makes two pipes and then saves its own stdin: the
+// save landed on the pipe's read end, the child inherited the console instead,
+// and a shell that answered on the network took its keystrokes from the serial
+// port. Nothing said anything -- the counts for the overwritten end were never
+// given back either.
+static bool is_free(const ubiqos_path_t *p) {
+    return !p->device && p->file < 0 && p->pipe < 0;
+}
+
 int32_t ubiqos_io_open_file(const char *abs_path, int32_t owner_pid) {
     if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS || !abs_path) return -1;
     uint32_t st = ubiqos_critical_enter();
@@ -496,7 +511,7 @@ int32_t ubiqos_io_open_file(const char *abs_path, int32_t owner_pid) {
         if (!open_files[i].refs) { slot = i; break; }
     int32_t fd = -1;
     for (int i = 0; i < UBIQOS_MAX_PATHS; i++)
-        if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) { fd = i; break; }
+        if (is_free(&paths[owner_pid][i])) { fd = i; break; }
     if (slot < 0 || fd < 0) { ubiqos_critical_exit(st); return -1; }
 
     uint32_t n = 0;
@@ -884,7 +899,7 @@ int32_t ubiqos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
     uint32_t st = ubiqos_critical_enter();
     if (new_path < 0) {
         for (int i = 0; i < UBIQOS_MAX_PATHS; i++)
-            if (!paths[owner_pid][i].device && paths[owner_pid][i].file < 0) {
+            if (is_free(&paths[owner_pid][i])) {
                 new_path = i;
                 break;
             }
