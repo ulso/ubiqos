@@ -776,6 +776,12 @@ void module_main(int argc, char **argv) {
         }
         if (state == 2) {
             if (ch >= '0' && ch <= '9') { csi_num = csi_num * 10 + (uint32_t)(ch - '0'); continue; }
+            // A sequence may carry several parameters, and this used to end at
+            // the first semicolon: everything after it was typed onto the
+            // command line. A terminal answering the width question late --
+            // after ask_width's 150 ms -- put `130R` on the prompt, which is
+            // how this was found, on the serial port and over netcon alike.
+            if (ch == ';') { csi_num = 0; continue; }
             state = 0;
             switch (ch) {
             case 'A': browse_back(e);    redraw(e); break;
@@ -791,6 +797,17 @@ void module_main(int argc, char **argv) {
                 if (e->pos) {
                     e->pos--;
                     while (e->pos && utf8_cont(e->line[e->pos])) e->pos--;
+                    redraw(e);
+                }
+                break;
+            case 'R':
+                // The cursor report, whenever it turns up. ask_width waits
+                // 150 ms for it at startup, which a terminal at the far end of
+                // a serial port or a socket can easily miss; taking it here as
+                // well means a late answer sets the width instead of being
+                // typed. The last parameter is the column, which is the width.
+                if (csi_num >= 20 && csi_num <= 400 && csi_num != e->width) {
+                    e->width = csi_num;
                     redraw(e);
                 }
                 break;
