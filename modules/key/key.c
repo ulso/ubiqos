@@ -64,6 +64,42 @@ static bool locked(void) {
     return true;
 }
 
+// Is a program of this name already running? Unlocking twice should not start
+// a second server, and `ps` is the only one who knows.
+static bool already_running(const char *name) {
+    for (uint32_t i = 0; i < UBIQOS_PS_SLOTS; i++) {
+        ubiqos_psinfo_t p;
+        if (ubiqos_psinfo(i, &p) != 0) continue;
+        if (p.state != UBIQOS_PS_ZOMBIE && is(p.name, name)) return true;
+    }
+    return false;
+}
+
+// Is there a key of this name? The store answers with a fingerprint, which is
+// not the value, and a failure means there is no such key.
+static bool have_key(const char *name) {
+    ubiqos_keyreq_t r;
+    for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
+    uint32_t n = 0;
+    while (name[n] && n < UBIQOS_KEY_NAME_MAX - 1) { r.name[n] = name[n]; n++; }
+    r.name[n] = 0;
+    return ubiqos_key_op(UBIQOS_KEY_OP_PRINT, &r) == 0;
+}
+
+// The shell over the network, if this board is one that answers SSH.
+//
+// sshd cannot start at boot: its host key is derived from the store and the
+// password is in it, so a locked board has neither. Unlocking is the moment
+// both appear, and it is also the moment somebody is demonstrably present --
+// which is the right condition for opening a way in.
+//
+// Only when there is a password to check against. Without one nobody could log
+// in, and a server listening for logins it must refuse is not a service.
+static void serve_ssh(void) {
+    if (!have_key("ssh.password") || already_running("sshd")) return;
+    ubiqos_exec("sshd", "");        // and NOT waited for: it runs until killed
+}
+
 // A store with a network's password in it is nearly always unlocked BECAUSE of
 // that password: the clock wants the network and so does anything that calls
 // out, and forgetting to ask for it afterwards is how a board sits there with
@@ -111,7 +147,8 @@ static void unlock(void) {
 
     if (rc == 0 || rc == 1) {
         say(rc ? "a new store, unlocked\r\n" : "unlocked\r\n");
-        join_if_networks();
+        join_if_networks();     // the network first: sshd waits for a stack
+        serve_ssh();
         return;
     }
     if (rc == -6)      say("key: that is not the passphrase, or the store has been changed\r\n");
@@ -146,9 +183,10 @@ void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
             "usage: key [unlock | lock | set NAME | remove NAME | check NAME]\n\n"
             "  unlock        type the passphrase; on a board with no store yet,\n"
-            "                what you type becomes the passphrase. If the store\n"
-            "                holds a password for a network, 'wifi auto' is run\n"
-            "                afterwards -- which is what it was unlocked for\n"
+            "                what you type becomes the passphrase. Afterwards:\n"
+            "                'wifi auto' if the store holds a network's password,\n"
+            "                and sshd if it holds one under 'ssh.password' --\n"
+            "                which is what it was unlocked for\n"
             "  lock          forget it; the store is sealed again\n"
             "  destroy       erase the store: every key and the passphrase\n"
             "  (none)        the names of the keys stored, and their lengths\n"

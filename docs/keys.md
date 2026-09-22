@@ -131,6 +131,9 @@ trying the-workshop...
 joined
 ```
 
+Unlocking also starts **sshd**, when the store holds a password under
+`ssh.password` -- see [ssh.md](ssh.md). Same reason, same moment.
+
 **Unlocking does this by itself** when the store holds a password for a
 network. That is what the store was opened for: the clock wants the network,
 and so does anything that calls out, and a board sitting there with the right

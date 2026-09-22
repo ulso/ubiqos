@@ -13,13 +13,22 @@ var             <dir>
 ```
 
 ```
-ubiqos:/> key unlock
 ubiqos:/> key set ssh.password
 value:
 stored
-ubiqos:/> sshd &
+ubiqos:/> key unlock
+passphrase:
+working
+unlocked
 sshd: listening on port 22
 ```
+
+**Unlocking starts it**, when the store holds a password under `ssh.password`
+and no sshd is running already. It cannot start at boot -- a locked board has
+neither the password nor the host key -- and unlocking is both the moment they
+appear and the moment somebody is demonstrably present, which is the right
+condition for opening a way in. `sshd &` by hand does the same thing on a
+board whose store was unlocked earlier.
 
 The key store must be unlocked, because both the password and the host key come
 from it. A board that must answer SSH after a power cut therefore needs somebody
