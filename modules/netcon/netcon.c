@@ -126,6 +126,22 @@ static uint32_t strip_telnet(int32_t sock, uint8_t *b, uint32_t n) {
 
 // --- THE SESSION ------------------------------------------------------------
 
+// A newline on its own moves down but not back: the console's driver turns LF
+// into CR LF and a pipe does not, so a shell whose output looks right on the
+// screen comes out as a staircase over the network. This is what a pty layer
+// does, and it is the whole of what one would be needed for here.
+static uint32_t crlf(const uint8_t *in, uint32_t n, uint8_t *out, uint32_t cap) {
+    uint32_t k = 0;
+    uint8_t prev = 0;
+    for (uint32_t i = 0; i < n && k + 2 <= cap; i++) {
+        if (in[i] == '\n' && prev != '\r') out[k++] = '\r';
+        out[k++] = in[i];
+        prev = in[i];
+    }
+    return k;
+}
+
+
 static bool child_alive(int32_t pid) {
     for (uint32_t s = 0; s < UBIQOS_PS_SLOTS; s++) {
         ubiqos_psinfo_t p;
@@ -136,36 +152,33 @@ static bool child_alive(int32_t pid) {
 }
 
 // One connection, from the shell's birth to its death.
+//
+// The shell gets a TERMINAL: 0, 1 and 2 all name one end of a two-way pair and
+// this program holds the other. Two one-way pipes are not the same thing --
+// `more` prints its prompt on descriptor 2 and reads the key from descriptor 2.
 static void session(int32_t sock) {
-    int32_t to_sh[2], from_sh[2];
-    if (ubiqos_pipe(to_sh) < 0) return;
-    if (ubiqos_pipe(from_sh) < 0) {
-        ubiqos_close(to_sh[0]); ubiqos_close(to_sh[1]);
-        return;
-    }
+    int32_t pair[2];
+    if (ubiqos_pipepair(pair) < 0) return;
 
-    // The child inherits what is on 0 and 1 at the moment it is made, so they
-    // are borrowed for exactly that moment and given straight back. This is
-    // what `sh` itself does for `>` and `<`.
-    const int32_t saved_in  = ubiqos_dup(UBIQOS_STDIN, -1);
-    const int32_t saved_out = ubiqos_dup(UBIQOS_STDOUT, -1);
-    ubiqos_dup(to_sh[0], UBIQOS_STDIN);
-    ubiqos_dup(from_sh[1], UBIQOS_STDOUT);
+    const int32_t s0 = ubiqos_dup(UBIQOS_STDIN, -1);
+    const int32_t s1 = ubiqos_dup(UBIQOS_STDOUT, -1);
+    const int32_t s2 = ubiqos_dup(UBIQOS_STDERR, -1);
+    ubiqos_dup(pair[1], UBIQOS_STDIN);
+    ubiqos_dup(pair[1], UBIQOS_STDOUT);
+    ubiqos_dup(pair[1], UBIQOS_STDERR);
     const int32_t pid = ubiqos_exec("sh", "");
-    ubiqos_dup(saved_in, UBIQOS_STDIN);
-    ubiqos_dup(saved_out, UBIQOS_STDOUT);
-    ubiqos_close(saved_in);
-    ubiqos_close(saved_out);
-
-    // Our copies of the child's ends. They have to go, or the shell's stdin
-    // has a writer for ever and never reads the end of the connection.
-    ubiqos_close(to_sh[0]);
-    ubiqos_close(from_sh[1]);
+    ubiqos_dup(s0, UBIQOS_STDIN);
+    ubiqos_dup(s1, UBIQOS_STDOUT);
+    ubiqos_dup(s2, UBIQOS_STDERR);
+    ubiqos_close(s0);
+    ubiqos_close(s1);
+    ubiqos_close(s2);
+    ubiqos_close(pair[1]);
 
     if (pid < 0) {
         const char *no = "netcon: no shell on this machine\r\n";
         ubiqos_sock_send(sock, (const uint8_t *)no, 34);
-        ubiqos_close(to_sh[1]); ubiqos_close(from_sh[0]);
+        ubiqos_close(pair[0]);
         return;
     }
 
@@ -179,15 +192,18 @@ static void session(int32_t sock) {
         if (got < 0) break;                       // the other end has gone
         if (got > 0) {
             const uint32_t n = strip_telnet(sock, buf, (uint32_t)got);
-            if (n) ubiqos_write(to_sh[1], buf, n);
+            if (n) ubiqos_write(pair[0], buf, n);
             moved = true;
         }
 
-        // And what the shell has to say back.
-        while (ubiqos_readable(from_sh[0]) > 0) {
-            const int32_t n = ubiqos_read(from_sh[0], buf, sizeof buf);
+        // And what the shell has to say back, with its line endings made
+        // whole -- see crlf above.
+        while (ubiqos_readable(pair[0]) > 0) {
+            const int32_t n = ubiqos_read(pair[0], buf, sizeof buf);
             if (n <= 0) break;
-            if (ubiqos_sock_send(sock, buf, (uint32_t)n) < 0) goto done;
+            uint8_t wire[BUFSZ * 2];
+            const uint32_t k = crlf(buf, (uint32_t)n, wire, sizeof wire);
+            if (ubiqos_sock_send(sock, wire, k) < 0) goto done;
             moved = true;
         }
 
@@ -199,10 +215,9 @@ done:
     // Closing the shell's input is how it is asked to leave: an empty pipe
     // with no writer reads as the end of the file, and `sh` treats that as
     // exit. Only if it will not take the hint does it get killed.
-    ubiqos_close(to_sh[1]);
+    ubiqos_close(pair[0]);
     for (int i = 0; i < 20 && child_alive(pid); i++) ubiqos_sleep(50);
     if (child_alive(pid)) ubiqos_kill(pid);
-    ubiqos_close(from_sh[0]);
 }
 
 void module_main(int argc, char **argv) {

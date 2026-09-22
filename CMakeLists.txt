@@ -1628,6 +1628,8 @@ ubiqos_add_module(pwd modules/pwd/pwd.c)
 ubiqos_add_module(key modules/key/key.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
+ubiqos_add_module(sshd modules/sshd/sshd.c NEWLIB)
+ubiqos_module_use_tls(sshd)
 ubiqos_module_use_tls(fetch)
 # The roots every TLS client trusts, as a data module of their own: one copy in
 # flash for all of them, and brought up to date by putting a higher revision on
@@ -1757,6 +1759,7 @@ set(UBIQOS_RESIDENT
     httpd
     sockstat
     netcon
+    sshd
     rhello
     mv
     atto
