@@ -33,7 +33,11 @@ int curses_term_size(int *rows, int *cols)
     const char q[] = "\x1b[18t";
     if (ubiqos_write(UBIQOS_STDOUT, (const uint8_t *)q, sizeof q - 1) < 0) return 0;
 
-    const uint32_t deadline = ubiqos_ticks_now() + 200;
+    // Four hundred milliseconds, because the answer crosses an SSH connection
+    // and a pipe pair to get back. A late one is not lost either -- getch
+    // recognises it -- but it is better to have the size before the first
+    // frame is drawn than after it.
+    const uint32_t deadline = ubiqos_ticks_now() + 400;
     int state = 0;                       // 0 outside, 1 after ESC, 2 parameters
     uint32_t p[3] = { 0, 0, 0 };
     int np = 0;

@@ -169,11 +169,53 @@ int standend(void)    { put("\x1b[0m"); return OK; }
 
 // One key. The screen is flushed first: whatever the program drew before
 // asking is what the person needs to see in order to answer.
+// A terminal's answer about its size, whenever it turns up.
+//
+// The question is asked at startup and most terminals reply within a few
+// milliseconds -- but over a network a late one arrives after the editor has
+// given up waiting, and then it is read as if somebody had typed
+// `[8;40;130t` into the file. Which is exactly what happened.
+//
+// So the answer is recognised here as well, and acted on: the size it carries
+// is the size to use. ESC [ ... t and ESC [ ... R are swallowed whole; any
+// other escape is handed on as before, because Atto reads those itself.
+static int swallow_report(void)
+{
+    unsigned char c;
+    unsigned p[3] = { 0, 0, 0 };
+    int np = 0;
+
+    if (read(0, &c, 1) != 1) return ERR;
+    if (c != '[') return 0x1b;                     // not a CSI; give ESC back
+
+    for (;;) {
+        if (read(0, &c, 1) != 1) return ERR;
+        if (c >= '0' && c <= '9') { if (np < 3) p[np] = p[np] * 10 + (c - '0'); continue; }
+        if (c == ';') { if (np < 2) np++; continue; }
+        if (c == 't') {
+            if (p[0] == 8 && np >= 2 && p[1] >= 4 && p[2] >= 20) {
+                LINES = (int)p[1];
+                COLS  = (int)p[2];
+            }
+            return 0;                              // eaten, and nothing typed
+        }
+        if (c == 'R') return 0;                    // a cursor report; also ours
+        return 0;                                  // some other sequence, gone
+    }
+}
+
 int getch(void)
 {
     unsigned char c;
     refresh();
     if (read(0, &c, 1) != 1) return ERR;
+
+    if (c == 0x1b) {
+        const int r = swallow_report();
+        if (r == ERR) return ERR;
+        if (r == 0) return getch();                // it was a report: read on
+        return r;                                  // an ESC the editor wanted
+    }
 
     // Carriage return becomes newline, which is what curses does on input
     // unless a program asks it not to with nonl(). Programs lean on it: Atto
