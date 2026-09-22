@@ -252,7 +252,11 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
         }
         case SYS_PIPE: {
             int32_t fds[2];
-            if (ubiqos_io_pipe(fds, ubiqos_current_pid()) < 0) {
+            // a1 says which: nought a pipe, one a two-way pair.
+            const int32_t rc = frame->a1
+                ? ubiqos_io_pipepair(fds, ubiqos_current_pid())
+                : ubiqos_io_pipe(fds, ubiqos_current_pid());
+            if (rc < 0) {
                 frame->a0 = (uint32_t)-1;
                 break;
             }
@@ -459,6 +463,21 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             case UBIQOS_KEY_OP_STATE:
                 frame->a0 = ubiqos_keys_state();
+                break;
+            case UBIQOS_KEY_OP_MATCH:
+                // A comparison, not a read: nothing goes back but yes or no.
+                frame->a0 = ubiqos_keys_match(r->name, r->value, r->len)
+                          ? 0u : (uint32_t)-1;
+                break;
+            case UBIQOS_KEY_OP_DERIVE:
+                // One HMAC, which is microseconds -- unlike the unlocking,
+                // which is a second of PBKDF2 and goes to the server below.
+                if (ubiqos_keys_derive(r->name, r->value)) {
+                    r->len = 32;
+                    frame->a0 = 0;
+                } else {
+                    frame->a0 = (uint32_t)-1;
+                }
                 break;
             case UBIQOS_KEY_OP_LOCK:
                 ubiqos_keys_lock();

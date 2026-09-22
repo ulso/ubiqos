@@ -151,6 +151,22 @@ makes a board join by itself at boot: the store is sealed then, and nothing can
 open it until somebody types the passphrase. A board that must come back on its
 own after a power cut therefore still keeps its password on the card.
 
+## Two things the kernel does with a key
+
+**`key match`** -- not a command, a call: a program hands in a name and a
+candidate and gets back yes or no. It is how `sshd` checks a password without
+ever being given the password to check against, and the comparison looks at
+every byte whatever the first one says.
+
+**`key derive`** -- thirty-two bytes that belong to this board and a label of
+the caller's choosing, being HMAC over the key that opens the store. Nothing
+stored is revealed and nothing has to be stored: the same label gives the same
+answer for as long as the passphrase lives, and a different answer on any other
+board. `sshd` gets its host key this way, because signing is elliptic-curve
+arithmetic that does not fit in this kernel and a key it could read back would
+be a key the store had handed over. Change the passphrase and every derived key
+changes with it -- for a host key that means clients will notice.
+
 ## Using a key
 
 The kernel reads the values; programs do not. Where the kernel can do the work

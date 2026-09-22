@@ -181,6 +181,44 @@ bool ubiqos_keys_fingerprint(const char *name, uint32_t *out)
     return true;
 }
 
+// Is this the value? Answered here, because answering it anywhere else means
+// handing over the value to be compared -- which is the one thing this store
+// does not do. The comparison looks at every byte whatever the first one says,
+// so that the time it takes cannot be counted into a guess.
+bool ubiqos_keys_match(const char *name, const uint8_t *value, uint32_t len)
+{
+    const key_slot_t *s = find(name);
+    if (!s) return false;
+    uint8_t diff = (uint8_t)((s->len ^ len) | ((s->len ^ len) >> 8));
+    const uint32_t n = s->len < len ? s->len : len;
+    for (uint32_t i = 0; i < n; i++) diff |= (uint8_t)(s->value[i] ^ value[i]);
+    return s->len == len && !diff;
+}
+
+// A key OF this board, for a purpose named by the caller -- not a key IN the
+// store. It is HMAC over the store's own key, which never leaves the kernel,
+// so the answer is stable for as long as the passphrase is, unguessable to
+// anybody without it, and different for every label and every board.
+//
+// This exists because a program can need a secret the kernel cannot use on its
+// behalf. sshd has to sign with its host key, and signing is elliptic-curve
+// arithmetic that does not fit in this kernel -- so it derives one here rather
+// than storing one it would then have to read back. Nothing stored is
+// revealed, and the promise that a value never comes out is untouched.
+//
+// Change the passphrase and every derived key changes with it. For a host key
+// that means clients will notice; that is the trade, and it is written down.
+bool ubiqos_keys_derive(const char *label, uint8_t out[32])
+{
+    if (!plain) return false;
+    char msg[UBIQOS_KEY_NAME_MAX + 8];
+    uint32_t n = 0;
+    for (const char *p = "derive:"; *p; p++) msg[n++] = *p;
+    for (uint32_t i = 0; label[i] && n < sizeof msg; i++) msg[n++] = label[i];
+    ubiqos_hmac_sha256(unlocked_key, sizeof unlocked_key, msg, n, out);
+    return true;
+}
+
 const uint8_t *ubiqos_keys_value(const char *name, uint32_t *len_out)
 {
     const key_slot_t *s = find(name);

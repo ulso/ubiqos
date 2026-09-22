@@ -2523,6 +2523,18 @@ static inline int32_t ubiqos_pipe(int32_t fds[2])
     return ubiqos_syscall(SYS_PIPE, (uint32_t)(uintptr_t)fds, 0, 0);
 }
 
+// Two descriptors that are both readable and writable, and what one writes the
+// other reads -- a socketpair, and the nearest thing to a terminal that can be
+// made without one. A pipe goes one way, so a program that prints a prompt and
+// reads the answer on the SAME descriptor cannot be served by one: `more` does
+// exactly that on descriptor 2, so that `cat x | more` does not wait for the
+// file to press a key. Give a shell 0, 1 and 2 from one end of a pair and it
+// has a terminal that happens to be a network connection.
+static inline int32_t ubiqos_pipepair(int32_t fds[2])
+{
+    return ubiqos_syscall(SYS_PIPE, (uint32_t)(uintptr_t)fds, 1, 0);
+}
+
 static inline int32_t ubiqos_dup(int32_t path, int32_t new_path)
 {
     return ubiqos_syscall(SYS_DUP, (uint32_t)path, (uint32_t)new_path, 0);
@@ -2766,6 +2778,24 @@ static inline int32_t ubiqos_loadmod(const char *name)
 #define UBIQOS_KEY_OP_LOCK    5u
 #define UBIQOS_KEY_OP_STATE   6u   // -> UBIQOS_KEYS_*
 #define UBIQOS_KEY_OP_DESTROY 7u   // erase the store, keys and passphrase alike
+
+// Is this the value kept under that name? name and value go in, 0 comes back
+// for yes and -1 for no. It is here so that a program checking a password does
+// not have to be given the password to check it against -- the comparison
+// happens in the kernel, over every byte whatever the first one says.
+#define UBIQOS_KEY_OP_MATCH   8u
+
+// Thirty-two bytes that belong to this board and this purpose: HMAC over the
+// key that opens the store, which never leaves the kernel. Nothing stored is
+// revealed and nothing has to be stored at all -- the same label gives the
+// same answer for as long as the passphrase lives, and a different answer on
+// any other board.
+//
+// It is for a secret the kernel cannot use on the program's behalf. sshd signs
+// with an elliptic-curve host key, and that arithmetic does not fit in this
+// kernel; deriving the key here beats storing one that would have to be read
+// back. Change the passphrase and every derived key changes with it.
+#define UBIQOS_KEY_OP_DERIVE  9u   // name = the label, value = 32 bytes out
 
 // The store is sealed. Until it is unlocked there is nothing to list and
 // nothing to use: the names are inside the ciphertext with the values.

@@ -32,6 +32,8 @@ int32_t  ubiqos_keys_destroy(void);        // both copies erased; no way back
 uint32_t ubiqos_keys_count(void);
 bool     ubiqos_keys_nth(uint32_t index, char *name_out, uint32_t *len_out);
 bool     ubiqos_keys_fingerprint(const char *name, uint32_t *out);
+bool     ubiqos_keys_match(const char *name, const uint8_t *value, uint32_t len);
+bool     ubiqos_keys_derive(const char *label, uint8_t out[32]);
 int32_t  ubiqos_keys_set(const char *name, const uint8_t *value, uint32_t len);
 int32_t  ubiqos_keys_remove(const char *name);
 
