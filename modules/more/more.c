@@ -19,7 +19,48 @@ UBIQOS_MEM_SIZE(8192);
 // still the terminal, which is where the reader's hands are.
 #define KEYS UBIQOS_STDERR
 
+// How tall is the terminal? ASK IT, and fall back to the screen's own size.
+//
+// The screen is the wrong answer over a network: the board's console is thirty
+// rows whatever the window at the other end is, so `more` paused in the middle
+// of a forty-row terminal and stopped in the wrong place.
+//
+// ESC [ 18 t is the question -- "how big is the text area" -- and a terminal
+// answers ESC [ 8 ; rows ; cols t. It is asked rather than the cursor-position
+// trick because that one has to drive the cursor into the far corner to find
+// out, and this console, which drops sequences it does not know, would have
+// been left with the cursor there. Dropped is exactly what happens here, so on
+// the screen there is no answer and the font's own row count is used, which is
+// right.
+static bool ask_terminal(int *rows) {
+    fputs("\x1b[18t", stderr);
+    fflush(stderr);
+
+    const uint32_t deadline = ubiqos_ticks_now() + 150;
+    int state = 0;                       // 0 esc, 1 '[', 2 the first number,
+    uint32_t num = 0, first = 0;         // 3 the second
+    while ((int32_t)(ubiqos_ticks_now() - deadline) < 0) {
+        char ch;
+        if (ubiqos_readable(KEYS) <= 0) { ubiqos_sleep(2); continue; }
+        if (ubiqos_read(KEYS, &ch, 1) <= 0) continue;
+        if (state == 0) { if (ch == 0x1b) state = 1; continue; }
+        if (state == 1) { state = (ch == '[') ? 2 : 0; num = 0; continue; }
+        if (ch >= '0' && ch <= '9') { num = num * 10 + (uint32_t)(ch - '0'); continue; }
+        if (ch == ';') {
+            if (state == 2) { first = num; state = 3; }
+            else if (state == 3 && first == 8) { *rows = (int)num; return num >= 4; }
+            num = 0;
+            continue;
+        }
+        state = 0;                       // anything else ends it
+        num = 0;
+    }
+    return false;
+}
+
 static int screen_rows(void) {
+    int rows = 0;
+    if (ask_terminal(&rows) && rows >= 4 && rows <= 200) return rows;
     ubiqos_confont_t f;
     if (ubiqos_console_font_info(-1, &f) < 0 || !f.rows) return 24;  // no screen
     return f.rows;
@@ -33,7 +74,11 @@ static bool pause_here(int *left, int rows) {
         if (ubiqos_read(KEYS, &c, 1) != 1) return false;    // nothing more to ask
         // Wipe the prompt, so the text that follows starts in a clean line.
         fputs("\r          \r", stderr);
-        if (c == 'q' || c == 'Q') return false;
+        // Ctrl-C stops it. Without this it counted as "any other key" and
+        // turned a page, which over a network connection is the only way to
+        // stop anything: there is no terminal driver in that path to notice
+        // the key and end the command for you.
+        if (c == 'q' || c == 'Q' || c == 3) return false;
         if (c == '\r' || c == '\n') { *left = 1; return true; }
         *left = rows - 1;
         return true;

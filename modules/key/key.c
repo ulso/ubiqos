@@ -97,7 +97,11 @@ static bool have_key(const char *name) {
 // in, and a server listening for logins it must refuse is not a service.
 static void serve_ssh(void) {
     if (!have_key("ssh.password") || already_running("sshd")) return;
-    ubiqos_exec("sshd", "");        // and NOT waited for: it runs until killed
+    // Not waited for: it runs until killed. But the answer IS looked at -- a
+    // server that failed to start and said nothing is a port that is simply
+    // refused later, with nowhere to look.
+    if (ubiqos_exec("sshd", "") < 0)
+        say("key: there is a password for ssh but sshd would not start\r\n");
 }
 
 // A store with a network's password in it is nearly always unlocked BECAUSE of

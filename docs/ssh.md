@@ -95,6 +95,18 @@ does not. Output that looks right on the screen came out as a staircase over
 the network until sshd did that translation itself, which is the one thing a
 pty layer would have been needed for.
 
+## What Ctrl-C can and cannot do
+
+A program that is READING gets the key: `more` stops, and the shell abandons
+the line it was editing. A program that is not reading does not, because there
+is no terminal driver in this path to notice the key and end the command for
+you -- on the screen and the serial port the console driver does that, and a
+pipe pair has no driver. So a long `fetch` over SSH runs to its end and the
+Ctrl-C waits in the pipe.
+
+Closing the connection does end it: the shell's input reaches its end, the
+shell leaves, and sshd kills what is left.
+
 ## What the debugging looked like
 
 Worth writing down, because both wrong turns were the same mistake seen from
