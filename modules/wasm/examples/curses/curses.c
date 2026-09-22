@@ -80,7 +80,10 @@ WINDOW *initscr(void)
         LINES = env_int("LINES", LINES);
         COLS  = env_int("COLUMNS", COLS);
     }
-    put("\x1b[2J\x1b[H");
+    // The attribute is cleared before the screen is: whatever colour the
+    // program before us left set would otherwise be what the screen is filled
+    // with, and a terminal that starts an editor should look like itself.
+    put("\x1b[0m\x1b[2J\x1b[H");
     refresh();
     return stdscr;
 }
@@ -155,10 +158,22 @@ int attron(chtype a)
     // readable. curses' eight colours are the dim eight, and on a black screen
     // they are hard to read: the console's own default is 15, brightwhite, so
     // text in curses' COLOR_WHITE came out dimmer than the shell it replaced.
+    // COLOR_BLACK as a background means THE BACKGROUND, not black paint.
+    //
+    // Programs write init_pair(n, COLOR_CYAN, COLOR_BLACK) meaning "cyan on
+    // whatever is behind", because on the terminals curses grew up on black is
+    // what was behind. Sending 40 paints it black, which is invisible on this
+    // board's own screen -- black on black -- and a black rectangle inside a
+    // window with any other background, which is what it looked like over SSH.
+    // 49 is the default background, and it is what that pair means.
+    //
+    // A black FOREGROUND is only meaningful against something, so it stands
+    // when the pair names a background and becomes the default when it does
+    // not: black on black is nobody's intention.
     put("\x1b[0;");
-    put_num(pair_fg[p] ? 90 + pair_fg[p] : 30);
+    put_num(pair_fg[p] ? 90 + pair_fg[p] : (pair_bg[p] ? 30 : 39));
     put(";");
-    put_num(pair_bg[p] ? 100 + pair_bg[p] : 40);
+    put_num(pair_bg[p] ? 100 + pair_bg[p] : 49);
     put("m");
     return OK;
 }
