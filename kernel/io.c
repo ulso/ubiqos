@@ -292,6 +292,15 @@ typedef struct {
 
 static pipe_t pipes[UBIQOS_MAX_PIPES];
 
+// How many rings are spoken for, for `free` to report. A ring with no reader
+// and no writer is free, which is the same test the allocation uses.
+uint32_t ubiqos_io_pipes_used(void) {
+    uint32_t n = 0;
+    for (int i = 0; i < UBIQOS_MAX_PIPES; i++)
+        if (pipes[i].readers || pipes[i].writers) n++;
+    return n;
+}
+
 static uint32_t pipe_used(const pipe_t *q) {
     return (q->head - q->tail) % UBIQOS_PIPE_BUF;
 }

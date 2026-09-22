@@ -61,6 +61,30 @@ shell's input, an empty pipe with no writer reads as the end of the file, and
 One connection at a time. The next client waits for the socket rather than
 being refused, and gets a fresh shell.
 
+## One at a time, and how that looks
+
+`netcon` serves one connection and then goes back to waiting. A client that
+knocks while another is being served is accepted by the stack and waits its
+turn, so what it sees is a connection that stays silent for a while -- not a
+refusal, and not a failure.
+
+That is worth knowing because it looks like a leak. Ten connections half a
+second apart, each given a second and a half to say something, and the later
+ones appear to fail: the board is simply still tidying up the one before.
+Given time between them, `free` shows every ring and every socket handed back:
+
+```
+ubiqos:/> free
+Pipe rings in use:  0 of 8
+Sockets in use:     2 of 8
+  socket 0: pid 10, port 80
+  socket 1: pid 8, port 23
+```
+
+Those lines are new, and they exist because this was worth measuring rather
+than arguing about. Both tables hold eight, and a service that cannot start
+because one is full says nothing about why.
+
 ## The kernel bug it found
 
 The first working version answered on the network and took its keystrokes

@@ -36,24 +36,29 @@ static bool ask_terminal(int *rows) {
     fputs("\x1b[18t", stderr);
     fflush(stderr);
 
-    const uint32_t deadline = ubiqos_ticks_now() + 150;
-    int state = 0;                       // 0 esc, 1 '[', 2 the first number,
-    uint32_t num = 0, first = 0;         // 3 the second
+    // The whole answer is read, terminator and all. Stopping at the parameter
+    // wanted leaves the rest of the sequence in the stream, and it turns up on
+    // the next prompt as `130t` -- which is what happened the first time.
+    const uint32_t deadline = ubiqos_ticks_now() + 200;
+    int state = 0;                       // 0 outside, 1 after ESC, 2 parameters
+    uint32_t p[3] = { 0, 0, 0 };
+    int np = 0;
     while ((int32_t)(ubiqos_ticks_now() - deadline) < 0) {
         char ch;
         if (ubiqos_readable(KEYS) <= 0) { ubiqos_sleep(2); continue; }
         if (ubiqos_read(KEYS, &ch, 1) <= 0) continue;
-        if (state == 0) { if (ch == 0x1b) state = 1; continue; }
-        if (state == 1) { state = (ch == '[') ? 2 : 0; num = 0; continue; }
-        if (ch >= '0' && ch <= '9') { num = num * 10 + (uint32_t)(ch - '0'); continue; }
-        if (ch == ';') {
-            if (state == 2) { first = num; state = 3; }
-            else if (state == 3 && first == 8) { *rows = (int)num; return num >= 4; }
-            num = 0;
+
+        if (state == 0) {
+            if (ch == 0x1b) { state = 1; np = 0; p[0] = p[1] = p[2] = 0; }
             continue;
         }
-        state = 0;                       // anything else ends it
-        num = 0;
+        if (state == 1) { state = (ch == '[') ? 2 : 0; continue; }
+        if (ch >= '0' && ch <= '9') { if (np < 3) p[np] = p[np] * 10 + (uint32_t)(ch - '0'); continue; }
+        if (ch == ';') { if (np < 2) np++; continue; }
+        // A final byte ends it, and only the one asked for is an answer: 8 is
+        // "this is the text area", and the rows are the second parameter.
+        if (ch == 't' && p[0] == 8 && np >= 2 && p[1] >= 4) { *rows = (int)p[1]; return true; }
+        state = 0;                       // something else entirely; wait for ours
     }
     return false;
 }

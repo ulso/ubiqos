@@ -1421,6 +1421,12 @@ typedef struct {
 // syscalls.c. The count is here because the printed line goes to the screen and
 // the UART, not to the USB console, so a session on the serial port could not
 // otherwise tell whether anything had happened.
+// How many of the kernel's pipe rings and network sockets are spoken for, out
+// of the eight there are of each. Both are small fixed tables, and a service
+// that fails to start because they are full says nothing about why -- which is
+// how an afternoon went once.
+#define UBIQOS_MEM_PIPES        6u   // rings in use
+#define UBIQOS_MEM_SOCKETS      7u   // lwIP sockets in use
 #define UBIQOS_MEM_ASSERTS      4u
 #define UBIQOS_MEM_ASSERT_LAST  5u
 
@@ -2825,6 +2831,13 @@ static inline int32_t ubiqos_moddir_get(uint32_t index, ubiqos_modinfo_t *out)
 static inline int32_t ubiqos_meminfo(uint32_t what)
 {
     return ubiqos_syscall(SYS_MEMINFO, what, 0, 0);
+}
+
+// One socket slot: bit 0 used, 1 the peer has gone, 2 still connecting, 3 lwIP
+// still holds a pcb; byte 1 the owning pid, bytes 2-3 the local port.
+static inline int32_t ubiqos_sockslot(uint32_t n)
+{
+    return ubiqos_syscall(SYS_MEMINFO, UBIQOS_MEM_SOCKETS, n + 1, 0);
 }
 
 // Random bytes, from the ring oscillator's own random bit with the microsecond

@@ -279,6 +279,30 @@ static int32_t do_send(int i, const uint8_t *buf, uint32_t len)
     return (int32_t)n;
 }
 
+uint32_t ubiqos_lwipsock_used(void)
+{
+    uint32_t n = 0;
+    for (int i = 0; i < NSOCK; i++) if (sk[i].used) n++;
+    return n;
+}
+
+// One slot, packed, for whoever is asking why the table is full: used, gone,
+// connecting, whether lwIP still has a pcb, who owns it and on which port.
+uint32_t ubiqos_lwipsock_counts(uint32_t which)
+{
+    return which == 0 ? ubiqos_lwipsock_queued : ubiqos_lwipsock_taken;
+}
+
+uint32_t ubiqos_lwipsock_slot(uint32_t i)
+{
+    if (i >= NSOCK) return 0;
+    return (sk[i].used ? 1u : 0u) | (sk[i].gone ? 2u : 0u)
+         | (sk[i].connecting ? 4u : 0u) | (sk[i].pcb ? 8u : 0u)
+         | ((uint32_t)(sk[i].owner & 0xffu) << 8)
+         | ((uint32_t)(sk[i].pcb ? sk[i].pcb->local_port : 0) << 16)
+         | ((uint32_t)(sk[i].npending & 0xfu) << 4);
+}
+
 static int32_t do_close(int i)
 {
     if (i < 0 || i >= NSOCK || !sk[i].used) return -1;

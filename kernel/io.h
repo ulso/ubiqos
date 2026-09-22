@@ -127,6 +127,7 @@ int32_t  ubiqos_io_file_seek(int32_t path, int32_t owner_pid,
 #define UBIQOS_PIPE_BUF  128
 
 // Two descriptors: fds[0] reads, fds[1] writes. -1 when none can be had.
+uint32_t ubiqos_io_pipes_used(void);
 int32_t ubiqos_io_pipe(int32_t fds[2], int32_t owner_pid);
 int32_t ubiqos_io_pipepair(int32_t fds[2], int32_t owner_pid);
 
