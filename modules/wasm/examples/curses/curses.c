@@ -66,8 +66,20 @@ static int env_int(const char *name, int fallback)
 WINDOW *initscr(void)
 {
     curses_adopt_pwd();
-    LINES = env_int("LINES", LINES);
-    COLS  = env_int("COLUMNS", COLS);
+
+    // The terminal first, the environment second, the defaults last. Asking
+    // matters most where the editor is furthest from the screen it started on:
+    // over SSH the board's own console is thirty rows whatever the window at
+    // the other end is, and an editor that believes thirty in a window of
+    // fifty draws in the top half and leaves the rest behind.
+    int rows = 0, cols = 0;
+    if (curses_term_size(&rows, &cols) && rows >= 4 && cols >= 20) {
+        LINES = rows;
+        COLS  = cols;
+    } else {
+        LINES = env_int("LINES", LINES);
+        COLS  = env_int("COLUMNS", COLS);
+    }
     put("\x1b[2J\x1b[H");
     refresh();
     return stdscr;

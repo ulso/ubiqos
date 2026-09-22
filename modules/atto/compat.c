@@ -17,6 +17,48 @@
 
 void curses_adopt_pwd(void) { }
 
+// How big is the terminal? ASK IT.
+//
+// ESC [ 18 t means "how big is the text area", and a terminal answers
+// ESC [ 8 ; rows ; cols t. The board's own console does not implement it and
+// drops what it does not know, so there the answer is silence and the caller
+// keeps its defaults -- which are that console's size anyway. Over SSH or a
+// serial line there is a real terminal at the far end, and it answers.
+//
+// The whole reply is consumed, terminator and all: stopping at the number
+// wanted leaves the rest in the stream, and it turns up as `130t` on the next
+// prompt. That was learnt in `more`, an hour before this.
+int curses_term_size(int *rows, int *cols)
+{
+    const char q[] = "\x1b[18t";
+    if (ubiqos_write(UBIQOS_STDOUT, (const uint8_t *)q, sizeof q - 1) < 0) return 0;
+
+    const uint32_t deadline = ubiqos_ticks_now() + 200;
+    int state = 0;                       // 0 outside, 1 after ESC, 2 parameters
+    uint32_t p[3] = { 0, 0, 0 };
+    int np = 0;
+    while ((int32_t)(ubiqos_ticks_now() - deadline) < 0) {
+        uint8_t ch;
+        if (ubiqos_readable(UBIQOS_STDIN) <= 0) { ubiqos_sleep(2); continue; }
+        if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
+
+        if (state == 0) {
+            if (ch == 0x1b) { state = 1; np = 0; p[0] = p[1] = p[2] = 0; }
+            continue;
+        }
+        if (state == 1) { state = (ch == '[') ? 2 : 0; continue; }
+        if (ch >= '0' && ch <= '9') { if (np < 3) p[np] = p[np] * 10 + (uint32_t)(ch - '0'); continue; }
+        if (ch == ';') { if (np < 2) np++; continue; }
+        if (ch == 't' && p[0] == 8 && np >= 2) {
+            *rows = (int)p[1];
+            *cols = (int)p[2];
+            return 1;
+        }
+        state = 0;                       // some other sequence; keep waiting
+    }
+    return 0;
+}
+
 // A real temporary file, because a failed mkstemp calls Atto's fatal() and
 // takes the editor down with it.
 int mkstemp(char *tmpl)

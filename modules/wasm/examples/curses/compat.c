@@ -28,6 +28,16 @@
 // initscr calls it. As a constructor it did not take effect, and something a
 // program depends on is worth an explicit call rather than a guess about when
 // the runtime gets round to it.
+// Nobody to ask here. A guest reaches its terminal through WASI, which has no
+// way to wait a little for an answer that may never come -- and a blocking read
+// of a cursor report that nothing will send hangs the editor. The environment
+// is what this build goes by; see the native compat.c for the other half.
+int curses_term_size(int *rows, int *cols)
+{
+    (void)rows; (void)cols;
+    return 0;
+}
+
 void curses_adopt_pwd(void)
 {
     const char *p = getenv("PWD");

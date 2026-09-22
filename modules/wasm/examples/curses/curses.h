@@ -51,6 +51,11 @@ extern int LINES, COLS;
 
 WINDOW *initscr(void);
 void curses_adopt_pwd(void);   // compat.c: start in the directory the shell was in
+
+// compat.c: ask the terminal how big it is, if this build can. 1 and the size
+// when it answered, 0 when there is nobody to ask -- and then the environment
+// and the defaults decide, as they did before.
+int curses_term_size(int *rows, int *cols);
 int endwin(void);
 int raw(void);
 int noraw(void);
