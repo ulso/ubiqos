@@ -325,6 +325,12 @@ int32_t ubiqos_lwip_sock_handle(const ubiqos_wifi_sock_t *r, int32_t from)
     case UBIQOS_SOCK_RECV:   return do_recv(i, r->buf, r->len);
     case UBIQOS_SOCK_SEND:   return do_send(i, r->buf, r->len);
     case UBIQOS_SOCK_CLOSE:  return do_close(i);
+    case UBIQOS_SOCK_PEER: {
+        if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].pcb) return -1;
+        if (!r->buf || r->len < sizeof(uint32_t)) return -1;
+        *(uint32_t *)r->buf = lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&sk[i].pcb->remote_ip)));
+        return 0;
+    }
     case UBIQOS_SOCK_CONNECT: {
         char name[64];
         uint32_t n = r->len > sizeof(name) - 1 ? sizeof(name) - 1 : r->len;

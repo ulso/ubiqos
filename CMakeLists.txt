@@ -1502,6 +1502,7 @@ target_compile_definitions(ehspi_app PRIVATE
 ubiqos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
 ubiqos_add_module(ehstat modules/ehstat/ehstat.c)
 ubiqos_add_module(ping modules/ping/ping.c)
+ubiqos_add_module(netcon modules/netcon/netcon.c)
 ubiqos_add_module(browse modules/browse/browse.c)
 ubiqos_add_module(ehrpc modules/ehrpc/ehrpc.c)
 # `wifi` again, as a front for ehrpc: the NINA client of that name retired with
@@ -1755,6 +1756,7 @@ set(UBIQOS_RESIDENT
     leds
     httpd
     sockstat
+    netcon
     rhello
     mv
     atto

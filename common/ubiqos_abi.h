@@ -1252,6 +1252,12 @@ typedef struct {
 // arg = (stack << 16) | port, buf = the host, len its length.
 #define UBIQOS_SOCK_CONNECT 13u
 
+// Who is at the other end. buf = &uint32_t, filled with the peer's IPv4
+// address in host order -- 0xC0A80701 for 192.168.7.1. A server that answers on
+// every interface cannot otherwise tell the cable from the WiFi, and a shell
+// that may be reached over one but not the other has to know which it is.
+#define UBIQOS_SOCK_PEER   14u
+
 // --- WHICH STACK ------------------------------------------------------------
 //
 // There is going to be more than one. The NINA coprocessor carries its own
@@ -2094,6 +2100,15 @@ static inline int32_t ubiqos_ping_state(uint32_t out[3])
     ubiqos_sockbuf_t b = { (uint8_t *)out, 3 * sizeof(uint32_t) };
     return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_PINGST,
                           (uint32_t)UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, 0),
+                          (uint32_t)(uintptr_t)&b);
+}
+
+// The address at the other end of an accepted socket, in host order. 0 and a
+// return of -1 mean the socket is not one, or has no peer.
+static inline int32_t ubiqos_sock_peer(int32_t sock, uint32_t *out)
+{
+    ubiqos_sockbuf_t b = { (uint8_t *)out, sizeof(uint32_t) };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_PEER, (uint32_t)sock,
                           (uint32_t)(uintptr_t)&b);
 }
 

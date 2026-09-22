@@ -103,6 +103,7 @@ languages when they are found, and skipped when they are not.
 | [docs/design.md](docs/design.md) | the long account: modules, display, console, shell, system calls, audio, pins, interrupts, scheduling |
 | [docs/writing-modules.md](docs/writing-modules.md) | writing a module |
 | [docs/the-sdk.md](docs/the-sdk.md) | building a module or an application outside this tree |
+| [docs/netcon.md](docs/netcon.md) | `netcon`: the shell over TCP, and the kernel bug it found |
 | [docs/config.md](docs/config.md) | `/sd/config.txt` and `/sd/wificfg.txt`: name, WiFi, time zone, the cable's address |
 | [docs/esp-hosted](docs/esp-hosted/README.md) | the WiFi co-processor and how its firmware gets there |
 | [docs/tls.md](docs/tls.md) | https: what is checked, the roots, and using it from a module |
