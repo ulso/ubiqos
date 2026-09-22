@@ -128,6 +128,7 @@ int32_t  ubiqos_io_file_seek(int32_t path, int32_t owner_pid,
 
 // Two descriptors: fds[0] reads, fds[1] writes. -1 when none can be had.
 int32_t ubiqos_io_pipe(int32_t fds[2], int32_t owner_pid);
+int32_t ubiqos_io_pipepair(int32_t fds[2], int32_t owner_pid);
 
 // True when a read would return nothing and nothing can ever arrive: an empty
 // pipe whose writers have all gone. The read system call asks before blocking,

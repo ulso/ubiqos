@@ -827,6 +827,17 @@ void module_main(int argc, char **argv) {
             continue;
         }
 
+        // Ctrl-D on an empty line is the end of the input, as it is everywhere
+        // else. On a line with something on it, it is ignored rather than
+        // deleting forward: losing a session to a stray keystroke is worse
+        // than lacking a shortcut. The shell had no idea what 0x04 was, which
+        // showed up first over ssh, where it is how you log out.
+        if (ch == 0x04) {
+            if (e->len) continue;
+            if (!e->quiet) ubiqos_write_str(e->out, "\r\n");
+            break;
+        }
+
         if (ch == 0x1b) { state = 1; continue; }
 
         if (ch == '\r' || ch == '\n') {

@@ -265,9 +265,22 @@ typedef struct {
 typedef struct {
     const ubiqos_device_t *device;
     int16_t file;                  // index into open_files, -1 for a device
-    int16_t pipe;                  // index into pipes, -1 when not one
-    uint8_t pipe_write;            // which end of it this descriptor is
+    int16_t pipe;                  // the ring this descriptor READS, -1 for none
+    int16_t pipe_back;             // and the one it WRITES, -1 for an ordinary pipe
+    uint8_t pipe_write;            // for an ordinary pipe, which end this is
 } ubiqos_path_t;
+
+// Two rings with their ends crossed is a terminal, and one ring is not.
+//
+// A pipe goes one way, so a descriptor on one is either readable or writable.
+// A console is both, and programs know it: `more` prints its prompt on
+// descriptor 2 and reads the key from descriptor 2, precisely so that
+// `cat x | more` does not wait for the file to press a key. Over a pair of
+// pipes there is no such descriptor, and more asked the board's own keyboard.
+//
+// So a descriptor may name two rings: one it reads and one it writes. That is
+// what ubiqos_io_pipepair makes, and it is what lets sshd hand a shell a
+// descriptor 0, 1 and 2 that all mean the same connection.
 
 // See io.h. A ring, and the counts of who still holds each end -- the second is
 // what tells an empty pipe apart from a finished one.
@@ -334,6 +347,7 @@ void ubiqos_io_init(void) {
             paths[p][i].device = 0;
             paths[p][i].file = -1;
             paths[p][i].pipe = -1;
+            paths[p][i].pipe_back = -1;
         }
     }
     // null needs no descriptor. A descriptor says which pins, which speed and
@@ -456,6 +470,7 @@ int32_t ubiqos_io_open(const char *name, int32_t owner_pid) {
             paths[owner_pid][p].device = &devices[i];
             paths[owner_pid][p].file = -1;
             paths[owner_pid][p].pipe = -1;
+            paths[owner_pid][p].pipe_back = -1;
             return p;
         }
         return -1;
@@ -499,7 +514,7 @@ static ubiqos_path_t *file_entry(int32_t path, int32_t owner_pid) {
 // port. Nothing said anything -- the counts for the overwritten end were never
 // given back either.
 static bool is_free(const ubiqos_path_t *p) {
-    return !p->device && p->file < 0 && p->pipe < 0;
+    return !p->device && p->file < 0 && p->pipe < 0 && p->pipe_back < 0;
 }
 
 int32_t ubiqos_io_open_file(const char *abs_path, int32_t owner_pid) {
@@ -606,8 +621,14 @@ void ubiqos_io_inherit(int32_t parent_pid, int32_t child_pid) {
         // A pipe end held by two processes is what makes a pipeline work: the
         // writer's end is not finished until every holder has let go.
         if (paths[child_pid][i].pipe >= 0) {
-            if (paths[child_pid][i].pipe_write) pipes[paths[child_pid][i].pipe].writers++;
-            else                                pipes[paths[child_pid][i].pipe].readers++;
+            if (paths[child_pid][i].pipe_back >= 0) {
+                pipes[paths[child_pid][i].pipe].readers++;
+                pipes[paths[child_pid][i].pipe_back].writers++;
+            } else if (paths[child_pid][i].pipe_write) {
+                pipes[paths[child_pid][i].pipe].writers++;
+            } else {
+                pipes[paths[child_pid][i].pipe].readers++;
+            }
         }
     }
     ubiqos_critical_exit(st);
@@ -616,9 +637,9 @@ void ubiqos_io_inherit(int32_t parent_pid, int32_t child_pid) {
 int32_t ubiqos_io_write(int32_t path, const uint8_t *buf, uint32_t len, int32_t owner_pid) {
     ubiqos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
-        if (!q->pipe_write) return -1;                  // the wrong end
+        if (!q->pipe_write && q->pipe_back < 0) return -1;  // the wrong end
         uint32_t st = ubiqos_critical_enter();
-        pipe_t *r = &pipes[q->pipe];
+        pipe_t *r = &pipes[q->pipe_back >= 0 ? q->pipe_back : q->pipe];
         // Nobody to read it. Failing beats filling a buffer that will never be
         // emptied, which is what SIGPIPE is for elsewhere.
         if (!r->readers) { ubiqos_critical_exit(st); return -1; }
@@ -757,7 +778,7 @@ int32_t ubiqos_io_readable_count(int32_t path, int32_t owner_pid) {
     // An exhausted pipe reads as ready, because what it has ready is the end of
     // itself: a reader that stayed blocked would wait for a writer that has
     // gone. The read call sorts the two apart with ubiqos_io_at_eof.
-    if (q) return q->pipe_write ? 0
+    if (q) return (q->pipe_write && q->pipe_back < 0) ? 0
          : (int32_t)pipe_used(&pipes[q->pipe]) + (pipes[q->pipe].writers ? 0 : 1);
 
     ubiqos_path_t *p = path_of(path, owner_pid);
@@ -770,8 +791,11 @@ bool ubiqos_io_writable(int32_t path, int32_t owner_pid) {
     ubiqos_path_t *q = pipe_entry(path, owner_pid);
     // Room, or nobody left to read it -- and the second counts as writable so
     // that a writer into a pipe nobody holds fails rather than waits for ever.
-    if (q) return q->pipe_write
-        && (pipe_used(&pipes[q->pipe]) < UBIQOS_PIPE_BUF - 1 || !pipes[q->pipe].readers);
+    if (q) {
+        const int16_t w = q->pipe_back >= 0 ? q->pipe_back : q->pipe;
+        if (!q->pipe_write && q->pipe_back < 0) return false;
+        return pipe_used(&pipes[w]) < UBIQOS_PIPE_BUF - 1 || !pipes[w].readers;
+    }
 
     ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return false;
@@ -782,7 +806,7 @@ bool ubiqos_io_writable(int32_t path, int32_t owner_pid) {
 int32_t ubiqos_io_read(int32_t path, uint8_t *buf, uint32_t len, int32_t owner_pid) {
     ubiqos_path_t *q = pipe_entry(path, owner_pid);
     if (q) {
-        if (q->pipe_write) return -1;                   // the wrong end
+        if (q->pipe_write && q->pipe_back < 0) return -1;   // the wrong end
         uint32_t st = ubiqos_critical_enter();
         pipe_t *r = &pipes[q->pipe];
         uint32_t n = 0;
@@ -864,8 +888,47 @@ int32_t ubiqos_io_pipe(int32_t fds[2], int32_t owner_pid) {
     pipes[q].readers = pipes[q].writers = 1;
     paths[owner_pid][r].pipe = (int16_t)q; paths[owner_pid][r].pipe_write = 0;
     paths[owner_pid][w].pipe = (int16_t)q; paths[owner_pid][w].pipe_write = 1;
+    paths[owner_pid][r].pipe_back = paths[owner_pid][w].pipe_back = -1;
     fds[0] = r;
     fds[1] = w;
+
+    ubiqos_critical_exit(st);
+    return 0;
+}
+
+// Two descriptors that can each be read AND written, and what one writes the
+// other reads. Two rings, ends crossed; each descriptor holds a reader on the
+// ring it reads and a writer on the ring it writes, so a closed end is seen as
+// the end of the file at the other, exactly as a pipe's is.
+int32_t ubiqos_io_pipepair(int32_t fds[2], int32_t owner_pid) {
+    if (owner_pid < 0 || owner_pid >= UBIQOS_MAX_PROCS || !fds) return -1;
+    uint32_t st = ubiqos_critical_enter();
+
+    int32_t a = -1, b = -1;
+    for (int i = 0; i < UBIQOS_MAX_PIPES; i++) {
+        if (pipes[i].readers || pipes[i].writers) continue;
+        if (a < 0) a = i; else { b = i; break; }
+    }
+    int32_t p0 = -1, p1 = -1;
+    for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
+        if (!is_free(&paths[owner_pid][i])) continue;
+        if (p0 < 0) p0 = i; else { p1 = i; break; }
+    }
+    if (b < 0 || p1 < 0) { ubiqos_critical_exit(st); return -1; }
+
+    pipes[a].head = pipes[a].tail = 0;
+    pipes[b].head = pipes[b].tail = 0;
+    pipes[a].readers = pipes[a].writers = 1;
+    pipes[b].readers = pipes[b].writers = 1;
+
+    paths[owner_pid][p0].pipe = (int16_t)a;   // reads a, writes b
+    paths[owner_pid][p0].pipe_back = (int16_t)b;
+    paths[owner_pid][p0].pipe_write = 0;
+    paths[owner_pid][p1].pipe = (int16_t)b;   // reads b, writes a
+    paths[owner_pid][p1].pipe_back = (int16_t)a;
+    paths[owner_pid][p1].pipe_write = 0;
+    fds[0] = p0;
+    fds[1] = p1;
 
     ubiqos_critical_exit(st);
     return 0;
@@ -884,6 +947,12 @@ bool ubiqos_io_at_eof(int32_t path, int32_t owner_pid) {
 // writer's last close, which is why the counts matter more than the buffer.
 static void pipe_release(ubiqos_path_t *p) {
     if (p->pipe < 0) return;
+    if (p->pipe_back >= 0) {                  // one end of a two-way pair holds
+        if (pipes[p->pipe].readers) pipes[p->pipe].readers--;        // a reader
+        if (pipes[p->pipe_back].writers) pipes[p->pipe_back].writers--;  // and a writer
+        p->pipe = p->pipe_back = -1;
+        return;
+    }
     if (p->pipe_write) { if (pipes[p->pipe].writers) pipes[p->pipe].writers--; }
     else               { if (pipes[p->pipe].readers) pipes[p->pipe].readers--; }
     p->pipe = -1;
@@ -916,8 +985,14 @@ int32_t ubiqos_io_dup(int32_t path, int32_t new_path, int32_t owner_pid) {
     paths[owner_pid][new_path] = *src;
     if (src->file >= 0) open_files[src->file].refs++;   // one more descriptor on it
     if (src->pipe >= 0) {
-        if (src->pipe_write) pipes[src->pipe].writers++;
-        else                 pipes[src->pipe].readers++;
+        if (src->pipe_back >= 0) {
+            pipes[src->pipe].readers++;
+            pipes[src->pipe_back].writers++;
+        } else if (src->pipe_write) {
+            pipes[src->pipe].writers++;
+        } else {
+            pipes[src->pipe].readers++;
+        }
     }
     ubiqos_critical_exit(st);
     return new_path;
