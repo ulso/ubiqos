@@ -126,6 +126,13 @@ static uint32_t strip_telnet(int32_t sock, uint8_t *b, uint32_t n) {
 
 // --- THE SESSION ------------------------------------------------------------
 
+// A module has no C library, so no memmove -- and a plain loop here is one gcc
+// turns back into a call to memmove, which then fails to link. Kept out of
+// line so that it stays a loop.
+static __attribute__((noinline)) void shift_down(uint8_t *to, const uint8_t *from, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) to[i] = from[i];
+}
+
 // A newline on its own moves down but not back: the console's driver turns LF
 // into CR LF and a pipe does not, so a shell whose output looks right on the
 // screen comes out as a staircase over the network. This is what a pty layer
@@ -184,16 +191,36 @@ static void session(int32_t sock) {
 
     telnet_seen = false;
     uint8_t buf[BUFSZ];
+    uint8_t held[BUFSZ];                          // typed, not yet taken
+    uint32_t held_n = 0;
     for (;;) {
         bool moved = false;
 
-        // The client's keystrokes into the shell.
-        const int32_t got = ubiqos_sock_recv(sock, buf, sizeof buf);
-        if (got < 0) break;                       // the other end has gone
-        if (got > 0) {
-            const uint32_t n = strip_telnet(sock, buf, (uint32_t)got);
-            if (n) ubiqos_write(pair[0], buf, n);
-            moved = true;
+        // The client's keystrokes into the shell -- as the shell has room, and
+        // never by waiting for it. Writing into a busy shell used to block
+        // here, and then nothing read the socket: the client's packets piled up
+        // in the stack until it had no buffers left for anything, on either
+        // interface. Now what does not fit waits in `held`, and while it waits
+        // the socket is not read, so TCP's own window holds the client back.
+        if (held_n) {
+            const int32_t k = ubiqos_write_some(pair[0], held, held_n);
+            if (k > 0) {
+                shift_down(held, held + k, held_n - (uint32_t)k);
+                held_n -= (uint32_t)k;
+                moved = true;
+            }
+        }
+        if (!held_n) {
+            const int32_t got = ubiqos_sock_recv(sock, buf, sizeof buf);
+            if (got < 0) break;                   // the other end has gone
+            if (got > 0) {
+                const uint32_t n = strip_telnet(sock, buf, (uint32_t)got);
+                const int32_t k = n ? ubiqos_write_some(pair[0], buf, n) : 0;
+                const uint32_t took = k > 0 ? (uint32_t)k : 0;
+                shift_down(held, buf + took, n - took);
+                held_n = n - took;
+                moved = true;
+            }
         }
 
         // And what the shell has to say back, with its line endings made

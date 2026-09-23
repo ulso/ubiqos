@@ -2234,6 +2234,26 @@ static inline int32_t ubiqos_readable(int32_t path)
     return ubiqos_syscall(SYS_READABLE, (uint32_t)path, 0, 0);
 }
 
+// Is there room to write without waiting?
+static inline int32_t ubiqos_writable(int32_t path)
+{
+    return ubiqos_syscall(SYS_READABLE, (uint32_t)path, 1, 0);
+}
+
+// As much of it as fits NOW, and never a wait: 0 when there is no room.
+//
+// ubiqos_write loops until everything is written, and a full pipe blocks the
+// writer until somebody reads. That is right for a program writing its own
+// output and fatal for one that sits BETWEEN two others: sshd writing a key
+// into a busy shell's input stopped, stopped reading its socket and stopped
+// draining the shell's output -- which the shell was waiting on. Each waited
+// for the other, and the network ran out of buffers behind them.
+static inline int32_t ubiqos_write_some(int32_t path, const void *buf, uint32_t len)
+{
+    if (!len || ubiqos_writable(path) <= 0) return 0;
+    return ubiqos_syscall(SYS_WRITE, (uint32_t)path, (uint32_t)(uintptr_t)buf, len);
+}
+
 // End another process. Refused for the kernel's own service threads, which the
 // machine needs and nobody chose to start.
 //

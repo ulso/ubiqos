@@ -736,8 +736,12 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             break;
         }
         case SYS_READABLE:
-            frame->a0 = (uint32_t)ubiqos_io_readable_count((int32_t)frame->a0,
-                                                           ubiqos_current_pid());
+            // a1 asks the other question: is there room to write? Needed by a
+            // program that must never block on a pipe -- see ubiqos_write_some.
+            frame->a0 = frame->a1
+                ? (ubiqos_io_writable((int32_t)frame->a0, ubiqos_current_pid()) ? 1u : 0u)
+                : (uint32_t)ubiqos_io_readable_count((int32_t)frame->a0,
+                                                     ubiqos_current_pid());
             break;
         case SYS_CONFONT:
             // Cheap enough to serve here: it records which font is wanted and

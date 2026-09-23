@@ -54,7 +54,14 @@ uint32_t ubiqos_heap_bytes = 192u * 1024u;   // mbedTLS's contexts, in PSRAM
 #define DEFAULT_PORT 22
 #define NET_WAIT_S   30
 #define PKT_MAX      4096           // what we will read; the channel asks for less
-#define CHAN_WINDOW  32768
+// The channel's window is exactly the room there is to hold typed input on its
+// way to the shell. It used to be thirty-two kilobytes, given straight back
+// after every packet -- "the board is never the reason a session waits" -- which
+// meant the client could always send, the input had to be pushed into the shell
+// whether it had room or not, and a busy shell stopped sshd dead. Now the client
+// may send no more than fits here, and the window reopens only as the shell
+// takes it.
+#define CHAN_WINDOW  2048
 #define CHAN_PACKET  1024
 
 #define KEY_HOST     "ssh.hostkey"
@@ -978,6 +985,56 @@ static uint32_t chan_id;              // the client's number for it
 static uint32_t chan_window;          // how much it will take before saying more
 static uint32_t our_window;
 
+// Input on its way to the shell, and the one size report still to be told.
+//
+// Typed bytes wait here while the shell is busy; the SSH window guarantees they
+// fit. A resized window is kept as a size and not as bytes: dragging a window
+// sends a report for every step, and only the last one matters, so a burst of
+// them becomes one line into the shell -- and only between whole pieces of
+// input, never in the middle of an arrow key's escape sequence.
+static uint8_t  tosh[CHAN_WINDOW];
+static uint32_t tosh_n;
+static uint32_t size_rows, size_cols;
+static bool     size_pending;
+
+static void queue_input(const uint8_t *d, uint32_t n) {
+    if (n > sizeof tosh - tosh_n) n = sizeof tosh - tosh_n;   // the window forbids it
+    memcpy(tosh + tosh_n, d, n);
+    tosh_n += n;
+}
+
+// Give the shell what it has room for, and never wait for it. Returns false if
+// the connection went while saying how much room there is again.
+static bool feed_shell(void) {
+    uint32_t given = 0;
+    while (tosh_n) {
+        const int32_t k = ubiqos_write_some(pair[0], tosh, tosh_n);
+        if (k <= 0) break;
+        memmove(tosh, tosh + k, tosh_n - (uint32_t)k);
+        tosh_n -= (uint32_t)k;
+        given += (uint32_t)k;
+    }
+    if (!tosh_n && size_pending) {
+        char rep_[32];
+        const int k = snprintf(rep_, sizeof rep_, "\x1b[8;%lu;%lut",
+                               (unsigned long)size_rows, (unsigned long)size_cols);
+        // All of it or none: half a report in the shell's input is worse than
+        // a late one, and the next pass will try again.
+        if (k > 0 && ubiqos_writable(pair[0]) > 0
+            && ubiqos_write_some(pair[0], rep_, (uint32_t)k) == k)
+            size_pending = false;
+    }
+    if (!given) return true;
+
+    // The window reopens by exactly what the shell took.
+    uint8_t b[16];
+    wr_t w = { b, sizeof b, 0, false };
+    w_byte(&w, MSG_CHANNEL_WINDOW_ADJUST);
+    w_u32(&w, chan_id);
+    w_u32(&w, given);
+    return send_packet(b, w.n);
+}
+
 static bool send_channel_data(const uint8_t *p, uint32_t n) {
     while (n) {
         uint32_t take = n > CHAN_PACKET ? CHAN_PACKET : n;
@@ -989,12 +1046,12 @@ static bool send_channel_data(const uint8_t *p, uint32_t n) {
                 r_u32(&r);
                 chan_window += r_u32(&r);
             } else if (payload[0] == MSG_CHANNEL_DATA) {
-                // Typed while we were waiting for room to answer. Dropping it
-                // would lose a keystroke for no reason.
+                // Typed while we were waiting for room to answer. Queued, not
+                // pushed: pushing into a busy shell is what used to stop sshd.
                 r_u32(&r);
                 uint32_t dl;
                 const uint8_t *d = r_str(&r, &dl);
-                if (!r.over && dl) ubiqos_write(pair[0], d, dl);
+                if (!r.over && dl) queue_input(d, dl);
             } else if (payload[0] == MSG_CHANNEL_CLOSE || payload[0] == MSG_DISCONNECT) {
                 return false;
             }
@@ -1048,6 +1105,7 @@ static void do_session(void) {
                 if (!send_channel_data(wire, k)) return;
             }
             if (!shell_alive()) { channel_eof_and_close(); return; }
+            if (!feed_shell()) return;        // typed input, as the shell has room
         }
 
         // And then whatever has arrived, if anything has. A socket is not a
@@ -1109,10 +1167,11 @@ static void do_session(void) {
                 const uint32_t rows = r_u32(&r);
                 if (running && !r.over && cols >= 20 && rows >= 4
                     && cols <= 1000 && rows <= 1000) {
-                    char rep_[32];
-                    const int k = snprintf(rep_, sizeof rep_, "\x1b[8;%lu;%lut",
-                                           (unsigned long)rows, (unsigned long)cols);
-                    if (k > 0) ubiqos_write(pair[0], (const uint8_t *)rep_, (uint32_t)k);
+                    // Remembered, not written: the next pass of the loop tells
+                    // the shell, once, whatever the size is by then.
+                    size_rows = rows;
+                    size_cols = cols;
+                    size_pending = true;
                 }
                 ok = true;                    // and no reply: it never wants one
             }
@@ -1135,15 +1194,7 @@ static void do_session(void) {
             uint32_t dl;
             const uint8_t *d = r_str(&r, &dl);
             if (r.over) break;
-            if (running && dl) ubiqos_write(pair[0], d, dl);
-            // Give the window straight back: the board is never the reason a
-            // terminal session waits.
-            uint8_t b[16];
-            wr_t w = { b, sizeof b, 0, false };
-            w_byte(&w, MSG_CHANNEL_WINDOW_ADJUST);
-            w_u32(&w, chan_id);
-            w_u32(&w, dl);
-            if (!send_packet(b, w.n)) return;
+            if (running && dl) queue_input(d, dl);   // and fed below, as it fits
             break;
         }
         case MSG_CHANNEL_WINDOW_ADJUST:
@@ -1181,6 +1232,8 @@ static void serve(void) {
     encrypted = false;
     have_session_id = false;
     shell_pid = -1;
+    tosh_n = 0;
+    size_pending = false;
     // Per connection, every one of them. This one was not, and a client that
     // had hung up took the NEXT session with it: the shell started, its banner
     // went out, and the first idle poll read a flag left over from somebody
