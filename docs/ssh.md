@@ -24,11 +24,16 @@ sshd: listening on port 22
 ```
 
 **Unlocking starts it**, when the store holds a password under `ssh.password`
-and no sshd is running already. It cannot start at boot -- a locked board has
-neither the password nor the host key -- and unlocking is both the moment they
-appear and the moment somebody is demonstrably present, which is the right
-condition for opening a way in. `sshd &` by hand does the same thing on a
-board whose store was unlocked earlier.
+and no sshd is running already. A locked board has neither the password nor
+the host key, and unlocking is both the moment they appear and the moment
+somebody is demonstrably present, which is the right condition for opening a
+way in. `sshd &` by hand does the same thing on a board whose store was
+unlocked earlier.
+
+**A board with a key file starts it at boot**, because the store is opened
+then with nobody there -- see [keys.md](keys.md#opening-at-boot-the-key-file).
+That is a way in that opens without anybody present, and it is the reason the
+key file is something to switch on rather than the default.
 
 The key store must be unlocked, because both the password and the host key come
 from it. A board that must answer SSH after a power cut therefore needs somebody

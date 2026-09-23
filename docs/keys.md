@@ -26,7 +26,9 @@ fingerprint 0x2e0a1877
 
 `key lock` seals it again, `key remove NAME` forgets one key (see
 [Taking one out](#taking-one-out) for what "forgets" is worth), and
-`key destroy` erases the store, passphrase and all.
+`key destroy` erases the store, passphrase and all. `key unattended on` lets
+the board open it at boot from a file on the card -- see
+[Opening at boot](#opening-at-boot-the-key-file).
 
 ## What it protects, and what it does not
 
@@ -72,6 +74,12 @@ Writing means erasing, which holds the flash for tens of milliseconds with
 nothing readable from it. So it happens in the filesystem server rather than
 in a system call, core 1 parks in a RAM loop first, and the new image is built
 in SRAM -- never in PSRAM, which shares the QMI bus with the flash.
+
+The image is a whole sector, zeroed before the store is copied into it. Until
+23 September 2026 it was allocated at the size of the store and programmed as
+a sector, so the last hundred-odd bytes of every copy were whatever the heap
+held next to it -- somebody else's memory, in the clear, in flash. A copy
+written before then still has that tail until it is next written over.
 
 ## Taking one out
 
@@ -179,11 +187,58 @@ one module that sends it, and while there is no memory protection that is a
 rule rather than a wall. It is still worth having: it keeps the key off the
 card, out of arguments and out of logs, which is where keys are actually lost.
 
+## Opening at boot: the key file
+
+A board that must come back by itself after a power cut cannot wait for
+somebody to type a passphrase. `key unattended on` makes it not have to:
+
+```
+ubiqos:/> key unattended on
+on: /sd/unlock.key written; the store opens at boot while it is there
+```
+
+At the next start the kernel finds `/sd/unlock.key`, opens the store with it,
+and then does what `key unlock` does afterwards -- `wifi auto`, and sshd if
+there is a password for it. The log says so:
+
+```
+Keys: unlocked by /sd/unlock.key
+Running /sd/startup
+```
+
+**What is in the file is not the passphrase.** It is thirty-two random bytes.
+The store's own key -- the one PBKDF2 makes from the passphrase -- is sealed a
+second time under a key made from those bytes and the chip's id, and that
+second copy lives in the store's header in flash. So:
+
+- **The card alone opens nothing.** The store is in the board's flash, and the
+  file's key is bound to this chip.
+- **The board without the card stays locked** until somebody types the
+  passphrase, exactly as before. Take the card out, and the board is a board
+  that needs its owner again.
+- **The board with the card gives up everything**, as a board left unlocked
+  does. That is the trade, and it is the same one `/sd/wificfg.txt` already
+  makes for the WiFi password -- except that this file is worth the whole
+  store.
+- **It can be taken back.** `key unattended off` removes the second copy from
+  flash as well as the file, and a copy of the file somebody made is then
+  thirty-two useless bytes. `key unattended on` again makes a new file, and
+  the old one stops working at once.
+
+The passphrase goes on working throughout, and the file's bytes never pass
+through a process: the kernel makes them, writes them and reads them at boot,
+and `key` only asks. `cat` refuses the file as it refuses the two config
+files, and none of the three can be renamed out of the way to be read under
+another name. `usbdisk` hands the whole card to a computer, which can read it;
+so can anyone with a card reader.
+
+`key unattended` on its own says which of four states the board is in: on, on
+without the file on this card, off with a stale file, or off.
+
 ## What comes next
 
-RP2350 has OTP that can be locked, and a secure mode. A key held there is what
-would let a board unlock itself without somebody typing a passphrase -- the
-thing a machine that must come back after a power cut needs. That is a larger
-piece of work, and it only means anything with the debug port closed as well.
-The format leaves room for it: the sealed copy carries its own parameters, so
-where the key comes from can change without the records changing.
+RP2350 has OTP that can be locked, and a secure mode. A key held there would
+let a board unlock itself with no card at all -- stronger against a stolen
+card, weaker against a stolen board, and only meaningful with the debug port
+closed as well. The format leaves room for it: the header already carries a
+second way in, and a third is a field more.
