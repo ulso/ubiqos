@@ -162,6 +162,11 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 
     sk[i].pcb = newpcb;
     sk[i].owner = sk[server].owner;
+    // No Nagle. It holds a small segment back while an earlier one is
+    // unacknowledged, and the host at the other end delays its ACK: an SSH
+    // echo that followed its own window adjust waited for that ACK, every
+    // key. Nothing here writes a byte at a time where coalescing would pay.
+    tcp_nagle_disable(newpcb);
     tcp_arg(newpcb, (void *)(intptr_t)i);
     tcp_recv(newpcb, on_recv);
     tcp_err(newpcb, on_err);
@@ -194,6 +199,7 @@ static void start_connect(int i, const ip_addr_t *addr)
     if (!p) { sk[i].connecting = false; sk[i].gone = true; ubiqos_lwipsock_why = 32; return; }
 
     sk[i].pcb = p;
+    tcp_nagle_disable(p);                  // as for accepted ones, above
     tcp_arg(p, (void *)(intptr_t)i);
     tcp_recv(p, on_recv);
     tcp_err(p, on_err);
