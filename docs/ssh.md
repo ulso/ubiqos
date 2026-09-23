@@ -125,17 +125,21 @@ that sentence:
   matters: before that filter existed, a resize during `key unlock` would have
   put `[8;40;130t` into the passphrase.
 
-## What Ctrl-C can and cannot do
+## What Ctrl-C does
 
-A program that is READING gets the key: `more` stops, and the shell abandons
-the line it was editing. A program that is not reading does not, because there
-is no terminal driver in this path to notice the key and end the command for
-you -- on the screen and the serial port the console driver does that, and a
-pipe pair has no driver. So a long `fetch` over SSH runs to its end and the
-Ctrl-C waits in the pipe.
+What it does on the screen. sshd does not put the key into the shell's input:
+it hands it to the kernel, which ends the command running in front -- a
+`sleep 20000`, a long `fetch` -- the way the console driver does for the
+board's own keyboard. A pipe pair has no driver of its own, so this is that
+driver's one job done by the kernel instead.
 
-Closing the connection does end it: the shell's input reaches its end, the
-shell leaves, and sshd kills what is left.
+When nothing is running in front, the key goes through as a key: at the
+prompt the shell abandons the line, and `more` stops. A program that has taken
+the key for itself -- Atto, through curses' `raw()` -- gets it too, which is
+why `C-x C-c` and every other Emacs command with a Ctrl-C in it still work.
+
+Closing the connection ends everything the session started, not only the
+shell: an Atto left running in a window that was closed goes with it.
 
 ## What the debugging looked like
 
