@@ -214,7 +214,19 @@ static void session(int32_t sock) {
             const int32_t got = ubiqos_sock_recv(sock, buf, sizeof buf);
             if (got < 0) break;                   // the other end has gone
             if (got > 0) {
-                const uint32_t n = strip_telnet(sock, buf, (uint32_t)got);
+                uint32_t n = strip_telnet(sock, buf, (uint32_t)got);
+                // Ctrl-C ends the command in front, as it would on the console;
+                // with nothing in front it goes on to the shell or to a program
+                // that took the key for itself. See ubiqos_interrupt.
+                uint32_t kept = 0;
+                for (uint32_t i = 0; i < n; i++) {
+                    if (buf[i] == 3 && ubiqos_interrupt(pair[0]) == 1) {
+                        ubiqos_sock_send(sock, (const uint8_t *)"^C\r\n", 4);
+                        continue;
+                    }
+                    buf[kept++] = buf[i];
+                }
+                n = kept;
                 const int32_t k = n ? ubiqos_write_some(pair[0], buf, n) : 0;
                 const uint32_t took = k > 0 ? (uint32_t)k : 0;
                 shift_down(held, buf + took, n - took);
@@ -242,9 +254,11 @@ done:
     // Closing the shell's input is how it is asked to leave: an empty pipe
     // with no writer reads as the end of the file, and `sh` treats that as
     // exit. Only if it will not take the hint does it get killed.
+    // The whole session goes, not only the shell: see ubiqos_hangup. Killing
+    // the shell alone left an Atto started from it running, holding the pair.
+    ubiqos_hangup(pair[0]);
     ubiqos_close(pair[0]);
-    for (int i = 0; i < 20 && child_alive(pid); i++) ubiqos_sleep(50);
-    if (child_alive(pid)) ubiqos_kill(pid);
+    (void)pid;
 }
 
 void module_main(int argc, char **argv) {

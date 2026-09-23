@@ -997,10 +997,25 @@ static uint32_t tosh_n;
 static uint32_t size_rows, size_cols;
 static bool     size_pending;
 
+// Ctrl-C bytes that ended a command rather than going to the shell. They were
+// sent inside the window like any byte, so the window has to be given them back
+// even though the shell never took them.
+static uint32_t intr_bytes;
+static bool     intr_echo;
+
 static void queue_input(const uint8_t *d, uint32_t n) {
-    if (n > sizeof tosh - tosh_n) n = sizeof tosh - tosh_n;   // the window forbids it
-    memcpy(tosh + tosh_n, d, n);
-    tosh_n += n;
+    for (uint32_t i = 0; i < n; i++) {
+        // Ctrl-C is the kernel's to decide, as it is on a console: a command in
+        // front is ended and the key is gone; nothing in front, or a program
+        // like Atto that took the key for itself, and it is passed on as input.
+        if (d[i] == 3 && ubiqos_interrupt(pair[0]) == 1) {
+            intr_bytes++;
+            intr_echo = true;
+            continue;
+        }
+        if (tosh_n >= sizeof tosh) break;                  // the window forbids it
+        tosh[tosh_n++] = d[i];
+    }
 }
 
 // Give the shell what it has room for, and never wait for it. Returns false if
@@ -1024,6 +1039,8 @@ static bool feed_shell(void) {
             && ubiqos_write_some(pair[0], rep_, (uint32_t)k) == k)
             size_pending = false;
     }
+    given += intr_bytes;
+    intr_bytes = 0;
     if (!given) return true;
 
     // The window reopens by exactly what the shell took.
@@ -1103,6 +1120,11 @@ static void do_session(void) {
                 if (got <= 0) break;
                 const uint32_t k = crlf(out, (uint32_t)got, wire, sizeof wire);
                 if (!send_channel_data(wire, k)) return;
+            }
+            if (intr_echo) {
+                // What a terminal shows for the key, as the console does.
+                intr_echo = false;
+                if (!send_channel_data((const uint8_t *)"^C\r\n", 4)) return;
             }
             if (!shell_alive()) { channel_eof_and_close(); return; }
             if (!feed_shell()) return;        // typed input, as the shell has room
@@ -1234,6 +1256,8 @@ static void serve(void) {
     shell_pid = -1;
     tosh_n = 0;
     size_pending = false;
+    intr_bytes = 0;
+    intr_echo = false;
     // Per connection, every one of them. This one was not, and a client that
     // had hung up took the NEXT session with it: the shell started, its banner
     // went out, and the first idle poll read a flag left over from somebody
@@ -1283,9 +1307,10 @@ static void serve(void) {
     if (shell_pid >= 0) {
         // Closing our end is how the shell is asked to leave: its input has no
         // writer left, which reads as the end of the file.
+        // Everything the session started goes with it -- see ubiqos_hangup.
+        // Killing the shell alone left an Atto from a closed window running.
+        ubiqos_hangup(pair[0]);
         ubiqos_close(pair[0]);
-        for (int i = 0; i < 20 && shell_alive(); i++) ubiqos_sleep(50);
-        if (shell_alive()) ubiqos_kill(shell_pid);
     }
     if (encrypted) {
         mbedtls_gcm_free(&gcm_in);
