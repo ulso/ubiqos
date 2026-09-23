@@ -8,6 +8,8 @@
 //   key set NAME        type the value; it is not shown
 //   key remove NAME
 //   key check NAME      a fingerprint, to compare with the one you have
+//   key unattended on   open the store at boot from a file on the card
+//   key unattended off  and stop
 //
 // The store is sealed: locked, there is nothing to list, because the names are
 // inside the ciphertext with the values. The first unlock on a board with no
@@ -138,6 +140,41 @@ static void join_if_networks(void) {
     if (pid >= 0) ubiqos_wait(pid);
 }
 
+// What an open store is for, done once it is open: by `key unlock`, and at
+// boot by the kernel running `key opened` after the key file has opened it.
+static void opened(void) {
+    join_if_networks();     // the network first: sshd waits for a stack
+    serve_ssh();
+}
+
+// The key file. Its bytes never pass through here: the kernel makes them,
+// writes them to the card and reads them at boot. This program asks, and
+// says what happened.
+static void unattended(const char *what) {
+    ubiqos_keyreq_t r;
+    for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
+    if (!what) {
+        r.index = 2;
+        const int32_t st = ubiqos_key_op(UBIQOS_KEY_OP_UNATTENDED, &r);
+        if (st < 0)          say("key: could not ask\r\n");
+        else if (st == 3)    say("on: " UBIQOS_KEY_FILE " opens the store at boot\r\n");
+        else if (st == 1)    say("on, but " UBIQOS_KEY_FILE " is not on this card -- the store stays locked at boot\r\n");
+        else if (st == 2)    say("off; " UBIQOS_KEY_FILE " is on the card but opens nothing\r\n");
+        else                 say("off: the store is opened by typing the passphrase\r\n");
+        return;
+    }
+    const bool on = is(what, "on");
+    if (!on && !is(what, "off")) { say("usage: key unattended [on | off]\r\n"); return; }
+    if (locked()) return;
+    r.index = on ? 1u : 0u;
+    const int32_t rc = ubiqos_key_op(UBIQOS_KEY_OP_UNATTENDED, &r);
+    if (rc == 0)       say(on ? "on: " UBIQOS_KEY_FILE " written; the store opens at boot while it is there\r\n"
+                              : "off: the store no longer opens from a file, and " UBIQOS_KEY_FILE " is gone\r\n");
+    else if (rc == -8) say("key: no card to write " UBIQOS_KEY_FILE " to, or it would not take it\r\n");
+    else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
+    else               say("key: the write did not take\r\n");
+}
+
 static void unlock(void) {
     ubiqos_keyreq_t r;
     for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
@@ -155,8 +192,7 @@ static void unlock(void) {
 
     if (rc == 0 || rc == 1) {
         say(rc ? "a new store, unlocked\r\n" : "unlocked\r\n");
-        join_if_networks();     // the network first: sshd waits for a stack
-        serve_ssh();
+        opened();
         return;
     }
     if (rc == -6)      say("key: that is not the passphrase, or the store has been changed\r\n");
@@ -189,7 +225,8 @@ static void list(void) {
 
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: key [unlock | lock | set NAME | remove NAME | check NAME]\n\n"
+            "usage: key [unlock | lock | set NAME | remove NAME | check NAME\n"
+            "            | unattended [on | off]]\n\n"
             "  unlock        type the passphrase; on a board with no store yet,\n"
             "                what you type becomes the passphrase. Afterwards:\n"
             "                'wifi auto' if the store holds a network's password,\n"
@@ -200,14 +237,27 @@ void module_main(int argc, char **argv) {
             "  (none)        the names of the keys stored, and their lengths\n"
             "  set NAME      type the value; it is not shown and never an argument\n"
             "  remove NAME   forget it\n"
-            "  check NAME    a fingerprint of the value, to compare with your own\n\n"
+            "  check NAME    a fingerprint of the value, to compare with your own\n"
+            "  unattended [on | off]\n"
+            "                open the store at boot from " UBIQOS_KEY_FILE ",\n"
+            "                with nobody there. Whoever has the board AND the\n"
+            "                card then has the keys; see docs/keys.md\n\n"
             "Values cannot be read back. The store is sealed in flash, outside\n"
             "anything a system update writes, and is opened by a passphrase --\n"
             "which must be typed again after every power-up, because the key\n"
-            "derived from it is kept only in RAM.\n"))
+            "derived from it is kept only in RAM -- or by the key file.\n"))
         return;
 
     if (argc == 2 && is(argv[1], "unlock")) { unlock(); return; }
+    if (argc == 2 && is(argv[1], "unattended")) { unattended(0); return; }
+    if (argc == 3 && is(argv[1], "unattended")) { unattended(argv[2]); return; }
+    // Run by the kernel at boot, when the key file has opened the store. By
+    // hand it does no harm: with the store locked it does nothing at all.
+    if (argc == 2 && is(argv[1], "opened")) {
+        ubiqos_keyreq_t r;
+        if (ubiqos_key_op(UBIQOS_KEY_OP_STATE, &r) == (int32_t)UBIQOS_KEYS_OPEN) opened();
+        return;
+    }
     if (argc == 2 && is(argv[1], "destroy")) {
         ubiqos_keyreq_t r;
         for (uint32_t i = 0; i < sizeof r; i++) ((uint8_t *)&r)[i] = 0;
@@ -241,7 +291,8 @@ void module_main(int argc, char **argv) {
     const bool rem = argc == 3 && is(argv[1], "remove");
     const bool chk = argc == 3 && is(argv[1], "check");
     if (!set && !rem && !chk) {
-        say("usage: key [unlock | lock | destroy | set NAME | remove NAME | check NAME]\r\n");
+        say("usage: key [unlock | lock | destroy | set NAME | remove NAME | check NAME\r\n"
+            "            | unattended [on | off]]\r\n");
         return;
     }
     if (locked()) return;
