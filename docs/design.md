@@ -328,6 +328,35 @@ every descriptor are resident in flash.
 file, so it is a list of commands and nothing more. It is started, not waited
 for: the system is up either way.
 
+## Where a program comes from
+
+A name typed at the shell is looked for in flash first, and then along the
+search path: directories, each naming its volume, tried in order.
+
+```
+ubiqos:/> path
+/sd
+ubiqos:/> path /sd/bin:/sd
+/sd/bin:/sd
+```
+
+In each directory the file may be called `name` or `name.mod`, and it is a
+module if its first four bytes are the sync code, whatever it is called. The
+default is `/sd`, the root of the card, which is where the loader always
+looked. `path ""` leaves flash alone.
+
+It is one path for the whole machine, not one per process as in Unix, because
+of where it is set: `/sd/startup` runs in a shell of its own that ends when the
+file does, and a setting made there has to outlive it. So a line in the
+startup file is all it takes:
+
+    path /sd/bin:/sd
+
+`/tmp` can be on the path, but is not by default: scratch space that anything
+can write is not somewhere a program should be picked up from unasked. `/dev`
+holds no files and is passed over. A volume added later -- a filesystem in
+flash, say -- is one more entry.
+
 ## The display
 
 DVI out of the HSTX peripheral at 640x480, one byte per pixel, RGB332. The
@@ -432,6 +461,7 @@ Type a module name to run it. Built in:
   ls       list a directory
   cd       change directory (built in)
   pwd      where you are
+  path     where programs not in flash are looked for
   mkdir    make a directory
   rmdir    remove an empty directory
   mount    which bus the card is on, or 'mount sdio' to take it again
