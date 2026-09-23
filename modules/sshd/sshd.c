@@ -1097,6 +1097,25 @@ static void do_session(void) {
             const uint8_t want_reply = r_byte(&r);
             bool ok = false;
             if (r_is(type, tl, "pty-req")) ok = true;
+            else if (r_is(type, tl, "window-change")) {
+                // The window at the other end was resized. There is no signal
+                // to send and no terminal driver to tell, so it goes to the
+                // shell's side IN BAND, as exactly what a terminal says when it
+                // is asked its size: ESC [ 8 ; rows ; cols t. The shell takes
+                // its width from it, curses turns it into KEY_RESIZE and Atto
+                // redraws, and the prompts that keep secrets skip it like any
+                // other escape sequence -- see ubiqos_esc_skip.
+                const uint32_t cols = r_u32(&r);
+                const uint32_t rows = r_u32(&r);
+                if (running && !r.over && cols >= 20 && rows >= 4
+                    && cols <= 1000 && rows <= 1000) {
+                    char rep_[32];
+                    const int k = snprintf(rep_, sizeof rep_, "\x1b[8;%lu;%lut",
+                                           (unsigned long)rows, (unsigned long)cols);
+                    if (k > 0) ubiqos_write(pair[0], (const uint8_t *)rep_, (uint32_t)k);
+                }
+                ok = true;                    // and no reply: it never wants one
+            }
             else if (r_is(type, tl, "shell")) {
                 ok = start_shell();
                 running = ok;

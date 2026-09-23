@@ -95,6 +95,22 @@ does not. Output that looks right on the screen came out as a staircase over
 the network until sshd did that translation itself, which is the one thing a
 pty layer would have been needed for.
 
+## When the window is resized
+
+The client says so -- a `window-change` request with the new rows and columns
+-- and there is no signal to send and no terminal driver to tell. So sshd puts
+it into the shell's input **in band**, as exactly what a terminal answers when
+asked its size: `ESC [ 8 ; rows ; cols t`. Everything downstream already knew
+that sentence:
+
+- the shell takes its width from it and redraws the line;
+- curses turns a changed size into `KEY_RESIZE`, and Atto -- which had
+  `resize-terminal` bound to it all along -- redraws to fit;
+- `more` does not take it for a key and turn a page;
+- the prompts that keep secrets drop it like any other escape sequence, which
+  matters: before that filter existed, a resize during `key unlock` would have
+  put `[8;40;130t` into the passphrase.
+
 ## What Ctrl-C can and cannot do
 
 A program that is READING gets the key: `more` stops, and the shell abandons

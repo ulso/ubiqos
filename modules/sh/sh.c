@@ -754,6 +754,7 @@ void module_main(int argc, char **argv) {
 
     int state = 0;                       // 0 text, 1 after ESC, 2 in CSI
     uint32_t csi_num = 0;
+    uint32_t csi_first = 0, csi_count = 0;   // the first parameter, and how many
 
     for (;;) {
         uint8_t ch;
@@ -772,6 +773,7 @@ void module_main(int argc, char **argv) {
         if (state == 1) {
             state = (ch == '[') ? 2 : 0;
             csi_num = 0;
+            csi_first = csi_count = 0;
             continue;
         }
         if (state == 2) {
@@ -781,7 +783,12 @@ void module_main(int argc, char **argv) {
             // command line. A terminal answering the width question late --
             // after ask_width's 150 ms -- put `130R` on the prompt, which is
             // how this was found, on the serial port and over netcon alike.
-            if (ch == ';') { csi_num = 0; continue; }
+            if (ch == ';') {
+                if (!csi_count) csi_first = csi_num;
+                csi_count++;
+                csi_num = 0;
+                continue;
+            }
             state = 0;
             switch (ch) {
             case 'A': browse_back(e);    redraw(e); break;
@@ -807,6 +814,16 @@ void module_main(int argc, char **argv) {
                 // well means a late answer sets the width instead of being
                 // typed. The last parameter is the column, which is the width.
                 if (csi_num >= 20 && csi_num <= 400 && csi_num != e->width) {
+                    e->width = csi_num;
+                    redraw(e);
+                }
+                break;
+            case 't':
+                // ESC [ 8 ; rows ; cols t -- the text area's size. A terminal
+                // sends it when asked, and sshd sends it when the window at the
+                // other end is resized; either way the columns are the width.
+                if (csi_first == 8 && csi_count == 2
+                    && csi_num >= 20 && csi_num <= 400 && csi_num != e->width) {
                     e->width = csi_num;
                     redraw(e);
                 }
