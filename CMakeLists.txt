@@ -1659,6 +1659,10 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/cxxdemo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/vtdemo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/lsmod.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/armtest.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/crit.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/newlibtest.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/pecho.mod
             ${CMAKE_CURRENT_BINARY_DIR}/free.mod
             ${CMAKE_CURRENT_BINARY_DIR}/echo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbecho.mod
@@ -1722,20 +1726,20 @@ add_custom_target(modules ALL
 # board when run, see the note in modules/wasm/wasm.c. Take it out before
 # leaving the machine in a state anyone else will type at.
 set(UBIQOS_RESIDENT
+    # Tests are built but not resident: armtest, crit, tlsftest, libctest,
+    # newlibtest, memtest, msgtest and msgcli, spin and spinrt, fill, pecho.
+    # Their .mod files are in the build directory; put one on the card, or
+    # anywhere on the search path, when it is wanted.
     vidstat
     screenshot
     cxxdemo
     vtdemo
     wasm
     hibouair
-    armtest
     usbdisk
     reboot
     dhello
-    tlsftest
     more
-    libctest
-    newlibtest
 #    wifilib
     uart
     esplink
@@ -1753,7 +1757,6 @@ set(UBIQOS_RESIDENT
     adc
     gpiodev
     gpio
-    crit
     tone
     volume
     play
@@ -1776,7 +1779,6 @@ set(UBIQOS_RESIDENT
     cp
     rm
     write
-    fill
     mkdir
     rmdir
     pwd
@@ -1792,22 +1794,16 @@ set(UBIQOS_RESIDENT
     kill
     cu
     sleep
-    spin
-    spinrt
     nice
     ps
     keys
     bootsel
-    memtest
     pimpl
     echo
     lsmod
     free
     usbstat
-    pecho
     zhello
-    msgtest
-    msgcli
 
     # And the board's own: descriptors and libraries for hardware that only
     # exists on one machine. They left this list when there were two boards,
