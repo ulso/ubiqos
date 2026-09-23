@@ -61,6 +61,10 @@ void curses_adopt_pwd(void);   // compat.c: start in the directory the shell was
 // when it answered, 0 when there is nobody to ask -- and then the environment
 // and the defaults decide, as they did before.
 int curses_term_size(int *rows, int *cols);
+
+// compat.c: from now on Ctrl-C is a key this program reads, not an order to end
+// it. What raw() means in every curses: an editor binds C-c to things.
+void curses_take_interrupt(void);
 int endwin(void);
 int raw(void);
 int noraw(void);

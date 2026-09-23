@@ -17,6 +17,10 @@
 
 void curses_adopt_pwd(void) { }
 
+// Nobody in front means Ctrl-C reaches us as a key -- on the screen, on the
+// serial port and through sshd or netcon alike. See raw() in curses.c.
+void curses_take_interrupt(void) { ubiqos_foreground(UBIQOS_STDIN, 0); }
+
 // How big is the terminal? ASK IT.
 //
 // ESC [ 18 t means "how big is the text area", and a terminal answers

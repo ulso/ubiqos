@@ -101,7 +101,20 @@ int endwin(void)
 
 // The UbiqOS console hands over each key as it is pressed and echoes nothing,
 // which is what raw() and noecho() are asking for. There is nothing to do.
-int raw(void)    { return OK; }
+// raw() is where a program says it wants every key as it is, Ctrl-C included,
+// which in Unix is the terminal's ISIG turned off. Here it is the foreground
+// cleared: with nobody in front, the console driver -- and sshd and netcon --
+// hand 0x03 over as an ordinary character instead of ending the program.
+//
+// Without it, C-x C-c in Atto did not quit Atto, it KILLED it: the console
+// saw Ctrl-C, ended the process in front, and an unsaved buffer went without
+// the question that would have saved it. It looked like quitting.
+int raw(void)    { curses_take_interrupt(); return OK; }
+
+// Not undone. Giving the key back would mean naming this process as the
+// foreground again, and there is no call that says who "this process" is --
+// and Atto calls noraw() only on its way out, after which the shell takes the
+// foreground back itself.
 int noraw(void)  { return OK; }
 int cbreak(void) { return OK; }
 int noecho(void) { return OK; }

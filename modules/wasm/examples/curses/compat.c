@@ -32,6 +32,10 @@
 // way to wait a little for an answer that may never come -- and a blocking read
 // of a cursor report that nothing will send hangs the editor. The environment
 // is what this build goes by; see the native compat.c for the other half.
+// A guest has no way to reach the foreground; it gets what the wasm host
+// decides. Left as it was.
+void curses_take_interrupt(void) { }
+
 int curses_term_size(int *rows, int *cols)
 {
     (void)rows; (void)cols;
