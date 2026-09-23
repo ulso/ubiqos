@@ -18,6 +18,27 @@
 #include "lwip/tcp.h"
 #include "lwip/pbuf.h"
 #include "lwip/dns.h"
+#include "tlsf.h"
+
+extern tlsf_pool_t ubiqos_bulk_pool;
+
+// What a connection has received and nobody has read yet, as BYTES.
+//
+// It used to be the pbuf chain lwIP handed over, kept as it came -- "a chain
+// costs nothing to hold". It costs a whole buffer from lwIP's pool per packet,
+// and the pool holds six, for everything: both interfaces, ARP, DHCP, ping,
+// mDNS. The window closes in bytes, so a peer may still send two thousand
+// nine hundred bytes of tiny packets to a reader that has stopped reading --
+// a window being dragged at the far end of an SSH session sends exactly that
+// -- and six of them empty the pool. Then the board answered nothing on either
+// interface until the reader woke or TCP gave up, which took minutes.
+//
+// So the data is copied out and the buffer handed straight back. The window
+// still opens only as the program reads, so flow control is unchanged; what
+// changed is that no program, however stuck, can hold the network's buffers.
+// One ring per connection, as big as the window, in PSRAM -- the kernel's
+// SRAM is spoken for, and nothing but the CPU touches these.
+#define RXRING TCP_WND
 
 int32_t ubiqos_msg_receive_tmo(ubiqos_msg_t *out, uint32_t ms);
 int32_t ubiqos_msg_reply(int32_t status);
@@ -38,6 +59,9 @@ typedef struct {
     uint16_t        want_port;   // where it is going, until there is a pcb
     int8_t          pending[NPENDING];
     uint8_t         npending;
+    uint8_t        *ring;        // received bytes, copied out of lwIP's buffers
+    uint16_t        rhead;       // where the oldest unread byte is
+    uint16_t        rcount;      // and how many there are
 } sock_t;
 
 static sock_t sk[NSOCK];
@@ -60,8 +84,19 @@ static int alloc_sock(void)
     return -1;
 }
 
+// A connection's ring, for sockets that carry data -- not listeners. Without
+// PSRAM, or if the pool will not give one, the socket falls back to keeping the
+// chain, which is how it always worked and is no worse than before.
+static void give_ring(int i)
+{
+    sk[i].ring = ubiqos_bulk_pool ? ubiqos_tlsf_malloc(ubiqos_bulk_pool, RXRING) : NULL;
+    sk[i].rhead = sk[i].rcount = 0;
+}
+
 static void free_sock(int i)
 {
+    if (sk[i].ring) { ubiqos_tlsf_free(ubiqos_bulk_pool, sk[i].ring); sk[i].ring = NULL; }
+    sk[i].rcount = 0;
     if (sk[i].rx) { pbuf_free(sk[i].rx); sk[i].rx = NULL; }
     sk[i].used = false;
     sk[i].pcb = NULL;
@@ -83,6 +118,21 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
     // closes when this end falls behind, which is what a window is for.
     ubiqos_lwipsock_oncalls++;
     ubiqos_lwipsock_onbytes += p->tot_len;
+
+    // Into the ring, and the buffer back to the pool at once. Only while no
+    // chain is waiting: a chain means an earlier packet did not fit, and what
+    // came after it must be read after it.
+    if (sk[i].ring && !sk[i].rx && p->tot_len <= RXRING - sk[i].rcount) {
+        const uint16_t tail  = (uint16_t)((sk[i].rhead + sk[i].rcount) % RXRING);
+        const uint16_t first = (uint16_t)(p->tot_len < RXRING - tail ? p->tot_len : RXRING - tail);
+        pbuf_copy_partial(p, sk[i].ring + tail, first, 0);
+        if (first < p->tot_len)
+            pbuf_copy_partial(p, sk[i].ring, (uint16_t)(p->tot_len - first), first);
+        sk[i].rcount = (uint16_t)(sk[i].rcount + p->tot_len);
+        pbuf_free(p);
+        return ERR_OK;
+    }
+
     if (sk[i].rx) pbuf_cat(sk[i].rx, p);
     else          sk[i].rx = p;
     (void)pcb;
@@ -108,6 +158,7 @@ static err_t on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 
     int i = alloc_sock();
     if (i < 0) return ERR_MEM;
+    give_ring(i);
 
     sk[i].pcb = newpcb;
     sk[i].owner = sk[server].owner;
@@ -184,6 +235,7 @@ static int32_t do_connect(const char *host, uint16_t port, int32_t owner)
 
     int i = alloc_sock();
     if (i < 0) { ubiqos_lwipsock_why = 10; return -1; }
+    give_ring(i);
 
     sk[i].owner = owner;
     sk[i].want_port = port;
@@ -246,6 +298,20 @@ static int32_t do_recv(int i, uint8_t *buf, uint32_t len)
 {
     if (i < 0 || i >= NSOCK)  { ubiqos_lwipsock_why = 1; return -1; }
     if (!sk[i].used)          { ubiqos_lwipsock_why = 2; return -1; }
+
+    // The ring first: whatever is in it arrived before anything in the chain.
+    if (sk[i].rcount) {
+        uint16_t n = (uint16_t)(len < sk[i].rcount ? len : sk[i].rcount);
+        const uint16_t first = (uint16_t)(n < RXRING - sk[i].rhead ? n : RXRING - sk[i].rhead);
+        memcpy(buf, sk[i].ring + sk[i].rhead, first);
+        if (first < n) memcpy(buf + first, sk[i].ring, n - first);
+        sk[i].rhead  = (uint16_t)((sk[i].rhead + n) % RXRING);
+        sk[i].rcount = (uint16_t)(sk[i].rcount - n);
+        if (sk[i].pcb) tcp_recved(sk[i].pcb, n);
+        ubiqos_lwipsock_recv += n;
+        return (int32_t)n;
+    }
+
     if (!sk[i].rx) {
         if (!sk[i].gone) return 0;                // nothing yet is not an end
         ubiqos_lwipsock_why = 3;
