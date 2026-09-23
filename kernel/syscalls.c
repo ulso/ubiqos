@@ -714,6 +714,13 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             return ubiqos_switch(sp);
+        case SYS_INTERRUPT:
+            // a1 set is the hangup: the client has gone, end the whole session.
+            frame->a0 = frame->a1
+                ? (uint32_t)ubiqos_io_hangup((int32_t)frame->a0, ubiqos_current_pid())
+                : (ubiqos_io_interrupt_path((int32_t)frame->a0,
+                                            ubiqos_current_pid()) ? 1u : 0u);
+            break;
         case SYS_FOREGRND:
             frame->a0 = (uint32_t)ubiqos_io_set_foreground(
                 (int32_t)frame->a0, (int32_t)frame->a1, ubiqos_current_pid());

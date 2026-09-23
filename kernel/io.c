@@ -288,6 +288,11 @@ typedef struct {
     uint8_t  buf[UBIQOS_PIPE_BUF];
     uint32_t head, tail;
     int32_t  readers, writers;
+    // The process in front, when this ring is a terminal's input -- the same
+    // thing a console device keeps, for the same reason: somebody at the other
+    // end presses Ctrl-C and something must know whom it is for. Set by the
+    // shell exactly as it sets a console's; see ubiqos_io_interrupt_path.
+    int32_t  foreground;
 } pipe_t;
 
 static pipe_t pipes[UBIQOS_MAX_PIPES];
@@ -732,6 +737,15 @@ int32_t ubiqos_process_kill(int32_t pid);
 bool    ubiqos_intr_request(int32_t pid);
 
 int32_t ubiqos_io_set_foreground(int32_t path, int32_t pid, int32_t owner_pid) {
+    // A shell whose input is a pipe pair -- one started by sshd or netcon --
+    // names its foreground on the ring it reads, which is the ring the server
+    // at the other end writes into. It used to be refused here, silently, so a
+    // shell over the network had nobody to interrupt.
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
+    if (q) {
+        pipes[q->pipe].foreground = pid > 0 ? pid : -1;
+        return 0;
+    }
     ubiqos_path_t *p = path_of(path, owner_pid);
     if (!p) return -1;
     // Cast away const: the device is shared, and this is a property of the
@@ -774,6 +788,62 @@ bool ubiqos_io_interrupt(const char *name) {
         return true;
     }
     return false;
+}
+
+// Ctrl-C arrived at a server -- sshd, netcon -- for the terminal at the other
+// end of this pipe pair. The same decision a console driver makes: if a
+// command is in front, it is ended (or told, if it asked to be) and the key is
+// consumed; if nothing is, false, and the server passes 0x03 on as an ordinary
+// byte -- to the shell's line editor, or to a program like Atto that took the
+// key for itself by clearing the foreground.
+//
+// Called from a trap. The console's version runs in the USB thread and has to
+// take a critical section to touch the scheduler; here the trap already has
+// interrupts off.
+bool ubiqos_io_interrupt_path(int32_t path, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
+    if (!q) return false;
+    // The ring the server WRITES is the one the shell reads.
+    const int16_t ring = q->pipe_back >= 0 ? q->pipe_back : q->pipe;
+    const int32_t victim = pipes[ring].foreground;
+    if (victim <= 0) return false;
+    if (!ubiqos_intr_request(victim)) {
+        pipes[ring].foreground = -1;
+        ubiqos_process_kill(victim);
+    }
+    return true;
+}
+
+// The connection is gone: end everything on the other side of this pipe pair.
+//
+// What a hangup is in Unix. When sshd or netcon lost its client it closed its
+// end and killed the shell -- and only the shell. Whatever the shell had
+// started was left: an Atto from a session whose Terminal window had been
+// closed went on running, holding the session's pipe pair, and every such
+// session cost two of the eight rings for good. The kernel knows exactly who
+// holds a ring, so it is asked rather than the server guessing.
+//
+// Everybody holding either ring except the caller is ended, outright: a
+// session that has lost its terminal has nobody to answer a question.
+int32_t ubiqos_io_hangup(int32_t path, int32_t owner_pid) {
+    ubiqos_path_t *q = pipe_entry(path, owner_pid);
+    if (!q) return -1;
+    const int16_t r1 = q->pipe, r2 = q->pipe_back;
+    int32_t ended = 0;
+    for (int pid = 1; pid < UBIQOS_MAX_PROCS; pid++) {
+        if (pid == owner_pid) continue;
+        for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
+            const ubiqos_path_t *p = &paths[pid][i];
+            if (p->pipe < 0) continue;
+            const bool ours = p->pipe == r1 || (r2 >= 0 && p->pipe == r2)
+                           || (p->pipe_back >= 0 && (p->pipe_back == r1 || p->pipe_back == r2));
+            if (!ours) continue;
+            ubiqos_process_kill(pid);
+            ended++;
+            break;
+        }
+    }
+    return ended;
 }
 
 bool ubiqos_io_readable(int32_t path, int32_t owner_pid) {
@@ -894,6 +964,7 @@ int32_t ubiqos_io_pipe(int32_t fds[2], int32_t owner_pid) {
     if (q < 0 || w < 0) { ubiqos_critical_exit(st); return -1; }
 
     pipes[q].head = pipes[q].tail = 0;
+    pipes[q].foreground = -1;
     pipes[q].readers = pipes[q].writers = 1;
     paths[owner_pid][r].pipe = (int16_t)q; paths[owner_pid][r].pipe_write = 0;
     paths[owner_pid][w].pipe = (int16_t)q; paths[owner_pid][w].pipe_write = 1;
@@ -926,6 +997,7 @@ int32_t ubiqos_io_pipepair(int32_t fds[2], int32_t owner_pid) {
     if (b < 0 || p1 < 0) { ubiqos_critical_exit(st); return -1; }
 
     pipes[a].head = pipes[a].tail = 0;
+    pipes[a].foreground = pipes[b].foreground = -1;
     pipes[b].head = pipes[b].tail = 0;
     pipes[a].readers = pipes[a].writers = 1;
     pipes[b].readers = pipes[b].writers = 1;

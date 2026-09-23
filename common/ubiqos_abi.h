@@ -913,6 +913,7 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 // only whether there is one. See kernel/config.c for why that is the shape.
 #define SYS_DATALINK  69u   // a0 = name, a1 = &size -> a0 = the data, 0 if none
 #define SYS_DATAUNLINK 70u  // a0 = what SYS_DATALINK returned
+#define SYS_INTERRUPT 72u   // a0 = path -> 1 consumed (a command was ended), 0 pass it on
 #define SYS_KEYS      71u   // a0 = UBIQOS_KEY_OP_*, a1 = &ubiqos_keyreq_t
 #define SYS_CONFIG    68u   // a0 = UBIQOS_CFG_*, a1 = buffer, a2 = length
                             //   -> a0 = the length written, or for the password
@@ -2282,6 +2283,25 @@ static inline int32_t ubiqos_kill_now(int32_t pid)
 // arrives -- the process it is meant for is usually blocked and reading nothing
 // -- and at that moment the kernel has no way of telling which of several
 // processes the person typing had in mind. The shell knows: it started it.
+// Ctrl-C, from a program that relays a terminal -- sshd, netcon. The kernel
+// ends whatever the shell at the other end of the pipe pair has in front and
+// answers 1; the key is then consumed. 0 means nothing was in front, or the
+// program in front took Ctrl-C for itself, and the byte should be passed on as
+// ordinary input. It is the decision a console driver makes about the same key.
+static inline int32_t ubiqos_interrupt(int32_t path)
+{
+    return ubiqos_syscall(SYS_INTERRUPT, (uint32_t)path, 0, 0);
+}
+
+// The client has gone: end every process on the other side of this pipe pair
+// -- the shell and whatever it started. Answers how many were ended. A server
+// that only killed the shell left the shell's children running, each holding
+// the pair, for good.
+static inline int32_t ubiqos_hangup(int32_t path)
+{
+    return ubiqos_syscall(SYS_INTERRUPT, (uint32_t)path, 1, 0);
+}
+
 static inline int32_t ubiqos_foreground(int32_t path, int32_t pid)
 {
     return ubiqos_syscall(SYS_FOREGRND, (uint32_t)path, (uint32_t)pid, 0);
