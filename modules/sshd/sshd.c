@@ -287,13 +287,29 @@ static bool read_exact(uint8_t *out, uint32_t n, uint32_t ms) {
     return true;
 }
 
+// A send that cannot go now is asked again, but not for ever: a client that
+// stopped reading for half a minute has gone in every way that matters, and a
+// server stuck here answers nobody else. `sshd -d` says when one takes over a
+// second, because a stall that nobody reports looks like a slow network.
 static bool write_all(const uint8_t *p, uint32_t n) {
     uint32_t sent = 0;
+    uint32_t waited = 0;
+    bool told = false;
     while (sent < n) {
         const int32_t r = ubiqos_sock_send(sock, p + sent, n - sent);
         if (r < 0) return false;
-        if (r == 0) { ubiqos_sleep(5); continue; }
+        if (r == 0) {
+            if (waited >= 30000) { peer_gone = true; return false; }
+            if (debugging && !told && waited >= 1000) {
+                say_num("sshd: a send has waited a second; TCP state", ubiqos_sock_state(sock));
+                told = true;
+            }
+            ubiqos_sleep(5);
+            waited += 5;
+            continue;
+        }
         sent += (uint32_t)r;
+        waited = 0;
     }
     return true;
 }
@@ -335,17 +351,40 @@ static bool send_packet(const uint8_t *pl, uint32_t n) {
 }
 
 // And one in. The payload is left in `payload`, its length in *out_len.
+//
+// The four bytes of length are kept across calls. The session loop asks with
+// no patience at all, and a header that had arrived in part used to be read,
+// found short, and dropped -- after which every length was read from the
+// middle of something else. Once the length is in, the rest is owed, and a
+// stream that cannot deliver it or does not decrypt is finished: peer_gone
+// says so, rather than the caller taking it for "nothing yet" and waiting on
+// a connection that can never make sense again.
+static uint8_t head[4];
+static uint32_t head_n;
+
 static bool recv_packet(uint32_t *out_len, uint32_t ms) {
-    uint8_t head[4];
-    if (!read_exact(head, 4, ms)) return false;
+    uint32_t waited = 0;
+    while (head_n < 4) {
+        const int32_t r = ubiqos_sock_recv(sock, head + head_n, 4 - head_n);
+        if (r < 0) { peer_gone = true; return false; }
+        if (r == 0) {
+            if (waited >= ms) return false;
+            ubiqos_sleep(5);
+            waited += 5;
+            continue;
+        }
+        head_n += (uint32_t)r;
+        waited = 0;
+    }
+    head_n = 0;
     const uint32_t len = ((uint32_t)head[0] << 24) | ((uint32_t)head[1] << 16)
                        | ((uint32_t)head[2] << 8) | head[3];
-    if (len < 8 || len > PKT_MAX - 32) return false;
+    if (len < 8 || len > PKT_MAX - 32) { peer_gone = true; return false; }
 
     if (!encrypted) {
-        if (!read_exact(rxbuf, len, 5000)) return false;
+        if (!read_exact(rxbuf, len, 5000)) { peer_gone = true; return false; }
         const uint32_t pad = rxbuf[0];
-        if (pad + 1 > len) return false;
+        if (pad + 1 > len) { peer_gone = true; return false; }
         *out_len = len - pad - 1;
         memcpy(payload, rxbuf + 1, *out_len);
         seq_in++;
@@ -353,14 +392,17 @@ static bool recv_packet(uint32_t *out_len, uint32_t ms) {
     }
 
     uint8_t tag[16];
-    if (!read_exact(rxbuf, len, 5000)) return false;
-    if (!read_exact(tag, 16, 5000)) return false;
+    if (!read_exact(rxbuf, len, 5000) || !read_exact(tag, 16, 5000)) { peer_gone = true; return false; }
     uint8_t plain[PKT_MAX];
     if (mbedtls_gcm_auth_decrypt(&gcm_in, len, iv_in, sizeof iv_in, head, 4,
-                                 tag, 16, rxbuf, plain) != 0) return false;
+                                 tag, 16, rxbuf, plain) != 0) {
+        say("sshd: a packet did not decrypt -- ending the session\r\n");
+        peer_gone = true;
+        return false;
+    }
     bump(iv_in);
     const uint32_t pad = plain[0];
-    if (pad + 1 > len) return false;
+    if (pad + 1 > len) { peer_gone = true; return false; }
     *out_len = len - pad - 1;
     memcpy(payload, plain + 1, *out_len);
     seq_in++;
@@ -784,8 +826,13 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
         say_hex("H   ", h, 32);
         if (!have_session_id) { memcpy(session_id, h, 32); have_session_id = true; }
 
+        // Each step that can fail says so under -d, with how long it took: a
+        // failure here once took forty-five seconds to report and gave no
+        // hint of which of the three it was.
+        uint32_t t0 = ubiqos_ticks_now();
         const uint32_t siglen = host_sign(h, sig, sizeof sig);
-        if (!siglen) goto out;
+        if (debugging) say_num("sshd: signed, ms", (int32_t)(ubiqos_ticks_now() - t0));
+        if (!siglen) { say("sshd: the host key would not sign\r\n"); goto out; }
 
         uint8_t out_pkt[512];
         wr_t w = { out_pkt, sizeof out_pkt, 0, false };
@@ -793,10 +840,13 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
         w_strn(&w, ks, kslen);
         w_strn(&w, qsb, 32);
         w_strn(&w, sig, siglen);
-        if (w.over || !send_packet(out_pkt, w.n)) goto out;
-
+        t0 = ubiqos_ticks_now();
         const uint8_t newkeys = MSG_NEWKEYS;
-        if (!send_packet(&newkeys, 1)) goto out;
+        if (w.over || !send_packet(out_pkt, w.n) || !send_packet(&newkeys, 1)) {
+            say_num("sshd: the reply would not go; TCP state", ubiqos_sock_state(sock));
+            goto out;
+        }
+        if (debugging) say_num("sshd: reply sent, ms", (int32_t)(ubiqos_ticks_now() - t0));
         if (!recv_packet(&n, 10000)) {
             // Which is not the same as the wrong message, and saying so cost
             // an hour: the buffer still held the LAST packet, so a client that
@@ -1299,6 +1349,7 @@ static void serve(void) {
     // went out, and the first idle poll read a flag left over from somebody
     // else and closed a session nobody had left.
     peer_gone = false;
+    head_n = 0;
 
     // The version line. Both sides send theirs without waiting for the other's.
     char hello[64];
