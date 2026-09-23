@@ -1625,6 +1625,7 @@ target_include_directories(lwipd_app PRIVATE
 #
 
 ubiqos_add_module(pwd modules/pwd/pwd.c)
+ubiqos_add_module(path modules/path/path.c)
 ubiqos_add_module(key modules/key/key.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
@@ -1679,6 +1680,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/ps.mod
             ${CMAKE_CURRENT_BINARY_DIR}/mkdir.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/path.mod
             ${CMAKE_CURRENT_BINARY_DIR}/date.mod
             ${CMAKE_CURRENT_BINARY_DIR}/fetch.mod
             ${CMAKE_CURRENT_BINARY_DIR}/gt911.mod
@@ -1778,6 +1780,7 @@ set(UBIQOS_RESIDENT
     mkdir
     rmdir
     pwd
+    path
     date
     fetch
     tlsroots

@@ -294,6 +294,7 @@ static void help(int32_t c) {
         "  ls       list a directory\r\n"
         "  cd       change directory (built in)\r\n"
         "  pwd      where you are\r\n"
+        "  path     where programs not in flash are looked for\r\n"
         "  date     what the clock says, once the network has told it\r\n"
         "  mkdir    make a directory\r\n"
         "  rmdir    remove an empty directory\r\n"
