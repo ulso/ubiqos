@@ -58,6 +58,15 @@ warning; ML-KEM is not in mbedTLS either.
 the chip's own generator, but the protocol around them is ours. Put it on your
 own network; do not put it on the internet.
 
+## One client at a time
+
+sshd serves one connection and then goes back for the next. While somebody is
+logged in, a second `ssh` is accepted by the network stack and then hears
+nothing -- no version line, no password prompt -- until the first session ends
+or the second client gives up. That looks like a server that has hung, and it
+is not one. An `ssh -N` master connection with no session open counts as
+somebody logged in.
+
 ## The host key is derived, not stored
 
 The store never hands a value back -- that is its whole promise -- so sshd
