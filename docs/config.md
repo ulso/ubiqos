@@ -23,6 +23,18 @@ Both are refused to processes all the same, because either may hold the
 password. A card with the credentials in both files says so at boot, by naming
 the one it used.
 
+**With a key file, wificfg.txt is not needed at all.** A board whose store
+holds the network's password under `wifi.<ssid>` and opens at boot from
+`/sd/unlock.key` joins by itself: the store opens before `/sd/startup`, and
+`wifi auto` scans and picks the network it has a key for. The password is then
+nowhere on the card in clear text. Tried on the Fruit Jam with wificfg.txt
+taken off the card: "the scan found 10", joined, and an address. See
+[keys.md](keys.md#opening-at-boot-the-key-file).
+
+The file is protected by its NAME. Renamed on a computer -- `oldwificfg.txt`
+-- it is an ordinary file again and `cat` shows the password. Take it off the
+card rather than renaming it there.
+
 Everything else -- `hostname`, `timezone`, `usb_address` -- stays in
 config.txt, and the split changed nothing about any of it. The same parser
 reads both files, so it does not actually police which setting goes where;

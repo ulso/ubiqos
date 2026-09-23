@@ -225,6 +225,10 @@ second copy lives in the store's header in flash. So:
   thirty-two useless bytes. `key unattended on` again makes a new file, and
   the old one stops working at once.
 
+With a password for the network in the store, `/sd/wificfg.txt` can go: the
+board opens the store, `wifi auto` finds the network, and the password is no
+longer on the card at all. That is the arrangement this was made for.
+
 The passphrase goes on working throughout, and the file's bytes never pass
 through a process: the kernel makes them, writes them and reads them at boot,
 and `key` only asks. `cat` refuses the file as it refuses the two config
