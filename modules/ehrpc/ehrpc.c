@@ -602,9 +602,13 @@ static void do_connect(int32_t dev, const char *ssid) {
     uint32_t pass_at = n;
 
     ubiqos_write_str(UBIQOS_STDOUT, "password: ");
+    ubiqos_esc_t esc = { 0 };
     for (;;) {
         uint8_t ch;
         if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
+        // Escape sequences are not the password: an arrow key, or the window
+        // at the other end of an SSH session being resized.
+        if (ubiqos_esc_skip(&esc, ch)) continue;
         if (ch == '\r' || ch == '\n') break;
         if (ch == 3) { n = pass_at; break; }              // ctrl-C: forget it
         if (ch == 8 || ch == 127) { if (n > pass_at) n--; continue; }

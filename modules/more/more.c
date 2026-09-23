@@ -74,9 +74,13 @@ static int screen_rows(void) {
 // True to carry on.
 static bool pause_here(int *left, int rows) {
     fputs("-- more --", stderr);
+    ubiqos_esc_t esc = { 0 };
     for (;;) {
         char c;
         if (ubiqos_read(KEYS, &c, 1) != 1) return false;    // nothing more to ask
+        // An escape sequence is not a key: the window being resized at the far
+        // end of an SSH session arrives as one, and used to turn a page.
+        if (ubiqos_esc_skip(&esc, (uint8_t)c)) continue;
         // Wipe the prompt, so the text that follows starts in a clean line.
         fputs("\r          \r", stderr);
         // Ctrl-C stops it. Without this it counted as "any other key" and

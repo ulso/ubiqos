@@ -42,9 +42,13 @@ static void copy_name(char *dst, const char *src) {
 static uint32_t ask(const char *what, uint8_t *out, uint32_t cap) {
     say(what);
     uint32_t n = 0;
+    ubiqos_esc_t esc = { 0 };
     for (;;) {
         uint8_t ch;
         if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
+        // An arrow key, or a terminal saying its window changed size, is not
+        // part of a passphrase -- and would be one nobody could type again.
+        if (ubiqos_esc_skip(&esc, ch)) continue;
         if (ch == '\r' || ch == '\n') break;
         if (ch == 3) { n = 0; break; }
         if (ch == 8 || ch == 127) { if (n) n--; continue; }
@@ -210,9 +214,11 @@ void module_main(int argc, char **argv) {
         say("This erases every key and the passphrase. Type 'destroy' to go on: ");
         uint8_t answer[16];
         uint32_t n = 0;
+        ubiqos_esc_t esc = { 0 };
         for (;;) {
             uint8_t ch;
             if (ubiqos_read(UBIQOS_STDIN, &ch, 1) <= 0) continue;
+            if (ubiqos_esc_skip(&esc, ch)) continue;
             if (ch == '\r' || ch == '\n') break;
             if (ch == 3) { n = 0; break; }
             if (ch >= ' ' && n < sizeof answer - 1) { answer[n++] = ch; ubiqos_write(UBIQOS_STDOUT, &ch, 1); }

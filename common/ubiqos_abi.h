@@ -2191,6 +2191,39 @@ static inline int32_t ubiqos_console_font_info(int32_t index, ubiqos_confont_t *
     return ubiqos_syscall(SYS_CONFONT, (uint32_t)index, (uint32_t)(uintptr_t)out, 1);
 }
 
+// Is this byte part of an escape sequence rather than something typed?
+//
+// A program that reads keystrokes one at a time and keeps every printable one
+// -- a password prompt, a pager waiting for a key -- takes the tail of an
+// escape sequence as typing: an arrow key becomes "[A", and a terminal's
+// report of its size becomes "[8;40;130t". In a password that is a password
+// nobody can type again. sshd now sends such a report whenever the window at
+// the other end is resized, so this is no longer only a matter of stray keys.
+//
+// Feed it every byte; true means "not typed, drop it". ESC [ ... runs to a
+// final byte from @ to ~, ESC O takes one more (the SS3 keys), and ESC with
+// anything else takes that one.
+typedef struct { uint8_t state; } ubiqos_esc_t;
+
+static inline bool ubiqos_esc_skip(ubiqos_esc_t *e, uint8_t ch)
+{
+    switch (e->state) {
+    case 0:
+        if (ch != 0x1b) return false;
+        e->state = 1;
+        return true;
+    case 1:
+        e->state = (ch == '[') ? 2 : (ch == 'O') ? 3 : 0;
+        return true;
+    case 2:
+        if (ch >= 0x40 && ch <= 0x7e) e->state = 0;
+        return true;
+    default:
+        e->state = 0;
+        return true;
+    }
+}
+
 // Is there anything to read? ubiqos_read blocks when there is not -- the caller
 // is put on WAIT_READ and its ecall re-executed when a byte turns up -- which is
 // what you want in a loop that has nothing else to do, and exactly what you do
