@@ -184,60 +184,82 @@ int standend(void)    { put("\x1b[0m"); return OK; }
 
 // One key. The screen is flushed first: whatever the program drew before
 // asking is what the person needs to see in order to answer.
-// A terminal's answer about its size, whenever it turns up.
+// A terminal's answer about its size, whenever it turns up -- and ONLY that.
 //
-// The question is asked at startup and most terminals reply within a few
-// milliseconds -- but over a network a late one arrives after the editor has
-// given up waiting, and then it is read as if somebody had typed
-// `[8;40;130t` into the file. Which is exactly what happened.
+// The question is asked at startup and a late answer used to be read as if
+// somebody had typed `[8;40;130t` into the file; and sshd now sends the same
+// answer whenever the window at the other end is resized. So reports are
+// recognised here: a text-area report (ESC [ 8 ; rows ; cols t) that changes
+// the size becomes KEY_RESIZE, and one that does not, like a cursor report
+// (ESC [ row ; col R), is eaten.
 //
-// So the answer is recognised here as well, and acted on: the size it carries
-// is the size to use. ESC [ ... t and ESC [ ... R are swallowed whole; any
-// other escape is handed on as before, because Atto reads those itself.
-static int swallow_report(void)
+// EVERYTHING ELSE IS HANDED ON, byte for byte, through a small queue. The
+// first version of this ate every escape sequence that was not a report, which
+// meant the arrow keys, Home, End and the page keys -- all of them ESC [ ...
+// sequences that Atto reads itself -- simply stopped working. A sequence that
+// turns out not to be ours is given back exactly as it came.
+static unsigned char pend[24];
+static int pend_n, pend_at;
+
+static int take(void)
 {
+    if (pend_at < pend_n) return pend[pend_at++];
     unsigned char c;
-    unsigned p[3] = { 0, 0, 0 };
-    int np = 0;
-
     if (read(0, &c, 1) != 1) return ERR;
-    if (c != '[') return 0x1b;                     // not a CSI; give ESC back
+    return c;
+}
 
-    for (;;) {
-        if (read(0, &c, 1) != 1) return ERR;
-        if (c >= '0' && c <= '9') { if (np < 3) p[np] = p[np] * 10 + (c - '0'); continue; }
-        if (c == ';') { if (np < 2) np++; continue; }
-        if (c == 't') {
-            if (p[0] == 8 && np >= 2 && p[1] >= 4 && p[2] >= 20) {
-                LINES = (int)p[1];
-                COLS  = (int)p[2];
-            }
-            return 0;                              // eaten, and nothing typed
-        }
-        if (c == 'R') return 0;                    // a cursor report; also ours
-        return 0;                                  // some other sequence, gone
-    }
+static int give_back(const unsigned char *b, int n)
+{
+    // The first byte is returned now and the rest queued behind it.
+    for (int i = 1; i < n && pend_n < (int)sizeof pend; i++) pend[pend_n++] = b[i];
+    return b[0];
 }
 
 int getch(void)
 {
-    unsigned char c;
     refresh();
-    if (read(0, &c, 1) != 1) return ERR;
+    if (pend_at >= pend_n) pend_at = pend_n = 0;
 
-    if (c == 0x1b) {
-        const int r = swallow_report();
-        if (r == ERR) return ERR;
-        if (r == 0) return getch();                // it was a report: read on
-        return r;                                  // an ESC the editor wanted
+    int c = take();
+    if (c == ERR) return ERR;
+    if (c != 0x1b) {
+        // Carriage return becomes newline, which is what curses does on input
+        // unless a program asks it not to with nonl(). Programs lean on it:
+        // Atto inserts a line break on 10 and answers "Not bound" to 13, and
+        // 13 is what a keyboard sends.
+        return c == '\r' ? '\n' : c;
     }
 
-    // Carriage return becomes newline, which is what curses does on input
-    // unless a program asks it not to with nonl(). Programs lean on it: Atto
-    // inserts a line break on 10 and answers "Not bound" to 13, and 13 is what
-    // a keyboard sends.
-    if (c == '\r') return '\n';
-    return (int)c;
+    unsigned char seq[sizeof pend];
+    int n = 0;
+    seq[n++] = 0x1b;
+    int d = take();
+    if (d == ERR) return 0x1b;
+    seq[n++] = (unsigned char)d;
+    if (d != '[') return give_back(seq, n);        // ESC f, ESC O H: not ours
+
+    unsigned p[3] = { 0, 0, 0 };
+    int np = 0;
+    for (;;) {
+        d = take();
+        if (d == ERR) return give_back(seq, n);
+        if (n < (int)sizeof seq) seq[n++] = (unsigned char)d;
+        if (d >= '0' && d <= '9') { if (np < 3) p[np] = p[np] * 10 + (unsigned)(d - '0'); continue; }
+        if (d == ';') { if (np < 2) np++; continue; }
+        break;                                     // the final byte
+    }
+
+    if (d == 't' && p[0] == 8 && np >= 2) {
+        if (p[1] >= 4 && p[2] >= 20 && ((int)p[1] != LINES || (int)p[2] != COLS)) {
+            LINES = (int)p[1];
+            COLS  = (int)p[2];
+            return KEY_RESIZE;                     // the window changed
+        }
+        return getch();                            // same size: eaten
+    }
+    if (d == 'R') return getch();                  // a cursor report: eaten
+    return give_back(seq, n);                      // a key: exactly as it came
 }
 
 // A control character in the form a person reads: "^A" for one, "^?" for

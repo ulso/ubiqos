@@ -33,6 +33,11 @@ extern WINDOW *stdscr;
 extern WINDOW *curscr;   // what is on the screen now, as curses names it
 extern int LINES, COLS;
 
+// What getch returns when the terminal says its size has changed: ncurses'
+// own number. Atto binds resize-terminal to 0x9A, which is this cut to a byte,
+// so the editor was ready for it all along -- nothing ever sent it.
+#define KEY_RESIZE 0632
+
 #define COLOR_BLACK   0
 #define COLOR_RED     1
 #define COLOR_GREEN   2
