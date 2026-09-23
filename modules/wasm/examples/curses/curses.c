@@ -18,6 +18,7 @@ int COLS  = 80;
 // so a redraw never has to flush halfway and tear.
 // One screen of text with an escape sequence on every line. A hundred and six
 // columns by forty rows is over four thousand characters before the escapes.
+static int   cur_x;       // the column, for tabs -- see add_one
 static char  out[16384];
 static unsigned out_len;
 
@@ -113,7 +114,7 @@ int beep(void)   { put("\a"); return OK; }
 
 int curs_set(int v) { put(v ? "\x1b[?25h" : "\x1b[?25l"); return OK; }
 
-int clear(void)    { put("\x1b[2J\x1b[H"); return OK; }
+int clear(void)    { put("\x1b[2J\x1b[H"); cur_x = 0; return OK; }
 int erase(void)    { return clear(); }
 int clrtoeol(void) { put("\x1b[K"); return OK; }
 int clrtobot(void) { put("\x1b[J"); return OK; }
@@ -121,11 +122,41 @@ int clrtobot(void) { put("\x1b[J"); return OK; }
 int move(int y, int x)
 {
     put("\x1b["); put_num(y + 1); put(";"); put_num(x + 1); put("H");
+    cur_x = x;
     return OK;
 }
 
-int addch(chtype c)  { char s[2]; s[0] = (char)(c & 0xff); s[1] = 0; put(s); return OK; }
-int addstr(const char *s) { put(s); return OK; }
+// A character as curses means it, which is not what a terminal does with it.
+//
+// Atto paints a window from top to bottom with addch and never moves to the
+// next row itself: it trusts that a newline, in curses, CLEARS THE REST OF THE
+// LINE and then goes to the start of the next -- and that a tab is spaces up to
+// the next stop. This used to send both bytes straight through, and a terminal
+// does neither: a newline moves down past whatever is still on the line, and a
+// tab moves over what is under it. So when Ctrl-K made the lines below move up,
+// each shorter line was drawn over a longer one and the longer one's tail stayed
+// -- a killed line that looked as if it had never gone.
+//
+// The column is tracked for the tabs' sake. A UTF-8 continuation byte is not a
+// column, and wide characters are counted as one, which is what Atto assumes too.
+
+static void add_one(unsigned char c)
+{
+    if (c == '\n') {
+        put("\x1b[K\r\n");
+        cur_x = 0;
+        return;
+    }
+    if (c == '\t') {
+        do { emit(' '); cur_x++; } while (cur_x & 7);
+        return;
+    }
+    emit(c);
+    if ((c & 0xC0) != 0x80) cur_x++;
+}
+
+int addch(chtype c)       { add_one((unsigned char)(c & 0xff)); return OK; }
+int addstr(const char *s) { while (*s) add_one((unsigned char)*s++); return OK; }
 int mvaddstr(int y, int x, const char *s) { move(y, x); return addstr(s); }
 
 // --- COLOUR ---------------------------------------------------------------
