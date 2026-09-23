@@ -1096,7 +1096,11 @@ static bool feed_shell(void) {
             && ubiqos_write_some(pair[0], rep_, (uint32_t)k) == k)
             size_pending = false;
     }
-    if (given && !lat_fed) lat_fed = ubiqos_ticks_now();
+    // From the LATEST key, not the first one not yet answered: a key the
+    // shell says nothing to -- Ctrl-U, which it ignores -- otherwise had its
+    // clock run on until the next key was answered, and reported a 300 ms key
+    // that was really a 0.3 s pause in the typing.
+    if (given) lat_fed = ubiqos_ticks_now();
     given += intr_bytes;
     intr_bytes = 0;
     if (!given) return true;
