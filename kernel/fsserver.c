@@ -136,6 +136,7 @@ static void drop_card_if_dead(void) {
 // covered only the old place would have made the new one the hole.
 //
 // Writing is still allowed, so an editor can replace them, and so is removing.
+// Renaming one is not: the new name would be readable.
 // This is not a permission system: UbiqOS has no users to have permissions. It
 // is two paths with one rule, which is what the secrets on the card need.
 static bool is_path(const char *abs, const char *secret) {
@@ -204,6 +205,9 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
         const ubiqos_fsops_t *b = ubiqos_vfs_split(abs2, &rest_to);
         if (!a || a != b) return -1;
         if (!a->rename) return -1;
+        // A secret may be replaced or removed, but not moved: a new name is
+        // one this guard does not know, and `cat` would read it there.
+        if (is_secret(abs)) return UBIQOS_FS_REFUSED;
         return a->rename(rest_from, rest_to) ? 0 : -1;
     }
     case UBIQOS_MSG_FS_MKDIR: {
