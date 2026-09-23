@@ -266,6 +266,23 @@ static void release_core1(void)
     while (parked) tight_loop_contents();
 }
 
+// What goes to flash is a whole sector, so the image is one: allocated at
+// FLASH_SECTOR_SIZE and zeroed. It used to be allocated at the size of the
+// store and programmed as a sector, which wrote whatever the heap held after
+// it -- somebody else's memory, in the clear -- into the tail of every copy.
+static key_store_t *new_image(void)
+{
+    key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, FLASH_SECTOR_SIZE);
+    if (img) memset(img, 0, FLASH_SECTOR_SIZE);
+    return img;
+}
+
+static void drop_image(key_store_t *img)
+{
+    memset(img, 0, FLASH_SECTOR_SIZE);
+    ubiqos_tlsf_free(ubiqos_mem_pool, img);
+}
+
 // A NULL image erases and writes nothing back, which is how a store is
 // destroyed.
 static void __not_in_flash_func(do_write)(uint32_t offset, const uint8_t *data)
@@ -283,7 +300,7 @@ static int32_t seal_and_write(void)
 {
     if (!plain || !live) return -1;
 
-    key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *img);
+    key_store_t *img = new_image();
     if (!img) return -1;
     memcpy(img, live, sizeof *img);
     img->seq = live->seq + 1;
@@ -303,8 +320,7 @@ static int32_t seal_and_write(void)
         if (copy_is_good(fresh) && fresh->seq == img->seq) live = fresh;
         else rc = -4;
     }
-    memset(img, 0, sizeof *img);
-    ubiqos_tlsf_free(ubiqos_mem_pool, img);
+    drop_image(img);
     return rc;
 }
 
@@ -382,9 +398,8 @@ int32_t ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen)
     if (!live) {
         // No store yet: this passphrase becomes the one, and an empty store is
         // written so that the next unlock has something to check against.
-        key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *img);
+        key_store_t *img = new_image();
         if (!img) { ubiqos_tlsf_free(ubiqos_mem_pool, fresh); return -1; }
-        memset(img, 0, sizeof *img);
         img->magic  = KEYS_MAGIC;
         img->format = KEYS_FORMAT;
         img->seq    = 1;
@@ -406,8 +421,7 @@ int32_t ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen)
             if (copy_is_good(w) && w->seq == 1) live = w;
             else rc = -4;
         }
-        memset(img, 0, sizeof *img);
-        ubiqos_tlsf_free(ubiqos_mem_pool, img);
+        drop_image(img);
         if (rc != 0) {
             memset(unlocked_key, 0, sizeof unlocked_key);
             ubiqos_tlsf_free(ubiqos_mem_pool, fresh);
