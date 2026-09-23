@@ -105,14 +105,3 @@ int32_t ubiqos_vfs_root_nth(uint32_t index, char *name_out, uint32_t *size_out) 
     return UBIQOS_ATTR_DIRECTORY;
 }
 
-// Modules are looked for on the first volume that can be read as a filesystem.
-// /dev cannot, having no find_nth, so it is skipped without being a special
-// case here.
-const ubiqos_fsops_t *ubiqos_vfs_module_volume(const char **name_out) {
-    for (uint32_t i = 0; i < volume_count; i++) {
-        if (!volumes[i].ops || !volumes[i].ops->find_nth) continue;
-        if (name_out) *name_out = volumes[i].name;
-        return volumes[i].ops;
-    }
-    return 0;
-}

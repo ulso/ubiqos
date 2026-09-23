@@ -40,7 +40,4 @@ const ubiqos_fsops_t *ubiqos_vfs_split(const char *path, const char **rest_out);
 // stat_nth gives. Returns the attribute byte or -1 past the end.
 int32_t ubiqos_vfs_root_nth(uint32_t index, char *name_out, uint32_t *size_out);
 
-// The volume that holds modules to register, or null when none is mounted.
-const ubiqos_fsops_t *ubiqos_vfs_module_volume(const char **name_out);
-
 #endif

@@ -524,6 +524,12 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             return ubiqos_switch(sp);
+        case SYS_PATH:                    // kept by the loader, so asked of it
+            if (!fs_request(UBIQOS_MSG_FS_PATH, (void*)(uintptr_t)frame->a0)) {
+                frame->a0 = (uint32_t)-1;
+                break;
+            }
+            return ubiqos_switch(sp);
         case SYS_FSDIR:
             if (!fs_request(UBIQOS_MSG_FS_DIR, (void*)(uintptr_t)frame->a0)) {
                 frame->a0 = (uint32_t)-1;

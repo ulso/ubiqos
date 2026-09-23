@@ -914,6 +914,7 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 #define SYS_DATALINK  69u   // a0 = name, a1 = &size -> a0 = the data, 0 if none
 #define SYS_DATAUNLINK 70u  // a0 = what SYS_DATALINK returned
 #define SYS_INTERRUPT 72u   // a0 = path -> 1 consumed (a command was ended), 0 pass it on
+#define SYS_PATH      73u   // a0 = &ubiqos_fs_path_t -> a0 = 0, -1 refused
 #define SYS_KEYS      71u   // a0 = UBIQOS_KEY_OP_*, a1 = &ubiqos_keyreq_t
 #define SYS_CONFIG    68u   // a0 = UBIQOS_CFG_*, a1 = buffer, a2 = length
                             //   -> a0 = the length written, or for the password
@@ -1135,6 +1136,20 @@ typedef struct {
 // milliseconds with the flash unreadable throughout. That is the filesystem
 // server's kind of work -- long, and not to be done in a trap.
 #define UBIQOS_MSG_FS_KEYSET 18u   // data = ubiqos_keyreq_t
+// The search path lives with the loader that walks it, so that setting it can
+// never land halfway through a load that is reading it.
+#define UBIQOS_MSG_FS_PATH   19u   // data = ubiqos_fs_path_t
+
+// Where a program not in flash is looked for: directories, each naming its
+// volume first, separated by colons -- "/sd/bin:/sd". One list for the whole
+// machine rather than one per process, because the startup file that sets it
+// is not the shell anybody will type into afterwards. Empty means flash only.
+#define UBIQOS_PATH_MAX 128u
+typedef struct {
+    const char *set;    // the new path, or NULL to leave it as it is
+    char       *out;    // the path as it is afterwards, or NULL
+    uint32_t    cap;    // room in out, terminator included
+} ubiqos_fs_path_t;
 
 // How long a name a directory listing may hand back, terminator included. FAT's
 // 8.3 needed twelve; VFAT's long names are read now, and ".wasm" alone does not
@@ -2826,6 +2841,20 @@ static inline void ubiqos_data_unlink(const void *data)
 static inline int32_t ubiqos_loadmod(const char *name)
 {
     return ubiqos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)name, 0, 0);
+}
+
+// The search path: read it, set it, or both. Setting refuses an entry that
+// does not start with a slash, and a path longer than UBIQOS_PATH_MAX - 1.
+static inline int32_t ubiqos_path_get(char *out, uint32_t cap)
+{
+    ubiqos_fs_path_t r = { 0, out, cap };
+    return ubiqos_syscall(SYS_PATH, (uint32_t)(uintptr_t)&r, 0, 0);
+}
+
+static inline int32_t ubiqos_path_set(const char *path)
+{
+    ubiqos_fs_path_t r = { path, 0, 0 };
+    return ubiqos_syscall(SYS_PATH, (uint32_t)(uintptr_t)&r, 0, 0);
 }
 
 // --- the key store ----------------------------------------------------------

@@ -41,6 +41,7 @@ const char *ubiqos_cwd_of(int32_t pid);
 static bool card_bring_up(bool try_sdio);
 static bool card_mounted;
 static bool load_module_from_card(const char *name);
+static int32_t path_request(const ubiqos_fs_path_t *r);
 bool ubiqos_msc_hand_over(void);
 void ubiqos_msc_take_back(void);
 bool ubiqos_msc_host_has_card(void);
@@ -390,6 +391,8 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
     }
     case UBIQOS_MSG_FS_LOADMOD:
         return load_module_from_card((const char*)m->data) ? 0 : -1;
+    case UBIQOS_MSG_FS_PATH:
+        return path_request((const ubiqos_fs_path_t*)m->data);
     case UBIQOS_MSG_FS_MOUNT:
         // A distinct answer, so `mount` can say which of the two it is. Saying
         // "no card, or not FAT32" about a card the host is holding sends the
@@ -473,11 +476,49 @@ void ubiqos_print_u32(uint32_t v);
 // which pool it belongs in. Reading the header first means the body is
 // allocated once, at its own size, in the right place. The old scan used a
 // fixed 32 kB staging buffer for every module regardless.
-static bool load_module_from_card(const char *name) {
-    const char *vol = "";
-    const ubiqos_fsops_t *ops = ubiqos_vfs_module_volume(&vol);
-    if (!ops || !ops->stat || !ops->read_at) return false;
+// The search path. Each entry is a directory with its volume first; the loader
+// tries them in order and takes the first file that is a module. "/sd" is what
+// the loader always did -- the root of the card -- so a machine nobody has
+// told otherwise behaves as it did before the path existed.
+static char search_path[UBIQOS_PATH_MAX] = "/sd";
 
+// Every entry must name a volume, which is to say start with a slash, and
+// none may be empty: "/sd::/tmp" is a typing mistake, not a request for the
+// current directory. Whether the directories exist is not checked -- the card
+// may come later, and a path is allowed to name one that is not there yet.
+static bool path_is_valid(const char *p) {
+    uint32_t n = 0;
+    bool entry_start = true;
+    for (; p[n]; n++) {
+        if (n >= UBIQOS_PATH_MAX - 1) return false;
+        if (entry_start && p[n] != '/') return false;
+        entry_start = p[n] == ':';
+    }
+    return n == 0 || !entry_start;         // not ending in a colon
+}
+
+static int32_t path_request(const ubiqos_fs_path_t *r) {
+    if (r->set) {
+        if (!path_is_valid(r->set)) return -1;
+        uint32_t i = 0;
+        for (; r->set[i]; i++) search_path[i] = r->set[i];
+        search_path[i] = 0;
+    }
+    if (r->out && r->cap) {
+        uint32_t i = 0;
+        for (; search_path[i] && i + 1 < r->cap; i++) r->out[i] = search_path[i];
+        r->out[i] = 0;
+    }
+    return 0;
+}
+
+// Is this file a module? Four bytes decide, not the name.
+static bool is_module_file(const ubiqos_fsops_t *ops, const char *file) {
+    uint32_t sync = 0;
+    return ops->read_at(file, 0, (uint8_t*)&sync, 4) == 4 && sync == UBIQOS_SYNC_CODE;
+}
+
+static bool load_module_from_card(const char *name) {
     // The name as given, and then the name with .mod after it.
     //
     // There is no extension requirement any more. A module file may be called
@@ -494,22 +535,41 @@ static bool load_module_from_card(const char *name) {
     // what made "hibouair&" -- a mistyped command line, with the ampersand
     // meant for the shell -- load hibouair.mod and start the scanner, with the
     // log reading "Loaded hibouair& from /sd" as though it had worked.
-    char file[UBIQOS_DIRNAME_MAX + 8];
     uint32_t n = 0;
     while (name[n]) {
-        if (n >= UBIQOS_NAME_LEN - 1) return false;
-        file[n] = name[n];
+        if (n >= UBIQOS_NAME_LEN - 1 || name[n] == '/') return false;
         n++;
     }
     if (!n) return false;
-    file[n] = 0;
 
-    uint32_t sync = 0;
-    if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != UBIQOS_SYNC_CODE) {
-        file[n] = '.'; file[n+1] = 'm'; file[n+2] = 'o'; file[n+3] = 'd'; file[n+4] = 0;
-        if (ops->read_at(file, 0, (uint8_t*)&sync, 4) != 4 || sync != UBIQOS_SYNC_CODE)
-            return false;
+    // Then each directory on the path in turn. An entry is copied out so that
+    // it can be split: "/sd/bin" is volume sd, and "/bin" within it.
+    char dir[UBIQOS_PATH_MAX];
+    char file[UBIQOS_PATH_MAX + UBIQOS_NAME_LEN + 8];
+    const ubiqos_fsops_t *ops = 0;
+    const char *p = search_path;
+    bool found = false;
+    while (*p && !found) {
+        uint32_t d = 0;
+        while (*p && *p != ':') dir[d++] = *p++;
+        dir[d] = 0;
+        if (*p == ':') p++;
+
+        const char *rest = "/";
+        ops = ubiqos_vfs_split(dir, &rest);
+        // A volume that cannot be read as files -- /dev -- has nothing to load.
+        if (!ops || !ops->stat || !ops->read_at) continue;
+
+        uint32_t f = 0;
+        for (const char *r = rest; *r; r++) file[f++] = *r;
+        if (file[f - 1] != '/') file[f++] = '/';
+        for (uint32_t i = 0; i < n; i++) file[f++] = name[i];
+        file[f] = 0;
+        if (is_module_file(ops, file)) { found = true; break; }
+        file[f] = '.'; file[f+1] = 'm'; file[f+2] = 'o'; file[f+3] = 'd'; file[f+4] = 0;
+        if (is_module_file(ops, file)) { found = true; break; }
     }
+    if (!found) return false;
 
     uint32_t size = 0;
     if (ops->stat(file, &size) < 0 || !size) return false;
@@ -531,8 +591,8 @@ static bool load_module_from_card(const char *name) {
     }
     ubiqos_print("Loaded ");
     ubiqos_print(name);
-    ubiqos_print(" from /");
-    ubiqos_print(vol);
+    ubiqos_print(" from ");
+    ubiqos_print(dir);
     ubiqos_print("\n");
     return true;
 }

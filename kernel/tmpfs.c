@@ -194,8 +194,9 @@ const ubiqos_fsops_t ubiqos_tmpfs_ops = {
     .stat     = tmp_stat,
 };
 
-// No find_nth, so ubiqos_vfs_module_volume passes it over: nobody should be
-// looking for modules in scratch space.
+// Modules are loaded from here only if the search path names /tmp, which by
+// default it does not: scratch space anybody can write is not somewhere a
+// program should be picked up from without being asked. See `path`.
 void ubiqos_tmpfs_init(void) {
     for (int i = 0; i < TMP_MAX_FILES; i++) files[i].used = false;
     if (!ubiqos_vfs_add("tmp", &ubiqos_tmpfs_ops))
