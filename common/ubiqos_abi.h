@@ -2905,6 +2905,15 @@ static inline int32_t ubiqos_path_set(const char *path)
 // back. Change the passphrase and every derived key changes with it.
 #define UBIQOS_KEY_OP_DERIVE  9u   // name = the label, value = 32 bytes out
 
+// The key file, /sd/unlock.key: thirty-two random bytes that open the store at
+// boot, so that a board can come back by itself after a power cut. index 1
+// makes a new one (the store must be open), 0 takes it away, 2 asks -- bit 0
+// says the store can be opened by a file, bit 1 that the file is on the card.
+// The passphrase is never on the card, and the file opens this store on this
+// board and nothing else. See docs/keys.md for what it gives up.
+#define UBIQOS_KEY_OP_UNATTENDED 10u
+#define UBIQOS_KEY_FILE "/sd/unlock.key"
+
 // The store is sealed. Until it is unlocked there is nothing to list and
 // nothing to use: the names are inside the ciphertext with the values.
 #define UBIQOS_KEYS_EMPTY     0u   // no store yet; unlocking makes one

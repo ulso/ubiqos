@@ -150,7 +150,59 @@ static bool is_path(const char *abs, const char *secret) {
 }
 
 static bool is_secret(const char *abs) {
-    return is_path(abs, "/sd/config.txt") || is_path(abs, "/sd/wificfg.txt");
+    return is_path(abs, "/sd/config.txt") || is_path(abs, "/sd/wificfg.txt")
+        || is_path(abs, UBIQOS_KEY_FILE);
+}
+
+// The key file, which only the kernel reads or writes. Its bytes open the key
+// store, so they go from the store to the card and back without passing
+// through any process -- `key unattended on` asks for one and never sees it.
+static int32_t key_file_read(uint8_t out[32]) {
+    const char *rest = "/";
+    const ubiqos_fsops_t *ops = ubiqos_vfs_split(UBIQOS_KEY_FILE, &rest);
+    uint32_t size = 0;
+    if (!ops || !ops->stat || !ops->read_at) return -1;
+    if (ops->stat(rest, &size) < 0 || size != 32) return -1;
+    return ops->read_at(rest, 0, out, 32) == 32 ? 0 : -1;
+}
+
+static bool key_file_present(void) {
+    const char *rest = "/";
+    const ubiqos_fsops_t *ops = ubiqos_vfs_split(UBIQOS_KEY_FILE, &rest);
+    uint32_t size = 0;
+    return ops && ops->stat && ops->stat(rest, &size) >= 0;
+}
+
+static int32_t key_file_write(const uint8_t token[32]) {
+    const char *rest = "/";
+    const ubiqos_fsops_t *ops = ubiqos_vfs_split(UBIQOS_KEY_FILE, &rest);
+    if (!ops || !ops->write_at) return -1;
+    if (ops->remove) ops->remove(rest);          // a fresh file, not one written over
+    return ops->write_at(rest, 0, token, 32) == 32 ? 0 : -1;
+}
+
+static void key_file_remove(void) {
+    const char *rest = "/";
+    const ubiqos_fsops_t *ops = ubiqos_vfs_split(UBIQOS_KEY_FILE, &rest);
+    if (ops && ops->remove) ops->remove(rest);
+}
+
+// -8: the wrapping is in flash but the file could not be written -- no card,
+// or a card that would not take it. The store is as usable as before; asking
+// again makes another file.
+static int32_t key_unattended(uint32_t what) {
+    if (what == 2)
+        return (ubiqos_keys_unattended() ? 1 : 0) | (key_file_present() ? 2 : 0);
+    if (what == 0) {
+        const int32_t rc = ubiqos_keys_unattended_off();
+        if (rc == 0) key_file_remove();
+        return rc;
+    }
+    uint8_t token[32];
+    int32_t rc = ubiqos_keys_unattended_on(token);
+    if (rc == 0 && key_file_write(token) != 0) rc = -8;
+    for (uint32_t i = 0; i < sizeof token; i++) token[i] = 0;
+    return rc;
 }
 
 static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
@@ -181,7 +233,14 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
         // Here rather than in the trap: an erase holds the flash for tens of
         // milliseconds, and this thread can afford that while a trap cannot.
         ubiqos_keyreq_t *r = (ubiqos_keyreq_t*)m->data;
-        if (r->op == UBIQOS_KEY_OP_DESTROY) return ubiqos_keys_destroy();
+        if (r->op == UBIQOS_KEY_OP_DESTROY) {
+            // The file goes with the store: it would open nothing now, and
+            // a file that looks like a key and is not one is a puzzle later.
+            const int32_t rc = ubiqos_keys_destroy();
+            if (rc == 0) key_file_remove();
+            return rc;
+        }
+        if (r->op == UBIQOS_KEY_OP_UNATTENDED) return key_unattended(r->index);
         if (r->op == UBIQOS_KEY_OP_UNLOCK) {
             const int32_t rc = ubiqos_keys_unlock(r->value, r->len);
             for (uint32_t i = 0; i < sizeof r->value; i++) r->value[i] = 0;
@@ -698,6 +757,35 @@ static void run_startup_script(void) {
     ubiqos_print("Running " STARTUP_PATH "\n");
 }
 
+// The key file, if there is one: the store opened at boot with nobody there,
+// and then what `key unlock` would do next -- `wifi auto` and sshd -- by
+// running `key opened`, so that it is the same code saying the same things on
+// the console. Before the startup script, so that the script finds the store
+// open and the network on its way.
+static void unlock_from_card(void) {
+    if (ubiqos_keys_state() != UBIQOS_KEYS_LOCKED || !ubiqos_keys_unattended()) return;
+    uint8_t token[32];
+    if (key_file_read(token) != 0) {
+        ubiqos_print("Keys: no " UBIQOS_KEY_FILE "; 'key unlock' opens the store\n");
+        return;
+    }
+    const int32_t rc = ubiqos_keys_unlock_file(token);
+    for (uint32_t i = 0; i < sizeof token; i++) token[i] = 0;
+    if (rc != 0) {
+        ubiqos_print("Keys: " UBIQOS_KEY_FILE " does not open this store\n");
+        return;
+    }
+    ubiqos_print("Keys: unlocked by " UBIQOS_KEY_FILE "\n");
+
+    const char *k = ubiqos_moddir_match("key");
+    const ubiqos_module_header_t *m = k ? ubiqos_moddir_link(k) : 0;
+    const int32_t pid = m ? ubiqos_process_create(m, "opened") : -1;
+    if (pid < 0) { ubiqos_print("Keys: could not run 'key opened'\n"); return; }
+    const char *console = ubiqos_io_has_device("con") ? "con" : "usb";
+    ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
+    ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
+}
+
 // The programs in flash that asked to start with the system -- see
 // UBIQOS_ATTR_AUTOSTART. After the script, so that a card can still set things
 // up first; with no card these are the only thing that makes the machine do
@@ -778,6 +866,7 @@ static void fs_thread(void) {
     // name that arrives a moment later.
     ubiqos_config_read();
 
+    unlock_from_card();
     run_startup_script();
     run_autostart();
 

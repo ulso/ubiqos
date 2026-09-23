@@ -486,6 +486,7 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             case UBIQOS_KEY_OP_SET:
             case UBIQOS_KEY_OP_UNLOCK:
             case UBIQOS_KEY_OP_DESTROY:
+            case UBIQOS_KEY_OP_UNATTENDED:   // a sector, and a file on the card
                 // Both are slow: a sector erase, or a second of PBKDF2. The
                 // server does them with interrupts on.
                 r->op = frame->a0;

@@ -37,6 +37,13 @@ bool     ubiqos_keys_derive(const char *label, uint8_t out[32]);
 int32_t  ubiqos_keys_set(const char *name, const uint8_t *value, uint32_t len);
 int32_t  ubiqos_keys_remove(const char *name);
 
+// The key file: the store's key sealed again under thirty-two bytes that live
+// on the card, so that a board can open its store at boot with nobody there.
+bool     ubiqos_keys_unattended(void);                     // is there a wrapping?
+int32_t  ubiqos_keys_unattended_on(uint8_t token_out[32]); // a new file's bytes
+int32_t  ubiqos_keys_unattended_off(void);
+int32_t  ubiqos_keys_unlock_file(const uint8_t token[32]);
+
 // For the kernel itself, and only the kernel: the bytes. The pointer is into
 // flash and stays valid until the store is written again.
 const uint8_t *ubiqos_keys_value(const char *name, uint32_t *len_out);

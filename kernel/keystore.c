@@ -24,7 +24,8 @@ void ubiqos_print_u32(uint32_t v);
 // power-cut story -- there is no moment when neither is readable.
 
 #define KEYS_MAGIC   0x59454b55u     // "UKEY", little endian
-#define KEYS_FORMAT  2u              // 1 was the same records in the clear
+#define KEYS_FORMAT  3u              // 1 was the records in the clear; 2 had no key file
+#define KEYS_WRAPPED 0x50415257u     // "WRAP": this copy can be opened by a key file
 // PBKDF2 iterations: what about two seconds of this chip buys, measured with
 // the hardware SHA-256 (roughly 12500 iterations a second). It is stored with
 // each copy, so raising it later leaves older stores openable.
@@ -57,6 +58,14 @@ typedef struct {
     uint8_t  nonce[12];
     uint8_t  tag[16];
     uint8_t  sealed[sizeof(key_plain_t)];
+    // Format 3: the store's own key, sealed a second time under a key made
+    // from a file on the card -- see ubiqos_keys_unattended_on. Format 2 wrote
+    // nothing here that means anything, so these are read only from a copy
+    // that says it is format 3, and only if the magic is there.
+    uint32_t wrap_magic;
+    uint8_t  wrap_nonce[12];
+    uint8_t  wrap_tag[16];
+    uint8_t  wrapped[32];
 } key_store_t;
 
 _Static_assert(sizeof(key_store_t) <= FLASH_SECTOR_SIZE, "the store must fit a sector");
@@ -83,9 +92,17 @@ static const key_store_t *copy_at(uint32_t which)
     return (const key_store_t *)(uintptr_t)(UBIQOS_FLASH_KEYS_BASE + which * FLASH_SECTOR_SIZE);
 }
 
+// Format 2 is still read: it is format 3 without a key file, and it becomes
+// format 3 the next time anything is written.
 static bool copy_is_good(const key_store_t *s)
 {
-    return s->magic == KEYS_MAGIC && s->format == KEYS_FORMAT && s->rounds >= 1000u;
+    return s->magic == KEYS_MAGIC && (s->format == 2u || s->format == KEYS_FORMAT)
+        && s->rounds >= 1000u;
+}
+
+static bool copy_has_wrap(const key_store_t *s)
+{
+    return s && s->format == KEYS_FORMAT && s->wrap_magic == KEYS_WRAPPED;
 }
 
 void ubiqos_keys_init(void)
@@ -266,6 +283,11 @@ static void release_core1(void)
     while (parked) tight_loop_contents();
 }
 
+// A change to the key-file wrapping, for seal_and_write to put in the copy
+// it writes: 1 puts these in, 2 takes the wrapping out, 0 leaves it.
+static uint32_t pending_wrap;
+static uint8_t  wrap_nonce_new[12], wrap_tag_new[16], wrapped_new[32];
+
 // What goes to flash is a whole sector, so the image is one: allocated at
 // FLASH_SECTOR_SIZE and zeroed. It used to be allocated at the size of the
 // store and programmed as a sector, which wrote whatever the heap held after
@@ -304,6 +326,27 @@ static int32_t seal_and_write(void)
     if (!img) return -1;
     memcpy(img, live, sizeof *img);
     img->seq = live->seq + 1;
+    // The key file's wrapping is the store's key under another key; neither
+    // changes when a record does, so it goes forward as it was. From a format
+    // 2 copy there is nothing to carry, and what is there is not a wrapping.
+    if (!copy_has_wrap(live)) {
+        img->wrap_magic = 0;
+        memset(img->wrap_nonce, 0, sizeof img->wrap_nonce);
+        memset(img->wrap_tag, 0, sizeof img->wrap_tag);
+        memset(img->wrapped, 0, sizeof img->wrapped);
+    }
+    img->format = KEYS_FORMAT;
+    if (pending_wrap == 1) {
+        img->wrap_magic = KEYS_WRAPPED;
+        memcpy(img->wrap_nonce, wrap_nonce_new, sizeof img->wrap_nonce);
+        memcpy(img->wrap_tag, wrap_tag_new, sizeof img->wrap_tag);
+        memcpy(img->wrapped, wrapped_new, sizeof img->wrapped);
+    } else if (pending_wrap == 2) {
+        img->wrap_magic = 0;
+        memset(img->wrap_nonce, 0, sizeof img->wrap_nonce);
+        memset(img->wrap_tag, 0, sizeof img->wrap_tag);
+        memset(img->wrapped, 0, sizeof img->wrapped);
+    }
     ubiqos_random_bytes(img->nonce, sizeof img->nonce);
     ubiqos_seal(unlocked_key, img->nonce, (const uint8_t *)plain, img->sealed,
                 sizeof(key_plain_t), img->tag);
@@ -440,6 +483,98 @@ int32_t ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen)
         memset(fresh, 0, sizeof *fresh);
         ubiqos_tlsf_free(ubiqos_mem_pool, fresh);
         return -6;                               // the passphrase, or a changed store
+    }
+    memcpy(unlocked_key, key, sizeof unlocked_key);
+    memset(key, 0, sizeof key);
+    plain = fresh;
+    return 0;
+}
+
+// --- the key file ------------------------------------------------------------
+//
+// A board that must come back by itself after a power cut cannot wait for
+// somebody to type a passphrase. So the store's key is sealed a second time,
+// under a key made from thirty-two random bytes that live in a file on the
+// card, and at boot the kernel opens the store with the file if it is there.
+//
+// The passphrase is never on the card. The file is worth this store on this
+// board and nothing else: the key it makes goes through HMAC with the chip's
+// id, and the wrapping it opens is in this board's flash. The card alone
+// opens nothing; the board without the card stays locked until somebody
+// types; and turning it off takes the wrapping out of flash, after which a
+// copy of the file is thirty-two useless bytes.
+//
+// What it gives up is written in docs/keys.md: whoever holds the board WITH
+// the card holds everything, exactly as if it had been left unlocked.
+
+static void file_key(const uint8_t token[32], uint8_t out[32])
+{
+    uint8_t msg[11 + PICO_UNIQUE_BOARD_ID_SIZE_BYTES];
+    memcpy(msg, "unattended:", 11);
+    pico_unique_board_id_t id;
+    pico_get_unique_board_id(&id);
+    memcpy(msg + 11, id.id, PICO_UNIQUE_BOARD_ID_SIZE_BYTES);
+    ubiqos_hmac_sha256(token, 32, msg, sizeof msg, out);
+    memset(msg, 0, sizeof msg);
+    memset(&id, 0, sizeof id);
+}
+
+bool ubiqos_keys_unattended(void)
+{
+    return copy_has_wrap(live);
+}
+
+// Make a new key file: its bytes go to token_out, for the caller to write to
+// the card, and the wrapping they open goes into flash. Asked again, it makes
+// another, and the old file stops working.
+int32_t ubiqos_keys_unattended_on(uint8_t token_out[32])
+{
+    if (!plain) return -5;
+    uint8_t k[32];
+    ubiqos_random_bytes(token_out, 32);
+    ubiqos_random_bytes(wrap_nonce_new, sizeof wrap_nonce_new);
+    file_key(token_out, k);
+    ubiqos_seal(k, wrap_nonce_new, unlocked_key, wrapped_new, sizeof unlocked_key, wrap_tag_new);
+    memset(k, 0, sizeof k);
+    pending_wrap = 1;
+    const int32_t rc = seal_and_write();
+    pending_wrap = 0;
+    memset(wrapped_new, 0, sizeof wrapped_new);
+    if (rc != 0) memset(token_out, 0, 32);
+    return rc;
+}
+
+int32_t ubiqos_keys_unattended_off(void)
+{
+    if (!plain) return -5;
+    pending_wrap = 2;
+    const int32_t rc = seal_and_write();
+    pending_wrap = 0;
+    return rc;
+}
+
+// Open the store with a key file's bytes rather than a passphrase. -6 is what
+// a wrong passphrase gets too: this file is not the one, or the store changed.
+int32_t ubiqos_keys_unlock_file(const uint8_t token[32])
+{
+    if (plain) return 0;
+    if (!copy_has_wrap(live)) return -7;         // no key file was made for this store
+
+    uint8_t k[32], key[32];
+    file_key(token, k);
+    const bool unwrapped = ubiqos_unseal(k, live->wrap_nonce, live->wrapped, key,
+                                         sizeof key, live->wrap_tag);
+    memset(k, 0, sizeof k);
+    if (!unwrapped) { memset(key, 0, sizeof key); return -6; }
+
+    key_plain_t *fresh = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *fresh);
+    if (!fresh) { memset(key, 0, sizeof key); return -1; }
+    if (!ubiqos_unseal(key, live->nonce, live->sealed, (uint8_t *)fresh,
+                       sizeof *fresh, live->tag)) {
+        memset(key, 0, sizeof key);
+        memset(fresh, 0, sizeof *fresh);
+        ubiqos_tlsf_free(ubiqos_mem_pool, fresh);
+        return -6;
     }
     memcpy(unlocked_key, key, sizeof unlocked_key);
     memset(key, 0, sizeof key);
