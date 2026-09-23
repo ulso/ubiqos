@@ -903,6 +903,13 @@ void module_main(int argc, char **argv) {
             e->pos = 0; redraw(e);
         } else if (ch == 5) {            // Ctrl-E
             e->pos = e->len; redraw(e);
+        } else if (ch == 21) {           // Ctrl-U: away with everything before the cursor
+            // What a Unix terminal has always done with it. Silence was the
+            // old answer, which also left the line exactly as it was.
+            if (e->pos) {
+                while (e->pos) { e->pos--; delete_at(e, e->pos); }
+                redraw(e);
+            }
         } else if (ch == 12) {           // Ctrl-L, but only on an empty line
             if (!e->len) { ubiqos_write_str(e->out, "\x1b[2J\x1b[H"); redraw(e); }
         } else if (ch == 8 || ch == 127) {
