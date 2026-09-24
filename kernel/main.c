@@ -394,6 +394,10 @@ bool verify_ubiqos_header(ubiqos_module_header_t *header) {
     return (header->header_crc == checksum);
 }
 
+// The same string for a program that asks -- UBIQOS_CFG_VERSION. Here and not
+// in syscalls.c so that only this file is rebuilt when the version moves.
+const char *ubiqos_version_string(void) { return UBIQOS_VERSION; }
+
 // --- THE SYSTEM'S ENTRY POINT ---
 void ubiqos_kernel_main(void) {
     // The version comes from `git describe` at build time -- see

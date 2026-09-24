@@ -922,6 +922,11 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 #define UBIQOS_CFG_HOSTNAME 0u
 #define UBIQOS_CFG_SSID     1u
 #define UBIQOS_CFG_PASSWORD 2u
+// What this system calls itself: "0.1.11", or "0.1.11-4-g2b90f43" for a build
+// four commits past that release -- what the boot banner says. For a program
+// that shows a user what it is running on, since a support question starts
+// with that.
+#define UBIQOS_CFG_VERSION  3u
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.

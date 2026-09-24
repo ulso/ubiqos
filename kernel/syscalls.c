@@ -816,9 +816,10 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 frame->a0 = ubiqos_config_has_password() ? 1u : 0u;
                 break;
             }
-            const char *v = frame->a0 == UBIQOS_CFG_HOSTNAME
-                          ? ubiqos_config_hostname()
-                          : frame->a0 == UBIQOS_CFG_SSID ? ubiqos_config_ssid() : 0;
+            extern const char *ubiqos_version_string(void);
+            const char *v = frame->a0 == UBIQOS_CFG_HOSTNAME ? ubiqos_config_hostname()
+                          : frame->a0 == UBIQOS_CFG_SSID     ? ubiqos_config_ssid()
+                          : frame->a0 == UBIQOS_CFG_VERSION  ? ubiqos_version_string() : 0;
             if (!v) { frame->a0 = (uint32_t)-1; break; }
             char *out = (char *)(uintptr_t)frame->a1;
             uint32_t cap = frame->a2, n = 0;
