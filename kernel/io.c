@@ -128,11 +128,27 @@ static int32_t acm_writable(void) {
     return (int32_t)tuh_cdc_write_available((uint8_t)idx);
 }
 
+uint32_t ubiqos_usbhost_cdc_id(void);
+int32_t  ubiqos_usbhost_cdc_reset(void);
+
+static int32_t acm_getstat(uint32_t code, void *data, uint32_t len) {
+    if (code != UBIQOS_SS_ACM_ID || len < sizeof(uint32_t)) return -1;
+    *(uint32_t *)data = ubiqos_usbhost_cdc_id();
+    return 0;
+}
+
+static int32_t acm_setstat(uint32_t code, const void *data, uint32_t len) {
+    (void)data; (void)len;
+    if (code != UBIQOS_SS_ACM_RESET) return -1;
+    return ubiqos_usbhost_cdc_reset();
+}
+
 static const ubiqos_driver_t driver_acm = {
     .module_name = "acm",
     .configure = acm_configure,
     .open = acm_open, .write = acm_write, .read = acm_read, .close = acm_close,
-    .readable = acm_readable, .writable = acm_writable
+    .readable = acm_readable, .writable = acm_writable,
+    .getstat = acm_getstat, .setstat = acm_setstat
 };
 
 // The console: the display to write to, the keyboard to read from. Output never

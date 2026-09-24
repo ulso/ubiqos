@@ -13,6 +13,9 @@
 #include "hardware/sync.h"
 #include "pico/multicore.h"
 #include "keystore.h"
+#if UBIQOS_USB_NATIVE_HOST
+#include "hardware/structs/usb.h"
+#endif
 
 void ubiqos_print(const char *s);
 void ubiqos_print_u32(uint32_t v);
@@ -993,6 +996,43 @@ void tuh_cdc_mount_cb(uint8_t idx) {
     ubiqos_print(":");
     ubiqos_print_hex(pid);
     ubiqos_print(tuh_cdc_get_dtr(idx) ? ", DTR high\n" : ", DTR low\n");
+}
+
+// Which device /dev/acm is, as UBIQOS_SS_ACM_ID answers it.
+uint32_t ubiqos_usbhost_cdc_id(void) {
+    if (cdc_index < 0 || !tuh_cdc_mounted((uint8_t)cdc_index)) return 0;
+    tuh_itf_info_t info;
+    uint16_t vid = 0, pid = 0;
+    if (!tuh_cdc_itf_get_info((uint8_t)cdc_index, &info)) return 0;
+    tuh_vid_pid_get(info.daddr, &vid, &pid);
+    return ((uint32_t)vid << 16) | pid;
+}
+
+// A bus reset, for a device that is still on the bus and no longer answers.
+// Found on a display that had shown "listening..." for five hours: the dongle
+// took commands and answered none, and setting SIE_CTRL.RESET_BUS over the debug
+// probe brought it back. The controller sees the reset as the device leaving and
+// then arriving, so TinyUSB takes it away and counts it again through its
+// ordinary attach and detach, and nothing here has to pretend either happened.
+//
+// Pretending was tried, and is worse: telling TinyUSB the device had gone,
+// resetting, and announcing an arrival crossed the controller's own detach and
+// attach, and enumeration stopped halfway, waiting for ever on a control
+// transfer to address 0.
+//
+// One write to a set alias, atomic from either core; the interrupt that follows
+// is taken on core 1, where TinyUSB runs, exactly as for an unplug.
+int32_t ubiqos_usbhost_cdc_reset(void) {
+#if UBIQOS_USB_NATIVE_HOST
+    if (!(usb_hw->sie_status & USB_SIE_STATUS_SPEED_BITS)) return -1;  // nothing on the bus
+    hw_set_bits(&usb_hw->sie_ctrl, USB_SIE_CTRL_RESET_BUS_BITS);
+    ubiqos_print("USB host: bus reset, asked for by a program\n");
+    return 0;
+#else
+    // PIO-USB: the reset would go to the hub, and through it to the keyboard
+    // and everything else. Not done until it can be aimed at one port.
+    return -1;
+#endif
 }
 
 void tuh_cdc_umount_cb(uint8_t idx) {

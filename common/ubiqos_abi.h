@@ -1036,6 +1036,24 @@ typedef struct {
 // configuration lives in the controller and can be rewritten.
 #define UBIQOS_SS_TOUCH_RANGE 0x0500u  // ubiqos_touch_range_t
 
+// --- /dev/acm, the serial device at the other end of the USB socket --------
+//
+// Which device it is, because "a serial port" is not an answer: a BleuIO
+// dongle of the older kind comes up first as its own bootloader, 2DCF:6001,
+// and only after some seconds as the dongle, 2DCF:6002 -- and a program that
+// talks to whatever opened first talks to the bootloader. 0 when nothing is
+// attached.
+#define UBIQOS_SS_ACM_ID    0x0600u    // getstat -> uint32_t, VID << 16 | PID
+
+// Reset the USB bus the device is on. The host sees it leave and come back,
+// counts it again and it reappears as /dev/acm, so a program asks for this
+// and then waits for UBIQOS_SS_ACM_ID to answer. It is for a device whose USB
+// side still works while nothing behind it answers -- an old BleuIO dongle
+// does that after hours of scanning, and only a reset or the power brings it
+// back. -1 where this host cannot: on PIO-USB a bus reset would take the hub
+// and every other device on it along.
+#define UBIQOS_SS_ACM_RESET 0x0601u    // setstat, no data
+
 #define UBIQOS_GPIO_FALL 1u
 #define UBIQOS_GPIO_RISE 2u
 
