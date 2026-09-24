@@ -488,6 +488,16 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # PBKDF2 and ChaCha20-Poly1305 are kernel code, and kernel code is
         # SRAM here because the kernel is linked copy_to_ram.
         set(ubiqosHeapKB 24)
+        # The Waveshare panel is not a framebuffer build and was never short:
+        # its C heap is over 200 kB. It shared the number above only because
+        # both are "not chargen", and the cuts made for the RISC-V framebuffer
+        # took its pool from 36 kB to 24 -- after which airview could not get
+        # the ten kilobytes of SRAM its screen needs, said "no room in SRAM for
+        # the screen" and left the display on the boot console. 96 leaves the
+        # C heap well over 100 kB on both of its builds.
+        if(UBIQOS_VIDEO STREQUAL "rgb")
+            set(ubiqosHeapKB 96)
+        endif()
     else()
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
