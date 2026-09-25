@@ -49,7 +49,20 @@
 // only symptom was a sensor missing from a web page.
 #define MAX_SENSORS    20
 #define REDRAW_MS      2000
-#define DONGLE_WAIT_S  30   // how long to wait for the dongle to turn up
+
+// The dongle is set up by commands it forgets, and one that has gone quiet for
+// this long is set up again. Sensors advertise several times a second, so
+// fifteen seconds of nothing is not a slow room -- see dongle_wake.
+#define QUIET_MS       15000u
+
+// Where the readings go for httpd, and the name they are written under first.
+#define SENSORS_PATH "/tmp/sensors.json"
+#define SENSORS_NEW  "/tmp/sensors.new"   // written, then renamed over SENSORS_PATH
+
+// What a BleuIO is, by its USB id: both kinds, the Pro and the older one, are
+// 2DCF:6002 when working. The older one comes up first as its own bootloader,
+// 2DCF:6001, for some seconds; what was said to it then went to the bootloader.
+#define BLEUIO_ID      0x2DCF6002u
 
 // The board types, from dxbleuio/src/models/hibouair.rs. What a sensor does not
 // have it reports as zero, which is why one of these will show CO2 0 for ever
@@ -128,6 +141,11 @@ UBIQOS_LIBC_DEFINE
 __thread uint8_t buf[CHUNK];
 __thread char    line[LINE_MAX];
 __thread uint32_t line_len;
+__thread uint32_t dongle_heard;        // ticks at the dongle's last whole line
+__thread bool     dongle_quiet;        // said so already
+__thread uint32_t wakes_unanswered;    // set-ups sent since it last said anything
+__thread bool     waiting_bleuio;      // nothing that is a BleuIO on the socket
+__thread bool     said_no_reset;       // told the user this machine cannot reset it
 
 /**
  * flush_input -- empty receive buffer.
@@ -152,6 +170,79 @@ static int32_t send_command(int32_t dev, const char *cmd)
         return -1;
 
     return write(dev, cmd, strlen(cmd));
+}
+
+// Is a BleuIO on the socket? A kernel from before UBIQOS_SS_ACM_ID cannot say,
+// and then whatever is there is taken to be one, as it always was.
+static bool bleuio_here(int32_t dev)
+{
+    uint32_t id = 0;
+    if (ubiqos_getstat(dev, UBIQOS_SS_ACM_ID, &id, sizeof id) != 0) return true;
+    return id == BLEUIO_ID;
+}
+
+// Ctrl-C ends a scan, and a carriage return after it ends the stray line a
+// dongle that was not scanning would otherwise begin its next command with.
+static void dongle_break(int32_t dev)
+{
+    write(dev, "\x03", 1);
+    ubiqos_sleep(150);
+    write(dev, "\r", 1);
+    ubiqos_sleep(50);
+}
+
+// No echo, verbose, central, scanning. The scan command's write is the answer:
+// it fails when there is nothing behind /dev/acm.
+static int32_t dongle_setup(int32_t dev)
+{
+    send_command(dev, AT_ECHO_OFF);   ubiqos_sleep(200);
+    send_command(dev, AT_VERBOSE_ON); ubiqos_sleep(200);
+    send_command(dev, AT_CENTRAL);    ubiqos_sleep(400);
+    flush_input(dev);
+    line_len = 0;
+    dongle_heard = ubiqos_ticks_now();
+    return send_command(dev, AT_SCAN);
+}
+
+// The readings, gone. Nothing is scanning, and a page showing readings as old
+// as they are ever going to get looks exactly like a page showing now.
+static void forget_sensors(void)
+{
+    sensor_count = 0;
+    ubiqos_fs_remove(SENSORS_PATH);
+}
+
+// A dongle that has said nothing for QUIET_MS is set up again -- unplugged and
+// put back, or updated, it remembers nothing it was told.
+//
+// One that takes a set-up and answers not a word has stopped behind its USB
+// side: the older BleuIO does that after hours, taking every command and
+// answering none, and no command reaches anything that listens. The second
+// such set-up asks the kernel to reset the USB bus, which brings it back. A
+// machine that cannot -- PIO-USB with a hub, like the Fruit Jam, where the
+// reset would take the keyboard along -- says once what is needed instead.
+static void dongle_wake(int32_t dev)
+{
+    if (!dongle_quiet) {
+        printf("hibouair: nothing from the dongle for %lu s; setting it up again\n",
+               (unsigned long)(QUIET_MS / 1000u));
+        dongle_quiet = true;
+    }
+    if (++wakes_unanswered >= 2) {
+        if (ubiqos_setstat(dev, UBIQOS_SS_ACM_RESET, 0, 0) == 0) {
+            printf("hibouair: the dongle answers nothing; resetting its USB bus\n");
+            wakes_unanswered = 0;
+            dongle_heard = ubiqos_ticks_now();
+            return;
+        }
+        if (!said_no_reset) {
+            printf("hibouair: the dongle answers nothing, and this machine cannot reset\n"
+                   "          it -- unplug it and put it back\n");
+            said_no_reset = true;
+        }
+    }
+    dongle_break(dev);
+    dongle_setup(dev);
 }
 
 static int hex_digit(char c)
@@ -276,8 +367,6 @@ static void remember(const uint8_t *b, uint32_t n, const char *addr)
 //
 // Two writers of this path would race. There is one scanner, because there is
 // one dongle.
-#define SENSORS_PATH "/tmp/sensors.json"
-#define SENSORS_NEW  "/tmp/sensors.new"   // written, then renamed over SENSORS_PATH
 
 static void put_str(int32_t fd, const char *s)
 {
@@ -452,6 +541,10 @@ static void consume(const uint8_t *p, uint32_t n)
         }
         line[line_len] = 0;
         if (line_len) {
+            dongle_heard = ubiqos_ticks_now();
+            dongle_quiet = false;
+            wakes_unanswered = 0;
+            said_no_reset = false;
             uint32_t got = find_payload(line, payload, sizeof(payload));
             if (got) {
                 take_address(line, addr, sizeof(addr));
@@ -471,8 +564,10 @@ void module_main(int argc, char **argv)
             "Either way the readings are written to /tmp/sensors.json, which is\n"
             "what httpd serves at /api/sensors. -q draws no table, which is what\n"
             "it wants in the background: 'hibouair -q &'.\n\n"
-            "A dongle that is not there yet is waited for, up to 30 seconds, so\n"
-            "this can be started from /sd/startup. 'kill hibouair' stops it.\n")) return;
+            "A dongle that is not there yet is waited for, so this can be\n"
+            "started from /sd/startup; one that goes quiet is set up again, and\n"
+            "one that stops answering altogether has its USB bus reset where the\n"
+            "machine can. 'kill hibouair' stops it.\n")) return;
 
     // Quiet is for the background. A table drawn by a process nobody is looking
     // at is not merely wasted -- it lands on whatever terminal the shell was
@@ -488,31 +583,24 @@ void module_main(int argc, char **argv)
     }
 
     // The dongle may not be there yet. Started from /sd/startup, this runs
-    // while the USB host is still finding what sits behind the hub, and a
-    // scanner that gave up at once would need somebody to start it again by
-    // hand. /dev/acm opens whether or not anything is plugged in; a write is
-    // what tells, and a lone CR is one the dongle's AT parser ignores.
-    uint32_t waited = 0;
-    while (write(dev, "\r", 1) < 0) {
-        if (waited == 0)
-            printf("hibouair: waiting for the dongle on /dev/acm\n");
-        if (waited >= DONGLE_WAIT_S) {
-            printf("hibouair: no dongle on /dev/acm after %lu s\n", (unsigned long)waited);
-            ubiqos_close(dev);
-            return;
-        }
-        ubiqos_sleep(1000);
-        waited++;
+    // while the USB host is still finding what sits behind the hub, and an
+    // older BleuIO spends its first seconds as its own bootloader. So it is
+    // waited for, however long that takes -- a service that gave up would need
+    // somebody to start it again by hand -- and nothing is said to the socket
+    // until a BleuIO is in it. A write is what finally tells: /dev/acm opens
+    // whether or not anything is plugged in, and a lone CR is one the dongle's
+    // AT parser ignores.
+    bool waited = false;
+    while (!bleuio_here(dev) || write(dev, "\r", 1) < 0) {
+        if (!waited) printf("hibouair: waiting for a BleuIO on /dev/acm\n");
+        waited = true;
+        ubiqos_sleep(500);
     }
     // One that has only just enumerated gets a moment before it is spoken to.
     if (waited)
         ubiqos_sleep(1000);
 
-    send_command(dev, AT_ECHO_OFF);   ubiqos_sleep(200);
-    send_command(dev, AT_VERBOSE_ON); ubiqos_sleep(200);
-    send_command(dev, AT_CENTRAL);    ubiqos_sleep(400);
-    flush_input(dev);
-    if (send_command(dev, AT_SCAN) < 0) {
+    if (dongle_setup(dev) < 0) {
         printf("hibouair: the dongle will not start scanning\n");
         return;
     }
@@ -533,16 +621,12 @@ void module_main(int argc, char **argv)
     for (;;) {
         ubiqos_arm(dev, PULSE_ACM);
 
+        // A second at most, so that a dongle that has gone away or gone quiet
+        // is noticed even when it says nothing at all.
         ubiqos_msg_t m;
-        int32_t from = ubiqos_receive_tmo(&m, 30000);
-        if (from == UBIQOS_RECV_TIMEOUT) {
-            printf("hibouair: nothing heard for 30 s\n");
-            continue;
-        }
-        if (from != 0)                  // a real message; not ours to answer
-            continue;
+        int32_t from = ubiqos_receive_tmo(&m, 1000);
 
-        if (m.type == PULSE_INTR) {
+        if (from == 0 && m.type == PULSE_INTR) {
             // The dongle stops scanning on a bare Ctrl-C, the same key that
             // brought us here. Half a second is what the kernel allows before
             // it ends the process regardless, which is far more than this needs.
@@ -557,13 +641,34 @@ void module_main(int argc, char **argv)
             break;
         }
 
-        int32_t n = ubiqos_read(dev, buf, sizeof(buf));
-        if (n < 0) {
-            printf("hibouair: the dongle is gone\n");
-            break;
+        if (from == 0) {
+            int32_t n = ubiqos_read(dev, buf, sizeof(buf));
+            if (n < 0) {
+                printf("hibouair: the dongle is gone\n");
+                break;
+            }
+            if (n > 0)
+                consume(buf, (uint32_t)n);
         }
-        if (n > 0)
-            consume(buf, (uint32_t)n);
+
+        // Nothing is said to the socket while no BleuIO is in it -- pulled out,
+        // being reset, or an older one in its bootloader -- and when one is
+        // there again it is set up from the beginning.
+        if (!bleuio_here(dev)) {
+            if (!waiting_bleuio) {
+                printf("hibouair: waiting for a BleuIO on /dev/acm\n");
+                waiting_bleuio = true;
+                forget_sensors();
+            }
+        } else if (waiting_bleuio) {
+            printf("hibouair: a BleuIO is back; setting it up\n");
+            waiting_bleuio = false;
+            wakes_unanswered = 0;
+            ubiqos_sleep(200);
+            dongle_setup(dev);
+        } else if (ubiqos_ticks_now() - dongle_heard >= QUIET_MS) {
+            dongle_wake(dev);
+        }
 
         // Redrawing on a timer rather than on every advertisement: four sensors
         // beaconing ten times a second would otherwise spend the whole console
