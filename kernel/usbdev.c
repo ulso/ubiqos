@@ -21,6 +21,7 @@ void ubiqos_usb_init(void) {
     // irq_add_shared_handler. That only works now that we stopped taking over
     // mtvec: the SDK's external dispatch is what looks up in that table.
     tud_init(0);
+    tud_cdc_set_wanted_char(3);         // Ctrl-C -- see tud_cdc_rx_wanted_cb
 
     // And stay OFF the bus until something can answer it. tud_connect is in
     // usb_thread, below.
@@ -219,15 +220,28 @@ void tud_umount_cb(void) {
     note_event("dropped us", ++ubiqos_usb_unmounts);
 }
 
+// Ctrl-C on the serial console, wherever it lands in what has been typed.
+//
+// This used to look at the first byte waiting and nowhere else. A program that
+// does not read its input -- a scanner printing what it hears -- leaves what
+// was typed at it in the FIFO, and a Ctrl-C typed after that sat behind it,
+// never at the front, never seen: the program ran on and nothing could stop it
+// from the keyboard. TinyUSB can be told to call back when a particular byte
+// arrives, anywhere in a packet, and that is what this is.
+//
+// When the key ends something, what was typed ahead goes with it, as a Unix
+// terminal flushes its input on an interrupt: those lines were typed at the
+// program that is gone, and handing them to the shell instead would run them.
+// When nothing is in front the key stays, as data for the shell to abandon its
+// line with. Called from tud_task, in the USB thread, as the old check was.
+void tud_cdc_rx_wanted_cb(uint8_t itf, char wanted_char) {
+    (void)wanted_char;
+    if (itf != 0) return;               // the console, not the network
+    if (ubiqos_io_interrupt("usb")) tud_cdc_read_flush();
+}
+
 void ubiqos_usb_task(void) {
     tud_task();
-
-    uint8_t c;
-    if (tud_mounted() && tud_cdc_available() && tud_cdc_peek(&c) && c == 3) {
-        if (ubiqos_io_interrupt("usb")) {
-            tud_cdc_read(&c, 1);        // consumed: it was never data
-        }
-    }
 }
 
 bool ubiqos_usb_ready(void) {
