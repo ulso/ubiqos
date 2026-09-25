@@ -345,6 +345,17 @@ but the stack grows down into the same span, so that is what exists, not what
 is safe. A module that wants a lot should ask for a larger `mem_size` rather
 than assume.
 
+**Running out of stack ends the module, on Arm.** The kernel sets the core's
+stack limit register, PSPLIM, to 128 bytes above the start of the data area for
+whichever process is running. A push that would go below it is stopped before
+it writes, the kernel says `stack overflow in NAME (pid N); it is ended`, and
+everything else goes on. Before that an overflow wrote silently through the
+module's own thread-local variables and into whatever lay below, and failed
+later somewhere unrelated. The limit does not protect what `ubiqos_data_area`
+hands out, which shares its span with the stack. RISC-V has no such register,
+and there an overflow is still silent. `stackbomb`, built but not resident,
+shows it: put it on the card and run it.
+
 ## In C++, the problem mostly goes away
 
 A member variable is addressed through `this`, which is a runtime pointer. That

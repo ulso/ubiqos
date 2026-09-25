@@ -1346,6 +1346,7 @@ ubiqos_add_module(vidstat modules/vidstat/vidstat.c)
 ubiqos_add_module(backlight modules/backlight/backlight.c)
 ubiqos_add_module(screenshot modules/screenshot/screenshot.c)
 ubiqos_add_module(pecho modules/pecho/pecho.c)
+ubiqos_add_module(stackbomb modules/stackbomb/stackbomb.c)
 ubiqos_add_zig_module(zhello modules/zhello/zhello.zig)
 ubiqos_add_module(echo modules/echo/echo.c)
 ubiqos_add_module(usbecho modules/usbecho/usbecho.c)
@@ -1673,6 +1674,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/crit.mod
             ${CMAKE_CURRENT_BINARY_DIR}/newlibtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pecho.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/stackbomb.mod
             ${CMAKE_CURRENT_BINARY_DIR}/free.mod
             ${CMAKE_CURRENT_BINARY_DIR}/echo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/usbecho.mod
@@ -1737,7 +1739,8 @@ add_custom_target(modules ALL
 # leaving the machine in a state anyone else will type at.
 set(UBIQOS_RESIDENT
     # Tests are built but not resident: armtest, crit, tlsftest, libctest,
-    # newlibtest, memtest, msgtest and msgcli, spin and spinrt, fill, pecho.
+    # newlibtest, memtest, msgtest and msgcli, spin and spinrt, fill, pecho,
+    # stackbomb.
     # Their .mod files are in the build directory; put one on the card, or
     # anywhere on the search path, when it is wanted.
     vidstat
