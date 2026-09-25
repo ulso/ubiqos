@@ -41,6 +41,7 @@ typedef struct {
     uint32_t data_size;       // how far it reaches before the stack comes down
     uint32_t mem_size;        // data + stack, as the module header asked for
     uint32_t saved_sp;        // the trap frame, hence the entire context
+    uint32_t stack_limit;     // PSPLIM while it runs; 0 for none -- see below
     const char *args;         // points into the process's OWN memory, not here
     int32_t  wait_path;       // WAIT_READ: the path being waited on
     int32_t  wait_pid;        // WAIT_CHILD: the process being waited for
@@ -237,6 +238,21 @@ void ubiqos_scheduler_init(void) {
     ubiqos_print("Real-time process scheduler initialized.\n");
 }
 
+// Where a process's stack must stop, with room to spare.
+//
+// The spare is for the fault itself. A stack that hits its limit is caught
+// with the stack pointer AT the limit, and the trap vector then writes its own
+// frame below that -- forty bytes, and sixty-four more when floating-point
+// state is live. Those bytes have to land in the process's own memory: below
+// the limit is its thread-local block, and below that, for a small module, the
+// allocator's header for this very allocation. 128 keeps the vector's writes
+// inside what the dying process owned.
+#define STACK_LIMIT_SPARE 128u
+
+static uint32_t stack_limit_above(uintptr_t floor) {
+    return (uint32_t)((floor + STACK_LIMIT_SPARE + 7u) & ~(uintptr_t)7u);
+}
+
 // A process that runs kernel code. It has no module and no arguments, only a
 // stack and an entry point, but is otherwise ordinary: scheduled by priority,
 // able to sleep, and preemptible.
@@ -270,6 +286,8 @@ int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
     process_table[slot].data_size = 0;        // in the kernel's own variables
     process_table[slot].mem_size = stack_bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
+    // The whole allocation is stack; its bottom is the limit.
+    process_table[slot].stack_limit = stack_limit_above((uintptr_t)mem);
     process_table[slot].msg_next = process_table[slot].msg_head = -1;
     process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
     process_table[slot].msg_dest = -1;
@@ -580,6 +598,11 @@ int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr,
                                                - data_base);
     process_table[slot].mem_size = bytes;
     process_table[slot].saved_sp = (uint32_t)(uintptr_t)frame;
+    // The stack stops above the data area's start: below it are the thread-
+    // local block and the arguments, which an overflow used to write over
+    // without a word. What ubiqos_data_area hands out above data_base shares
+    // the span with the stack and is not guarded -- nothing uses it today.
+    process_table[slot].stack_limit = stack_limit_above(data_base);
     process_table[slot].msg_next = process_table[slot].msg_head = -1;
     process_table[slot].msg_tail = process_table[slot].msg_serving = -1;
     process_table[slot].msg_dest = -1;
@@ -635,10 +658,17 @@ uint32_t ubiqos_switch(uint32_t current_sp) {
 
     current_pid = next;
     process_table[next].state = PROC_STATE_RUNNING;
+    ubiqos_arch_set_stack_limit(process_table[next].stack_limit);
     return process_table[next].saved_sp;
 }
 
 int32_t ubiqos_current_pid(void) { return current_pid; }
+
+// A process that runs a module, rather than a kernel thread -- which has none,
+// and cannot be ended without taking the machine with it.
+bool ubiqos_process_is_module(int32_t pid) {
+    return pid > 0 && pid < MAX_PROCESSES && process_table[pid].module != NULL;
+}
 
 uint32_t ubiqos_process_get_args(char *buf, uint32_t len) {
     const char *src = process_table[current_pid].args;

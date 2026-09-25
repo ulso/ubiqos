@@ -95,6 +95,8 @@ void ubiqos_wake_readers(void);
 void ubiqos_sleep_begin(uint32_t ticks);
 uint32_t ubiqos_set_priority(uint32_t prio);
 int32_t ubiqos_process_info(uint32_t slot, ubiqos_psinfo_t *out);
+void ubiqos_process_exit(void);
+bool ubiqos_process_is_module(int32_t pid);
 void ubiqos_reboot_bootsel(void);
 void ubiqos_reboot_machine(void);
 int32_t ubiqos_pulse_send(int32_t dest, uint32_t type, uint32_t value);
@@ -1119,6 +1121,35 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
         ubiqos_assert_last = frame->pc;
         UBIQOS_TRAP_STEP_BREAKPOINT(frame);
         return sp;
+    }
+
+    // A process ran out of stack: PSPLIM caught it before it wrote below its
+    // limit. A module is ended and the machine goes on, as it would if the
+    // process had exited -- which is what a stack overflow used to be unable
+    // to cause, having corrupted something first and failed somewhere else
+    // later. A kernel thread cannot be ended, so it stops the machine as any
+    // other fault does, but saying which kind of fault it was.
+    //
+    // The frame is not to be trusted: the core stops stacking when it meets
+    // the limit, so the saved pc is whatever was there. Nothing here reads it
+    // except to print it.
+    if (UBIQOS_TRAP_IS_STACK_OVERFLOW(frame)) {
+        UBIQOS_TRAP_CLEAR_STACK_OVERFLOW();
+        const int32_t pid = ubiqos_current_pid();
+        ubiqos_psinfo_t info;
+        const bool known = ubiqos_process_info((uint32_t)pid, &info) == 0;
+        ubiqos_crash_note(UBIQOS_CRASH_TRAP, frame->pc, frame->cause, 0);
+        ubiqos_print("\n*** UBIQOS: stack overflow in ");
+        ubiqos_print(known ? info.name : "?");
+        ubiqos_print(" (pid ");
+        ubiqos_print_u32((uint32_t)pid);
+        if (known && ubiqos_process_is_module(pid)) {
+            ubiqos_print("); it is ended ***\n");
+            ubiqos_process_exit();
+            return ubiqos_switch(sp);
+        }
+        ubiqos_print("), a kernel thread; stopping ***\n");
+        for (;;) __asm__ volatile("wfi");
     }
 
     // Write it down before saying anything, because saying it goes through the

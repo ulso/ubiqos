@@ -111,6 +111,29 @@ static inline uint32_t ubiqos_arm_fault_address(void)
         (f)->pc += 2u; \
     } while (0)
 
+// A process's stack limit, PSPLIM. The core checks every push and every
+// exception's stacking against it, and a stack that would go below it raises a
+// UsageFault with CFSR.STKOF set -- which, with the UsageFault left disabled,
+// arrives here as a HardFault. Without it an overflow wrote silently into what
+// lies below the stack: the process's own thread-local variables, and below
+// those whatever the allocator keeps next door. It is set on every switch, so
+// it always names the running process's stack; handlers run on MSP and are not
+// affected. Eight-byte aligned -- the low three bits are ignored.
+#define ARM_CFSR_STKOF  (1u << 20)
+#define ARM_HFSR_FORCED (1u << 30)
+static inline void ubiqos_arch_set_stack_limit(uint32_t limit)
+{
+    __asm__ volatile("msr psplim, %0" : : "r"(limit));
+}
+#define UBIQOS_TRAP_IS_STACK_OVERFLOW(f) ((f)->cause == ARM_EXC_HARDFAULT && \
+                                          (ARM_SCB_CFSR & ARM_CFSR_STKOF) != 0)
+// Both bits are write-one-to-clear. Left set, the next fault of any kind would
+// look like another overflow.
+#define UBIQOS_TRAP_CLEAR_STACK_OVERFLOW() do { \
+        ARM_SCB_CFSR = ARM_CFSR_STKOF; \
+        ARM_SCB_HFSR = ARM_HFSR_FORCED; \
+    } while (0)
+
 // Thread mode, on the process stack, with no floating-point state stacked.
 //
 // That last part is about a NEW process and nothing more. It used to claim the

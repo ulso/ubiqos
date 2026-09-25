@@ -62,6 +62,13 @@ _Static_assert(sizeof(ubiqos_frame_t) == 144, "the frame must match FRAME_SIZE")
         (f)->pc += ((_insn & 3u) == 3u) ? 4u : 2u; \
     } while (0)
 
+// No stack limit register here. Hazard3 has none, and PMP -- which could do
+// the same with a guard region -- restricts only code below machine mode, which
+// processes are not yet. So nothing is set and nothing is ever reported.
+static inline void ubiqos_arch_set_stack_limit(uint32_t limit) { (void)limit; }
+#define UBIQOS_TRAP_IS_STACK_OVERFLOW(f) ((void)(f), 0)
+#define UBIQOS_TRAP_CLEAR_STACK_OVERFLOW() ((void)0)
+
 // The global pointer every process runs with. Captured from the kernel once at
 // startup, because on this machine gp addresses the kernel's own small data and
 // a process that does not have it cannot call into the kernel at all.
