@@ -93,12 +93,51 @@ static bool dmesg_wrapped;
 // process." arriving four lines later. Eleven characters in, the server got
 // the processor. The console had been given a ring copy for exactly this
 // reason and dmesg had been left as a loop.
+//
+// Every line starts with the time since boot, "[  1234.567] ", in the log and
+// nowhere else. A log without times said that a dongle had been reset seven
+// times and nothing about whether that was one bad minute or a whole night,
+// and the question afterwards is always when. The timer is the hardware's, in
+// microseconds from reset, so the stamps are right before the scheduler's
+// clock has started ticking. The screen is left alone: it is read as it
+// happens, when the time is now.
+//
+// A line is stamped when its first bytes arrive, and a print that ends
+// without a newline leaves the next one to continue the same line unstamped.
+// That flag is shared by every writer, so two writers interleaving mid-line
+// can put a stamp in an odd place -- cosmetic, as the paragraph below says of
+// interleaving generally.
+static bool dmesg_mid_line;
+
+static uint32_t dmesg_stamp(char *out) {
+    uint64_t ms = time_us_64() / 1000u;
+    uint32_t sec = (uint32_t)(ms / 1000u), frac = (uint32_t)(ms % 1000u);
+    char digits[10];
+    uint32_t d = 0;
+    do { digits[d++] = (char)('0' + sec % 10u); sec /= 10u; } while (sec);
+    uint32_t n = 0;
+    out[n++] = '[';
+    for (uint32_t pad = d; pad < 6; pad++) out[n++] = ' ';
+    while (d) out[n++] = digits[--d];
+    out[n++] = '.';
+    out[n++] = (char)('0' + frac / 100u);
+    out[n++] = (char)('0' + frac / 10u % 10u);
+    out[n++] = (char)('0' + frac % 10u);
+    out[n++] = ']';
+    out[n++] = ' ';
+    return n;
+}
+
 static void dmesg_write(const char *p, uint32_t n) {
+    char stamp[24];
+    uint32_t sn = 0;
+    if (n && !dmesg_mid_line) sn = dmesg_stamp(stamp);
     uint32_t st = save_and_disable_interrupts();
-    for (uint32_t i = 0; i < n; i++) {
-        dmesg_buf[dmesg_head++] = p[i];
+    for (uint32_t i = 0; i < sn + n; i++) {
+        dmesg_buf[dmesg_head++] = i < sn ? stamp[i] : p[i - sn];
         if (dmesg_head >= DMESG_SIZE) { dmesg_head = 0; dmesg_wrapped = true; }
     }
+    if (n) dmesg_mid_line = p[n - 1] != '\n';
     restore_interrupts(st);
 }
 

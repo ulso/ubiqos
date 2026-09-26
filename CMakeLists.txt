@@ -558,6 +558,13 @@ set(UBIQOS_DMESG_KB "auto" CACHE STRING "kernel log ring in kB, or auto to follo
 if(UBIQOS_DMESG_KB STREQUAL "auto")
     if(UBIQOS_VIDEO STREQUAL "chargen")
         set(ubiqosDmesgKB 16)
+    elseif(UBIQOS_VIDEO STREQUAL "rgb")
+        # The Waveshare panel, whose C heap is over 140 kB. Two kilobytes held
+        # the boot and about a dozen dongle events; a display that reset its
+        # BleuIO seven times in one episode had overwritten how the episode
+        # began before anybody looked. With a time on every line, 32 kB is
+        # days of that.
+        set(ubiqosDmesgKB 32)
     else()
         set(ubiqosDmesgKB 2)
     endif()
