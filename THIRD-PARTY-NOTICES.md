@@ -18,6 +18,7 @@ the BSD licences below ask for exactly that.
 | wasm3 | `third_party/wasm3/`; the `wasm` module | MIT |
 | Mbed TLS 3.6, as shipped with the SDK | the SDK; built into `fetch` and any module using `lib/tls` | Apache-2.0 (dual-licensed with GPL-2.0-or-later; taken under Apache-2.0) |
 | Atto | `modules/atto/upstream/` | public domain |
+| ML-KEM-768 and Keccak (FIPS 202), from PQClean | `third_party/mlkem768/`; the `sshd` module | public domain (CC0) |
 | newlib-nano | the toolchain's C library, linked into modules that ask for it | BSD-style, see below |
 | libgcc | the toolchain's runtime | GPL-3.0 with the GCC Runtime Library Exception |
 
