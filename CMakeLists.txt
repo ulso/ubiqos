@@ -1646,6 +1646,7 @@ ubiqos_add_module(pwd modules/pwd/pwd.c)
 ubiqos_add_module(path modules/path/path.c)
 ubiqos_add_module(key modules/key/key.c)
 ubiqos_add_module(date modules/date/date.c)
+ubiqos_add_module(uptime modules/uptime/uptime.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
 ubiqos_add_module(sshd modules/sshd/sshd.c NEWLIB)
 ubiqos_module_use_tls(sshd)
@@ -1705,6 +1706,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/pwd.mod
             ${CMAKE_CURRENT_BINARY_DIR}/path.mod
             ${CMAKE_CURRENT_BINARY_DIR}/date.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/uptime.mod
             ${CMAKE_CURRENT_BINARY_DIR}/fetch.mod
             ${CMAKE_CURRENT_BINARY_DIR}/gt911.mod
             ${CMAKE_CURRENT_BINARY_DIR}/touchdesc.mod
@@ -1804,6 +1806,7 @@ set(UBIQOS_RESIDENT
     pwd
     path
     date
+    uptime
     fetch
     tlsroots
     mount
