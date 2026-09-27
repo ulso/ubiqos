@@ -297,6 +297,7 @@ static void help(int32_t c) {
         "  path     where programs not in flash are looked for\r\n"
         "  date     what the clock says, once the network has told it\r\n"
         "  uptime   how long since the machine started, and when that was\r\n"
+        "  uname    what this system is: -a for everything\r\n"
         "  mkdir    make a directory\r\n"
         "  rmdir    remove an empty directory\r\n"
         "  mount    take the SD card again\r\n"
