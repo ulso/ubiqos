@@ -437,6 +437,12 @@ bool verify_ubiqos_header(ubiqos_module_header_t *header) {
 // in syscalls.c so that only this file is rebuilt when the version moves.
 const char *ubiqos_version_string(void) { return UBIQOS_VERSION; }
 
+// The board by name, and the build's date -- UBIQOS_CFG_BOARD and _BUILT. Here
+// for the same reason: this file is rebuilt whenever the version moves, which
+// is every commit, so the date is the build's and not a stale object's.
+const char *ubiqos_board_string(void) { return UBIQOS_BOARD_NAME; }
+const char *ubiqos_built_string(void) { return __DATE__ " " __TIME__; }
+
 // --- THE SYSTEM'S ENTRY POINT ---
 void ubiqos_kernel_main(void) {
     // The version comes from `git describe` at build time -- see

@@ -819,9 +819,13 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             extern const char *ubiqos_version_string(void);
+            extern const char *ubiqos_board_string(void);
+            extern const char *ubiqos_built_string(void);
             const char *v = frame->a0 == UBIQOS_CFG_HOSTNAME ? ubiqos_config_hostname()
                           : frame->a0 == UBIQOS_CFG_SSID     ? ubiqos_config_ssid()
-                          : frame->a0 == UBIQOS_CFG_VERSION  ? ubiqos_version_string() : 0;
+                          : frame->a0 == UBIQOS_CFG_VERSION  ? ubiqos_version_string()
+                          : frame->a0 == UBIQOS_CFG_BOARD    ? ubiqos_board_string()
+                          : frame->a0 == UBIQOS_CFG_BUILT    ? ubiqos_built_string() : 0;
             if (!v) { frame->a0 = (uint32_t)-1; break; }
             char *out = (char *)(uintptr_t)frame->a1;
             uint32_t cap = frame->a2, n = 0;

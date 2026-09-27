@@ -927,6 +927,11 @@ static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 // that shows a user what it is running on, since a support question starts
 // with that.
 #define UBIQOS_CFG_VERSION  3u
+// Which board the system was built for, by its full name -- "Adafruit Fruit
+// Jam" -- and when the kernel was built, as the compiler wrote it: "Sep 27 2026
+// 11:52:03". What `uname` shows as the platform and the version.
+#define UBIQOS_CFG_BOARD    4u
+#define UBIQOS_CFG_BUILT    5u
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
