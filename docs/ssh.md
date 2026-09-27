@@ -45,7 +45,7 @@ decision.
 
 | | |
 |---|---|
-| key exchange | `curve25519-sha256` |
+| key exchange | `mlkem768x25519-sha256`, and `curve25519-sha256` for older clients |
 | host key | `ecdsa-sha2-nistp256` |
 | cipher | `aes256-gcm@openssh.com`, both directions |
 | authentication | `password`, checked in the kernel against the key store |
@@ -55,9 +55,18 @@ One of each, because a second choice is a second thing to get wrong and every
 OpenSSH client made this decade offers all four.
 
 **Not Ed25519**, which is what most people's keys are: mbedTLS has no Edwards
-curves at all, so neither the host key nor a client key can be one. **Not
-post-quantum**: OpenSSH now prefers `mlkem768x25519-sha256` and says so in a
-warning; ML-KEM is not in mbedTLS either.
+curves at all, so neither the host key nor a client key can be one.
+
+**Post-quantum since 0.1.17.** OpenSSH 10 prefers `mlkem768x25519-sha256` and
+warns about any connection without it -- "this session may be vulnerable to
+store now, decrypt later attacks": a recording of today's session, opened by a
+quantum computer later. sshd now offers it first. It is a hybrid: ML-KEM-768
+and X25519 together, the shared secret being SHA-256 of both, so a weakness in
+either still leaves the other. ML-KEM-768 is PQClean's clean implementation,
+public domain, in `third_party/mlkem768/`; mbedTLS has none. The server only
+ever encapsulates -- it never makes an ML-KEM key or decapsulates one -- and
+checks the client's key as FIPS 203 asks before using it. It costs about 0.15
+seconds a login and 12 kB of sshd. A client without it still gets curve25519.
 
 **Not audited.** The cryptography underneath is mbedTLS and the randomness is
 the chip's own generator, but the protocol around them is ours. Put it on your

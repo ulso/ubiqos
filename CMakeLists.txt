@@ -1649,7 +1649,15 @@ ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(uptime modules/uptime/uptime.c)
 ubiqos_add_module(uname modules/uname/uname.c)
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
-ubiqos_add_module(sshd modules/sshd/sshd.c NEWLIB)
+# ML-KEM-768 for the post-quantum half of mlkem768x25519-sha256 -- PQClean's
+# clean implementation, public domain; see third_party/mlkem768/README.md.
+set(UBIQOS_MLKEM768_SOURCES
+    third_party/mlkem768/cbd.c      third_party/mlkem768/fips202.c
+    third_party/mlkem768/indcpa.c   third_party/mlkem768/kem.c
+    third_party/mlkem768/ntt.c      third_party/mlkem768/poly.c
+    third_party/mlkem768/polyvec.c  third_party/mlkem768/reduce.c
+    third_party/mlkem768/symmetric-shake.c third_party/mlkem768/verify.c)
+ubiqos_add_module(sshd modules/sshd/sshd.c ${UBIQOS_MLKEM768_SOURCES} NEWLIB)
 ubiqos_module_use_tls(sshd)
 ubiqos_module_use_tls(fetch)
 # The roots every TLS client trusts, as a data module of their own: one copy in

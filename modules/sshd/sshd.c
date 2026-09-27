@@ -15,6 +15,7 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/gcm.h"
 #include "mbedtls/sha256.h"
+#include "../../third_party/mlkem768/api.h"
 
 // sshd -- a shell over SSH.
 //
@@ -27,7 +28,8 @@
 //
 // WHAT IT IMPLEMENTS, and no more:
 //
-//   kex           curve25519-sha256
+//   kex           mlkem768x25519-sha256, and curve25519-sha256 for a client
+//                 without it
 //   host key      ecdsa-sha2-nistp256
 //   cipher        aes256-gcm@openssh.com, both directions
 //   auth          password, checked against the key store
@@ -35,7 +37,11 @@
 //
 // One of each, because a second choice is a second thing to get wrong and
 // every OpenSSH client made this decade offers all five. A client that offers
-// none of them is told which is missing rather than left to guess.
+// none of them is told which is missing rather than left to guess. The key
+// exchange is the exception: two, so that a client from before post-quantum
+// cryptography still gets in, and one that has it is not warned about "store
+// now, decrypt later" -- a recording of today's session opened by a quantum
+// computer later. ML-KEM-768 is PQClean's, in third_party/mlkem768.
 //
 // NOT Ed25519, which everybody's keys are: mbedTLS has no Edwards curves at
 // all, so neither the host key nor a client key can be one. The host key is
@@ -659,12 +665,20 @@ static uint32_t host_sign(const uint8_t h[32], uint8_t *out, uint32_t cap) {
 static uint8_t session_id[32];
 static bool have_session_id;
 
+// The key exchange this connection uses, settled by client_agrees.
+enum { KEX_NONE, KEX_C25519, KEX_MLKEM };
+static uint32_t kex_alg;
+
+// Ours, most wanted first. The hybrid is ML-KEM-768 and X25519 together, so a
+// flaw in either leaves the other standing.
+#define KEX_OURS "mlkem768x25519-sha256,curve25519-sha256,curve25519-sha256@libssh.org"
+
 static void kexinit_payload(wr_t *w) {
     uint8_t cookie[16];
     mbedtls_ctr_drbg_random(&drbg, cookie, sizeof cookie);
     w_byte(w, MSG_KEXINIT);
     w_raw(w, cookie, sizeof cookie);
-    w_str(w, "curve25519-sha256,curve25519-sha256@libssh.org");
+    w_str(w, KEX_OURS);
     w_str(w, "ecdsa-sha2-nistp256");
     w_str(w, "aes256-gcm@openssh.com");      // client to server
     w_str(w, "aes256-gcm@openssh.com");      // server to client
@@ -686,9 +700,22 @@ static bool client_agrees(const uint8_t *p, uint32_t n) {
     r.at += 16;                              // the cookie
     uint32_t len;
     const uint8_t *kex = r_str(&r, &len);
-    if (!listed(kex, len, "curve25519-sha256") &&
-        !listed(kex, len, "curve25519-sha256@libssh.org")) {
-        say("sshd: the client will not do curve25519-sha256\r\n");
+    // RFC 4253: the first of the CLIENT's that we have too. A client lists
+    // what it prefers first, and OpenSSH prefers the hybrid.
+    kex_alg = KEX_NONE;
+    for (uint32_t i = 0; !r.over && i < len && kex_alg == KEX_NONE; ) {
+        uint32_t j = i;
+        while (j < len && kex[j] != ',') j++;
+        const uint8_t *name = kex + i;
+        const uint32_t nl = j - i;
+        if (nl == 21 && memcmp(name, "mlkem768x25519-sha256", 21) == 0) kex_alg = KEX_MLKEM;
+        else if ((nl == 17 && memcmp(name, "curve25519-sha256", 17) == 0) ||
+                 (nl == 28 && memcmp(name, "curve25519-sha256@libssh.org", 28) == 0))
+            kex_alg = KEX_C25519;
+        i = j + 1;
+    }
+    if (kex_alg == KEX_NONE) {
+        say("sshd: the client will do neither mlkem768x25519-sha256 nor curve25519-sha256\r\n");
         return false;
     }
     const uint8_t *hk = r_str(&r, &len);
@@ -745,6 +772,29 @@ static bool derive_key(char which, const uint8_t *kmp, uint32_t kmplen,
     return true;
 }
 
+// ML-KEM wants random bytes through PQClean's name for them, and gets them
+// from the same generator as everything else here: CTR-DRBG seeded from the
+// chip's true random number generator.
+int PQCLEAN_randombytes(uint8_t *output, size_t n) {
+    return mbedtls_ctr_drbg_random(&drbg, output, n) == 0 ? 0 : -1;
+}
+
+#define MLKEM_PK   PQCLEAN_MLKEM768_CLEAN_CRYPTO_PUBLICKEYBYTES    // 1184
+#define MLKEM_CT   PQCLEAN_MLKEM768_CLEAN_CRYPTO_CIPHERTEXTBYTES   // 1088
+#define MLKEM_SS   PQCLEAN_MLKEM768_CLEAN_CRYPTO_BYTES             // 32
+
+// FIPS 203's check on an encapsulation key, which PQClean leaves to its
+// caller: the first 1152 bytes are 768 twelve-bit numbers, and each must be
+// below q = 3329. A key that fails is one no honest client made.
+static bool mlkem_key_ok(const uint8_t *pk) {
+    for (uint32_t i = 0; i + 3 <= 1152; i += 3) {
+        const uint32_t a = pk[i] | ((uint32_t)(pk[i + 1] & 0x0f) << 8);
+        const uint32_t b = (pk[i + 1] >> 4) | ((uint32_t)pk[i + 2] << 4);
+        if (a >= 3329u || b >= 3329u) return false;
+    }
+    return true;
+}
+
 static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen,
                    const uint8_t *is, uint32_t islen) {
     uint32_t n;
@@ -755,7 +805,16 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
     rd_t r = { payload, n, 1, false };
     uint32_t qclen;
     const uint8_t *qc = r_str(&r, &qclen);
-    if (r.over || qclen != 32) { say("sshd: a curve25519 point is 32 bytes\r\n"); return false; }
+    // For the hybrid, the client's ML-KEM encapsulation key and then its
+    // X25519 point, in one string; for plain curve25519, the point alone.
+    const uint32_t pqlen = kex_alg == KEX_MLKEM ? MLKEM_PK : 0;
+    if (r.over || qclen != pqlen + 32) {
+        say(pqlen ? "sshd: an ML-KEM-768 and X25519 key share is 1216 bytes\r\n"
+                  : "sshd: a curve25519 point is 32 bytes\r\n");
+        return false;
+    }
+    if (pqlen && !mlkem_key_ok(qc)) { say("sshd: the client's ML-KEM key is malformed\r\n"); return false; }
+    const uint8_t *qx = qc + pqlen;           // the X25519 half, either way
 
     // Our half of the exchange. Curve25519 speaks little-endian and mbedTLS
     // speaks whatever it is told, so the byte order is written out here rather
@@ -779,7 +838,7 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
     if (mbedtls_ecp_gen_keypair(&grp, &d, &qs, mbedtls_ctr_drbg_random, &drbg) != 0) goto out;
     if (mbedtls_ecp_point_write_binary(&grp, &qs, MBEDTLS_ECP_PF_UNCOMPRESSED,
                                        &olen, qsb, sizeof qsb) != 0 || olen != 32) goto out;
-    if (mbedtls_ecp_point_read_binary(&grp, &qcp, qc, 32) != 0) goto out;
+    if (mbedtls_ecp_point_read_binary(&grp, &qcp, qx, 32) != 0) goto out;
     if (mbedtls_ecp_mul(&grp, &shared, &d, &qcp, mbedtls_ctr_drbg_random, &drbg) != 0) goto out;
     if (mbedtls_ecp_point_write_binary(&grp, &shared, MBEDTLS_ECP_PF_UNCOMPRESSED,
                                        &olen, kb, sizeof kb) != 0 || olen != 32) goto out;
@@ -794,14 +853,38 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
         // different K. RFC 8731 and OpenSSH both take the raw output of the
         // scalar multiplication and put it in an mpint as it is -- the bytes,
         // not the number they would be in the other order.
+        //
+        // The hybrid is draft-ietf-sshm-mlkem-hybrid-kex, as OpenSSH does it:
+        // our reply is the ML-KEM ciphertext and then our X25519 point, and
+        // the shared secret is SHA-256 of the ML-KEM secret followed by the
+        // X25519 one -- encoded as a STRING, not an mpint. The encoding is
+        // what the hash and the keys are made from, so a wrong one is a
+        // failed exchange and not a subtle one.
+        static uint8_t qs[MLKEM_CT + 32];
+        uint32_t qslen = 32;
         uint8_t kmp[40];
         wr_t kw = { kmp, sizeof kmp, 0, false };
-        w_mpint(&kw, kb, 32);
+        if (kex_alg == KEX_MLKEM) {
+            uint8_t ss[MLKEM_SS], both[MLKEM_SS + 32], k[32];
+            if (PQCLEAN_MLKEM768_CLEAN_crypto_kem_enc(qs, ss, qc) != 0) goto out;
+            memcpy(qs + MLKEM_CT, qsb, 32);
+            qslen = MLKEM_CT + 32;
+            memcpy(both, ss, MLKEM_SS);
+            memcpy(both + MLKEM_SS, kb, 32);
+            if (mbedtls_sha256(both, sizeof both, k, 0) != 0) goto out;
+            w_strn(&kw, k, 32);
+            memset(ss, 0, sizeof ss);
+            memset(both, 0, sizeof both);
+            memset(k, 0, sizeof k);
+        } else {
+            memcpy(qs, qsb, 32);
+            w_mpint(&kw, kb, 32);
+        }
 
         uint8_t ks[128], sig[128];
         const uint32_t kslen = host_key_blob(ks, sizeof ks);
         if (!kslen) goto out;
-        say_hex("Q_C ", qc, 32);
+        say_hex("Q_C ", qx, 32);                // the X25519 half
         say_hex("Q_S ", qsb, 32);
         say_hex("K   ", kb, 32);
         say_hex("K_S ", ks, kslen);
@@ -817,8 +900,8 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
         hash_string(&c, ic, iclen);
         hash_string(&c, is, islen);
         hash_string(&c, ks, kslen);
-        hash_string(&c, qc, 32);
-        hash_string(&c, qsb, 32);
+        hash_string(&c, qc, qclen);
+        hash_string(&c, qs, qslen);
         mbedtls_sha256_update(&c, kmp, kw.n);
         mbedtls_sha256_finish(&c, h);
         mbedtls_sha256_free(&c);
@@ -834,11 +917,11 @@ static bool do_kex(const char *client_version, const uint8_t *ic, uint32_t iclen
         if (debugging) say_num("sshd: signed, ms", (int32_t)(ubiqos_ticks_now() - t0));
         if (!siglen) { say("sshd: the host key would not sign\r\n"); goto out; }
 
-        uint8_t out_pkt[512];
+        static uint8_t out_pkt[1536];         // the hybrid's reply is 1.3 kB
         wr_t w = { out_pkt, sizeof out_pkt, 0, false };
         w_byte(&w, MSG_KEX_ECDH_REPLY);
         w_strn(&w, ks, kslen);
-        w_strn(&w, qsb, 32);
+        w_strn(&w, qs, qslen);
         w_strn(&w, sig, siglen);
         t0 = ubiqos_ticks_now();
         const uint8_t newkeys = MSG_NEWKEYS;
@@ -1390,7 +1473,8 @@ static void serve(void) {
         say("sshd: the key exchange failed\r\n");
         return;
     }
-    say("sshd: keys agreed\r\n");
+    say(kex_alg == KEX_MLKEM ? "sshd: keys agreed, mlkem768x25519-sha256\r\n"
+                             : "sshd: keys agreed, curve25519-sha256\r\n");
 
     if (!do_userauth()) return;
     lat_fed = lat_n = lat_sum = lat_max = st_out = st_iter = 0;
