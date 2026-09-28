@@ -129,9 +129,23 @@ static inline void ubiqos_arch_set_stack_limit(uint32_t limit)
                                           (ARM_SCB_CFSR & ARM_CFSR_STKOF) != 0)
 // Both bits are write-one-to-clear. Left set, the next fault of any kind would
 // look like another overflow.
+//
+// And a system call the overflow interrupted is forgotten. When the limit is
+// met while the core stacks the registers for an SVC, the stacking stops, the
+// fault is taken -- and the SVC stays PENDING. The process is then ended and
+// another switched in, and when the fault handler returns the pending SVC runs
+// against the new process: its r7 as the call number, its r0 as the argument.
+// stackbomb writes a line at every level, so it met the limit inside a write,
+// and the shell that resumed after it had r7 = SYS_EXEC and r0 = 3 -- the pid
+// its own exec had just returned. The kernel looked up a module named at
+// address 3. On the RP2350 that is boot ROM and reads quietly as garbage; on
+// the STM32H5 nothing is there, and it was a bus fault that found this.
+#define ARM_SCB_SHCSR            (*(volatile uint32_t *)0xE000ED24u)
+#define ARM_SHCSR_SVCALLPENDED   (1u << 15)
 #define UBIQOS_TRAP_CLEAR_STACK_OVERFLOW() do { \
         ARM_SCB_CFSR = ARM_CFSR_STKOF; \
         ARM_SCB_HFSR = ARM_HFSR_FORCED; \
+        ARM_SCB_SHCSR &= ~ARM_SHCSR_SVCALLPENDED; \
     } while (0)
 
 // Thread mode, on the process stack, with no floating-point state stacked.
