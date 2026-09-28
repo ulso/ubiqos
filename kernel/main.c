@@ -795,6 +795,10 @@ void ubiqos_kernel_main(void) {
     // Started before the shell, so the console is being serviced by the time
     // anything can type at it.
     ubiqos_usb_start_task();
+#if UBIQOS_CHIP_STM32H5
+    // No USB task there to carry lwIP; Ethernet has a thread of its own.
+    { extern void h5_net_start(void); h5_net_start(); }
+#endif
 
     uint32_t started = 0;
     const char *shell = ubiqos_moddir_match("sh");

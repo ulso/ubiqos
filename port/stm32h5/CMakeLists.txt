@@ -60,6 +60,16 @@ add_custom_target(ubiqos_version ALL
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/ubiqos_version.h)
 
 set(K ${UBIQOS_ROOT}/kernel)
+
+# lwIP itself, from the same copy the RP2350 kernel is built with: the one in
+# the pico-sdk's tree, which is lwIP 2.2 as released. Nothing else of the SDK is
+# used; lib/lwip-patched has UbiqOS's two mDNS files, and port/stm32h5/lwip has
+# the arch header the SDK would otherwise supply.
+set(UBIQOS_LWIP_DIR "$ENV{HOME}/.pico-sdk/sdk/2.3.1/lib/lwip" CACHE PATH "lwIP's source tree")
+file(GLOB H5_LWIP_SOURCES
+    ${UBIQOS_LWIP_DIR}/src/core/*.c
+    ${UBIQOS_LWIP_DIR}/src/core/ipv4/*.c)
+list(APPEND H5_LWIP_SOURCES ${UBIQOS_LWIP_DIR}/src/netif/ethernet.c)
 add_executable(ubiqos_h5
     ${K}/crashlog.c
     ${K}/vfs.c
@@ -88,11 +98,23 @@ add_executable(ubiqos_h5
     sdk.c
     stubs.c
     kapi.c
+    eth.c
+    ethnet.c
+    ${K}/lwipsock.c
+    ${K}/lwipping.c
+    ${K}/lwipmdns.c
+    ${K}/lwipsntp.c
+    ${UBIQOS_ROOT}/lib/lwip-patched/apps/mdns/mdns.c
+    ${UBIQOS_ROOT}/lib/lwip-patched/apps/mdns/mdns_out.c
+    ${UBIQOS_LWIP_DIR}/src/apps/mdns/mdns_domain.c
+    ${H5_LWIP_SOURCES}
 )
 add_dependencies(ubiqos_h5 ubiqos_version)
 target_include_directories(ubiqos_h5 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk
+    ${CMAKE_CURRENT_SOURCE_DIR}/lwip
+    ${UBIQOS_LWIP_DIR}/src/include
     ${CMAKE_CURRENT_BINARY_DIR}
     ${UBIQOS_ROOT}
     ${K}
@@ -105,9 +127,10 @@ target_compile_definitions(ubiqos_h5 PRIVATE
     UBIQOS_CHIP_STM32H5=1
     "UBIQOS_BOARD_HEADER=<boards/nucleo-h563zi.h>"
     UBIQOS_HAS_VIDEO=0 UBIQOS_HAS_CONSOLE=0
-    UBIQOS_HEAP_SIZE=262144
+    UBIQOS_HEAP_SIZE=458752
     DMESG_SIZE=16384
     UBIQOS_CRITICAL_BASEPRI=0x80
+    UBIQOS_LWIP=1
 )
 target_compile_options(ubiqos_h5 PRIVATE ${H5_CPU_FLAGS} -O2 -g -Wall
     -ffunction-sections -fdata-sections -fno-math-errno)

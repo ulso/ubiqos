@@ -75,3 +75,17 @@ int32_t  ubiqos_keys_unattended_on(uint8_t token_out[32]) { (void)token_out; ret
 int32_t  ubiqos_keys_unattended_off(void) { return -1; }
 int32_t  ubiqos_keys_unlock_file(const uint8_t token[32]) { (void)token; return -1; }
 const uint8_t *ubiqos_keys_value(const char *n, uint32_t *l) { (void)n; (void)l; return NULL; }
+
+// --- The C library's heap: there is none ------------------------------------
+// mDNS formats with snprintf, and newlib's formatter can reach malloc -- not for
+// a fixed buffer, which is all it is given, but the reference is enough to pull
+// malloc in, and malloc wants sbrk. On the RP2350 the pico-sdk's own printf
+// stands in and none of it is linked. Here sbrk refuses: a malloc that is ever
+// called gets NULL, which is an answer, rather than memory from nowhere.
+#include <errno.h>
+void *_sbrk(ptrdiff_t incr)
+{
+    (void)incr;
+    errno = ENOMEM;
+    return (void *)-1;
+}
