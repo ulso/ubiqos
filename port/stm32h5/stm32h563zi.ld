@@ -1,0 +1,69 @@
+/* The STM32H563ZI's memory, as seen with TrustZone off (TZEN = 0xC3, the state
+ * a NUCLEO-H563ZI leaves the factory in): 2 MB of flash from 0x08000000 and
+ * 640 kB of SRAM from 0x20000000 -- SRAM1, SRAM2 and SRAM3 back to back.
+ *
+ * The code runs where it is, in flash. The RP2350 build copies itself into
+ * SRAM because of the QMI, which shares one bus between flash and PSRAM; this
+ * chip has its own flash controller and an instruction cache in front of it,
+ * and nothing it runs from an interrupt can stall against anything else.
+ */
+
+ENTRY(ubiqos_reset)
+
+MEMORY
+{
+    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K
+    RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 640K
+}
+
+/* The main stack, for the reset handler, the kernel before it starts the
+ * scheduler, and every exception after. */
+__stack_size = 8K;
+
+SECTIONS
+{
+    .vectors : ALIGN(512)
+    {
+        KEEP(*(.vectors))
+    } > FLASH
+
+    .text :
+    {
+        *(.text .text.*)
+        *(.rodata .rodata.*)
+        KEEP(*(.init))
+        KEEP(*(.fini))
+    } > FLASH
+
+    .ARM.exidx :
+    {
+        *(.ARM.exidx* .gnu.linkonce.armexidx.*)
+    } > FLASH
+
+    .data : ALIGN(4)
+    {
+        __data_start = .;
+        *(.data .data.*)
+        . = ALIGN(4);
+        __data_end = .;
+    } > RAM AT > FLASH
+    __data_load = LOADADDR(.data);
+
+    .bss (NOLOAD) : ALIGN(4)
+    {
+        __bss_start = .;
+        *(.bss .bss.* COMMON)
+        . = ALIGN(4);
+        __bss_end = .;
+    } > RAM
+
+    .stack (NOLOAD) : ALIGN(8)
+    {
+        __stack_limit = .;
+        . += __stack_size;
+        __stack_top = .;
+    } > RAM
+
+    __heap_start = .;
+    __heap_end = ORIGIN(RAM) + LENGTH(RAM);
+}
