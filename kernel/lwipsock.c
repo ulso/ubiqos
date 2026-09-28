@@ -21,6 +21,12 @@
 #include "tlsf.h"
 
 extern tlsf_pool_t ubiqos_bulk_pool;
+extern tlsf_pool_t ubiqos_mem_pool;
+
+// PSRAM where there is some, and the one pool where there is not: a board with
+// no PSRAM got no ring and so no socket, which nobody noticed while every board
+// had eight megabytes of it. The NUCLEO-H563ZI has none and 640 kB of SRAM.
+static tlsf_pool_t ring_pool(void) { return ubiqos_bulk_pool ? ubiqos_bulk_pool : ubiqos_mem_pool; }
 
 // What a connection has received and nobody has read yet, as BYTES.
 //
@@ -89,13 +95,13 @@ static int alloc_sock(void)
 // chain, which is how it always worked and is no worse than before.
 static void give_ring(int i)
 {
-    sk[i].ring = ubiqos_bulk_pool ? ubiqos_tlsf_malloc(ubiqos_bulk_pool, RXRING) : NULL;
+    sk[i].ring = ubiqos_tlsf_malloc(ring_pool(), RXRING);
     sk[i].rhead = sk[i].rcount = 0;
 }
 
 static void free_sock(int i)
 {
-    if (sk[i].ring) { ubiqos_tlsf_free(ubiqos_bulk_pool, sk[i].ring); sk[i].ring = NULL; }
+    if (sk[i].ring) { ubiqos_tlsf_free(ring_pool(), sk[i].ring); sk[i].ring = NULL; }
     sk[i].rcount = 0;
     if (sk[i].rx) { pbuf_free(sk[i].rx); sk[i].rx = NULL; }
     sk[i].used = false;
