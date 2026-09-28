@@ -23,7 +23,7 @@ const char *h5_reset_reason(void)
 }
 
 // Copied by h5_clock_init before the instruction cache goes on -- see there.
-uint32_t h5_uid_words[3];
+extern uint32_t h5_uid_words[3];
 
 void h5_unique_id(uint8_t out[12])
 {

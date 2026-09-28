@@ -55,6 +55,10 @@ void ubiqos_reset(void);
 
 typedef void (*vector_t)(void);
 
+// The range fills every entry with the default, and the two after it replace
+// theirs: GCC warns about the replacement under -Wextra, and it is the point.
+#pragma GCC diagnostic ignored "-Woverride-init"
+
 __attribute__((section(".vectors"), used))
 const vector_t ubiqos_vectors[16 + H5_IRQ_COUNT] = {
     [0]  = (vector_t)&__stack_top,

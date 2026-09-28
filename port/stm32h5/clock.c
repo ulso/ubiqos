@@ -14,6 +14,7 @@
 #include "stm32h5xx.h"
 #include "port.h"
 
+uint32_t h5_uid_words[3];       // the device id; see the note before ICACHE below
 uint32_t h5_sysclk_hz = 32000000u;
 uint32_t h5_pclk1_hz  = 32000000u;
 bool     h5_clock_from_hse;
@@ -78,7 +79,6 @@ void h5_clock_init(void)
     // there is a bus fault: ST's answer is an MPU region marking the area
     // uncacheable, and this one is to read the twelve bytes once, first. Found
     // by the kernel faulting in h5_unique_id with BFARVALID set.
-    extern uint32_t h5_uid_words[3];
     for (int w = 0; w < 3; w++) h5_uid_words[w] = ((const volatile uint32_t *)UID_BASE)[w];
 
     // The instruction cache in front of the flash: with five wait states,
