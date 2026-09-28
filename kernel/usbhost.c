@@ -743,7 +743,7 @@ void tuh_hid_umount_cb(uint8_t addr, uint8_t instance) {
     if (repeat_key) ubiqos_hid_lost_repeats++;
     forget_held_keys();
 
-    ubiqos_print("USB host: HID gone\n");
+    ev_push(EV_LOG, LOG_HID_GONE, 0, 0);
 }
 
 // The layout comes from the keyboard's descriptor, which is where it belongs:
@@ -991,11 +991,12 @@ void tuh_cdc_mount_cb(uint8_t idx) {
     if (tuh_cdc_itf_get_info(idx, &info))
         tuh_vid_pid_get(info.daddr, &vid, &pid);
 
-    ubiqos_print("USB host: CDC-ACM ready as 'acm', ");
-    ubiqos_print_hex(vid);
-    ubiqos_print(":");
-    ubiqos_print_hex(pid);
-    ubiqos_print(tuh_cdc_get_dtr(idx) ? ", DTR high\n" : ", DTR low\n");
+    // Said by core 0, as every line from here must be -- see WHAT CORE 1 MAY
+    // NOT DO ITSELF. This one printed directly for a while, and holding
+    // interrupts off guards the log against this core only: on the display a
+    // detach printed over the bus reset line core 0 was writing at the same
+    // moment, and left " by a program" of it.
+    ev_push(EV_LOG, LOG_CDC_UP, ((uint32_t)vid << 16) | pid, tuh_cdc_get_dtr(idx) ? 1u : 0u);
 }
 
 // Which device /dev/acm is, as UBIQOS_SS_ACM_ID answers it.
@@ -1037,7 +1038,7 @@ int32_t ubiqos_usbhost_cdc_reset(void) {
 
 void tuh_cdc_umount_cb(uint8_t idx) {
     if (cdc_index == (int32_t)idx) cdc_index = -1;
-    ubiqos_print("USB host: CDC-ACM device gone\n");
+    ev_push(EV_LOG, LOG_CDC_GONE, 0, 0);
 }
 
 void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
