@@ -393,7 +393,9 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
     // is the shell's stdin the command should read.
     case UBIQOS_MSG_FS_EXEC: {
         const ubiqos_fs_exec_t *e = (const ubiqos_fs_exec_t*)m->data;
-        int32_t pid = ubiqos_process_create(e->module, e->args);
+        extern int32_t ubiqos_process_create_for(const ubiqos_module_header_t *m,
+                                                 const char *args, int32_t parent);
+        int32_t pid = ubiqos_process_create_for(e->module, e->args, from);
         if (pid >= 0) {
             ubiqos_io_inherit(from, pid);
             ubiqos_cwd_inherit(from, pid);

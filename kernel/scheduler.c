@@ -6,6 +6,7 @@
 #include "trap.h"
 #include "io.h"
 #include "moddir.h"
+#include "critical.h"
 
 #define MAX_PROCESSES UBIQOS_MAX_PROCESSES
 #define KERNEL_PID    0     // The kernel is itself a process, always runnable.
@@ -124,19 +125,29 @@ static int32_t  ready_head[UBIQOS_PRIO_LEVELS];
 static int32_t  ready_tail[UBIQOS_PRIO_LEVELS];
 static uint32_t ready_bitmap;
 
+// In a critical section, because not every caller is a trap. The filesystem
+// server creates a process from its own thread, and the socket server answers
+// from the network's: both put a process in a queue with the tick free to come
+// in half way and take one out of the same queue. Between "the queue is not
+// empty" and "link behind the tail" the tick could take the last one, and the
+// one being added was linked behind a process no longer in any queue -- READY,
+// and never run again.
 static void ready_enqueue(int32_t pid) {
+    const ubiqos_critical_t st = ubiqos_critical_enter();
     uint32_t p = process_table[pid].priority;
     process_table[pid].next_ready = -1;
     if (ready_head[p] < 0) ready_head[p] = pid;
     else process_table[ready_tail[p]].next_ready = pid;
     ready_tail[p] = pid;
     ready_bitmap |= (1u << p);
+    ubiqos_critical_exit(st);
 }
 
 // Out of the queue it is standing in. Only killing needs this -- a process that
 // blocks is simply not put back, which is why nothing else ever had to remove
 // one. Leaving a dead process linked would hand the processor to a free slot.
 static void ready_remove(int32_t pid) {
+    const ubiqos_critical_t st = ubiqos_critical_enter();
     uint32_t p = process_table[pid].priority;
     int32_t cur = ready_head[p], prev = -1;
     while (cur >= 0) {
@@ -147,11 +158,13 @@ static void ready_remove(int32_t pid) {
             if (ready_tail[p] == pid) ready_tail[p] = prev;
             if (ready_head[p] < 0) ready_bitmap &= ~(1u << p);
             process_table[pid].next_ready = -1;
+            ubiqos_critical_exit(st);
             return;
         }
         prev = cur;
         cur = process_table[cur].next_ready;
     }
+    ubiqos_critical_exit(st);
 }
 
 // The highest priority with anyone in it. The idle process is always ready, so
@@ -424,8 +437,26 @@ uint8_t *ubiqos_module_relocated_copy(const ubiqos_module_header_t *m, void **ow
 }
 
 
+int32_t ubiqos_process_create_for(const ubiqos_module_header_t *module_ptr,
+                                  const char *args, int32_t parent);
+bool ubiqos_process_is_module(int32_t pid);
+
 int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr,
                               const char *args) {
+    return ubiqos_process_create_for(module_ptr, args, current_pid);
+}
+
+// Made on behalf of PARENT, whose priority the new process takes. That is the
+// shell, when the shell runs a command -- but the filesystem server does the
+// creating, in its own thread, and for as long as the priority was taken from
+// whoever called this, every command ran at the server's 22 rather than the
+// shell's 16. A command that never blocks then starved the shell, which could
+// not so much as name it as the foreground, so Ctrl-C had nobody to end; on the
+// STM32H5 it starved the network thread as well, and ping stopped answering.
+// A kernel thread is not a parent a priority is inherited from: what it starts
+// runs at the default.
+int32_t ubiqos_process_create_for(const ubiqos_module_header_t *module_ptr,
+                                  const char *args, int32_t parent) {
     // A module without the re-entrant attribute has writable data that every
     // instance would share, so there may only be one. OS-9 said the same thing
     // with the same bit. A service that owns hardware, or a protocol stack with
@@ -626,9 +657,9 @@ int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr,
     process_table[slot].intr_pulse    = 0;
     process_table[slot].intr_deadline = -1;
 
-    process_table[slot].priority = (current_pid == KERNEL_PID)
-                                 ? UBIQOS_PRIO_DEFAULT
-                                 : process_table[current_pid].priority;
+    process_table[slot].priority = ubiqos_process_is_module(parent)
+                                 ? process_table[parent].priority
+                                 : UBIQOS_PRIO_DEFAULT;
     process_table[slot].state = PROC_STATE_READY;
     ready_enqueue(slot);
 
