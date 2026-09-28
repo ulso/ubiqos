@@ -718,7 +718,14 @@ void ubiqos_kernel_main(void) {
     // anything. The kernel falls back on the device it already uses for its own
     // diagnostics, so the system never goes mute merely because the card is
     // missing a descriptor.
-    if (!ubiqos_io_device_count()) {
+    //
+    // Asked as "is there a console", not "is there any device". /dev/null is
+    // registered with no descriptor at all, so the count was never zero once it
+    // existed and this fallback had quietly become dead code. Nobody noticed on
+    // the RP2350 boards, which carry descriptors in flash; the first board with
+    // none -- the NUCLEO-H563ZI -- started a shell with no stdin, which read -1
+    // in a loop a million times a second.
+    if (!ubiqos_io_has_device("term") && !ubiqos_io_has_device("usb")) {
         ubiqos_print("No descriptors found; registering the built-in console.\n");
         static const struct {
             ubiqos_descriptor_t desc;
