@@ -19,9 +19,21 @@
 //
 // A region ends where the next begins, which is what keeps an oversized system
 // image from quietly swallowing the application's half.
+//
+// The RP2350's addresses come first in this file on purpose: CMakeLists.txt
+// reads the module base out of it with a pattern and takes the first match.
+#if !UBIQOS_CHIP_STM32H5
 #define UBIQOS_FLASH_MODULE_BASE 0x10100000u
 #define UBIQOS_FLASH_APP_BASE    0x10800000u
 #define UBIQOS_FLASH_END         0x11000000u
+#else
+// The STM32H563's 2 MB: the kernel in the first bank's first megabyte, the
+// system's modules in half of the second, the application after them, and the
+// key store in the last sectors -- 8 kB each on this chip, not the RP2350's 4.
+#define UBIQOS_FLASH_MODULE_BASE 0x08100000u
+#define UBIQOS_FLASH_APP_BASE    0x08180000u
+#define UBIQOS_FLASH_END         0x081F0000u
+#endif
 
 // The key store: two 4 kB sectors, written alternately so that losing power in
 // the middle of a write leaves the older copy whole. It is the one thing in
@@ -32,8 +44,13 @@
 // RP2350-E10 block addressed at 0x10ffff00, and the boot ROM writes it -- so
 // the last sector is erased every time a system is copied onto the board, and
 // anything kept there would go with it.
+#if !UBIQOS_CHIP_STM32H5
 #define UBIQOS_FLASH_KEYS_BASE   0x10FE0000u
 #define UBIQOS_FLASH_KEYS_SIZE   0x2000u
+#else
+#define UBIQOS_FLASH_KEYS_BASE   0x081F0000u
+#define UBIQOS_FLASH_KEYS_SIZE   0x4000u
+#endif
 
 // The fixed data area: RAM set aside at a known address for the writable data
 // of the single-instance programs make_flash_image.py places there, so that

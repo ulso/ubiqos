@@ -18,9 +18,13 @@ int32_t ubiqos_console_trace_at(uint32_t offset);
 #include "crashlog.h"
 #include "keystore.h"
 #include "crypto.h"
+#if UBIQOS_CHIP_STM32H5
+#include "port.h"          // the RNG, in place of the RP2350's TRNG and ROSC
+#else
 #include "hardware/structs/rosc.h"
 #include "hardware/structs/trng.h"
 #include "hardware/resets.h"
+#endif
 #include "pico/time.h"
 #include "critical.h"
 #include "config.h"
@@ -161,6 +165,13 @@ void ubiqos_random_bytes(uint8_t *out, uint32_t len)
 
 static int32_t trng_raw(uint8_t *out, uint32_t want)
 {
+#if UBIQOS_CHIP_STM32H5
+    // The H5's RNG, which runs its own health tests and hands out conditioned
+    // words -- more than the RP2350's raw samples are, and hashed by the caller
+    // all the same.
+    if (want > 64) want = 64;
+    return h5_rng_read(out, want);
+#else
     static bool up;
     if (!up) {
         unreset_block_num_wait_blocking(RESET_TRNG);
@@ -182,6 +193,7 @@ static int32_t trng_raw(uint8_t *out, uint32_t want)
         }
     }
     return (int32_t)n;
+#endif
 }
 
 uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
@@ -1012,6 +1024,9 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             if (want > 256) want = 256;          // see the note in the header
+#if UBIQOS_CHIP_STM32H5
+            frame->a0 = (uint32_t)h5_rng_read(out, want);
+#else
             uint32_t n = 0;
             while (n < want) {
                 uint32_t r = 0;
@@ -1020,6 +1035,7 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 for (int b = 0; b < 4 && n < want; b++) out[n++] = (uint8_t)(r >> (8 * b));
             }
             frame->a0 = n;
+#endif
             break;
         }
         case SYS_USBINFO: {

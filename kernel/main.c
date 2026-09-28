@@ -2,8 +2,10 @@
 #include <stdbool.h>
 #include "tlsf.h"
 #include "../common/modules.h"
+#if !UBIQOS_CHIP_STM32H5
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
+#endif
 #include "io.h"
 #include "trap.h"
 #include "sdcard.h"
@@ -12,11 +14,17 @@
 #include "flashmod.h"
 #include "ubiqos_version.h"
 #include "keystore.h"
+#include "pico/time.h"
+#if UBIQOS_CHIP_STM32H5
+// The STM32H5 port: the console, the reset reason, the reboot. See port/stm32h5.
+#include "port.h"
+#include "hardware/sync.h"     // which the SDK's uart header brought in on the RP2350
+#else
 #include "pico/bootrom.h"
 #include "pico/unique_id.h"
 #include "hardware/watchdog.h"
 #include "hardware/psram.h"
-#include "pico/time.h"
+#endif
 
 void ubiqos_pio_probe(void);
 void ubiqos_video_init(void);
@@ -42,7 +50,11 @@ void ubiqos_usbhost_init(void);
 // are doing something else -- see boards/ws43b.h. It has to be an absence at
 // build time rather than a peripheral left alone: ubiqos_putc WAITS on the
 // UART, so an uninitialised one hangs the kernel on its first line.
-#if UBIQOS_HAS_DIAG_UART
+#if UBIQOS_CHIP_STM32H5
+// One serial line to the computer, shared with the shell: see port/stm32h5/console.c.
+void ubiqos_uart_init(void) { h5_console_init(UBIQOS_UART_BAUD); }
+#define UBIQOS_UART_PUT(c) h5_console_putc(c)
+#elif UBIQOS_HAS_DIAG_UART
 void ubiqos_uart_init(void) {
     uart_init(UBIQOS_UART, UBIQOS_UART_BAUD);
     gpio_set_function(UBIQOS_UART_TX_PIN, UART_FUNCSEL_NUM(UBIQOS_UART, UBIQOS_UART_TX_PIN));
@@ -255,6 +267,11 @@ uint32_t ubiqos_psram_bytes(void) { return psram_bytes; }
 // framebuffer or a file buffer has no business eating the seventy kilobytes
 // that were left.
 static void ubiqos_bulk_pool_init(void) {
+#if UBIQOS_CHIP_STM32H5
+    // No PSRAM on this board; everything is SRAM, and there is plenty of it.
+    ubiqos_print("PSRAM: none on this board; bulk allocations come from SRAM\n");
+    return;
+#else
     if (!psram_is_available()) {
         ubiqos_print("PSRAM: none found; bulk allocations fall back to SRAM\n");
         return;
@@ -279,6 +296,7 @@ static void ubiqos_bulk_pool_init(void) {
     ubiqos_print(" kB at 0x");
     ubiqos_print_hex(UBIQOS_PSRAM_BASE);
     ubiqos_print(ubiqos_bulk_pool ? ", second pool ready\n" : ", pool refused\n");
+#endif
 }
 
 // --- MEMORY MANAGEMENT (TLSF) ---
@@ -479,6 +497,11 @@ void ubiqos_kernel_main(void) {
     // POWMAN remembers across the reset that it is reporting on. Power-on and
     // brown-out are the two that matter here; the watchdog bits would name our
     // own reboot command, and the glitch detector is its own kind of news.
+#if UBIQOS_CHIP_STM32H5
+    ubiqos_print("Reset: ");
+    ubiqos_print(h5_reset_reason());
+    ubiqos_print("\n");
+#else
     {
         uint32_t why = *(volatile uint32_t *)(0x40100000u + 0x2cu);
         ubiqos_print("Reset: ");
@@ -494,6 +517,7 @@ void ubiqos_kernel_main(void) {
         ubiqos_print_u32(why);
         ubiqos_print(")\n");
     }
+#endif
     
     // 1. Initiera TLSF-minnespoolen
     ubiqos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");
@@ -612,9 +636,15 @@ void ubiqos_kernel_main(void) {
     // these boards on one desk do not answer to the same address.
     {
         extern void ubiqos_usb_net_id(const uint8_t *unique, uint32_t n);
+#if UBIQOS_CHIP_STM32H5
+        uint8_t id[12];
+        h5_unique_id(id);
+        ubiqos_usb_net_id(id, sizeof id);
+#else
         pico_unique_board_id_t id;
         pico_get_unique_board_id(&id);
         ubiqos_usb_net_id(id.id, sizeof id.id);
+#endif
     }
 
     // The key queue first, and unconditionally: anything reading a console
@@ -744,7 +774,13 @@ void ubiqos_kernel_main(void) {
             ubiqos_descriptor_t desc;
             ubiqos_uart_config_t uart;
         } fallback = {
+            // On the STM32H5 the port's own USART driver, built in; the
+            // uart module is the RP2350's and its registers are not here.
+#if UBIQOS_CHIP_STM32H5
+            .desc = { .device_name = "term", .driver_name = "h5uart",
+#else
             .desc = { .device_name = "term", .driver_name = "uart",
+#endif
                       .device_class = UBIQOS_CLASS_CHAR, .reserved = 0,
                       .config_offset = sizeof(ubiqos_descriptor_t),
                       .config_size = sizeof(ubiqos_uart_config_t) },
@@ -838,7 +874,11 @@ void ubiqos_kernel_main(void) {
 // works from the Hazard3 core -- the BOOTSEL button and this end up in the same
 // place.
 void ubiqos_reboot_bootsel(void) {
+#if UBIQOS_CHIP_STM32H5
+    h5_reboot_bootloader();
+#else
     reset_usb_boot(0, 0);
+#endif
 }
 
 // Start the machine again, which is the other half of what the BOOTSEL button
@@ -847,7 +887,11 @@ void ubiqos_reboot_bootsel(void) {
 // and everything comes up as it does from power-on -- except the card, which
 // does not lose power and so stays latched into whatever bus it was using.
 void ubiqos_reboot_machine(void) {
+#if UBIQOS_CHIP_STM32H5
+    NVIC_SystemReset();
+#else
     watchdog_reboot(0, 0, 0);
+#endif
     for (;;) { }                // it does not come back; this is for the compiler
 }
 
@@ -868,7 +912,13 @@ int main(void) {
     // of 25, so 640x480 arrives at about 57 Hz rather than 60. Monitors take it.
     // The gain is that a bus which a hub has to resynchronise and repeat is at
     // last clocked at the rate it is specified for.
+#if UBIQOS_CHIP_STM32H5
+    // The clock is already up -- the port's reset handler starts it before any
+    // C that could care -- and the microsecond clock is all that is missing.
+    h5_time_init();
+#else
     set_sys_clock_khz(120000, true);
+#endif
 
     ubiqos_uart_init();
     ubiqos_kernel_main();
