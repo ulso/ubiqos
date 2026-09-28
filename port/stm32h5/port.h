@@ -25,6 +25,8 @@ uint32_t h5_console_write(const uint8_t *buf, uint32_t len);   // what fitted
 uint32_t h5_console_room(void);
 uint32_t h5_console_read(uint8_t *buf, uint32_t len);
 uint32_t h5_console_available(void);
+void h5_console_start_thread(void);          // Ctrl-C; see console.c
+void h5_net_start(void);                     // Ethernet and lwIP; see ethnet.c
 
 // What the kernel asks of the chip that the pico-sdk answered on the RP2350.
 const char *h5_reset_reason(void);           // why this boot happened, in words

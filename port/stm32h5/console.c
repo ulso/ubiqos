@@ -28,6 +28,7 @@ static volatile uint32_t tx_head, tx_tail;  // head: next free; tail: next to se
 static uint8_t rx_ring[RX_SIZE];
 static volatile uint32_t rx_head, rx_tail;
 static volatile uint32_t rx_dropped;
+static volatile bool intr_seen;       // a Ctrl-C arrived; the console thread acts on it
 static bool up;
 
 static void pin_af(GPIO_TypeDef *g, uint32_t pin, uint32_t af)
@@ -83,6 +84,7 @@ void USART3_IRQHandler(void)
         const uint8_t c = (uint8_t)USART3->RDR;
         if (rx_head - rx_tail < RX_SIZE) rx_ring[rx_head++ & (RX_SIZE - 1u)] = c;
         else rx_dropped++;
+        if (c == 0x03) intr_seen = true;
     }
     if ((USART3->CR1 & USART_CR1_TXEIE_TXFNFIE) && (isr & USART_ISR_TXE_TXFNF)) {
         if (tx_head != tx_tail) USART3->TDR = tx_ring[tx_tail++ & (TX_SIZE - 1u)];
@@ -185,3 +187,43 @@ const ubiqos_driver_t h5_term_driver = {
     .open = term_open, .write = term_write, .read = term_read, .close = term_close,
     .readable = term_readable, .writable = term_writable,
 };
+
+// --- Ctrl-C -------------------------------------------------------------------
+//
+// What the USB console does on the RP2350, here: the key ends the command in
+// front of the terminal, and whatever was typed after it goes with it. The
+// interrupt only notices -- ending a process is the kernel's business and may
+// not be done from a handler -- and this thread, which wakes every few
+// milliseconds above every program, does the rest. With nothing in front the
+// key stays in the input like any other, and the shell clears its line.
+//
+// Above every program, because the command a Ctrl-C is for may be one that
+// never gives the processor up.
+
+#include "usbdev.h"                    // the thread priorities
+
+void ubiqos_print(const char *s);
+int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t priority);
+bool ubiqos_io_interrupt(const char *device_name);
+
+static void console_thread(void)
+{
+    for (;;) {
+        if (intr_seen) {
+            intr_seen = false;
+            if (ubiqos_io_interrupt("term")) {
+                const uint32_t st = __get_PRIMASK();
+                __disable_irq();
+                rx_tail = rx_head;             // the typed-ahead, and the key itself
+                __set_PRIMASK(st);
+            }
+        }
+        ubiqos_sleep(5);
+    }
+}
+
+void h5_console_start_thread(void)
+{
+    if (ubiqos_kernel_thread(console_thread, 1024, UBIQOS_PRIO_USB) < 0)
+        ubiqos_print("console: could not start its thread; Ctrl-C will not end commands\n");
+}

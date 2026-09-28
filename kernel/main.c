@@ -796,8 +796,10 @@ void ubiqos_kernel_main(void) {
     // anything can type at it.
     ubiqos_usb_start_task();
 #if UBIQOS_CHIP_STM32H5
-    // No USB task there to carry lwIP; Ethernet has a thread of its own.
-    { extern void h5_net_start(void); h5_net_start(); }
+    // No USB task there to carry lwIP or the console's Ctrl-C; each has a
+    // thread of its own.
+    h5_console_start_thread();
+    h5_net_start();
 #endif
 
     uint32_t started = 0;
