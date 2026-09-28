@@ -25,16 +25,26 @@ void ubiqos_default_handler(void)
 #define WEAK_HANDLER(name) \
     void name(void) __attribute__((weak, alias("ubiqos_default_handler")))
 
+// The four the kernel takes, under the names it gives them on the RP2350 --
+// kernel/arm/scheduler.S, one body for all four, IPSR saying which. Weak, so
+// the test program links without a kernel.
+WEAK_HANDLER(isr_hardfault);
+WEAK_HANDLER(isr_svcall);
+WEAK_HANDLER(isr_pendsv);
+WEAK_HANDLER(isr_systick);
+
 WEAK_HANDLER(NMI_Handler);
-WEAK_HANDLER(HardFault_Handler);
 WEAK_HANDLER(MemManage_Handler);
 WEAK_HANDLER(BusFault_Handler);
 WEAK_HANDLER(UsageFault_Handler);
 WEAK_HANDLER(SecureFault_Handler);
-WEAK_HANDLER(SVC_Handler);
 WEAK_HANDLER(DebugMon_Handler);
-WEAK_HANDLER(PendSV_Handler);
-WEAK_HANDLER(SysTick_Handler);
+
+// The port's own device interrupts: the microsecond clock's overflow and the
+// console. Direct handlers, not through the kernel's trap -- the SDK's
+// interrupt handlers work the same way on the RP2350.
+WEAK_HANDLER(TIM2_IRQHandler);
+WEAK_HANDLER(USART3_IRQHandler);
 
 void ubiqos_reset(void);
 
@@ -50,25 +60,26 @@ const vector_t ubiqos_vectors[16 + H5_IRQ_COUNT] = {
     [0]  = (vector_t)&__stack_top,
     [1]  = ubiqos_reset,
     [2]  = NMI_Handler,
-    [3]  = HardFault_Handler,
+    [3]  = isr_hardfault,
     [4]  = MemManage_Handler,
     [5]  = BusFault_Handler,
     [6]  = UsageFault_Handler,
     [7]  = SecureFault_Handler,
-    [11] = SVC_Handler,
+    [11] = isr_svcall,
     [12] = DebugMon_Handler,
-    [14] = PendSV_Handler,
-    [15] = SysTick_Handler,
+    [14] = isr_pendsv,
+    [15] = isr_systick,
     [16 ... 16 + H5_IRQ_COUNT - 1] = ubiqos_default_handler,
+    [16 + TIM2_IRQn]   = TIM2_IRQHandler,
+    [16 + USART3_IRQn] = USART3_IRQHandler,
 };
 
 void ubiqos_reset(void)
 {
-    // The stack pointer came from the table; its limit did not. MSPLIM is the
-    // same guard PSPLIM is for a process -- this is a Cortex-M33 like the
-    // RP2350's -- and costs nothing to set.
-    extern uint32_t __stack_limit;
-    __set_MSPLIM((uint32_t)&__stack_limit);
+    // MSPLIM is left at zero, as the RP2350's startup leaves it. The kernel
+    // moves MSP to its own interrupt stack when it becomes the idle process
+    // (kernel/arm/stack.c), and a limit set here for the startup stack would
+    // then sit above the new one and fault the first exception.
 
     uint32_t *src = &__data_load, *dst = &__data_start;
     while (dst < &__data_end) *dst++ = *src++;

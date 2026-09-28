@@ -49,6 +49,14 @@ SECTIONS
     } > RAM AT > FLASH
     __data_load = LOADADDR(.data);
 
+    /* Kept across a warm reset: the startup code neither loads nor clears it.
+     * The kernel's crash record lives here, so that the reboot that follows a
+     * crash can still say what it was. */
+    .uninitialized_data (NOLOAD) : ALIGN(4)
+    {
+        *(.uninitialized_data .uninitialized_data.*)
+    } > RAM
+
     .bss (NOLOAD) : ALIGN(4)
     {
         __bss_start = .;

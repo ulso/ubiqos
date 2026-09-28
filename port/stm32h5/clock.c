@@ -73,6 +73,14 @@ void h5_clock_init(void)
     RCC->CFGR1 = (RCC->CFGR1 & ~RCC_CFGR1_SW) | (3u << RCC_CFGR1_SW_Pos);
     while (((RCC->CFGR1 & RCC_CFGR1_SWS) >> RCC_CFGR1_SWS_Pos) != 3u) { }
 
+    // The device id, while it can still be read. It sits in the flash's
+    // read-only area at 0x08FFF800, and with the instruction cache on a read
+    // there is a bus fault: ST's answer is an MPU region marking the area
+    // uncacheable, and this one is to read the twelve bytes once, first. Found
+    // by the kernel faulting in h5_unique_id with BFARVALID set.
+    extern uint32_t h5_uid_words[3];
+    for (int w = 0; w < 3; w++) h5_uid_words[w] = ((const volatile uint32_t *)UID_BASE)[w];
+
     // The instruction cache in front of the flash: with five wait states,
     // running without it is running at a fraction of the clock.
     ICACHE->CR |= ICACHE_CR_EN;
