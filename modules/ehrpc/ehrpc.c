@@ -59,6 +59,7 @@ UBIQOS_MEM_SIZE(16384);
 #define REQ_GET_MODE  259u
 #define REQ_GET_PS    271u
 #define REQ_GET_RSSI  341u
+#define REQ_GET_PHY   339u    // WifiStaGetNegotiatedPhymode
 #define RESP_OFFSET   256u
 
 
@@ -694,6 +695,32 @@ static void do_rssi(int32_t dev) {
     ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
+// Which 802.11 generation the association actually uses: what the chip and
+// the access point settled on, rather than what either of them offers.
+static void do_phy(int32_t dev) {
+    uint8_t payload[64];
+    uint32_t plen = 0;
+    uint32_t resp = call(dev, REQ_GET_PHY, 0, 0, 3000, payload, sizeof(payload), &plen);
+    if (resp == 0xffffffffu) { say("ehrpc: no answer\r\n"); return; }
+    if (resp) { say("ehrpc: not associated\r\n"); return; }
+
+    ps_t m = { 0, 0 };                        // value at field 2 again
+    walk(payload, plen, on_ps, &m);
+
+    static const char *const names[] = {
+        "long range", "802.11b", "802.11g", "802.11a",
+        "802.11n, 20 MHz", "802.11n, 40 MHz", "802.11ax, 20 MHz", "802.11ac, 20 MHz",
+    };
+    ubiqos_line_t l;
+    ubiqos_line_reset(&l);
+    ubiqos_line_str(&l, "phy mode ");
+    ubiqos_line_u32(&l, m.type);
+    ubiqos_line_str(&l, "  (");
+    ubiqos_line_str(&l, m.type < 8 ? names[m.type] : "something else");
+    ubiqos_line_str(&l, ")\r\n");
+    ubiqos_line_flush(UBIQOS_STDOUT, &l);
+}
+
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
             "usage: ehrpc mode | peek | connect <ssid> | auto | scan\n\n"
@@ -701,6 +728,7 @@ void module_main(int argc, char **argv) {
             "  mode    which WiFi mode the radio is in\n"
             "  ps      which power-saving mode it is actually in\n"
             "  rssi    how strong the signal from the access point is\n"
+            "  phy     which 802.11 mode the association settled on\n"
             "  peek    whatever the chip has said that nobody has taken\n"
             "  connect <ssid>  bring the radio up and join. A password kept in\n"
             "          the key store as 'wifi.<ssid>' is used without asking and\n"
@@ -718,8 +746,9 @@ void module_main(int argc, char **argv) {
     const bool scanning  = argc == 2 && is(argv[1], "scan");
     bool ps   = argc == 2 && is(argv[1], "ps");
     bool rssi = argc == 2 && is(argv[1], "rssi");
-    if (!mode && !peek && !conn && !ps && !rssi && !automatic && !scanning) {
-        say("usage: ehrpc mode | ps | rssi | peek | connect <ssid> | auto | scan\r\n");
+    bool phy  = argc == 2 && is(argv[1], "phy");
+    if (!mode && !peek && !conn && !ps && !rssi && !phy && !automatic && !scanning) {
+        say("usage: ehrpc mode | ps | rssi | phy | peek | connect <ssid> | auto | scan\r\n");
         return;
     }
 
@@ -730,6 +759,7 @@ void module_main(int argc, char **argv) {
     else if (mode)      do_mode(dev);
     else if (ps)   do_ps(dev);
     else if (rssi) do_rssi(dev);
+    else if (phy)  do_phy(dev);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
     ubiqos_close(dev);

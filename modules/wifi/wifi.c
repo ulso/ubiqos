@@ -35,7 +35,8 @@ void module_main(int argc, char **argv) {
             "  scan            which networks are in earshot, strongest first,\n"
             "                  and which of them there is a key for\n"
             "  rssi            the access point's signal strength\n"
-            "  mode, ps        which mode and power saving the radio is in\n\n"
+            "  mode, ps        which mode and power saving the radio is in\n"
+            "  phy             which 802.11 mode the association settled on\n\n"
             "The same as ehrpc, which does the work. To join at every boot\n"
             "without typing, put ssid and password in /sd/config.txt.\n"))
         return;
@@ -43,10 +44,10 @@ void module_main(int argc, char **argv) {
     const bool connect = argc == 3 && is(argv[1], "connect");
     const bool simple  = argc == 2 && (is(argv[1], "rssi") || is(argv[1], "mode")
                                        || is(argv[1], "ps") || is(argv[1], "auto")
-                                       || is(argv[1], "scan"));
+                                       || is(argv[1], "scan") || is(argv[1], "phy"));
     if (!connect && !simple) {
         ubiqos_write_str(UBIQOS_STDOUT,
-                         "usage: wifi connect <ssid> | auto | scan | rssi | mode | ps\r\n");
+                         "usage: wifi connect <ssid> | auto | scan | rssi | mode | ps | phy\r\n");
         return;
     }
 
