@@ -52,7 +52,14 @@ void ubiqos_print(const char *s);
 // settings that are nobody's secret stay in a file anybody may read.
 #define WIFI_PATH "wificfg.txt"
 
-static char host[32] = "ubiqos";
+// The board's own name when the card gives none, where the board has one -- a
+// board with no card slot at all would otherwise answer to "ubiqos", like
+// every other board in the room with nothing on its card.
+#include "board.h"
+#ifndef UBIQOS_DEFAULT_HOSTNAME
+#define UBIQOS_DEFAULT_HOSTNAME "ubiqos"
+#endif
+static char host[32] = UBIQOS_DEFAULT_HOSTNAME;
 static char ssid[33];
 static char pass[64];
 static bool done;
