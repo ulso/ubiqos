@@ -55,7 +55,13 @@
 // it on the internet.
 
 UBIQOS_MEM_SIZE(49152);
-uint32_t ubiqos_heap_bytes = 192u * 1024u;   // mbedTLS's contexts, in PSRAM
+// The C library's heap, taken in one piece at the first malloc. It was 192 kB,
+// which in PSRAM cost nothing; on a board without PSRAM it is SRAM, and on the
+// NUCLEO-H563ZI it left 27 kB for everything else, so a pipe in an ssh session
+// had no room for its second command. Measured there after a login and a
+// session, the heap's high-water mark was 2800 bytes: sshd's large state is
+// static. 64 kB is twenty times that.
+uint32_t ubiqos_heap_bytes = 64u * 1024u;
 
 #define DEFAULT_PORT 22
 #define NET_WAIT_S   30
