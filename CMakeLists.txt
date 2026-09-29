@@ -1657,7 +1657,10 @@ set(UBIQOS_MLKEM768_SOURCES
     third_party/mlkem768/ntt.c      third_party/mlkem768/poly.c
     third_party/mlkem768/polyvec.c  third_party/mlkem768/reduce.c
     third_party/mlkem768/symmetric-shake.c third_party/mlkem768/verify.c)
-ubiqos_add_module(sshd modules/sshd/sshd.c ${UBIQOS_MLKEM768_SOURCES} NEWLIB)
+# One instance: it listens on one port and serves its sessions itself, and
+# with SINGLE its data can have a fixed place in RAM while its code stays in
+# flash, on a board that sets such a place aside -- see UBIQOS_ATTR_SPLIT.
+ubiqos_add_module(sshd modules/sshd/sshd.c ${UBIQOS_MLKEM768_SOURCES} NEWLIB SINGLE)
 ubiqos_module_use_tls(sshd)
 ubiqos_module_use_tls(fetch)
 # The roots every TLS client trusts, as a data module of their own: one copy in
