@@ -457,8 +457,24 @@ int32_t ubiqos_process_create(const ubiqos_module_header_t *module_ptr,
 // STM32H5 it starved the network thread as well, and ping stopped answering.
 // A kernel thread is not a parent a priority is inherited from: what it starts
 // runs at the default.
+//
+// The module comes LINKED, and the link becomes the process's: it is let go of
+// when the process ends. When there is no process it is let go of here. Every
+// caller linked and then created, and not one of them unlinked on failure --
+// so each refusal for a full table, a short pool or a second instance left a
+// link behind, and a module off the card that has links never leaves memory.
+static int32_t create_process(const ubiqos_module_header_t *module_ptr,
+                              const char *args, int32_t parent);
+
 int32_t ubiqos_process_create_for(const ubiqos_module_header_t *module_ptr,
                                   const char *args, int32_t parent) {
+    const int32_t pid = create_process(module_ptr, args, parent);
+    if (pid < 0 && module_ptr) ubiqos_moddir_unlink(module_ptr);
+    return pid;
+}
+
+static int32_t create_process(const ubiqos_module_header_t *module_ptr,
+                              const char *args, int32_t parent) {
     // A module without the re-entrant attribute has writable data that every
     // instance would share, so there may only be one. OS-9 said the same thing
     // with the same bit. A service that owns hardware, or a protocol stack with
