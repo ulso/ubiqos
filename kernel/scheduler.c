@@ -8,8 +8,9 @@
 #include "moddir.h"
 #include "critical.h"
 #include "flashmod.h"
+#include "sizes.h"
 
-#define MAX_PROCESSES UBIQOS_MAX_PROCESSES
+#define MAX_PROCESSES UBIQOS_PROCESSES
 #define KERNEL_PID    0     // The kernel is itself a process, always runnable.
 
 // A process that is waiting is not runnable. Until this existed, waiting meant

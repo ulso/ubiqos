@@ -278,7 +278,7 @@ typedef struct {
 //
 // The table is indexed by pid, so it must be as tall as the scheduler's process
 // table. One definition, shared, rather than two numbers that have to agree.
-#define UBIQOS_MAX_PROCS UBIQOS_MAX_PROCESSES
+#define UBIQOS_MAX_PROCS UBIQOS_PROCESSES
 
 typedef struct {
     const ubiqos_device_t *device;

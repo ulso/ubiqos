@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../common/ubiqos_abi.h"
+#include "sizes.h"          // UBIQOS_PATHS, UBIQOS_OPEN_FILES, UBIQOS_PROCESSES
 
 // The I/O manager, in the spirit of OS-9: processes open a path to a named
 // device and write to the path number. The driver owns the hardware.
@@ -27,7 +28,7 @@
 // process, so the whole rise costs under a kilobyte -- and three of a
 // process's eight were always stdin, stdout and stderr, which left five for
 // its own work and a pipeline with redirection on both halves can want more.
-#define UBIQOS_MAX_PATHS   12
+#define UBIQOS_MAX_PATHS   UBIQOS_PATHS        // 12 unless the board says; kernel/sizes.h
 #define UBIQOS_PATH_NONE   (-1)
 
 // ubiqos_driver_t was here. It is in common/ubiqos_abi.h now, because a driver
@@ -96,7 +97,7 @@ bool     ubiqos_io_writable(int32_t path, int32_t owner_pid);
 // REFUSED twelve -- so this is the one number on the list that was not chosen
 // but forced, back when moving the drivers out of the kernel had not yet
 // happened. Seventy-two bytes an entry.
-#define UBIQOS_MAX_OPEN_FILES 16
+#define UBIQOS_MAX_OPEN_FILES UBIQOS_OPEN_FILES   // 16 unless the board says; kernel/sizes.h
 
 // Bind an already-resolved absolute path to a free descriptor. Called by the
 // filesystem server, which is the only thing that knows the path is real.

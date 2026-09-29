@@ -90,9 +90,10 @@ void ubiqos_putc(char c) {
 // printed first of all. Like UBIQOS_HEAP_SIZE this comes from CMake and follows
 // UBIQOS_VIDEO, because a framebuffer build has no room to spare and a chargen
 // build has 300 kB.
-#ifndef DMESG_SIZE
-#define DMESG_SIZE 2048
-#endif
+//
+// A board may name its own in its header, and that wins -- see kernel/sizes.h,
+// which is also where the 2 kB default is.
+#include "sizes.h"
 static char dmesg_buf[DMESG_SIZE];
 static uint32_t dmesg_head;      // where the next byte goes
 static bool dmesg_wrapped;
@@ -522,6 +523,21 @@ void ubiqos_kernel_main(void) {
     // 1. Initiera TLSF-minnespoolen
     ubiqos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");
     ubiqos_mem_pool = ubiqos_tlsf_create(UBIQOS_POOL_BASE, UBIQOS_POOL_BYTES);
+
+    // What this kernel was built with, as the kernel sees it: a size a board
+    // meant to set and did not is the kind of mistake that compiles, so the
+    // log says what took effect rather than what was intended.
+    ubiqos_print("  tables: ");
+    ubiqos_print_u32(UBIQOS_PROCESSES);
+    ubiqos_print(" processes, ");
+    ubiqos_print_u32(UBIQOS_PATHS);
+    ubiqos_print(" paths each, ");
+    ubiqos_print_u32(UBIQOS_OPEN_FILES);
+    ubiqos_print(" open files, dmesg ");
+    ubiqos_print_u32(DMESG_SIZE);
+    ubiqos_print(", pool ");
+    ubiqos_print_u32(UBIQOS_POOL_BYTES);
+    ubiqos_print(" bytes\n");
     
     if (ubiqos_mem_pool) {
         ubiqos_print("🎉 Success: Memory engine active!\n");

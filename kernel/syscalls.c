@@ -73,7 +73,7 @@ static bool server_request(int32_t srv, uint32_t type, void *data) {
 // is gone the moment we switch away. One entry per process is enough because a
 // process can only be blocked in one send at a time, which is the same argument
 // that lets a sender's buffer be passed by pointer at all.
-static ubiqos_fs_fdio_t fdio_req[UBIQOS_MAX_PROCESSES];
+static ubiqos_fs_fdio_t fdio_req[UBIQOS_PROCESSES];
 
 // And the same for a socket call, for the same reason and one that took a
 // while to see: the message carries a POINTER, and a request left on the trap
@@ -82,10 +82,10 @@ static ubiqos_fs_fdio_t fdio_req[UBIQOS_MAX_PROCESSES];
 // server is the USB task, which looks once a millisecond, and in that window
 // another trap overwrites the request -- which read as a socket operation of
 // 2290649225 and varied from run to run depending on what else was happening.
-static ubiqos_wifi_sock_t sock_req[UBIQOS_MAX_PROCESSES];
-static ubiqos_fs_open_t open_req[UBIQOS_MAX_PROCESSES];
-static ubiqos_fs_seek_t seek_req[UBIQOS_MAX_PROCESSES];
-static ubiqos_fs_exec_t exec_req[UBIQOS_MAX_PROCESSES];
+static ubiqos_wifi_sock_t sock_req[UBIQOS_PROCESSES];
+static ubiqos_fs_open_t open_req[UBIQOS_PROCESSES];
+static ubiqos_fs_seek_t seek_req[UBIQOS_PROCESSES];
+static ubiqos_fs_exec_t exec_req[UBIQOS_PROCESSES];
 
 static bool fs_request(uint32_t type, void *data) {
     return server_request(ubiqos_fs_server_pid(), type, data);

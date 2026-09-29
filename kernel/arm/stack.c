@@ -20,6 +20,7 @@
 //
 // -- pc 0xFFFFFFFC, a return into nothing. Two stack pointers need two stacks.
 #include <stdint.h>
+#include "../sizes.h"
 
 // Deep enough for the deepest system call, because that is what runs here: the
 // handler and everything it calls, including the file server request path. The
@@ -27,7 +28,7 @@
 // 72-byte frame and nothing more, where on RISC-V they carry the kernel's work
 // as well. If this is ever too small the symptom will be a fault with a pc
 // inside the kernel and a stack pointer just below ubiqos_irq_stack.
-#define UBIQOS_IRQ_STACK_WORDS 1024   // 4 kB
+#define UBIQOS_IRQ_STACK_WORDS (UBIQOS_IRQ_STACK_BYTES / 4)   // 4 kB unless the board says
 
 __attribute__((aligned(8)))
 uint32_t ubiqos_irq_stack[UBIQOS_IRQ_STACK_WORDS];
