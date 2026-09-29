@@ -10,14 +10,18 @@
 
 ENTRY(ubiqos_reset)
 
-/*
- The top 64 kB of SRAM are not the kernel's: they are the fixed data area,
+/* The kernel's flash is the first 256 kB, and the module image starts where it
+ * ends -- UBIQOS_FLASH_MODULE_BASE in kernel/flashmod.h, which must say the
+ * same. A kernel that outgrows it fails to link rather than running into the
+ * modules. It is 123 kB today.
+ *
+ * The top 64 kB of SRAM are not the kernel's: they are the fixed data area,
  * where make_flash_image.py puts the writable data of the single-instance
  * programs whose code stays in flash -- UBIQOS_FIXED_DATA_BASE in
  * kernel/flashmod.h, which must say the same. */
 MEMORY
 {
-    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K
+    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 256K
     RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 576K
     FIXED (rw)  : ORIGIN = 0x20090000, LENGTH = 64K
 }

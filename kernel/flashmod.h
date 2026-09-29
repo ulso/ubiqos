@@ -27,10 +27,12 @@
 #define UBIQOS_FLASH_APP_BASE    0x10800000u
 #define UBIQOS_FLASH_END         0x11000000u
 #else
-// The STM32H563's 2 MB: the kernel in the first bank's first megabyte, the
-// system's modules in half of the second, the application after them, and the
-// key store in the last sectors -- 8 kB each on this chip, not the RP2350's 4.
-#define UBIQOS_FLASH_MODULE_BASE 0x08100000u
+// The STM32H563's 2 MB: the kernel in the first 256 kB -- it uses 123 -- the
+// system's modules from there across the bank boundary, the application after
+// them, and the key store in the last sectors -- 8 kB each on this chip, not
+// the RP2350's 4. The modules had half of the second bank and had filled 95 %
+// of it, while the kernel sat in a megabyte of its own.
+#define UBIQOS_FLASH_MODULE_BASE 0x08040000u
 #define UBIQOS_FLASH_APP_BASE    0x08180000u
 #define UBIQOS_FLASH_END         0x081F0000u
 #endif
