@@ -760,6 +760,43 @@ instrumentation: `CONFIG_ESP_PKT_STATS` and the function profiling in
 `esp/fruitjam-c6/`, which are two lines of sdkconfig and a reflash -- and
 reflashing that chip is routine now.
 
+### It was 802.11ax
+
+It could be decomposed from this end after all, and the co-processor was
+never reflashed. Two measurements did it (29 September 2026).
+
+**Timing a ping at the bus.** `ehstat` now shows an echo request of ours
+from leaving over SPI to its reply arriving over SPI, and one of theirs from
+arriving to our reply leaving. Ours took 99.0 to 99.2 ms and theirs was
+answered in 2 ms. So 97 ms of every round trip was outside this host -- and
+almost the same every time, which a beacon interval would not be: pings a
+second apart drift 24 ms against a 102.4 ms beacon.
+
+**A reference on the same network.** From the same wired Mac, other WiFi
+stations answered in 7 to 13 ms at best, and the Mac's own WiFi reached the
+router in 6. The Fruit Jam never came in under 67. The air and the router
+were fine; the difference was this station.
+
+`ehrpc phy` asks the chip which mode the association settled on
+(WifiStaGetNegotiatedPhymode, 339), and it said **802.11ax, 20 MHz**. The C6
+is a Wi-Fi 6 chip and the house router is a Wi-Fi 6 mesh, so they agreed on
+it. With `WifiSetProtocol` (297) restricting the chip to b/g/n before the
+join:
+
+| | 802.11ax | 802.11n |
+|---|---|---|
+| Mac to board, idle, best | 67 ms | 11 ms |
+| Mac to board, idle, average | 90 ms | 17 ms |
+| board to router | 102 ms | 9--14 ms |
+| twenty pings a second | past a second, queueing | 15 ms, none lost |
+| a hundred pings a second | -- | 19 ms, none lost |
+
+The driver now sets b/g/n in `radio_prepare`. Why 802.11ax costs this much
+between this chip and this router is not known, and there is nothing to buy
+by finding out: the SPI link carries a few megabits, which 802.11n carries
+many times over. What it cured in use: an ssh session over WiFi was treacle
+every time, and one over the USB cable was not.
+
 ## Why not UART
 
 UART needs no extra pins and GP8/GP9 are already there. Espressif's own design
