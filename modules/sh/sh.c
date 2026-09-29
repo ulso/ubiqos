@@ -260,8 +260,16 @@ static bool line_is(const char *line, const char *word) {
 
 // What start_one returns for a built in: it has already run, in this process,
 // so there is no pid to wait for and nothing failed. Every caller that reads a
-// negative return has to know this one, which is why it is not just -4.
-#define SH_BUILTIN (-4)
+// negative return has to know this one.
+//
+// These two are the shell's own and sit far below anything SYS_EXEC answers.
+// SH_BUILTIN was -4 until the kernel took -4 for a full process table, and a
+// refused command then looked like a built in that had run: the shell said
+// nothing at all.
+#define SH_BUILTIN (-100)
+// Said already -- a redirection that could not be made reports its own error,
+// and the caller must not add "no such module" to it.
+#define SH_SAID    (-101)
 
 // cd is built in and has to be. A module changing its own current directory
 // changes nothing for the shell that started it -- the child gets a copy at
@@ -433,12 +441,12 @@ static int32_t start_one(char *cmd) {
     // among the modules and not found. They write to UBIQOS_STDOUT, which is
     // the pipe's file, or the > file, whenever one of those is in place.
     //
-    // -3 rather than -1: the redirection said what was wrong, and the caller
+    // SH_SAID rather than -1: the redirection said what was wrong, and the caller
     // adding "no such module" to it sends the reader looking for the wrong
     // thing entirely.
     int32_t pid;
     if (opened != nrd) {
-        pid = -3;
+        pid = SH_SAID;
     } else if (line_is(cmd, "help")) {
         help(UBIQOS_STDOUT);
         pid = SH_BUILTIN;
@@ -476,7 +484,7 @@ static int32_t run_between(char *cmd, int32_t fd, const char *file, uint32_t fla
     int32_t f = ubiqos_open_flags(file, flags);
     if (f < 0) {
         ubiqos_write_str(UBIQOS_STDERR, "sh: no room in /tmp for the pipe\n");
-        return -3;
+        return SH_SAID;
     }
     int32_t saved = ubiqos_dup(fd, -1);
     ubiqos_dup(f, fd);
@@ -504,7 +512,7 @@ static int32_t run_pipeline(char *left, char *right) {
 
     int32_t p1 = run_between(left, UBIQOS_STDOUT, between,
                              UBIQOS_O_WRONLY | UBIQOS_O_CREAT | UBIQOS_O_TRUNC);
-    if (p1 == -3) return -3;
+    if (p1 == SH_SAID) return SH_SAID;
     if (p1 < 0 && p1 != SH_BUILTIN) {
         ubiqos_fs_remove(between); failed_name = left; return p1;
     }
@@ -689,7 +697,7 @@ static int32_t exec_line(char *line) {
         while (e > line && e[-1] == ' ') *--e = 0;
         if (!*line || !*right) {
             ubiqos_write_str(UBIQOS_STDERR, "sh: a pipe wants a command on both sides\n");
-            return -3;
+            return SH_SAID;
         }
         return run_pipeline(line, right);
     }
@@ -867,14 +875,18 @@ void module_main(int argc, char **argv) {
             if (ran) {
                 remember(e);
                 int32_t r = exec_line(e->line);
-                if (r < 0 && r != -3 && r != SH_BUILTIN) {
+                if (r < 0 && r != SH_SAID && r != SH_BUILTIN) {
                     ubiqos_line_t l;
                     ubiqos_line_reset(&l);
-                    // -2 means the module is there but is not re-entrant and
-                    // is already running. Saying "no such module" for that
-                    // sends the reader looking for the wrong problem.
-                    ubiqos_line_str(&l, r == -2 ? "already running: "
-                                                : "no such module: ");
+                    // Only -1 means the module is not there. The others say
+                    // it is and could not be started, and "no such module"
+                    // for any of them sends the reader looking for the wrong
+                    // problem -- as it did for a full process table, which
+                    // a board with eight slots fills with three commands.
+                    ubiqos_line_str(&l, r == UBIQOS_EXEC_RUNNING   ? "already running: "
+                                      : r == UBIQOS_EXEC_NO_SLOT   ? "no free process slot for "
+                                      : r == UBIQOS_EXEC_NO_MEMORY ? "not enough memory for "
+                                                                   : "no such module: ");
                     // The command that failed, which for a pipeline is not
                     // the head of the line. This read e->line, and start_one
                     // NUL-terminates the LEFT half at its first space -- so

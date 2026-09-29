@@ -487,7 +487,7 @@ static int32_t create_process(const ubiqos_module_header_t *module_ptr,
             ubiqos_print("  refused: ");
             ubiqos_print((const char*)((uintptr_t)module_ptr + module_ptr->name_offset));
             ubiqos_print(" is not re-entrant and is already running\n");
-            return -2;      // distinct from -1, so a shell can say which it was
+            return UBIQOS_EXEC_RUNNING;   // distinct from -1, so a shell can say which it was
         }
     }
 
@@ -499,7 +499,7 @@ static int32_t create_process(const ubiqos_module_header_t *module_ptr,
     }
     if (slot < 0) {
         ubiqos_print("Error: process table full.\n");
-        return -1;
+        return UBIQOS_EXEC_NO_SLOT;
     }
 
     // One contiguous area: data at the bottom, stack downwards from the top.
@@ -507,7 +507,7 @@ static int32_t create_process(const ubiqos_module_header_t *module_ptr,
     void *mem = ubiqos_tlsf_malloc(ubiqos_pool_for(module_ptr), bytes);
     if (!mem) {
         ubiqos_print("Error: failed to allocate process memory.\n");
-        return -1;
+        return UBIQOS_EXEC_NO_MEMORY;
     }
 
     // A module is copied when it cannot run where it lies, and the module says
@@ -552,7 +552,7 @@ static int32_t create_process(const ubiqos_module_header_t *module_ptr,
         if (!aligned) {
             ubiqos_print("Error: failed to allocate room to relocate a module.\n");
             ubiqos_tlsf_free(ubiqos_pool_for(module_ptr), mem);
-            return -1;
+            return UBIQOS_EXEC_NO_MEMORY;
         }
 
         // run is the aligned copy; code_base keeps the allocation itself, which

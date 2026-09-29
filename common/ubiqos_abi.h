@@ -1840,11 +1840,20 @@ static inline void ubiqos_reboot(void)
 // block, and a syscall that blocks in the middle has to be able to resume where
 // it stopped. Two calls from out here need none of that machinery, and every
 // caller gets the behaviour by calling ubiqos_exec as it always did.
+// What SYS_EXEC answers when there is no process. -1 alone means the name was
+// not found, which is the one answer worth looking on the card for; the others
+// say the program exists and could not be started, and reading the card about
+// them would only be slower.
+#define UBIQOS_EXEC_NOT_FOUND  (-1)
+#define UBIQOS_EXEC_RUNNING    (-2)   // one instance only, and it is running
+#define UBIQOS_EXEC_NO_SLOT    (-4)   // the process table is full
+#define UBIQOS_EXEC_NO_MEMORY  (-5)   // no room for its memory, or for its copy
+
 static inline int32_t ubiqos_exec(const char *module_name, const char *args)
 {
     int32_t pid = ubiqos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
                                  (uint32_t)(uintptr_t)args, 0);
-    if (pid != -1) return pid;               // -2 is "not re-entrant", not "missing"
+    if (pid != UBIQOS_EXEC_NOT_FOUND) return pid;   // started, or refused for a reason
 
     if (ubiqos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)module_name, 0, 0) != 0)
         return -1;
