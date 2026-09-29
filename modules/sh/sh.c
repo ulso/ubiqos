@@ -505,7 +505,11 @@ static int32_t run_between(char *cmd, int32_t fd, const char *file, uint32_t fla
 // Which command could not be started, for the caller to name. It is set for
 // every failure that has a name to give, and read only when exec_line returns
 // one of those -- see the note where it is reported.
-static const char *failed_name;
+//
+// Per process, in the thread-local block. As a plain static it was the only
+// writable byte in the module, and it made every shell a copy of the whole ten
+// kilobytes in RAM rather than code run where it lies in flash.
+static __thread const char *failed_name;
 
 static int32_t run_pipeline(char *left, char *right) {
     const char *between = "/tmp/pipe";
