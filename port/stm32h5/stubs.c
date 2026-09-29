@@ -3,8 +3,9 @@
 // what the answer means, so that a command that asks gets "not here" rather
 // than a hang or a fault.
 //
-// These go one by one as the port grows: the key store when the flash driver
-// is written, the USB device when TinyUSB comes, the network when lwIP does.
+// These go one by one as the port grows: the key store went when the flash
+// driver was written, the network when lwIP came; the USB device waits for
+// TinyUSB.
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -36,7 +37,6 @@ uint32_t ubiqos_usbhost_cdc_id(void) { return 0; }
 int32_t  ubiqos_usbhost_cdc_reset(void) { return -1; }
 uint32_t ubiqos_usbhost_info(uint32_t what) { (void)what; return 0; }
 void     ubiqos_usbhost_set_keymap(const ubiqos_keymap_t *k) { (void)k; }
-void     ubiqos_keys_park_here(void) { }
 
 // --- PIO, WiFi: RP2350 and Fruit Jam hardware -----------------------------
 void     ubiqos_pio_probe(void) { }
@@ -54,27 +54,6 @@ void     ubiqos_sd_forget(void) { }
 bool     ubiqos_fat_mount(void) { return false; }
 int32_t  ubiqos_fat_stat(const char *path, uint32_t *size_out) { (void)path; (void)size_out; return -1; }
 const ubiqos_fsops_t *ubiqos_fat_ops_ptr(void) { return NULL; }
-
-// --- The key store: sealed in flash, and the flash driver is not written ----
-// EMPTY rather than an error, so that `key` says there is no store; unlocking
-// refuses, so that nothing believes a secret was kept.
-void     ubiqos_keys_init(void) { }
-uint32_t ubiqos_keys_state(void) { return UBIQOS_KEYS_EMPTY; }
-int32_t  ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen) { (void)pass; (void)plen; return -1; }
-void     ubiqos_keys_lock(void) { }
-int32_t  ubiqos_keys_destroy(void) { return -1; }
-uint32_t ubiqos_keys_count(void) { return 0; }
-bool     ubiqos_keys_nth(uint32_t i, char *n, uint32_t *l) { (void)i; (void)n; (void)l; return false; }
-bool     ubiqos_keys_fingerprint(const char *n, uint32_t *o) { (void)n; (void)o; return false; }
-bool     ubiqos_keys_match(const char *n, const uint8_t *v, uint32_t l) { (void)n; (void)v; (void)l; return false; }
-bool     ubiqos_keys_derive(const char *label, uint8_t out[32]) { (void)label; (void)out; return false; }
-int32_t  ubiqos_keys_set(const char *n, const uint8_t *v, uint32_t l) { (void)n; (void)v; (void)l; return -1; }
-int32_t  ubiqos_keys_remove(const char *n) { (void)n; return -1; }
-bool     ubiqos_keys_unattended(void) { return false; }
-int32_t  ubiqos_keys_unattended_on(uint8_t token_out[32]) { (void)token_out; return -1; }
-int32_t  ubiqos_keys_unattended_off(void) { return -1; }
-int32_t  ubiqos_keys_unlock_file(const uint8_t token[32]) { (void)token; return -1; }
-const uint8_t *ubiqos_keys_value(const char *n, uint32_t *l) { (void)n; (void)l; return NULL; }
 
 // --- The C library's heap: there is none ------------------------------------
 // mDNS formats with snprintf, and newlib's formatter can reach malloc -- not for

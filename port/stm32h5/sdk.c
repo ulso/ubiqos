@@ -32,10 +32,34 @@ void h5_unique_id(uint8_t out[12])
 }
 
 // The RNG runs from HSI48, which nothing else has started yet. Its words have
-// been through the chip's own conditioning and health tests; a seed or clock
-// error clears itself with a conditioning reset, and a word that never comes
-// ends the read short rather than holding a trap for ever.
+// been through the chip's own conditioning and health tests.
+//
+// It is set up the way ST gives for this family -- the NIST configuration
+// 0x00F00D00 written together with the conditioning reset, and the health test
+// threshold 0xAAC7 -- as Zephyr's driver does it. Left at its reset values the
+// RNG ran, but ran out: sshd seeds its generator with more bytes than a TLS
+// connection does, met a word that never came, and refused to start with "no
+// entropy", every time. A seed error is recovered the way the reference
+// manual says, by pulsing the conditioning reset until it and the error flags
+// are clear, and a word is waited for long enough to arrive: in the NIST
+// configuration the RNG delivers sixteen bytes every 343 microseconds.
+#define RNG_NIST_CONFIG  0x00F00D00u
+#define RNG_NIST_HTCR    0x0000AAC7u
+#define RNG_CONFIG_BITS  (RNG_CR_NISTC | RNG_CR_CLKDIV | RNG_CR_RNG_CONFIG1 \
+                        | RNG_CR_RNG_CONFIG2 | RNG_CR_RNG_CONFIG3)
+#define RNG_WORD_SPINS   2000000u   // a few milliseconds at 240 MHz, several words' worth
+
 static bool rng_up;
+uint32_t h5_rng_seed_errors, h5_rng_timeouts;
+
+static bool rng_condition_reset(void)
+{
+    RNG->CR |= RNG_CR_CONDRST;
+    RNG->CR &= ~RNG_CR_CONDRST;
+    for (uint32_t n = 0; n < 100000u; n++)
+        if (!(RNG->CR & RNG_CR_CONDRST)) return true;
+    return false;
+}
 
 static void rng_start(void)
 {
@@ -43,8 +67,25 @@ static void rng_start(void)
     while (!(RCC->CR & RCC_CR_HSI48RDY)) { }
     RCC->AHB2ENR |= RCC_AHB2ENR_RNGEN;
     (void)RCC->AHB2ENR;
-    RNG->CR = RNG_CR_RNGEN;
+
+    RNG->CR = (RNG->CR & ~RNG_CONFIG_BITS) | RNG_NIST_CONFIG | RNG_CR_CONDRST;
+    RNG->HTCR = RNG_NIST_HTCR;
+    RNG->CR &= ~RNG_CR_CONDRST;
+    while (RNG->CR & RNG_CR_CONDRST) { }
+    RNG->CR |= RNG_CR_RNGEN;
     rng_up = true;
+}
+
+// Whether the RNG is in a state to deliver: a seed error is cleared and the
+// conditioning started again; a clock error is not this driver's to fix.
+static bool rng_healthy(void)
+{
+    const uint32_t sr = RNG->SR;
+    if (!(sr & (RNG_SR_SECS | RNG_SR_SEIS))) return !(sr & RNG_SR_CECS);
+    h5_rng_seed_errors++;
+    RNG->SR = ~RNG_SR_SEIS;                   // write-zero-to-clear
+    if (!rng_condition_reset()) return false;
+    return !(RNG->SR & (RNG_SR_SECS | RNG_SR_CECS));
 }
 
 int32_t h5_rng_read(uint8_t *out, uint32_t len)
@@ -52,14 +93,14 @@ int32_t h5_rng_read(uint8_t *out, uint32_t len)
     if (!rng_up) rng_start();
     uint32_t n = 0;
     while (n < len) {
-        if (RNG->SR & (RNG_SR_SECS | RNG_SR_CECS)) {
-            RNG->CR |= RNG_CR_CONDRST;
-            RNG->CR &= ~RNG_CR_CONDRST;
-        }
         uint32_t spins = 0;
-        while (!(RNG->SR & RNG_SR_DRDY) && ++spins < 100000u) { }
-        if (!(RNG->SR & RNG_SR_DRDY)) break;
+        while (!(RNG->SR & RNG_SR_DRDY) && ++spins < RNG_WORD_SPINS) {
+            if ((spins & 1023u) == 0 && !rng_healthy()) break;
+        }
+        if (!(RNG->SR & RNG_SR_DRDY)) { h5_rng_timeouts++; break; }
         const uint32_t w = RNG->DR;
+        // A word read while a seed error was being raised is not to be used.
+        if (RNG->SR & RNG_SR_SEIS) { rng_healthy(); continue; }
         for (int b = 0; b < 4 && n < len; b++) out[n++] = (uint8_t)(w >> (8 * b));
     }
     return (int32_t)n;

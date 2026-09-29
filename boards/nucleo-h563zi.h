@@ -19,6 +19,15 @@
 // at a time.
 #define UBIQOS_HAS_DIAG_UART 0
 
+// The key store opens itself: it is sealed under a passphrase everybody knows,
+// see UBIQOS_KEYS_DEFAULT_PASS in kernel/fsserver.c, and tried with it at boot.
+// A bench board with no card has nowhere to keep a key file and nobody to type
+// at it, and a store that stays shut is a store nothing can use. What that
+// costs is plain: the store keeps its secrets from nobody who can read the
+// flash, and the ST-LINK on this board reads it. Give the store a passphrase
+// of its own and it stays shut until `key unlock`, as on any other board.
+#define UBIQOS_KEYS_OPEN_BY_DEFAULT 1
+
 #define UBIQOS_BOARD_FIXED_PINS                                              \
     { UBIQOS_PIN('D', 8), "console" }, { UBIQOS_PIN('D', 9), "console" },     \
     /* The Ethernet PHY's RMII and management lines, fixed by the board. */   \

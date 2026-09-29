@@ -100,6 +100,9 @@ add_executable(ubiqos_h5
     kapi.c
     eth.c
     ethnet.c
+    flash.c
+    ${K}/keystore.c
+    ${K}/crypto.c
     ${K}/lwipsock.c
     ${K}/lwipping.c
     ${K}/lwipmdns.c
@@ -127,7 +130,7 @@ target_compile_definitions(ubiqos_h5 PRIVATE
     UBIQOS_CHIP_STM32H5=1
     "UBIQOS_BOARD_HEADER=<boards/nucleo-h563zi.h>"
     UBIQOS_HAS_VIDEO=0 UBIQOS_HAS_CONSOLE=0
-    UBIQOS_HEAP_SIZE=458752
+    UBIQOS_HEAP_SIZE=524288
     DMESG_SIZE=16384
     UBIQOS_CRITICAL_BASEPRI=0x80
     UBIQOS_LWIP=1
