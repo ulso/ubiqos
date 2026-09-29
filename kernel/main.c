@@ -377,10 +377,23 @@ static void ubiqos_bulk_pool_init(void) {
 // The size itself now comes from CMake, because it has to follow UBIQOS_VIDEO:
 // a framebuffer build has some 28 kB of SRAM left over and a chargen build has
 // 300, and one number cannot be right for both. See UBIQOS_HEAP_KB.
+//
+// Or, on a port whose linker script says where it is, it is simply whatever
+// SRAM the kernel left: __pool_start to __pool_end. A number here would have
+// to be moved by hand every time the kernel grew or shrank, and on the
+// STM32H5 it was 37 kB short of the memory that was actually free.
+#if UBIQOS_POOL_FROM_LINKER
+extern uint8_t __pool_start[], __pool_end[];
+#define UBIQOS_POOL_BASE  __pool_start
+#define UBIQOS_POOL_BYTES ((uint32_t)(__pool_end - __pool_start))
+#else
 #ifndef UBIQOS_HEAP_SIZE
 #define UBIQOS_HEAP_SIZE (40 * 1024)
 #endif
 uint8_t ubiqos_heap[UBIQOS_HEAP_SIZE] __attribute__((aligned(4)));
+#define UBIQOS_POOL_BASE  ubiqos_heap
+#define UBIQOS_POOL_BYTES UBIQOS_HEAP_SIZE
+#endif
 tlsf_pool_t ubiqos_mem_pool;
 
 // Validate the header before anything in it is trusted.
@@ -484,7 +497,7 @@ void ubiqos_kernel_main(void) {
     
     // 1. Initiera TLSF-minnespoolen
     ubiqos_print("Initializing TLSF O(1) Real-Time Memory Pool...\n");
-    ubiqos_mem_pool = ubiqos_tlsf_create(ubiqos_heap, UBIQOS_HEAP_SIZE);
+    ubiqos_mem_pool = ubiqos_tlsf_create(UBIQOS_POOL_BASE, UBIQOS_POOL_BYTES);
     
     if (ubiqos_mem_pool) {
         ubiqos_print("🎉 Success: Memory engine active!\n");
