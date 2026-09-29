@@ -352,6 +352,7 @@ function(ubiqos_app_image name)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}.bin
         COMMAND python3 ${UBIQOS_ROOT}/make_flash_image.py
+                --base ${UBIQOS_FLASH_APP_BASE}
                 ${CMAKE_CURRENT_BINARY_DIR}/${name}.bin ${mods}
         DEPENDS ${mods} ${UBIQOS_ROOT}/make_flash_image.py
         COMMENT "Building the application image ${name}.bin")

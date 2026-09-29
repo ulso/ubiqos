@@ -495,8 +495,9 @@ int32_t ubiqos_process_create_for(const ubiqos_module_header_t *module_ptr,
     // A module is copied when it cannot run where it lies, and the module says
     // so itself: UBIQOS_ATTR_PRIVATE is set at build time for anything with
     // writable data, addresses to fix, or a .bss to zero. A module with none of
-    // those runs straight out of flash and costs no memory at all, which is
-    // most of them.
+    // those runs straight out of flash and costs no memory for its code -- and
+    // one whose only reason was its addresses has had them fixed for where it
+    // lies by make_flash_image.py, and has lost the bit there.
     //
     // A copy per process rather than one shared between them. It is the simple
     // thing and the modules are a few kilobytes; sharing one relocated copy

@@ -6,8 +6,8 @@ and gives the module a copy of its own for the second -- but a module that has
 neither is markedly cheaper, and most are written that way on purpose.
 
 **The cheap module runs where it lies.** One copy in flash serves every process,
-nothing is allocated, and starting it cannot fail for want of memory. Forty-nine
-of the fifty-three modules in this tree are like that.
+nothing is allocated for its code, and starting it costs only its own data area
+and stack.
 
 **A module with either gets a copy per process.** `make_module.py` marks it
 `UBIQOS_ATTR_PRIVATE` -- for writable data, for addresses to relocate, or for a
@@ -15,6 +15,17 @@ of the fifty-three modules in this tree are like that.
 the process starts. That is what makes a `static` variable an ordinary variable
 and a C++ vtable an ordinary vtable, at the price of the module's own size in
 RAM for as long as it runs.
+
+**Addresses alone no longer cost a copy in flash.** gcc reaches a string
+constant through an absolute address beside the code, so nearly every program
+has a relocation or two, and for a while every module in the tree was copied
+whole to have them applied. A module whose only reason is relocations --
+no writable data, no `.bss`, re-entrant -- is marked `UBIQOS_ATTR_PLACEABLE`,
+and `make_flash_image.py --base` fixes its addresses for where it will lie in
+flash and clears `PRIVATE` there, so it runs in place after all. On Arm that is
+64 of the 79 programs; on RISC-V the compiler puts small variables in `.sdata`
+and `.sbss`, which are writable, and few qualify. The same module off the card
+is copied and relocated as before.
 
 [`check_module.py`](../check_module.py) still reads the relocations out of the
 object files, but it now counts what the loader will fix and refuses only what

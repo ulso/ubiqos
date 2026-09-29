@@ -207,8 +207,10 @@ Nothing is read off the card until something runs it. A name that is not in the
 module directory and not in flash is looked for on the card, read in, and
 registered; when the last process using it exits, the entry goes and its memory
 is freed with it. A module occupies memory for exactly as long as something is
-using it. Flash modules work the same way and always have: they are never
-copied at all, since the code runs where it lies.
+using it. A flash module with nothing to copy is never copied: its code runs
+where it lies. One with writable data or a `.bss` is copied like a card module,
+and one whose only reason was relocations has them fixed when the flash image
+is built -- see `UBIQOS_ATTR_PLACEABLE`.
 
 Flash is searched first, so a module that exists in both places comes from
 flash and the card copy is never read. Take it out of `UBIQOS_RESIDENT` if the

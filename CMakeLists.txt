@@ -1867,9 +1867,23 @@ if(resident_absent)
     message(STATUS "Not resident, not built here: ${resident_absent}")
 endif()
 
+# The address is read out of the header rather than written again here: there is
+# one place UBIQOS_FLASH_MODULE_BASE is defined and the kernel is it.
+file(STRINGS kernel/flashmod.h ubiqosFlashBaseLine
+     REGEX "define[ \t]+UBIQOS_FLASH_MODULE_BASE")
+string(REGEX MATCH "0x[0-9a-fA-F]+" ubiqosFlashBase "${ubiqosFlashBaseLine}")
+if(NOT ubiqosFlashBase)
+    message(FATAL_ERROR "UBIQOS_FLASH_MODULE_BASE is not in kernel/flashmod.h "
+                        "in a form this can read")
+endif()
+
+# --base places the modules: a program that is private only for its
+# relocations has them fixed for the address it will lie at, and runs there
+# instead of being copied into RAM. See make_flash_image.py.
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/modules.bin
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/make_flash_image.py
+            --base ${ubiqosFlashBase}
             ${CMAKE_CURRENT_BINARY_DIR}/modules.bin ${resident_mods}
     DEPENDS ${resident_mods} ${CMAKE_CURRENT_SOURCE_DIR}/make_flash_image.py
     COMMENT "Building the resident module image")
@@ -1889,15 +1903,7 @@ add_dependencies(flashimage modules)
 # .py takes that and this and makes the one file a product is shipped as -- or
 # the application's alone, when only the application has changed.
 #
-# The address is read out of the header rather than written again here: there is
-# one place UBIQOS_FLASH_MODULE_BASE is defined and the kernel is it.
-file(STRINGS kernel/flashmod.h ubiqosFlashBaseLine
-     REGEX "define[ \t]+UBIQOS_FLASH_MODULE_BASE")
-string(REGEX MATCH "0x[0-9a-fA-F]+" ubiqosFlashBase "${ubiqosFlashBaseLine}")
-if(NOT ubiqosFlashBase)
-    message(FATAL_ERROR "UBIQOS_FLASH_MODULE_BASE is not in kernel/flashmod.h "
-                        "in a form this can read")
-endif()
+
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/system_modules.uf2
