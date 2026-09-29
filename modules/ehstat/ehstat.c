@@ -161,6 +161,11 @@ void module_main(int argc, char **argv) {
     num("  data ready lo ", s.dr_low);
     num("  us since last ", s.turn_gap_us);
     num("  worst gap     ", s.worst_turn_gap_us);
+    say("\r\na ping timed at the bus, microseconds\r\n");
+    num("  ours, out and back", s.ping_out_us);
+    num("  best              ", s.best_ping_out_us);
+    num("  theirs, answered  ", s.ping_in_us);
+    num("  worst             ", s.worst_ping_in_us);
     say("\r\none exchange, microseconds\r\n");
     num("  on the wire  ", s.wall_us);
     num("  worst        ", s.worst_wall_us);

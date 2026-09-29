@@ -322,6 +322,19 @@ static bool transact_finish(void)
     return true;
 }
 
+// The ICMP type of an Ethernet frame carrying IPv4 ICMP, or -1. Enough to
+// time a ping at the bus -- see ping_out_us in common/ubiqos_abi.h.
+static int icmp_type(const uint8_t *f, uint32_t n)
+{
+    if (n < 14u + 20u + 1u || f[12] != 0x08u || f[13] != 0x00u) return -1;
+    const uint32_t ihl = (f[14] & 0x0fu) * 4u;
+    if (f[14 + 9] != 1u || n < 14u + ihl + 1u) return -1;
+    return f[14 + ihl];
+}
+
+static uint32_t ping_sent_us;       // our echo request left; 0 when none is out
+static uint32_t ping_came_us;       // theirs arrived; 0 when answered
+
 static void take_frame(void)
 {
     uint16_t hdr, len, off, sum, want;
@@ -372,6 +385,16 @@ static void take_frame(void)
     if (iftype < 9) stats.by_if[iftype]++;
 
     if (iftype == IF_STA) {
+        const int t = icmp_type(rxbuf + hdr, len);
+        if (t == 0 && ping_sent_us) {
+            const uint32_t us = (uint32_t)K->time_us() - ping_sent_us;
+            stats.ping_out_us = us;
+            if (!stats.best_ping_out_us || us < stats.best_ping_out_us) stats.best_ping_out_us = us;
+            ping_sent_us = 0;
+        } else if (t == 8) {
+            ping_came_us = (uint32_t)K->time_us();
+        }
+
         uint32_t next = (netbox_head + 1u) % NET_SLOTS;
         if (next == netbox_tail) { netbox_lost++; return; }
         uint16_t n = len > EH_BUF ? EH_BUF : len;
@@ -460,6 +483,16 @@ static void eh_thread(void)
                 uint32_t waited = (uint32_t)K->time_us() - nettx_queued_us_slot[nettx_tail];
                 stats.txwait_us = waited;
                 if (waited > stats.worst_txwait_us) stats.worst_txwait_us = waited;
+                const int t = icmp_type(netstage + nettx_tail * EH_BUF + HDR_V1,
+                                        nettx_used[nettx_tail] - HDR_V1);
+                if (t == 8) {
+                    ping_sent_us = (uint32_t)K->time_us();
+                } else if (t == 0 && ping_came_us) {
+                    const uint32_t us = (uint32_t)K->time_us() - ping_came_us;
+                    stats.ping_in_us = us;
+                    if (us > stats.worst_ping_in_us) stats.worst_ping_in_us = us;
+                    ping_came_us = 0;
+                }
                 nettx_tail = (nettx_tail + 1u) % NET_TX_SLOTS;
                 build_dummy();
                 break;

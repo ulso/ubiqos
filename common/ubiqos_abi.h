@@ -677,6 +677,12 @@ typedef struct {
     // when we have nothing of our own to send, and it had never been counted.
     uint32_t dr_high, dr_low;
     uint32_t turn_gap_us, worst_turn_gap_us;   // between one offer and the next
+    // A ping timed at this bus, which splits a slow round trip in two. OUT is
+    // an echo request of ours leaving over SPI to its reply arriving over SPI:
+    // the co-processor, the air and the far end, and nothing of this host. IN
+    // is an echo request arriving to our reply leaving: this host alone.
+    uint32_t ping_out_us, best_ping_out_us;
+    uint32_t ping_in_us, worst_ping_in_us;
 } ubiqos_eh_stats_t;
 
 // --- PING -------------------------------------------------------------------
