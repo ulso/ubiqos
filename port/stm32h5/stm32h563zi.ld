@@ -10,7 +10,8 @@
 
 ENTRY(ubiqos_reset)
 
-/* The top 64 kB of SRAM are not the kernel's: they are the fixed data area,
+/*
+ The top 64 kB of SRAM are not the kernel's: they are the fixed data area,
  * where make_flash_image.py puts the writable data of the single-instance
  * programs whose code stays in flash -- UBIQOS_FIXED_DATA_BASE in
  * kernel/flashmod.h, which must say the same. */
@@ -77,6 +78,13 @@ SECTIONS
         __stack_top = .;
     } > RAM
 
-    __heap_start = .;
-    __heap_end = ORIGIN(RAM) + LENGTH(RAM);
+    /* The module pool: everything the kernel did not take. Processes, the
+     * copies of modules that cannot run in place, and their heaps all come
+     * from here -- see UBIQOS_POOL_FROM_LINKER in kernel/main.c. Nothing else
+     * may use it: there is no C heap, and _sbrk in stubs.c refuses. */
+    .pool (NOLOAD) : ALIGN(8)
+    {
+        __pool_start = .;
+    } > RAM
+    __pool_end = ORIGIN(RAM) + LENGTH(RAM);
 }
