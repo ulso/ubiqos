@@ -617,6 +617,7 @@ static void eh_thread(void)
 #define REQ_GET_MAC     257u
 #define REQ_SET_MODE    260u
 #define REQ_SET_PS      270u
+#define REQ_SET_PROTOCOL 297u
 #define REQ_WIFI_INIT   278u
 #define REQ_WIFI_START  280u
 #define REQ_WIFI_CONNECT 282u
@@ -629,6 +630,9 @@ static void eh_thread(void)
 #define WIFI_INIT_MAGIC 0x1f2f3f4fu
 #define WIFI_MODE_STA   1u
 #define WIFI_IF_STA     0u          // an INTERFACE, where station is 0
+#define WIFI_PROTOCOL_11B 0x1u     // esp_wifi_types.h
+#define WIFI_PROTOCOL_11G 0x2u
+#define WIFI_PROTOCOL_11N 0x4u
 
 // protocomm's serial framing, which wraps every RPC:
 //   [0x01][ep_len:2 LE]["RPCRsp"][0x02][data_len:2 LE][protobuf]
@@ -850,6 +854,23 @@ static bool radio_prepare(void)
 
     n = put_field(body, 1, WIFI_MODE_STA);
     if (!rpc_ok("station mode", REQ_SET_MODE, body, n, 5000)) return false;
+
+    // 802.11b/g/n, and NOT 802.11ax, which the C6 offers by default and the
+    // house router accepted. With it every round trip had a floor of 67 ms,
+    // twenty pings a second queued up past a full second, and an ssh session
+    // was treacle. Without it the floor is 11 ms and the average 17 -- what
+    // every other station on the same network gets -- and a hundred pings a
+    // second go through without a loss. Measured at this bus, not guessed:
+    // ehstat's ping timing put 97 of the 99 ms outside this host, and
+    // `ehrpc phy` said 802.11ax when it was slow and 802.11n when it was not.
+    //
+    // Why ax costs that here is not known; the power-save setting below was
+    // ruled out long before. It buys nothing on a link whose SPI carries a
+    // few megabits, so it goes. Set before the join, which is where the
+    // protocol is negotiated.
+    n = put_field(body, 1, WIFI_IF_STA);
+    n += put_field(body + n, 2, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+    if (!rpc_ok("802.11b/g/n", REQ_SET_PROTOCOL, body, n, 5000)) return false;
 
     // Power save off. esp_wifi_init leaves the station asleep between DTIM
     // beacons, which put 232 milliseconds on a ping that takes 74 without.
