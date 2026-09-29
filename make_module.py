@@ -476,8 +476,14 @@ def create_module(input_bin_path, output_mod_path, module_name,
 
     # Three reasons for one answer: writable data, addresses to fix, or a .bss
     # to zero. Any of them means the module cannot run where it lies.
-    if reloc or bss_size or (elf_path and nm_tool and has_writable_data(elf_path, nm_tool)):
+    writable = bool(elf_path and nm_tool and has_writable_data(elf_path, nm_tool))
+    if reloc or bss_size or writable:
         attrs |= 4
+    # Bit 5: private for its relocations alone, so it can run in place once they
+    # are fixed for where it lies -- see UBIQOS_ATTR_PLACEABLE. Re-entrant as
+    # well, because a module that is not is copied whatever else is true.
+    if reloc and not bss_size and not writable and not single:
+        attrs |= 0x20
     attr_rev  = (attrs << 8) | UBIQOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
 # trap frame is 128 bytes, so 4 kB leaves ample depth for call chains -- and it

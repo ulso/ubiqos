@@ -48,10 +48,24 @@
 // It is what lets a module be written as ordinary C. A static variable used to
 // be refused, because one copy of the code in flash served every process and
 // they would all have shared it; with a copy per process it is simply a
-// variable. Position-independent code is still worth having and still costs
-// nothing -- a module without this bit runs straight out of flash, as most of
-// them do -- but it is no longer the price of admission.
+// variable. A module without this bit runs straight out of flash.
+//
+// Which, as the compiler builds them, is none: gcc reaches a string constant
+// through an absolute address beside the code, so every program has a
+// relocation or two and was copied into RAM whole to have them applied. With
+// PSRAM that went unnoticed; on a board with only SRAM it is sshd's 185 kB of
+// code sitting in memory the machine does not have. See the next bit.
 #define UBIQOS_ATTR_PRIVATE   0x04
+
+// Private only for its relocations: no writable data and no .bss, so once its
+// addresses are fixed for where it lies it can run there. make_flash_image.py
+// does exactly that for the modules it lays out in flash -- it knows each one's
+// address -- and clears PRIVATE in the copy it writes, so the kernel runs it
+// in place and gives it only its thread-local data and its stack. The same
+// module off a card is still copied and relocated like any other: the
+// relocations overwrite what they fix rather than adding to it, so applying
+// them again for another address is correct whatever was there.
+#define UBIQOS_ATTR_PLACEABLE 0x20
 
 // Start this program when the system comes up, after the card's startup script
 // if there is one. It is for an application in flash, which has to run whether
