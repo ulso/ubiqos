@@ -1,10 +1,9 @@
-# The STM32H5 port's own build, while the port is being brought up. The kernel
-# joins it here once the board has a working clock and console; until then this
-# builds the test program and nothing of the pico-sdk.
+# The STM32H5 port's own build: the kernel for the NUCLEO-H563ZI, without the
+# pico-sdk.
 #
 #   cmake -G Ninja -S port/stm32h5 -B build-h5
 #   ninja -C build-h5
-#   probe-rs download --chip STM32H563ZITx build-h5/h5hello.elf && probe-rs reset --chip STM32H563ZITx
+#   probe-rs download --chip STM32H563ZITx build-h5/ubiqos_h5.elf && probe-rs reset --chip STM32H563ZITx
 
 cmake_minimum_required(VERSION 3.13)
 
@@ -25,29 +24,10 @@ set(UBIQOS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 # for one calling the same way on the other.
 set(H5_CPU_FLAGS -mcpu=cortex-m33 -mthumb -march=armv8-m.main+fp+dsp -mfloat-abi=softfp)
 
-add_executable(h5hello
-    hello.c
-    startup.c
-    clock.c
-    console.c
-)
-target_compile_definitions(h5hello PRIVATE STM32H563xx)
-target_include_directories(h5hello PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${UBIQOS_ROOT}/third_party/cmsis-device-h5/Include
-    ${UBIQOS_ROOT}/third_party/cmsis-core/Include
-)
-target_compile_options(h5hello PRIVATE ${H5_CPU_FLAGS} -O2 -g -Wall -Wextra
-    -ffunction-sections -fdata-sections)
-target_link_options(h5hello PRIVATE ${H5_CPU_FLAGS} -nostartfiles --specs=nano.specs
-    -T${CMAKE_CURRENT_SOURCE_DIR}/stm32h563zi.ld -Wl,--gc-sections
-    -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/h5hello.map)
-set_target_properties(h5hello PROPERTIES SUFFIX ".elf")
-
 # --- The kernel ---------------------------------------------------------------
 #
 # The same kernel sources the RP2350 build compiles, less everything that has no
-# hardware here yet: video, USB, the card, WiFi, the key store. What they
+# hardware here yet: video, USB, the card, WiFi. What they
 # provide to the rest of the kernel is answered by stubs.c, which says per
 # function what is missing and why. The pico-sdk calls the remaining files
 # make are answered by the headers in sdk/, whose names are the SDK's own so
