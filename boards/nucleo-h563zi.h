@@ -32,6 +32,37 @@
 // of its own and it stays shut until `key unlock`, as on any other board.
 #define UBIQOS_KEYS_OPEN_BY_DEFAULT 1
 
+// --- CLOCK AND CONSOLE ------------------------------------------------------
+// No crystal is fitted for HSE. The ST-LINK drives its 8 MHz MCO into OSC_IN,
+// which makes HSE an external clock in bypass mode. 240 MHz is what Zephyr runs
+// this board at, under the chip's 250.
+#define UBIQOS_H5_HSE_HZ        8000000u
+#define UBIQOS_H5_HSE_BYPASS    1
+#define UBIQOS_H5_SYSCLK_HZ     240000000u
+
+// The ST-LINK's virtual serial port: USART3 on PD8 (TX) and PD9 (RX), AF7.
+#define UBIQOS_H5_CONSOLE_PORT  'D'
+#define UBIQOS_H5_CONSOLE_TX    8u
+#define UBIQOS_H5_CONSOLE_RX    9u
+#define UBIQOS_H5_CONSOLE_AF    7u
+
+// --- FLASH AND RAM ----------------------------------------------------------
+// 2 MB: the kernel in the first 256 kB -- it uses 123 -- the system's modules
+// from there across the bank boundary, the application after them, and the
+// key store in the last sectors, 8 kB each on this chip. The modules once had
+// half of the second bank and had filled 95 % of it, while the kernel sat in a
+// megabyte of its own. port/stm32h5/stm32h563zi.ld must say the same.
+#define UBIQOS_BOARD_FLASH_MODULE_BASE 0x08040000u
+#define UBIQOS_BOARD_FLASH_APP_BASE    0x08180000u
+#define UBIQOS_BOARD_FLASH_END         0x081F0000u
+#define UBIQOS_BOARD_FLASH_KEYS_BASE   0x081F0000u
+#define UBIQOS_BOARD_FLASH_KEYS_SIZE   0x4000u
+
+// The top 64 kB of the 640 kB of SRAM, for the data of single-instance
+// programs whose code stays in flash; the linker script keeps it out.
+#define UBIQOS_BOARD_FIXED_DATA_BASE   0x20090000u
+#define UBIQOS_BOARD_FIXED_DATA_SIZE   0x10000u
+
 #define UBIQOS_BOARD_FIXED_PINS                                              \
     { UBIQOS_PIN('D', 8), "console" }, { UBIQOS_PIN('D', 9), "console" },     \
     /* The Ethernet PHY's RMII and management lines, fixed by the board. */   \

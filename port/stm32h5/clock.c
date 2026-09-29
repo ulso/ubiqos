@@ -1,18 +1,31 @@
-// The STM32H5's clocks: 240 MHz from PLL1, fed by the ST-LINK's 8 MHz.
+// The STM32H5's clocks: PLL1 from HSE, at whatever the board header asks for.
 //
-// The NUCLEO-H563ZI has no crystal fitted for HSE by default. The ST-LINK
-// drives its MCO output into the chip's OSC_IN instead, which makes HSE an
-// external clock in bypass mode rather than an oscillator. 8 MHz / 2 * 120 / 2
-// is 240 MHz, the same PLL setting Zephyr uses on this board, below the chip's
-// 250 MHz limit.
+// The board says three things -- UBIQOS_H5_HSE_HZ, UBIQOS_H5_HSE_BYPASS and
+// UBIQOS_H5_SYSCLK_HZ -- and the PLL is worked out from them: HSE divided down
+// to a 4 MHz reference, multiplied to twice the system clock, divided by two.
+// On the NUCLEO-H563ZI that is the ST-LINK's 8 MHz, in bypass, to 240 MHz; on
+// the NUCLEO-H503RB a 24 MHz crystal to 250.
 //
-// If HSE never comes up -- an ST-LINK that is not driving MCO, a board with the
-// solder bridges moved to a crystal -- the chip stays on its reset clock, HSI
-// divided by two, 32 MHz. Slower, but a console that works at the wrong speed
-// says why; one that never starts says nothing.
+// If HSE never comes up -- an ST-LINK that is not driving MCO, a crystal that
+// does not start -- the chip stays on its reset clock, HSI divided by two, 32
+// MHz. Slower, but a console that works at the wrong speed says why; one that
+// never starts says nothing.
 
 #include "stm32h5xx.h"
 #include "port.h"
+#include "board.h"
+
+#if !defined(UBIQOS_H5_HSE_HZ) || !defined(UBIQOS_H5_HSE_BYPASS) || !defined(UBIQOS_H5_SYSCLK_HZ)
+#error "the board header must say UBIQOS_H5_HSE_HZ, UBIQOS_H5_HSE_BYPASS and UBIQOS_H5_SYSCLK_HZ"
+#endif
+#define PLL_REF_HZ 4000000u         // input range 4-8 MHz, PLL1RGE 2
+#define PLL_M (UBIQOS_H5_HSE_HZ / PLL_REF_HZ)
+#define PLL_N (UBIQOS_H5_SYSCLK_HZ * 2u / PLL_REF_HZ)
+_Static_assert(UBIQOS_H5_HSE_HZ % PLL_REF_HZ == 0, "HSE must be a multiple of 4 MHz");
+_Static_assert(UBIQOS_H5_SYSCLK_HZ * 2u % PLL_REF_HZ == 0, "the system clock must be a multiple of 2 MHz");
+_Static_assert(PLL_M >= 1 && PLL_M <= 63, "PLL1M is six bits");
+_Static_assert(PLL_N >= 4 && PLL_N <= 512, "PLL1N is 4 to 512");
+_Static_assert(UBIQOS_H5_SYSCLK_HZ <= 250000000u, "250 MHz is the STM32H5's limit");
 
 uint32_t h5_uid_words[3];       // the device id; see the note before ICACHE below
 uint32_t h5_sysclk_hz = 32000000u;
@@ -28,8 +41,10 @@ void h5_clock_init(void)
     PWR->VOSCR = (PWR->VOSCR & ~PWR_VOSCR_VOS) | (3u << PWR_VOSCR_VOS_Pos);
     while (!(PWR->VOSSR & PWR_VOSSR_VOSRDY)) { }
 
-    // HSE as a clock input, analog bypass: what the ST-LINK's MCO is.
-    RCC->CR = (RCC->CR & ~RCC_CR_HSEEXT) | RCC_CR_HSEBYP;
+    // HSE: a clock input in analog bypass when something drives OSC_IN, as the
+    // ST-LINK's MCO does; the oscillator when a crystal sits across the pins.
+    RCC->CR = (RCC->CR & ~(RCC_CR_HSEEXT | RCC_CR_HSEBYP))
+            | (UBIQOS_H5_HSE_BYPASS ? RCC_CR_HSEBYP : 0u);
     RCC->CR |= RCC_CR_HSEON;
     uint32_t n = 0;
     while (!(RCC->CR & RCC_CR_HSERDY)) {
@@ -39,23 +54,23 @@ void h5_clock_init(void)
         }
     }
 
-    // PLL1: HSE / M=2 is 4 MHz, input range 4-8 MHz (RGE 2), times N=120 is a
-    // 480 MHz VCO in the wide range, and / P=2 is 240 MHz. Q and R are set to
-    // what Zephyr sets and not enabled: nothing takes them yet.
+    // PLL1: HSE / M is 4 MHz, input range 4-8 MHz (RGE 2), times N is a VCO at
+    // twice the system clock in the wide range, and / P=2 is the system clock.
+    // Q and R are set to what Zephyr sets and not enabled: nothing takes them.
     RCC->CR &= ~RCC_CR_PLL1ON;
     while (RCC->CR & RCC_CR_PLL1RDY) { }
     RCC->PLL1CFGR = (3u << RCC_PLL1CFGR_PLL1SRC_Pos)
                   | (2u << RCC_PLL1CFGR_PLL1RGE_Pos)
-                  | (2u << RCC_PLL1CFGR_PLL1M_Pos)
+                  | (PLL_M << RCC_PLL1CFGR_PLL1M_Pos)
                   | RCC_PLL1CFGR_PLL1PEN;
-    RCC->PLL1DIVR = ((120u - 1u) << RCC_PLL1DIVR_PLL1N_Pos)
+    RCC->PLL1DIVR = ((PLL_N - 1u) << RCC_PLL1DIVR_PLL1N_Pos)
                   | ((2u - 1u)   << RCC_PLL1DIVR_PLL1P_Pos)
                   | ((4u - 1u)   << RCC_PLL1DIVR_PLL1Q_Pos)
                   | ((2u - 1u)   << RCC_PLL1DIVR_PLL1R_Pos);
     RCC->CR |= RCC_CR_PLL1ON;
     while (!(RCC->CR & RCC_CR_PLL1RDY)) { }
 
-    // Five wait states and the high-frequency write delay for 240 MHz at VOS0,
+    // Five wait states and the high-frequency write delay, for 210 to 250 MHz at VOS0,
     // set and read back before the clock goes up, never after.
     const uint32_t acr = (FLASH->ACR & ~(FLASH_ACR_LATENCY | FLASH_ACR_WRHIGHFREQ))
                        | (5u << FLASH_ACR_LATENCY_Pos)
@@ -64,7 +79,7 @@ void h5_clock_init(void)
     FLASH->ACR = acr;
     while ((FLASH->ACR & FLASH_ACR_LATENCY) != (5u << FLASH_ACR_LATENCY_Pos)) { }
 
-    // AHB and APB2 at the full 240, APB1 and APB3 at 120 -- the ceiling for
+    // AHB and APB2 at the full clock, APB1 and APB3 at half -- the ceiling for
     // the buses is the system clock, but the half is what ST's own boards use
     // and what the USART3 divider below is worked out from.
     RCC->CFGR2 = (RCC->CFGR2 & ~(RCC_CFGR2_HPRE | RCC_CFGR2_PPRE1 | RCC_CFGR2_PPRE2 | RCC_CFGR2_PPRE3))
@@ -85,7 +100,7 @@ void h5_clock_init(void)
     // running without it is running at a fraction of the clock.
     ICACHE->CR |= ICACHE_CR_EN;
 
-    h5_sysclk_hz = 240000000u;
-    h5_pclk1_hz  = 120000000u;
+    h5_sysclk_hz = UBIQOS_H5_SYSCLK_HZ;
+    h5_pclk1_hz  = UBIQOS_H5_SYSCLK_HZ / 2u;
     h5_clock_from_hse = true;
 }

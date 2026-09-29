@@ -1,5 +1,6 @@
-// The serial console: USART3 on PD8 (TX) and PD9 (RX), alternate function 7,
-// which the NUCLEO-H563ZI wires to the ST-LINK's virtual serial port.
+// The serial console: USART3, on the pins the board header names, which both
+// Nucleo boards wire to the ST-LINK's virtual serial port -- PD8 and PD9 with
+// AF7 on the NUCLEO-H563ZI, PA4 and PA3 with AF13 on the NUCLEO-H503RB.
 //
 // Two rings and one interrupt. The shell's output and the kernel's own lines
 // both go into the transmit ring -- the board has one serial line to the
@@ -15,13 +16,23 @@
 #include "stm32h5xx.h"
 #include "port.h"
 #include "../../common/ubiqos_abi.h"
+#include "board.h"
 
-#define CONSOLE_TX_PIN 8u
-#define CONSOLE_RX_PIN 9u
-#define CONSOLE_AF     7u
+#define CONSOLE_TX_PIN UBIQOS_H5_CONSOLE_TX
+#define CONSOLE_RX_PIN UBIQOS_H5_CONSOLE_RX
+#define CONSOLE_AF     UBIQOS_H5_CONSOLE_AF
+#define CONSOLE_GPIO   ((GPIO_TypeDef *)(GPIOA_BASE + (UBIQOS_H5_CONSOLE_PORT - 'A') * 0x400u))
+#define CONSOLE_GPIOEN (1u << (UBIQOS_H5_CONSOLE_PORT - 'A'))   // RCC_AHB2ENR, A=0 to I=8
 
-#define TX_SIZE 2048u               // powers of two: the indices wrap by mask
+// Powers of two: the indices wrap by mask. A board short of RAM names a
+// smaller transmit ring; a line or two is enough to keep the shell from waiting.
+#ifdef UBIQOS_BOARD_CONSOLE_TX_SIZE
+#define TX_SIZE UBIQOS_BOARD_CONSOLE_TX_SIZE
+#else
+#define TX_SIZE 2048u
+#endif
 #define RX_SIZE 256u
+_Static_assert((TX_SIZE & (TX_SIZE - 1u)) == 0, "the transmit ring is a power of two");
 
 static uint8_t tx_ring[TX_SIZE];
 static volatile uint32_t tx_head, tx_tail;  // head: next free; tail: next to send
@@ -42,12 +53,12 @@ static void pin_af(GPIO_TypeDef *g, uint32_t pin, uint32_t af)
 
 void h5_console_init(uint32_t baud)
 {
-    RCC->AHB2ENR  |= RCC_AHB2ENR_GPIODEN;
+    RCC->AHB2ENR  |= CONSOLE_GPIOEN;
     RCC->APB1LENR |= RCC_APB1LENR_USART3EN;
     (void)RCC->APB1LENR;              // the enable takes effect before the first access
 
-    pin_af(GPIOD, CONSOLE_TX_PIN, CONSOLE_AF);
-    pin_af(GPIOD, CONSOLE_RX_PIN, CONSOLE_AF);
+    pin_af(CONSOLE_GPIO, CONSOLE_TX_PIN, CONSOLE_AF);
+    pin_af(CONSOLE_GPIO, CONSOLE_RX_PIN, CONSOLE_AF);
 
     // USART3's kernel clock is PCLK1 out of reset (CCIPR1.USART3SEL = 0).
     USART3->CR1 = 0;

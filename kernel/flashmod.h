@@ -27,14 +27,13 @@
 #define UBIQOS_FLASH_APP_BASE    0x10800000u
 #define UBIQOS_FLASH_END         0x11000000u
 #else
-// The STM32H563's 2 MB: the kernel in the first 256 kB -- it uses 123 -- the
-// system's modules from there across the bank boundary, the application after
-// them, and the key store in the last sectors -- 8 kB each on this chip, not
-// the RP2350's 4. The modules had half of the second bank and had filled 95 %
-// of it, while the kernel sat in a megabyte of its own.
-#define UBIQOS_FLASH_MODULE_BASE 0x08040000u
-#define UBIQOS_FLASH_APP_BASE    0x08180000u
-#define UBIQOS_FLASH_END         0x081F0000u
+// On the STM32H5 each board says where its regions are, because the family
+// runs from 128 kB of flash to 2 MB and a layout for one part is wrong for every
+// other. The board header's UBIQOS_BOARD_FLASH_* -- see boards/nucleo-h563zi.h.
+#include "board.h"
+#define UBIQOS_FLASH_MODULE_BASE UBIQOS_BOARD_FLASH_MODULE_BASE
+#define UBIQOS_FLASH_APP_BASE    UBIQOS_BOARD_FLASH_APP_BASE
+#define UBIQOS_FLASH_END         UBIQOS_BOARD_FLASH_END
 #endif
 
 // The key store: two 4 kB sectors, written alternately so that losing power in
@@ -50,21 +49,21 @@
 #define UBIQOS_FLASH_KEYS_BASE   0x10FE0000u
 #define UBIQOS_FLASH_KEYS_SIZE   0x2000u
 #else
-#define UBIQOS_FLASH_KEYS_BASE   0x081F0000u
-#define UBIQOS_FLASH_KEYS_SIZE   0x4000u
+#define UBIQOS_FLASH_KEYS_BASE   UBIQOS_BOARD_FLASH_KEYS_BASE
+#define UBIQOS_FLASH_KEYS_SIZE   UBIQOS_BOARD_FLASH_KEYS_SIZE
 #endif
 
 // The fixed data area: RAM set aside at a known address for the writable data
 // of the single-instance programs make_flash_image.py places there, so that
 // their code can stay in flash -- see UBIQOS_ATTR_SPLIT. None on the RP2350,
-// whose PSRAM makes a copy cost nothing worth the address; the top 64 kB of
-// the STM32H563's SRAM, which its linker script keeps out of everything else.
+// whose PSRAM makes a copy cost nothing worth the address. On the STM32H5 the
+// board says, and its linker script keeps the area out of everything else.
 #if !UBIQOS_CHIP_STM32H5
 #define UBIQOS_FIXED_DATA_BASE   0u
 #define UBIQOS_FIXED_DATA_SIZE   0u
 #else
-#define UBIQOS_FIXED_DATA_BASE   0x20090000u
-#define UBIQOS_FIXED_DATA_SIZE   0x10000u
+#define UBIQOS_FIXED_DATA_BASE   UBIQOS_BOARD_FIXED_DATA_BASE
+#define UBIQOS_FIXED_DATA_SIZE   UBIQOS_BOARD_FIXED_DATA_SIZE
 #endif
 
 // Scan the flash region for module headers and register what is found as
