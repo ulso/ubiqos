@@ -263,7 +263,12 @@ def bss_after_image(elf_path, nm_tool, load_base, image_len):
         if m.group(1) in (".tdata", ".tbss"):
             continue
         addr, size = int(m.group(3), 16), int(m.group(4), 16)
-        if addr and addr + size > end:
+        # An empty section reaches nothing. Its address is where it WOULD
+        # start, rounded up to its alignment -- so an empty .data after a .tbss
+        # aligned to eight counted the padding in front of it as .bss, and
+        # head, more and write were copied into RAM for six bytes that did
+        # not exist.
+        if addr and size and addr + size > end:
             end = addr + size
     return end - (load_base + image_len)
 
