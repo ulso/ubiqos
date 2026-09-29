@@ -1648,7 +1648,9 @@ ubiqos_add_module(key modules/key/key.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(uptime modules/uptime/uptime.c)
 ubiqos_add_module(uname modules/uname/uname.c)
-ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB)
+# SINGLE for the same reason as sshd below: its 168 kB of code can then stay in
+# flash on a board without PSRAM. One fetch at a time; a second is refused.
+ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB SINGLE)
 # ML-KEM-768 for the post-quantum half of mlkem768x25519-sha256 -- PQClean's
 # clean implementation, public domain; see third_party/mlkem768/README.md.
 set(UBIQOS_MLKEM768_SOURCES

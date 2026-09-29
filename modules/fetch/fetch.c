@@ -18,7 +18,10 @@
 // headers and the body as they arrive and stops when the server closes.
 
 UBIQOS_MEM_SIZE(32768);                  // mbedTLS's big-number work is on the stack
-uint32_t ubiqos_heap_bytes = 192u * 1024u;   // records, certificates, contexts; PSRAM
+// Records, certificates, contexts. 77.5 kB at most, measured against
+// example.com, 1.1.1.1, google.com and github.com; the rest is for a server
+// with a longer chain. One piece, so on a board without PSRAM it is SRAM.
+uint32_t ubiqos_heap_bytes = 128u * 1024u;
 
 static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 static void err(const char *s) { ubiqos_write_str(UBIQOS_STDERR, s); }
