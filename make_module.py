@@ -202,6 +202,38 @@ def has_writable_data(elf_path, nm_tool):
     return False
 
 
+def writable_tail(elf_path, nm_tool, load_base):
+    """Where the module's writable data starts, from the load base, if all of
+    it is one tail after every read-only section -- None if it is not.
+
+    .tdata and .tbss do not count: the thread-local image is read out of the
+    module wherever it lies, and never written there. The answer is what a
+    UBIQOS_ATTR_SPLIT module needs: everything before it stays where the module
+    lies, everything from it on is copied to the data area.
+    """
+    import subprocess, re
+    prefix = nm_tool[:-2] if nm_tool.endswith("nm") else ""
+    out = subprocess.run([prefix + "readelf", "-SW", elf_path],
+                         capture_output=True, text=True).stdout
+    writable, readonly = [], []
+    for line in out.splitlines():
+        m = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-fA-F]+)\s+"
+                     r"[0-9a-fA-F]+\s+([0-9a-fA-F]+)\s+\S+\s+(\S*)", line)
+        if not m:
+            continue
+        name, flags = m.group(1), m.group(5)
+        addr, size = int(m.group(3), 16), int(m.group(4), 16)
+        if "A" not in flags or not size or name in (".tdata", ".tbss"):
+            continue
+        (writable if "W" in flags and "X" not in flags else readonly).append(addr)
+    if not writable:
+        return None
+    start = min(writable)
+    if any(a >= start for a in readonly):
+        return None
+    return start - load_base
+
+
 def bss_after_image(elf_path, nm_tool, load_base, image_len):
     """How far the allocated sections reach past what objcopy wrote.
 
@@ -431,6 +463,8 @@ def create_module(input_bin_path, output_mod_path, module_name,
     reloc_offset = name_offset + len(name_bytes)
     reloc_count = len(reloc)
     module_size = reloc_offset + 8 * reloc_count
+    # A split module's trailer follows the table -- see ubiqos_split_t. It is
+    # decided further down, with the attributes; room is made for it there.
 
 # Defaults for the ubiqos-specific fields
     UBIQOS_TYPE_PROGRAM = 1
@@ -484,6 +518,18 @@ def create_module(input_bin_path, output_mod_path, module_name,
     # well, because a module that is not is copied whatever else is true.
     if reloc and not bss_size and not writable and not single:
         attrs |= 0x20
+    # Bit 6: one instance, with its writable data in one tail after its code, so
+    # that the code can stay where it lies and the tail be given a fixed place
+    # in RAM -- see UBIQOS_ATTR_SPLIT. Only a program: a library is started by
+    # the kernel's loader, which copies it and knows nothing of a data area.
+    split_offset = None
+    if single and module_type == "program" and (bss_size or writable):
+        tail = writable_tail(elf_path, nm_tool, elf_load_base(elf_path, nm_tool))
+        if tail is not None:
+            split_offset = header_size + tail
+            attrs |= 0x40
+    if split_offset is not None:
+        module_size += 16
     attr_rev  = (attrs << 8) | UBIQOS_ABI_VERSION
 # Total RAM: data area at the bottom and the process stack from the top. One
 # trap frame is 128 bytes, so 4 kB leaves ample depth for call chains -- and it
@@ -525,13 +571,16 @@ def create_module(input_bin_path, output_mod_path, module_name,
         # kind and an entry stays eight bytes.
         for site, kind, target in reloc:
             f.write(struct.pack('<II', (kind << 28) | site, target))
+        if split_offset is not None:
+            f.write(struct.pack('<IIII', 0x54494c53, split_offset, 0, 0))
 
     print(f"  module '{module_name}' revision {revision}, "
           f"{module_size} bytes, {tls_total} thread-local"
           f"{f', {mem_size} bytes of memory' if mem_size != 4096 else ''}"
           f"{f', {reloc_count} relocations' if reloc_count else ''}"
           f"{', real-time' if realtime else ''}"
-          f"{', single instance' if single else ''}")
+          f"{', single instance' if single else ''}"
+          f"{f', data from {split_offset:#x} can be placed' if split_offset is not None else ''}")
 
 if __name__ == "__main__":
 # --data as a flag rather than a positional argument: CMake drops empty

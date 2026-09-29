@@ -67,6 +67,31 @@
 // them again for another address is correct whatever was there.
 #define UBIQOS_ATTR_PLACEABLE 0x20
 
+// A single-instance program whose writable data -- .data, .bss and whatever
+// else the linker marked writable -- is one tail at the end of its image, after
+// all of its code and constants. Such a module carries a ubiqos_split_t after
+// its relocation table saying where that tail starts. make_flash_image.py can
+// then give the tail a FIXED address in RAM, the data area the board sets aside
+// (UBIQOS_FIXED_DATA_BASE in kernel/flashmod.h), fix the module's addresses
+// accordingly -- code and constants where they lie in flash, data at that
+// address -- and clear PRIVATE. The kernel copies only the tail when the
+// process starts and runs the code in place: sshd's 190 kB of code stays in
+// flash, and 22 kB of data is all it takes from RAM.
+//
+// One instance only, because there is one address: the module must not be
+// re-entrant, and the kernel refuses a second instance as it always has. The
+// same module off a card, or on a board with no such area, is copied and
+// relocated whole like any other.
+#define UBIQOS_ATTR_SPLIT     0x40
+
+#define UBIQOS_SPLIT_MAGIC    0x54494c53u   // "SLIT", little endian
+typedef struct {
+    uint32_t magic;          // UBIQOS_SPLIT_MAGIC
+    uint32_t data_offset;    // where the writable tail starts, from the header
+    uint32_t data_addr;      // the fixed address it runs at; 0 until it is placed
+    uint32_t reserved;
+} ubiqos_split_t;
+
 // Start this program when the system comes up, after the card's startup script
 // if there is one. It is for an application in flash, which has to run whether
 // or not a card is in the slot: a product whose screen stays on the boot text
@@ -822,6 +847,15 @@ typedef struct __attribute__((packed, aligned(4))) {
 static inline uint32_t ubiqos_module_image_size(const ubiqos_module_header_t *h)
 {
     return h->name_offset;
+}
+
+// The split trailer, where a module has one: right after the relocation table.
+static inline const ubiqos_split_t *ubiqos_module_split(const ubiqos_module_header_t *h)
+{
+    if (!((h->attr_rev >> 8) & UBIQOS_ATTR_SPLIT)) return 0;
+    const ubiqos_split_t *t = (const ubiqos_split_t *)(const void *)
+        ((const uint8_t *)h + h->reloc_offset + 8u * h->reloc_count);
+    return t->magic == UBIQOS_SPLIT_MAGIC ? t : 0;
 }
 
 // --- SYSTEM CALLS ---------------------------------------------------------
