@@ -44,6 +44,13 @@
 #define MBEDTLS_SHA512_C          // and the entropy pool's own hash
 #define MBEDTLS_CIPHER_C
 #define MBEDTLS_AES_C
+// The AES tables as constants, in flash, rather than worked out at the first
+// use into 8.7 kB of .bss. That .bss was in every module that uses AES -- sshd,
+// fetch -- and a module with writable data is copied whole into RAM to run;
+// the tables were most of what mbedTLS added to it. They are the same numbers
+// either way, and reading them from flash costs a handshake nothing a person
+// would notice.
+#define MBEDTLS_AES_ROM_TABLES
 #define MBEDTLS_GCM_C
 #define MBEDTLS_CHACHA20_C
 #define MBEDTLS_POLY1305_C
