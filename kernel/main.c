@@ -799,7 +799,9 @@ void ubiqos_kernel_main(void) {
     // No USB task there to carry lwIP or the console's Ctrl-C; each has a
     // thread of its own.
     h5_console_start_thread();
+#if UBIQOS_LWIP
     h5_net_start();
+#endif
 #endif
 
     uint32_t started = 0;

@@ -78,20 +78,29 @@ add_executable(ubiqos_h5
     sdk.c
     stubs.c
     kapi.c
-    eth.c
-    ethnet.c
     flash.c
     ${K}/keystore.c
     ${K}/crypto.c
-    ${K}/lwipsock.c
-    ${K}/lwipping.c
-    ${K}/lwipmdns.c
-    ${K}/lwipsntp.c
-    ${UBIQOS_ROOT}/lib/lwip-patched/apps/mdns/mdns.c
-    ${UBIQOS_ROOT}/lib/lwip-patched/apps/mdns/mdns_out.c
-    ${UBIQOS_LWIP_DIR}/src/apps/mdns/mdns_domain.c
-    ${H5_LWIP_SOURCES}
 )
+# Ethernet and the stack on it. Off, the kernel is what a board without a
+# network would carry -- which is also how to measure what the network costs.
+option(UBIQOS_H5_NET "Ethernet, lwIP, mDNS and NTP" ON)
+if(UBIQOS_H5_NET)
+    target_sources(ubiqos_h5 PRIVATE
+        eth.c
+        ethnet.c
+        ${K}/lwipsock.c
+        ${K}/lwipping.c
+        ${K}/lwipmdns.c
+        ${K}/lwipsntp.c
+        ${UBIQOS_ROOT}/lib/lwip-patched/apps/mdns/mdns.c
+        ${UBIQOS_ROOT}/lib/lwip-patched/apps/mdns/mdns_out.c
+        ${UBIQOS_LWIP_DIR}/src/apps/mdns/mdns_domain.c
+        ${H5_LWIP_SOURCES})
+    target_compile_definitions(ubiqos_h5 PRIVATE UBIQOS_LWIP=1)
+else()
+    target_compile_definitions(ubiqos_h5 PRIVATE UBIQOS_LWIP=0)
+endif()
 add_dependencies(ubiqos_h5 ubiqos_version)
 target_include_directories(ubiqos_h5 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -113,7 +122,6 @@ target_compile_definitions(ubiqos_h5 PRIVATE
     UBIQOS_POOL_FROM_LINKER=1
     DMESG_SIZE=16384
     UBIQOS_CRITICAL_BASEPRI=0x80
-    UBIQOS_LWIP=1
 )
 target_compile_options(ubiqos_h5 PRIVATE ${H5_CPU_FLAGS} -O2 -g -Wall
     -ffunction-sections -fdata-sections -fno-math-errno)
