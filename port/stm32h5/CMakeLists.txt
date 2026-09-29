@@ -1,5 +1,5 @@
-# The STM32H5 port's own build: the kernel for the NUCLEO-H563ZI, without the
-# pico-sdk.
+# The STM32H5 port's own build: the kernel for an STM32H5 board -- the
+# NUCLEO-H563ZI unless UBIQOS_H5_BOARD says otherwise -- without the pico-sdk.
 #
 #   cmake -G Ninja -S port/stm32h5 -B build-h5
 #   ninja -C build-h5
@@ -40,6 +40,24 @@ add_custom_target(ubiqos_version ALL
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/ubiqos_version.h)
 
 set(K ${UBIQOS_ROOT}/kernel)
+
+# Which board: its chip, its linker script and its header. The header says the
+# rest -- the clock, the console's pins, where things are in flash, how big the
+# kernel's tables are.
+#
+#   cmake -G Ninja -S port/stm32h5 -B build-h503 -DUBIQOS_H5_BOARD=nucleo-h503rb
+set(UBIQOS_H5_BOARD "nucleo-h563zi" CACHE STRING "nucleo-h563zi or nucleo-h503rb")
+if(UBIQOS_H5_BOARD STREQUAL "nucleo-h563zi")
+    set(H5_CHIP STM32H563xx)
+    set(H5_LD   stm32h563zi.ld)
+    set(H5_ETH  ON)
+elseif(UBIQOS_H5_BOARD STREQUAL "nucleo-h503rb")
+    set(H5_CHIP STM32H503xx)
+    set(H5_LD   stm32h503rb.ld)
+    set(H5_ETH  OFF)                       # the part has no Ethernet MAC
+else()
+    message(FATAL_ERROR "UBIQOS_H5_BOARD: no board called ${UBIQOS_H5_BOARD}")
+endif()
 
 # lwIP itself, from the same copy the RP2350 kernel is built with: the one in
 # the pico-sdk's tree, which is lwIP 2.2 as released. Nothing else of the SDK is
@@ -84,7 +102,10 @@ add_executable(ubiqos_h5
 )
 # Ethernet and the stack on it. Off, the kernel is what a board without a
 # network would carry -- which is also how to measure what the network costs.
-option(UBIQOS_H5_NET "Ethernet, lwIP, mDNS and NTP" ON)
+set(UBIQOS_H5_NET ${H5_ETH} CACHE BOOL "Ethernet, lwIP, mDNS and NTP")
+if(UBIQOS_H5_NET AND NOT H5_ETH)
+    message(FATAL_ERROR "${UBIQOS_H5_BOARD} has no Ethernet: UBIQOS_H5_NET=OFF")
+endif()
 if(UBIQOS_H5_NET)
     target_sources(ubiqos_h5 PRIVATE
         eth.c
@@ -115,9 +136,9 @@ target_include_directories(ubiqos_h5 PRIVATE
     ${UBIQOS_ROOT}/third_party/cmsis-core/Include
 )
 target_compile_definitions(ubiqos_h5 PRIVATE
-    STM32H563xx
+    ${H5_CHIP}
     UBIQOS_CHIP_STM32H5=1
-    "UBIQOS_BOARD_HEADER=<boards/nucleo-h563zi.h>"
+    "UBIQOS_BOARD_HEADER=<boards/${UBIQOS_H5_BOARD}.h>"
     UBIQOS_HAS_VIDEO=0 UBIQOS_HAS_CONSOLE=0
     UBIQOS_POOL_FROM_LINKER=1
     DMESG_SIZE=16384
@@ -126,6 +147,6 @@ target_compile_definitions(ubiqos_h5 PRIVATE
 target_compile_options(ubiqos_h5 PRIVATE ${H5_CPU_FLAGS} -O2 -g -Wall
     -ffunction-sections -fdata-sections -fno-math-errno)
 target_link_options(ubiqos_h5 PRIVATE ${H5_CPU_FLAGS} -nostartfiles --specs=nano.specs
-    -T${CMAKE_CURRENT_SOURCE_DIR}/stm32h563zi.ld -Wl,--gc-sections
+    -T${CMAKE_CURRENT_SOURCE_DIR}/${H5_LD} -Wl,--gc-sections
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/ubiqos_h5.map)
 set_target_properties(ubiqos_h5 PROPERTIES SUFFIX ".elf")
