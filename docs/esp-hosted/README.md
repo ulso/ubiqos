@@ -779,8 +779,11 @@ were fine; the difference was this station.
 
 `ehrpc phy` asks the chip which mode the association settled on
 (WifiStaGetNegotiatedPhymode, 339), and it said **802.11ax, 20 MHz**. The C6
-is a Wi-Fi 6 chip and the house router is a Wi-Fi 6 mesh, so they agreed on
-it. With `WifiSetProtocol` (297) restricting the chip to b/g/n before the
+is a Wi-Fi 6 chip, 2.4 GHz only, and the house network is a Wi-Fi 7 mesh --
+five TP-Link Deco BE65 and BE85 nodes -- which speaks 802.11ax to a Wi-Fi 6
+station, so they agreed on it. Whether the cost is the C6's or this mesh's is
+not known: another access point might give 802.11ax without it. With
+`WifiSetProtocol` (297) restricting the chip to b/g/n before the
 join:
 
 | | 802.11ax | 802.11n |
