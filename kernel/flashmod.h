@@ -35,6 +35,19 @@
 #define UBIQOS_FLASH_KEYS_BASE   0x10FE0000u
 #define UBIQOS_FLASH_KEYS_SIZE   0x2000u
 
+// The fixed data area: RAM set aside at a known address for the writable data
+// of the single-instance programs make_flash_image.py places there, so that
+// their code can stay in flash -- see UBIQOS_ATTR_SPLIT. None on the RP2350,
+// whose PSRAM makes a copy cost nothing worth the address; the top 64 kB of
+// the STM32H563's SRAM, which its linker script keeps out of everything else.
+#if !UBIQOS_CHIP_STM32H5
+#define UBIQOS_FIXED_DATA_BASE   0u
+#define UBIQOS_FIXED_DATA_SIZE   0u
+#else
+#define UBIQOS_FIXED_DATA_BASE   0x20090000u
+#define UBIQOS_FIXED_DATA_SIZE   0x10000u
+#endif
+
 // Scan the flash region for module headers and register what is found as
 // resident modules. They run where they lie and are never copied -- exactly
 // what OS-9 did with ROM modules, and the reason a module system needs no

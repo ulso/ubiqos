@@ -7,6 +7,7 @@
 #include "io.h"
 #include "moddir.h"
 #include "critical.h"
+#include "flashmod.h"
 
 #define MAX_PROCESSES UBIQOS_MAX_PROCESSES
 #define KERNEL_PID    0     // The kernel is itself a process, always runnable.
@@ -506,7 +507,29 @@ int32_t ubiqos_process_create_for(const ubiqos_module_header_t *module_ptr,
     bool reentrant = ((module_ptr->attr_rev >> 8) & UBIQOS_ATTR_REENTRANT) != 0;
     bool needs_copy = ((module_ptr->attr_rev >> 8) & UBIQOS_ATTR_PRIVATE) != 0;
     void *code_copy = 0;
-    if (!reentrant || needs_copy) {
+
+    // Placed with its data at a fixed address: only that data is copied, and
+    // the code runs where it lies. The address must be inside this board's data
+    // area -- a module placed for another board's would write over whatever is
+    // there -- and when it is not, the module is copied and relocated whole,
+    // which is correct wherever the copy lands.
+    const ubiqos_split_t *split = needs_copy ? 0 : ubiqos_module_split(module_ptr);
+    if (split) {
+        const uint32_t tail = ubiqos_module_image_size(module_ptr) - split->data_offset;
+        const uint32_t size = tail + module_ptr->bss_size;
+        if (UBIQOS_FIXED_DATA_SIZE && split->data_addr >= UBIQOS_FIXED_DATA_BASE
+                && split->data_addr + size <= UBIQOS_FIXED_DATA_BASE + UBIQOS_FIXED_DATA_SIZE) {
+            uint8_t *to = (uint8_t *)(uintptr_t)split->data_addr;
+            const uint8_t *from = (const uint8_t *)module_ptr + split->data_offset;
+            for (uint32_t i = 0; i < tail; i++) to[i] = from[i];
+            for (uint32_t i = tail; i < size; i++) to[i] = 0;
+        } else {
+            split = 0;
+            needs_copy = true;
+        }
+    }
+
+    if (!split && (!reentrant || needs_copy)) {
         code_copy = 0;
         uint8_t *aligned = ubiqos_module_relocated_copy(module_ptr, &code_copy);
         if (!aligned) {
