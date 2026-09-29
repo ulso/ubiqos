@@ -28,6 +28,7 @@
 #include "sdcard.h"
 #include "moddir.h"
 #include "keystore.h"
+#include "board.h"
 #include "flashmod.h"
 #include "tlsf.h"
 #include "config.h"
@@ -737,6 +738,15 @@ static bool card_bring_up(bool try_sdio) {
 // blocks holds up nothing but itself.
 #define STARTUP_PATH "/sd/startup"
 
+// Where a process started by the system says what it has to say: the screen if
+// there is one, the USB console if not, and the serial terminal on a board with
+// neither -- the NUCLEO-H563ZI, whose only console is the ST-LINK's.
+static const char *console_name(void) {
+    if (ubiqos_io_has_device("con")) return "con";
+    if (ubiqos_io_has_device("usb")) return "usb";
+    return "term";
+}
+
 static void run_startup_script(void) {
     uint32_t size = 0;
     if (ubiqos_fat_stat("startup", &size) < 0) return;   // no script, nothing to say
@@ -752,7 +762,7 @@ static void run_startup_script(void) {
     if (in < 0) { ubiqos_print("startup: could not open " STARTUP_PATH "\n"); return; }
     if (in != UBIQOS_STDIN) ubiqos_io_dup(in, UBIQOS_STDIN, pid);
 
-    const char *console = ubiqos_io_has_device("con") ? "con" : "usb";
+    const char *console = console_name();
     ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
     ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
 
@@ -764,7 +774,37 @@ static void run_startup_script(void) {
 // running `key opened`, so that it is the same code saying the same things on
 // the console. Before the startup script, so that the script finds the store
 // open and the network on its way.
+#if UBIQOS_KEYS_OPEN_BY_DEFAULT
+// A board that asks for it -- see its header -- has a store sealed under a
+// passphrase that is written here, and so is known to everyone: it is made at
+// the first boot and opened at every one after. A store that somebody has
+// sealed under a passphrase of their own does not open with this one, and
+// stays shut until they type it.
+#define UBIQOS_KEYS_DEFAULT_PASS "ubiqos: open by default"
+
+static bool open_by_default(void) {
+    const uint32_t was = ubiqos_keys_state();
+    if (was == UBIQOS_KEYS_OPEN) return true;
+    const char *p = UBIQOS_KEYS_DEFAULT_PASS;
+    uint32_t n = 0;
+    while (p[n]) n++;
+    if (ubiqos_keys_unlock((const uint8_t *)p, n) < 0) {
+        ubiqos_print("Keys: sealed under a passphrase of its own; 'key unlock' opens it\n");
+        return false;
+    }
+    ubiqos_print(was == UBIQOS_KEYS_EMPTY
+        ? "Keys: a new store, open by default -- this board keeps no secret from its debugger\n"
+        : "Keys: open by default -- this board keeps no secret from its debugger\n");
+    return true;
+}
+#endif
+
+static void run_key_opened(void);
+
 static void unlock_from_card(void) {
+#if UBIQOS_KEYS_OPEN_BY_DEFAULT
+    if (open_by_default()) { run_key_opened(); return; }
+#endif
     if (ubiqos_keys_state() != UBIQOS_KEYS_LOCKED || !ubiqos_keys_unattended()) return;
     uint8_t token[32];
     if (key_file_read(token) != 0) {
@@ -778,12 +818,17 @@ static void unlock_from_card(void) {
         return;
     }
     ubiqos_print("Keys: unlocked by " UBIQOS_KEY_FILE "\n");
+    run_key_opened();
+}
 
+// What `key unlock` does after opening the store -- `wifi auto`, sshd -- run
+// as `key opened`, so that it is the same code saying the same things.
+static void run_key_opened(void) {
     const char *k = ubiqos_moddir_match("key");
     const ubiqos_module_header_t *m = k ? ubiqos_moddir_link(k) : 0;
     const int32_t pid = m ? ubiqos_process_create(m, "opened") : -1;
     if (pid < 0) { ubiqos_print("Keys: could not run 'key opened'\n"); return; }
-    const char *console = ubiqos_io_has_device("con") ? "con" : "usb";
+    const char *console = console_name();
     ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
     ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
 }
@@ -814,7 +859,7 @@ static void run_autostart(void) {
             continue;
         }
 
-        const char *console = ubiqos_io_has_device("con") ? "con" : "usb";
+        const char *console = console_name();
         ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
         ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
 
