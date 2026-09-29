@@ -8,6 +8,10 @@
 
 #define UBIQOS_BOARD_NAME   "ST NUCLEO-H563ZI"
 
+// Its name on the network, since there is no card to give it one: it answers
+// to nucleo-h563zi.local, not to the ubiqos.local every card-less board shares.
+#define UBIQOS_DEFAULT_HOSTNAME "nucleo-h563zi"
+
 // Pins are numbered port by port, sixteen to a port: PA0 is 0, PB0 is 16, PD8
 // is 56. Nine ports, A to I, whether or not this package bonds out every pin.
 #define UBIQOS_PIN(port, n) ((uint32_t)((port) - 'A') * 16u + (n))
