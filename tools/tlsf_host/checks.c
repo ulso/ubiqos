@@ -48,18 +48,21 @@ static void line(const char *what, unsigned long v) {
     out_str("  "); out_str(what); out_str(" "); out_u32(v); out_str("\n");
 }
 
-int tlsf_checks(void) {
+// One pool of BYTES at the front of the arena, through everything below.
+static int check_pool(unsigned long bytes) {
     int bad = 0;
-    out_str("  header is "); out_u32(sizeof(void*) * 8); out_str(" bit\n");
+    allocs = 0;
+    out_str("  pool of "); out_u32(bytes); out_str(" bytes\n");
 
     out_str("  creating...\n");
-    tlsf_pool_t pool = ubiqos_tlsf_create(arena, sizeof arena);
+    tlsf_pool_t pool = ubiqos_tlsf_create(arena, bytes);
     if (!pool) { out_str("  create failed\n"); return 1; }
     out_str("  created\n");
 
     unsigned long start = ubiqos_tlsf_largest_free(pool);
     out_str("  first walk done\n");
     line("largest free at the start:", start);
+    line("  so the pool keeps for itself:", bytes - start);
 
     void *a = wrap_alloc(pool, 1024);
     unsigned long held = ubiqos_tlsf_largest_free(pool);
@@ -107,5 +110,18 @@ int tlsf_checks(void) {
     if (end != start) { out_str("  POOL SHRANK\n"); bad = 1; }
 
     out_str(bad ? "  FAILED\n" : "  passed\n");
+    return bad;
+}
+
+// Three sizes, because the free-list table is sized to the pool now: the
+// arena the harness always had, the 14 kB a NUCLEO-H503RB's pool is, and a
+// pool small enough that its table has barely any rows at all.
+int tlsf_checks(void) {
+    out_str("  header is "); out_u32(sizeof(void*) * 8); out_str(" bit\n");
+    int bad = 0;
+    bad |= check_pool(sizeof arena);
+    bad |= check_pool(14272);
+    bad |= check_pool(4096);
+    out_str(bad ? "FAILED\n" : "all passed\n");
     return bad;
 }

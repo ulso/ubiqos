@@ -11,13 +11,19 @@ typedef struct block_header_t {
     struct block_header_t* prev_free;
 } block_header_t;
 
+// The control block sits at the front of the pool, and its free lists are only
+// as many rows as the pool has size classes: fl_count, one more than the class
+// of the pool's own size. It was all FL_INDEX_MAX rows whatever the pool, a
+// table for blocks of up to four gigabytes -- 4.2 kB of every pool, which on a
+// 14 kB pool was the room a command needed to start.
 typedef struct {
     block_header_t block_null;
     uint32_t fl_bitmap;
+    uint32_t fl_count;
     uint32_t sl_bitmap[FL_INDEX_MAX];
-    block_header_t* blocks[FL_INDEX_MAX][SL_INDEX_COUNT];
     uintptr_t pool_start;
     uintptr_t pool_end;
+    block_header_t* blocks[][SL_INDEX_COUNT];    // fl_count rows
 } tlsf_ctrl_t;
 
 #define MIN_PAYLOAD      (2 * sizeof(void*))
@@ -30,7 +36,7 @@ static inline int tlsf_fls(uint32_t word) {
     return 31 - __builtin_clz(word);
 }
 
-static void tlsf_mapping(size_t size, int* fl, int* sl) {
+static void tlsf_mapping(const tlsf_ctrl_t* ctrl, size_t size, int* fl, int* sl) {
     int f = tlsf_fls((uint32_t)size);
     if (f < 5) {
         *fl = 0;
@@ -39,7 +45,7 @@ static void tlsf_mapping(size_t size, int* fl, int* sl) {
         *fl = f;
         *sl = (int)((size >> (f - 5)) & (SL_INDEX_COUNT - 1));
     }
-    if (*fl >= FL_INDEX_MAX) *fl = FL_INDEX_MAX - 1;
+    if (*fl >= (int)ctrl->fl_count) *fl = (int)ctrl->fl_count - 1;
 }
 
 // The neighbour at the next higher address, or NULL if the block is last.
@@ -51,7 +57,7 @@ static block_header_t* next_phys(tlsf_ctrl_t* ctrl, block_header_t* block) {
 
 static void tlsf_insert(tlsf_ctrl_t* ctrl, block_header_t* block) {
     int fl, sl;
-    tlsf_mapping(BLOCK_SIZE(block), &fl, &sl);
+    tlsf_mapping(ctrl, BLOCK_SIZE(block), &fl, &sl);
 
     block->size |= BLOCK_FREE_BIT;
     block->next_free = ctrl->blocks[fl][sl];
@@ -68,7 +74,7 @@ static void tlsf_insert(tlsf_ctrl_t* ctrl, block_header_t* block) {
 // Coalescing needs exactly that: the neighbour to be eaten is rarely first.
 static void tlsf_remove(tlsf_ctrl_t* ctrl, block_header_t* block) {
     int fl, sl;
-    tlsf_mapping(BLOCK_SIZE(block), &fl, &sl);
+    tlsf_mapping(ctrl, BLOCK_SIZE(block), &fl, &sl);
 
     if (block->prev_free != &ctrl->block_null) {
         block->prev_free->next_free = block->next_free;
@@ -86,19 +92,26 @@ static void tlsf_remove(tlsf_ctrl_t* ctrl, block_header_t* block) {
 }
 
 tlsf_pool_t ubiqos_tlsf_create(void* mem, size_t bytes) {
-    if (bytes < sizeof(tlsf_ctrl_t) + sizeof(block_header_t) + MIN_PAYLOAD) return NULL;
+    // No block can be larger than the pool, so no size class above the
+    // pool's own is ever used.
+    int top = tlsf_fls((uint32_t)bytes);
+    if (top < 0) return NULL;
+    uint32_t rows = (uint32_t)top + 1u;
+    if (rows > FL_INDEX_MAX) rows = FL_INDEX_MAX;
+    const size_t ctrl_bytes = sizeof(tlsf_ctrl_t) + rows * sizeof(((tlsf_ctrl_t*)0)->blocks[0]);
+    if (bytes < ctrl_bytes + 8 + sizeof(block_header_t) + MIN_PAYLOAD) return NULL;
 
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)mem;
     ctrl->fl_bitmap = 0;
+    ctrl->fl_count = rows;
     ctrl->block_null.next_free = &ctrl->block_null;
     ctrl->block_null.prev_free = &ctrl->block_null;
     ctrl->block_null.size = 0;
-    for (int i = 0; i < FL_INDEX_MAX; ++i) {
-        ctrl->sl_bitmap[i] = 0;
+    for (int i = 0; i < FL_INDEX_MAX; ++i) ctrl->sl_bitmap[i] = 0;
+    for (uint32_t i = 0; i < rows; ++i)
         for (int j = 0; j < SL_INDEX_COUNT; ++j) ctrl->blocks[i][j] = &ctrl->block_null;
-    }
 
-    uintptr_t start = ((uintptr_t)mem + sizeof(tlsf_ctrl_t) + 3) & ~(uintptr_t)3;
+    uintptr_t start = ((uintptr_t)mem + ctrl_bytes + 7) & ~(uintptr_t)7;
     ctrl->pool_start = start;
     ctrl->pool_end = (uintptr_t)mem + bytes;
 
@@ -117,10 +130,10 @@ static void* ubiqos_tlsf_malloc_unlocked(tlsf_pool_t pool, size_t size) {
     if (size < MIN_PAYLOAD) size = MIN_PAYLOAD;
 
     int fl, sl;
-    tlsf_mapping(size, &fl, &sl);
+    tlsf_mapping(ctrl, size, &fl, &sl);
 
     block_header_t* block = 0;
-    for (int f = fl; f < FL_INDEX_MAX && !block; ++f) {
+    for (int f = fl; f < (int)ctrl->fl_count && !block; ++f) {
         uint32_t sl_map = ctrl->sl_bitmap[f];
         if (f == fl) sl_map &= (sl >= 31) ? 0u : (~0U << (sl + 1));
         while (sl_map) {
