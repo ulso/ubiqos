@@ -60,6 +60,7 @@ UBIQOS_MEM_SIZE(16384);
 #define REQ_GET_PS    271u
 #define REQ_GET_RSSI  341u
 #define REQ_GET_PHY   339u    // WifiStaGetNegotiatedPhymode
+#define REQ_FEATURE   387u    // FeatureControl: Bluetooth init, enable, ...
 #define RESP_OFFSET   256u
 
 
@@ -721,6 +722,36 @@ static void do_phy(int32_t dev) {
     ubiqos_line_flush(UBIQOS_STDOUT, &l);
 }
 
+// Bluetooth: bring the co-processor's controller up, so that HCI can pass --
+// FeatureControl with feature 1 (Bluetooth), command 1 (init) and then 3
+// (enable). A firmware built without a controller answers with an error, and
+// that is said. What talks HCI after this is modules/blescan.
+static void do_bt(int32_t dev) {
+    static const char *const step[] = { "init", "enable" };
+    static const uint32_t command[] = { 1u, 3u };
+    for (int i = 0; i < 2; i++) {
+        uint8_t body[8];
+        uint32_t n = 0;
+        n += put_field(body + n, 1, 0, 1u);           // Feature_Bluetooth
+        n += put_field(body + n, 2, 0, command[i]);
+        uint8_t payload[64];
+        uint32_t plen = 0;
+        const uint32_t resp = call(dev, REQ_FEATURE, body, n, 5000, payload, sizeof(payload), &plen);
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "bluetooth ");
+        ubiqos_line_str(&l, step[i]);
+        // A firmware built without the controller does not know the request
+        // and says nothing at all -- the Fruit Jam's does not have one.
+        if (resp == 0xffffffffu)      ubiqos_line_str(&l, ": no answer -- this firmware has no Bluetooth controller");
+        else if (resp == 0)           ubiqos_line_str(&l, ": ok");
+        else { ubiqos_line_str(&l, ": refused, "); ubiqos_line_u32(&l, resp); }
+        ubiqos_line_str(&l, "\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
+        if (resp != 0) return;
+    }
+}
+
 void module_main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
             "usage: ehrpc mode | peek | connect <ssid> | auto | scan\n\n"
@@ -729,6 +760,7 @@ void module_main(int argc, char **argv) {
             "  ps      which power-saving mode it is actually in\n"
             "  rssi    how strong the signal from the access point is\n"
             "  phy     which 802.11 mode the association settled on\n"
+            "  bt      bring the Bluetooth controller up, for HCI\n"
             "  peek    whatever the chip has said that nobody has taken\n"
             "  connect <ssid>  bring the radio up and join. A password kept in\n"
             "          the key store as 'wifi.<ssid>' is used without asking and\n"
@@ -747,8 +779,9 @@ void module_main(int argc, char **argv) {
     bool ps   = argc == 2 && is(argv[1], "ps");
     bool rssi = argc == 2 && is(argv[1], "rssi");
     bool phy  = argc == 2 && is(argv[1], "phy");
-    if (!mode && !peek && !conn && !ps && !rssi && !phy && !automatic && !scanning) {
-        say("usage: ehrpc mode | ps | rssi | phy | peek | connect <ssid> | auto | scan\r\n");
+    bool bt   = argc == 2 && is(argv[1], "bt");
+    if (!mode && !peek && !conn && !ps && !rssi && !phy && !bt && !automatic && !scanning) {
+        say("usage: ehrpc mode | ps | rssi | phy | bt | peek | connect <ssid> | auto | scan\r\n");
         return;
     }
 
@@ -760,6 +793,7 @@ void module_main(int argc, char **argv) {
     else if (ps)   do_ps(dev);
     else if (rssi) do_rssi(dev);
     else if (phy)  do_phy(dev);
+    else if (bt)   do_bt(dev);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
     ubiqos_close(dev);
