@@ -26,7 +26,14 @@ void ubiqos_print_hex(uint32_t v);
 //
 // The pins are the board's, from its header. D- is always D+ plus one, which
 // PIO-USB requires; the rest a board may simply not have.
+#if UBIQOS_HAS_PIO_USB_HOST
 #define USB_HOST_DP_PIN  UBIQOS_USB_HOST_DP
+#else
+// No host on PIO, so no D+ -- the Challenger+ has none. This file is built for
+// every board all the same, and the code that would start a host is never
+// called on such a board; the number is one no pin has.
+#define USB_HOST_DP_PIN  0xffu
+#endif
 
 #if UBIQOS_HAS_USB_HOST_POWER
 #define USB_HOST_POWER   UBIQOS_USB_HOST_POWER
@@ -105,6 +112,32 @@ uint32_t tusb_time_millis_api(void) {
     return (uint32_t)(time_us_64() / 1000u);
 }
 
+// The board's peripherals, released from reset: on the Fruit Jam the USB hub,
+// the audio DAC and the ESP32-C6 together, on the Challenger+ the C6 alone.
+// A board with no USB host calls it from main; one with a host has it called
+// here, in the place it always had. A pin the board wants held high while the
+// reset goes -- UBIQOS_ESP_RESET_PULLUP -- keeps its pull-up after; the driver
+// that owns it sets its function when it starts.
+void ubiqos_periph_reset(void) {
+#if UBIQOS_HAS_PERIPH_RESET
+    gpio_init(ESP_BOOT);
+    gpio_set_dir(ESP_BOOT, GPIO_IN);
+    gpio_set_pulls(ESP_BOOT, true, false);   // pull up, and leave the button alone
+#ifdef UBIQOS_ESP_RESET_PULLUP
+    gpio_init(UBIQOS_ESP_RESET_PULLUP);
+    gpio_set_dir(UBIQOS_ESP_RESET_PULLUP, GPIO_IN);
+    gpio_set_pulls(UBIQOS_ESP_RESET_PULLUP, true, false);
+#endif
+    sleep_ms(1);
+
+    gpio_init(PERIPH_RESET);
+    gpio_set_dir(PERIPH_RESET, GPIO_OUT);
+    gpio_put(PERIPH_RESET, 0);            // a real pulse, not just a release
+    sleep_ms(10);
+    gpio_put(PERIPH_RESET, 1);            // let the on-board peripherals go
+#endif
+}
+
 // The board's own power-up, which is NOT the USB host and must not move with
 // it: GP22 releases the hub, the audio DAC and the ESP32-C6 together, and the
 // drivers that come later in boot depend on having happened after it. Only the
@@ -121,18 +154,7 @@ void ubiqos_usbhost_init(void) {
     // reset as an input with its PULL-DOWN on, so GP0 was holding the ESP in
     // bootloader mode every time. The chip had power and drove its busy line,
     // which is what made it look present but permanently not ready.
-#if UBIQOS_HAS_PERIPH_RESET
-    gpio_init(ESP_BOOT);
-    gpio_set_dir(ESP_BOOT, GPIO_IN);
-    gpio_set_pulls(ESP_BOOT, true, false);   // pull up, and leave the button alone
-    sleep_ms(1);
-
-    gpio_init(PERIPH_RESET);
-    gpio_set_dir(PERIPH_RESET, GPIO_OUT);
-    gpio_put(PERIPH_RESET, 0);            // a real pulse, not just a release
-    sleep_ms(10);
-    gpio_put(PERIPH_RESET, 1);            // let the on-board peripherals go
-#endif
+    ubiqos_periph_reset();
 
 #if UBIQOS_HAS_USB_HOST_POWER
     gpio_init(USB_HOST_POWER);

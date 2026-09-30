@@ -685,6 +685,9 @@ void ubiqos_kernel_main(void) {
     // been tried. Until then the pads are wired and unasked.
 #if UBIQOS_HAS_PIO_USB_HOST || UBIQOS_USB_NATIVE_HOST
     ubiqos_usbhost_init();
+#elif UBIQOS_HAS_PERIPH_RESET
+    // No host to do it in passing, so the peripherals' reset is released here.
+    { extern void ubiqos_periph_reset(void); ubiqos_periph_reset(); }
 #endif
     // And then the host itself, on the other core. Its interrupts belong to
     // whichever core enables them, so tuh_init runs over there rather than
