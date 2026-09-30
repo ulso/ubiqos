@@ -505,7 +505,9 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # 24 later the same day, for the key store's cryptography -- SHA-256,
         # PBKDF2 and ChaCha20-Poly1305 are kernel code, and kernel code is
         # SRAM here because the kernel is linked copy_to_ram.
-        set(ubiqosHeapKB 24)
+        # 20 since 30 Sep 2026: turning the XIP cache back on at boot, when a
+        # debugger has left it off, took the riscv framebuffer heap to 252.
+        set(ubiqosHeapKB 20)
         # The Waveshare panel is not a framebuffer build and was never short:
         # its C heap is over 200 kB. It shared the number above only because
         # both are "not chargen", and the cuts made for the RISC-V framebuffer

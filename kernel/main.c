@@ -24,6 +24,8 @@
 #include "pico/unique_id.h"
 #include "hardware/watchdog.h"
 #include "hardware/psram.h"
+#include "hardware/xip_cache.h"
+#include "hardware/structs/xip_ctrl.h"
 #endif
 
 void ubiqos_pio_probe(void);
@@ -527,6 +529,22 @@ void ubiqos_kernel_main(void) {
         ubiqos_print("(chip_reset ");
         ubiqos_print_u32(why);
         ubiqos_print(")\n");
+    }
+
+    // The XIP cache on, whoever turned it off. A reset that is not a power
+    // cycle leaves XIP_CTRL as it was, and J-Link's flash loader leaves it
+    // off: after one failed `loadbin` on the Challenger every module that runs
+    // in place ran from flash uncached, twenty times slower -- sshd took 16 s
+    // over a key exchange that takes 0.7 s, and every client gave up first.
+    // Invalidated before it goes on, since what it held is from before
+    // whatever was written while it was off.
+    {
+        const uint32_t on = XIP_CTRL_EN_SECURE_BITS | XIP_CTRL_EN_NONSECURE_BITS;
+        if ((xip_ctrl_hw->ctrl & on) != on) {
+            xip_cache_invalidate_all();
+            hw_set_bits(&xip_ctrl_hw->ctrl, on);
+            ubiqos_print("XIP cache: found switched off -- a debugger's doing -- and turned on\n");
+        }
     }
 #endif
     
