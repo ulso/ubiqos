@@ -747,6 +747,21 @@ void module_main(int argc, char **argv) {
     // away from caring where its input comes from, which it should not.
     e->quiet = argc > 1 && line_is(argv[1], "script");
 
+    // "sh module NAME" runs a data module's text the same way: a board's boot
+    // script kept in flash, for a board with no card to keep one on. Read from
+    // the module where it lies rather than through a descriptor -- there is no
+    // file to open, and a script is only ever read front to back.
+    const char *text = 0;
+    uint32_t text_len = 0, text_at = 0;
+    if (argc > 2 && line_is(argv[1], "module")) {
+        text = (const char *)ubiqos_data_link(argv[2], &text_len);
+        if (!text) {
+            ubiqos_write_str(UBIQOS_STDERR, "sh: no data module by that name\r\n");
+            return;
+        }
+        e->quiet = true;
+    }
+
     e->out = UBIQOS_STDOUT;
     e->len = e->pos = 0;
     e->line[0] = 0;
@@ -773,7 +788,14 @@ void module_main(int argc, char **argv) {
 
     for (;;) {
         uint8_t ch;
-        int32_t got = ubiqos_read(UBIQOS_STDIN, &ch, 1);
+        int32_t got;
+        if (text) {
+            // A data module is padded to a word, so the text ends at its NUL.
+            got = (text_at < text_len && text[text_at]) ? 1 : 0;
+            if (got) ch = (uint8_t)text[text_at++];
+        } else {
+            got = ubiqos_read(UBIQOS_STDIN, &ch, 1);
+        }
         // Zero is the end and not "nothing yet": the kernel blocks a process
         // whose device has nothing to say rather than returning, so a nought
         // reaching here came from a file that has been read to its end or a

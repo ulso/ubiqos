@@ -330,6 +330,11 @@ every descriptor are resident in flash.
 file, so it is a list of commands and nothing more. It is started, not waited
 for: the system is up either way.
 
+A board with no card -- the Challenger -- keeps its script in flash instead: a
+data module called `startup`, text in the same form, which the shell runs as
+`sh module startup`. The board chooses the file (`boards/challenger-startup.c`)
+and it is used only when there is no `/sd/startup`, so a card still overrides it.
+
 ## Where a program comes from
 
 A name typed at the shell is looked for in flash first, and then along the

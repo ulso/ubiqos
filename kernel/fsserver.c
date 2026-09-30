@@ -747,9 +747,37 @@ static const char *console_name(void) {
     return "term";
 }
 
+// With no script on a card, the board's own: a data module called "startup" in
+// its module image -- see boards/*-startup.c. A card's script wins, so that
+// what a board does at boot can still be changed without building anything.
+#define STARTUP_MODULE "startup"
+
+static void run_startup_module(void) {
+    const char *stored = ubiqos_moddir_match(STARTUP_MODULE);
+    const ubiqos_module_header_t *d = stored ? ubiqos_moddir_link(stored) : 0;
+    if (!d) return;                                      // none, nothing to say
+    const bool data = (d->type_lang >> 8) == UBIQOS_TYPE_DATA;
+    ubiqos_moddir_unlink(d);
+    if (!data) return;
+
+    const char *sh = ubiqos_moddir_match("sh");
+    const ubiqos_module_header_t *m = sh ? ubiqos_moddir_link(sh) : 0;
+    int32_t pid = m ? ubiqos_process_create(m, "module " STARTUP_MODULE) : -1;
+    if (pid < 0) { ubiqos_print("startup: no shell to run it\n"); return; }
+
+    const char *console = console_name();
+    ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
+    ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
+
+    ubiqos_print("Running the " STARTUP_MODULE " module\n");
+}
+
 static void run_startup_script(void) {
     uint32_t size = 0;
-    if (ubiqos_fat_stat("startup", &size) < 0) return;   // no script, nothing to say
+    if (!card_mounted || ubiqos_fat_stat("startup", &size) < 0) {
+        run_startup_module();
+        return;
+    }
 
     const char *sh = ubiqos_moddir_match("sh");
     const ubiqos_module_header_t *m = sh ? ubiqos_moddir_link(sh) : 0;
