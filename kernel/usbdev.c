@@ -280,6 +280,17 @@ int32_t ubiqos_usb_write(const uint8_t *buf, uint32_t len) {
         written++;
     }
     if (written) tud_cdc_write_flush();
+
+    // Nobody listening, and no room: the rest is dropped, as it would be to a
+    // terminal nobody watches. TinyUSB means to do this itself -- with DTR low
+    // its buffer is overwritable -- but the room check above still reports it
+    // full, so a program writing to a console nobody had open was told "none
+    // of it went" for ever and waited. That was sshd on the Challenger, whose
+    // console is this one: a few sessions' worth of "sshd: a client" filled
+    // the 256 bytes after the Mac's terminal had closed, and every connection
+    // after that got no banner until somebody opened the port. A host that
+    // reads without raising DTR loses what it falls behind by, and no more.
+    if (written < len && !tud_cdc_connected()) return (int32_t)len;
     return (int32_t)written;
 }
 
