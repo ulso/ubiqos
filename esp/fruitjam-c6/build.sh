@@ -35,7 +35,10 @@ git -C "$WORK/esp_hosted" submodule update --init --recursive --depth 1
 
 CP="$WORK/esp_hosted/examples/wifi/sta/cp"
 cd "$CP"
-idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32c6;$HERE/sdkconfig.defaults.fruitjam" \
+# The board's wiring. The Fruit Jam's unless BOARD_DEFAULTS names another --
+# esp/challenger-c6/build.sh does, for iLabs' Challenger+ RP2350.
+BOARD_DEFAULTS=${BOARD_DEFAULTS:-$HERE/sdkconfig.defaults.fruitjam}
+idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32c6;$BOARD_DEFAULTS" \
        set-target esp32c6 build
 
 echo

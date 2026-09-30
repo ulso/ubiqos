@@ -1,0 +1,19 @@
+# iLabs' Challenger+ RP2350 WiFi6/BLE5: the ESP32-C6-MINI-1-H4 as seen from its
+# own side. From iLabs' schematic 54-00314-1 rev P1.2, sheet 4; the RP2350's
+# side of each net is in boards/challenger-rp2350.h and the descriptors.
+#
+# SPI full duplex, as on the Fruit Jam -- same chip, same transport, other pins.
+CONFIG_EH_TRANSPORT_CP_SPI=y
+CONFIG_EH_TRANSPORT_CP_SPI_CONTROLLER_HSPI=y
+
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_MOSI=14
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_MISO=2
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_CLK=15
+CONFIG_EH_TRANSPORT_CP_SPI_HSPI_GPIO_CS=7
+
+# IO3 -> RP2350 GP22, which iLabs name the handshake.
+CONFIG_EH_TRANSPORT_CP_SPI_GPIO_HANDSHAKE=3
+
+# IO9 -> RP2350 GP14. The chip's download strap as well, as on the Fruit Jam:
+# the RP2350 must leave it high while the C6 comes out of reset.
+CONFIG_EH_TRANSPORT_CP_SPI_GPIO_DATA_READY=9
