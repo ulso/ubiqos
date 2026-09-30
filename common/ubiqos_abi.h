@@ -969,6 +969,7 @@ static inline const ubiqos_split_t *ubiqos_module_split(const ubiqos_module_head
 #define SYS_DATAUNLINK 70u  // a0 = what SYS_DATALINK returned
 #define SYS_INTERRUPT 72u   // a0 = path -> 1 consumed (a command was ended), 0 pass it on
 #define SYS_PATH      73u   // a0 = &ubiqos_fs_path_t -> a0 = 0, -1 refused
+#define SYS_CHILDPULSE 74u  // a0 = pulse type, 0 for none: told when a child ends
 #define SYS_KEYS      71u   // a0 = UBIQOS_KEY_OP_*, a1 = &ubiqos_keyreq_t
 #define SYS_CONFIG    68u   // a0 = UBIQOS_CFG_*, a1 = buffer, a2 = length
                             //   -> a0 = the length written, or for the password
@@ -3065,6 +3066,22 @@ static inline int32_t ubiqos_sockslot(uint32_t n)
 static inline int32_t ubiqos_catch_intr(uint32_t pulse_type)
 {
     return ubiqos_syscall(SYS_CATCHINTR, pulse_type, 0, 0);
+}
+
+// Be told when a process this one started comes to an end: a pulse of the given
+// type, which receive returns from 0, with the child's pid in the low sixteen
+// bits of its value and why it ended in the high ones. It is what a supervisor
+// is built on -- init on a node restarts what it started -- and waiting for any
+// of several children is then just waiting for the next pulse. Zero asks for
+// nothing again. A child's children are not reported: only its parent hears.
+#define UBIQOS_END_EXITED   0u   // it returned, or asked to exit
+#define UBIQOS_END_KILLED   1u   // somebody ended it, Ctrl-C or kill
+#define UBIQOS_END_FAULTED  2u   // a fault in it, or its stack overflowing
+#define UBIQOS_END_PID(value)    ((int32_t)((value) & 0xffffu))
+#define UBIQOS_END_REASON(value) ((uint32_t)(value) >> 16)
+static inline int32_t ubiqos_child_pulse(uint32_t pulse_type)
+{
+    return ubiqos_syscall(SYS_CHILDPULSE, pulse_type, 0, 0);
 }
 
 static inline int32_t ubiqos_random(void *buf, uint32_t len)

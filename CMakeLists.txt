@@ -540,7 +540,13 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # still far larger than anything has used.
         #
         # 104 later the same day, for the cryptography that seals the store.
-        set(ubiqosHeapKB 104)
+        #
+        # 100 since 30 Sep 2026, for supervision: a fault in a module ends the
+        # module instead of the machine, and a parent that asks is told when a
+        # child ends -- with them the riscv chargen C heap was 1656 bytes. The
+        # allocator had given this pool back 2.3 kB the day before, when its
+        # free-list table stopped being sized for four gigabytes.
+        set(ubiqosHeapKB 100)
     endif()
 else()
     set(ubiqosHeapKB ${UBIQOS_HEAP_KB})

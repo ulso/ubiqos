@@ -1006,6 +1006,11 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 ? ubiqos_process_count()
                 : (uint32_t)ubiqos_tlsf_largest_free(ubiqos_mem_pool);
             break;
+        case SYS_CHILDPULSE: {
+            extern int32_t ubiqos_process_child_pulse(uint32_t type);
+            frame->a0 = (uint32_t)ubiqos_process_child_pulse(frame->a0);
+            break;
+        }
         case SYS_CATCHINTR: {
             extern int32_t ubiqos_intr_catch(uint32_t type);
             frame->a0 = (uint32_t)ubiqos_intr_catch(frame->a0);
@@ -1172,11 +1177,41 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
         ubiqos_print_u32((uint32_t)pid);
         if (known && ubiqos_process_is_module(pid)) {
             ubiqos_print("); it is ended ***\n");
-            ubiqos_process_exit();
+            extern void ubiqos_process_fault_exit(void);
+            ubiqos_process_fault_exit();
             return ubiqos_switch(sp);
         }
         ubiqos_print("), a kernel thread; stopping ***\n");
         for (;;) __asm__ volatile("wfi");
+    }
+
+    // A fault in a process ends that process, as a stack overflow does, and the
+    // machine goes on. Only in a module, and only where the trap can tell it
+    // came from one -- see UBIQOS_TRAP_IN_PROCESS: a fault in the kernel, or in
+    // a kernel thread that nobody could restart, still stops everything below.
+    // What the process wrote before it faulted is not undone, and without
+    // memory protection it may have written outside itself; ending it is still
+    // better than ending every other process with it, and it is what lets a
+    // supervisor restart it.
+    if (UBIQOS_TRAP_IN_PROCESS(frame)) {
+        const int32_t pid = ubiqos_current_pid();
+        ubiqos_psinfo_t info;
+        if (ubiqos_process_info((uint32_t)pid, &info) == 0 && ubiqos_process_is_module(pid)) {
+            const uint32_t addr = UBIQOS_TRAP_FAULT(frame);
+            UBIQOS_TRAP_CLEAR_FAULT();
+            ubiqos_print("\n*** UBIQOS: fault in ");
+            ubiqos_print(info.name);
+            ubiqos_print(" (pid ");
+            ubiqos_print_u32((uint32_t)pid);
+            ubiqos_print(") at pc ");
+            ubiqos_print_hex(frame->pc);
+            ubiqos_print(", fault ");
+            ubiqos_print_hex(addr);
+            ubiqos_print("; it is ended ***\n");
+            extern void ubiqos_process_fault_exit(void);
+            ubiqos_process_fault_exit();
+            return ubiqos_switch(sp);
+        }
     }
 
     // Write it down before saying anything, because saying it goes through the

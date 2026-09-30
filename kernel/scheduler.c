@@ -55,6 +55,13 @@ typedef struct {
     int32_t  next_ready;      // READY: next in this priority's queue, -1 at the end
     struct alloc_hdr *allocs; // everything this process has been given
 
+    // Who started it, and whether that one wants to hear when it ends. A
+    // supervisor asks with SYS_CHILDPULSE and gets a pulse of that type, the
+    // child's pid and the reason in its value -- see UBIQOS_END_* in the ABI.
+    int32_t  parent;          // the process that started it, -1 for none
+    uint32_t child_pulse;     // the pulse type to send when a child ends, 0 none
+    uint32_t end_reason;      // UBIQOS_END_*, set by whatever ends it
+
     // Messages. A rendezvous queues senders, not messages: the message stays in
     // the sender's memory, which cannot change because the sender is stopped.
     // So this is one more list through the process table, like the two above.
@@ -295,6 +302,9 @@ int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
                        (uintptr_t)ubiqos_process_return, 0, 0, kernel_tp);
 
     process_table[slot].entry_point = frame->pc;
+    process_table[slot].parent = -1;          // started by nobody who can be told
+    process_table[slot].child_pulse = 0;
+    process_table[slot].end_reason = UBIQOS_END_EXITED;
     process_table[slot].module   = NULL;      // nothing to unlink when it ends
     process_table[slot].mem_base = mem;
     process_table[slot].data_base = NULL;     // a kernel thread keeps its state
@@ -659,6 +669,10 @@ static int32_t create_process(const ubiqos_module_header_t *module_ptr,
                        (uint32_t)tls_base);
 
     process_table[slot].entry_point = frame->pc;
+    // A kernel thread or the kernel itself is not a parent anybody tells.
+    process_table[slot].parent = ubiqos_process_is_module(parent) ? parent : -1;
+    process_table[slot].child_pulse = 0;
+    process_table[slot].end_reason = UBIQOS_END_EXITED;
     process_table[slot].module = module_ptr;
     process_table[slot].mem_base = mem;
     process_table[slot].code_base = code_copy;
@@ -1576,11 +1590,40 @@ static void reap(uint32_t pid) {
     process_table[pid].mem_base = NULL;
 
     wake_waiters(pid);
+
+    // Its children are nobody's now: the slot will be reused, and a pulse
+    // meant for this process must not reach whatever takes it next.
+    for (int i = 1; i < MAX_PROCESSES; i++)
+        if (process_table[i].parent == (int32_t)pid) process_table[i].parent = -1;
+
+    // And the parent is told, if it asked -- after the slot and the memory are
+    // free, so that a supervisor restarting it at once finds room to.
+    const int32_t parent = process_table[pid].parent;
+    process_table[pid].parent = -1;
+    if (parent > 0 && process_table[parent].state != PROC_STATE_FREE
+            && process_table[parent].child_pulse) {
+        pulse_deliver(parent, 0, process_table[parent].child_pulse,
+                      (process_table[pid].end_reason << 16) | (pid & 0xffffu));
+    }
 }
 
 void ubiqos_process_exit(void) {
     if (current_pid == KERNEL_PID) return;      // the kernel is never terminated
     reap(current_pid);
+}
+
+// Ended by a fault in itself rather than by asking. The same taking apart; only
+// what the parent is told differs.
+void ubiqos_process_fault_exit(void) {
+    if (current_pid == KERNEL_PID) return;
+    process_table[current_pid].end_reason = UBIQOS_END_FAULTED;
+    reap(current_pid);
+}
+
+// Ask to be told when a child ends: the pulse type, or 0 for no more.
+int32_t ubiqos_process_child_pulse(uint32_t type) {
+    process_table[current_pid].child_pulse = type;
+    return 0;
 }
 
 // End somebody else.
@@ -1603,6 +1646,7 @@ int32_t ubiqos_process_kill(int32_t pid) {
     // needs all three, and none of them was started by anyone who could be
     // asked whether they meant it.
     if (!p->module) return -1;
+    p->end_reason = UBIQOS_END_KILLED;
 
     if (p->state == PROC_STATE_WAIT_REPLY) {
         sleep_remove(pid);

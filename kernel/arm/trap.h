@@ -148,6 +148,22 @@ static inline void ubiqos_arch_set_stack_limit(uint32_t limit)
         ARM_SCB_SHCSR &= ~ARM_SHCSR_SVCALLPENDED; \
     } while (0)
 
+// Whether the fault happened in a process -- thread mode, on the process stack,
+// which EXC_RETURN says in bits 3 and 2 -- rather than in the kernel. A fault
+// in a handler is the kernel's own and stops the machine; one in a process can
+// end that process and leave the machine running, which is what a supervisor
+// needs in order to have anything to restart.
+#define UBIQOS_TRAP_IN_PROCESS(f) (((f)->exc_return & 0xCu) == 0xCu)
+
+// Every fault status the core latched, written back to clear it, so that the
+// next fault is read as itself and not as this one again. And a pending system
+// call is dropped, for the reason given above for the stack overflow.
+#define UBIQOS_TRAP_CLEAR_FAULT() do { \
+        ARM_SCB_CFSR = ARM_SCB_CFSR; \
+        ARM_SCB_HFSR = ARM_SCB_HFSR; \
+        ARM_SCB_SHCSR &= ~ARM_SHCSR_SVCALLPENDED; \
+    } while (0)
+
 // Thread mode, on the process stack, with no floating-point state stacked.
 //
 // That last part is about a NEW process and nothing more. It used to claim the

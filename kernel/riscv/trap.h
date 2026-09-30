@@ -69,6 +69,12 @@ static inline void ubiqos_arch_set_stack_limit(uint32_t limit) { (void)limit; }
 #define UBIQOS_TRAP_IS_STACK_OVERFLOW(f) ((void)(f), 0)
 #define UBIQOS_TRAP_CLEAR_STACK_OVERFLOW() ((void)0)
 
+// Processes run in machine mode like the kernel, so a trap cannot tell from
+// the privilege it came from whether it was the kernel's or a process's. Every
+// fault here stops the machine, as it always has.
+#define UBIQOS_TRAP_IN_PROCESS(f) ((void)(f), 0)
+#define UBIQOS_TRAP_CLEAR_FAULT() ((void)0)
+
 // The global pointer every process runs with. Captured from the kernel once at
 // startup, because on this machine gp addresses the kernel's own small data and
 // a process that does not have it cannot call into the kernel at all.
