@@ -403,6 +403,13 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
 // OS-9's F$Link and F$Fork in one: look the module up, bump
 // its link count, and make a process of it. The code is shared --
 // only the data area is new.
+#if UBIQOS_NODE
+            // A node starts its programs at boot and nothing after: what runs
+            // on it is fixed by its module image, as a task table fixes it in
+            // an RTOS configured at build time. See kernel/node.c.
+            frame->a0 = (uint32_t)UBIQOS_EXEC_STATIC;
+            break;
+#endif
             const char *want = (const char*)(uintptr_t)frame->a0;
             const char *stored = ubiqos_moddir_match(want);
             if (!stored) { frame->a0 = (uint32_t)-1; break; }

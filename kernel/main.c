@@ -634,9 +634,11 @@ void ubiqos_kernel_main(void) {
     ubiqos_io_init();
     // Before any volume can be added, and before the first path is resolved.
     // /dev exists from here on, so the root is never empty.
+#if !UBIQOS_NODE
     { extern void ubiqos_vfs_init(void); ubiqos_vfs_init(); }
     // /var needs no memory: the ring is already full of what has been said.
     { extern void ubiqos_varfs_init(void); ubiqos_varfs_init(); }
+#endif
     ubiqos_moddir_init();
 
     // Flash first: resident modules run where they lie and cost no heap. The
@@ -645,7 +647,9 @@ void ubiqos_kernel_main(void) {
     ubiqos_bulk_pool_init();
     // After the bulk pool, not with the other volumes: /tmp puts its files in
     // PSRAM, and there is no PSRAM to put them in until now.
+#if !UBIQOS_NODE
     { extern void ubiqos_tmpfs_init(void); ubiqos_tmpfs_init(); }
+#endif
     ubiqos_keys_init();
     ubiqos_pio_probe();
     // The network device's MAC, from the chip's own unique id, so that two of
@@ -720,8 +724,10 @@ void ubiqos_kernel_main(void) {
 #if UBIQOS_HAS_CONSOLE
     ubiqos_console_start_server();
 #endif
+#if !UBIQOS_NODE
     extern void ubiqos_fs_start_server(void);
     ubiqos_fs_start_server();
+#endif
 
     // After the console and the servers, so that a chip which is not there says
     // so on a screen that exists rather than taking the boot down with it.
@@ -813,14 +819,38 @@ void ubiqos_kernel_main(void) {
     ubiqos_usb_start_task();
 #if UBIQOS_CHIP_STM32H5
     // No USB task there to carry lwIP or the console's Ctrl-C; each has a
-    // thread of its own.
+    // thread of its own. Not on a node: Ctrl-C ends the command in front, and
+    // a node has no command in front of anything.
+#if !UBIQOS_NODE
     h5_console_start_thread();
+#endif
 #if UBIQOS_LWIP
     h5_net_start();
 #endif
 #endif
 
     uint32_t started = 0;
+#if UBIQOS_NODE
+    // A node starts every program in its module image, in the order the image
+    // has them, and nothing after: the image is the configuration. Each gets
+    // the console as stdin, stdout and stderr, so what it prints is the log.
+    // Drivers and libraries are not programs and are left to whoever uses them.
+    const char *console = ubiqos_io_has_device("usb") ? "usb" : "term";
+    for (uint32_t i = 0; i < ubiqos_moddir_count(); i++) {
+        const ubiqos_module_entry_t *e = ubiqos_moddir_entry(i);
+        if ((e->header->type_lang >> 8) != UBIQOS_TYPE_PROGRAM) continue;
+        const ubiqos_module_header_t *m = ubiqos_moddir_link(e->name);
+        const int32_t pid = m ? ubiqos_process_create(m, "") : -1;
+        ubiqos_print("node: ");
+        ubiqos_print(e->name);
+        if (pid < 0) { ubiqos_print(" did not start\n"); continue; }
+        ubiqos_io_open_as(console, pid, UBIQOS_STDIN);
+        ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
+        ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
+        ubiqos_print(" started\n");
+        started++;
+    }
+#else
     const char *shell = ubiqos_moddir_match("sh");
     if (shell) {
         const ubiqos_module_header_t *m = ubiqos_moddir_link(shell);
@@ -871,6 +901,7 @@ void ubiqos_kernel_main(void) {
         if (m && ubiqos_process_create(m, "") >= 0) started++;
 
     }
+#endif
 
     if (started) {
         ubiqos_print_u32(started);
