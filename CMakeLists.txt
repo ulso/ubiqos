@@ -1683,6 +1683,12 @@ ubiqos_add_module(msgcli modules/msgcli/msgcli.c)
 # other by name and talk over messages. See kernel/node.c.
 ubiqos_add_module(nodelog modules/nodelog/nodelog.c)
 ubiqos_add_module(nodebeat modules/nodebeat/nodebeat.c)
+# init: the first process on a node, the only one that starts others, and the
+# supervisor that starts them again. inittab is its table; faultdemo is there
+# to be restarted.
+ubiqos_add_module(init modules/init/init.c)
+ubiqos_add_data_module(inittab modules/inittab/inittab.c PLAIN REV 1)
+ubiqos_add_module(faultdemo modules/faultdemo/faultdemo.c)
 ubiqos_add_module(font modules/font/font.c)
 ubiqos_add_module(color modules/color/color.c)
 ubiqos_add_module(kill modules/kill/kill.c)
@@ -1744,6 +1750,9 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nodelog.mod
             ${CMAKE_CURRENT_BINARY_DIR}/nodebeat.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/init.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/inittab.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/faultdemo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
