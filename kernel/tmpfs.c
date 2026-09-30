@@ -1,3 +1,4 @@
+#include <string.h>
 #include "vfs.h"
 #include "tlsf.h"
 #include "../common/ubiqos_abi.h"
@@ -95,12 +96,21 @@ static tlsf_pool_t pool(void) {
     return ubiqos_bulk_pool ? ubiqos_bulk_pool : ubiqos_mem_pool;
 }
 
+// Doubling, not a kilobyte at a time. Every growth copies the whole file, and
+// growing by a fixed step made writing a file cost the square of its size: a
+// 1.2 MB image fetched into /tmp on iLabs' Challenger+ was still arriving after
+// three minutes -- the first attempt slowed until the connection gave up at
+// 650 kB. Doubled, the copying adds up to about the file once more. When the
+// doubled size cannot be had, what is needed and no more is tried.
 static bool reserve(tmpfile_t *f, uint32_t want) {
     if (want <= f->cap) return true;
-    uint32_t cap = (want + TMP_GROW - 1) / TMP_GROW * TMP_GROW;
+    const uint32_t need = (want + TMP_GROW - 1) / TMP_GROW * TMP_GROW;
+    uint32_t cap = f->cap ? f->cap : TMP_GROW;
+    while (cap < need) cap *= 2u;
     uint8_t *p = (uint8_t*)ubiqos_tlsf_malloc(pool(), cap);
+    if (!p && cap > need) p = (uint8_t*)ubiqos_tlsf_malloc(pool(), cap = need);
     if (!p) return false;
-    for (uint32_t i = 0; i < f->size; i++) p[i] = f->data[i];
+    memcpy(p, f->data, f->size);
     if (f->data) ubiqos_tlsf_free(pool(), f->data);
     f->data = p;
     f->cap = cap;
