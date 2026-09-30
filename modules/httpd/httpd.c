@@ -98,24 +98,26 @@ static const char SENSOR_PAGE[] =
     "a{color:var(--dim)}\n"
     "</style>\n"
     "<div class=top>\n"
-    "  <div><h1>UbiqOS &middot; HibouAir</h1><div class=sub>BleuIO scanner over the USB host</div></div>\n"
+    "  <div><h1>UbiqOS &middot; HibouAir</h1><div class=sub id=sub></div></div>\n"
     "  <div class=state><span class=dot id=dot></span><span id=stateText>connecting</span></div>\n"
     "</div>\n"
     "<div class=grid id=cards></div>\n"
     "<p class=note id=note></p>\n"
-    "<p><a href=\"/files\">files on the card</a> &middot; <span id=mem></span></p>\n"
+    "<p><span id=files hidden><a href=\"/files\">files on the card</a> &middot; </span><span id=mem></span></p>\n"
     "<script>\n"
     "// Polling, not a WebSocket. The sensors advertise every couple of seconds and\n"
     "// the scanner republishes on the same beat, so asking on that beat sees every\n"
     "// change there is -- and it keeps the server able to close after each answer.\n"
     "var CARDS = document.getElementById(\"cards\"), NOTE = document.getElementById(\"note\"),\n"
     "    DOT = document.getElementById(\"dot\"), STATE = document.getElementById(\"stateText\"),\n"
-    "    MEM = document.getElementById(\"mem\");\n"
+    "    MEM = document.getElementById(\"mem\"), SUB = document.getElementById(\"sub\"),\n"
+    "    FILES = document.getElementById(\"files\");\n"
     "\n"
     "function pair(k, v){ return \"<div><div class=k>\" + k + \"</div><div class=v>\" + v + \"</div></div>\"; }\n"
     "\n"
     "function draw(d){\n"
     "  var s = d.sensors || [];\n"
+    "  if (d.source) SUB.textContent = d.source;\n"
     "  DOT.className = \"dot\" + (s.length ? \" on\" : \"\");\n"
     "  STATE.textContent = s.length ? (s.length + \" sensor\" + (s.length > 1 ? \"s\" : \"\")) : \"no sensors\";\n"
     "  NOTE.textContent = s.length ? \"\" :\n"
@@ -144,6 +146,7 @@ static const char SENSOR_PAGE[] =
     "    .then(function(m){\n"
     "      MEM.textContent = \"SRAM \" + m.sramFree + \" B free, PSRAM \" +\n"
     "                        Math.round(m.psramFree/1024) + \" kB free, \" + m.processes + \" processes\";\n"
+    "      FILES.hidden = !m.card;\n"
     "    }).catch(function(){});\n"
     "}\n"
     "tick(); setInterval(tick, 2000);\n"
@@ -238,6 +241,19 @@ static void send_head(int32_t sock, const char *status, const char *type, uint32
 // page looks like. Data is the better boundary and it is the one the
 // pico-io-bridge UI already assumes: its tabs fetch JSON and draw themselves,
 // which is why that page could be inherited at all when its server could not.
+// Whether there is a card to list. The root holds nothing but volumes, so a
+// card is there exactly when "sd" is among them -- and a Challenger, which has
+// no socket for one, offers no link to a page of nothing.
+static bool card_present(void) {
+    char raw[UBIQOS_DIRNAME_MAX], name[UBIQOS_DIRNAME_MAX];
+    uint32_t size;
+    for (uint32_t i = 0; ubiqos_fs_dir_at("/", i, raw, &size) >= 0; i++) {
+        ubiqos_pretty_name(raw, name);
+        if (name[0] == 's' && name[1] == 'd' && !name[2]) return true;
+    }
+    return false;
+}
+
 static uint32_t status_json(char *out, uint32_t max) {
     (void)max;
     uint32_t n = 0;
@@ -247,6 +263,7 @@ static uint32_t status_json(char *out, uint32_t max) {
         { "psramTotal", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_BULK_SIZE) },
         { "processes",  (uint32_t)ubiqos_meminfo(UBIQOS_MEM_PROCESSES) },
         { "assertions", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_ASSERTS) },
+        { "card",       card_present() ? 1u : 0u },
     };
     out[n++] = '{';
     for (uint32_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
