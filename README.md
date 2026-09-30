@@ -16,7 +16,7 @@ WebAssembly.
 |---|---|
 | **Adafruit Fruit Jam** (RP2350B) | HDMI console, USB keyboard through the on-board hub, microSD over 4-bit SDIO, 8 MB PSRAM, the TLV320 audio codec, WiFi through the ESP32-C6, NeoPixels and buttons |
 | **Waveshare RP2350-Touch-LCD-4.3B** | the 800x480 RGB panel, the GT911 touch controller, microSD, PSRAM; the USB-C port as device or as host |
-| **iLabs Challenger+ RP2350 WiFi6/BLE5** (RP2350A) | the USB console and network (192.168.8.1 on the cable), 8 MB PSRAM, WiFi and Bluetooth LE through the ESP32-C6 -- which must run UbiqOS's ESP-Hosted build, `esp/challenger-c6/build.sh`, instead of the AT firmware it ships with. No card, so its boot script is in flash: it starts as a BLE-to-WiFi bridge that shows HibouAir sensors on a web page |
+| **iLabs Challenger+ RP2350 WiFi6/BLE5** (RP2350A) | the USB console and network (192.168.8.1 on the cable), 8 MB PSRAM, WiFi and Bluetooth LE through the ESP32-C6 -- which must run UbiqOS's ESP-Hosted build, `esp/challenger-c6/build.sh`, instead of the AT firmware it ships with. No card, so its boot script is in flash: it starts as a BLE-to-WiFi bridge that shows HibouAir sensors on a web page -- see [docs/challenger.md](docs/challenger.md) |
 | **ST NUCLEO-H563ZI** (STM32H563) | Ethernet with lwIP, mDNS and NTP, `sshd`, `fetch`, the key store, the console on the ST-LINK's serial port; programs run in place from flash |
 | **ST NUCLEO-H503RB** (STM32H503, 32 kB RAM) | the node profile: the scheduler, messages and driver modules, with no files and no shell; `init` starts what `inittab` names and starts it again when it fails |
 
@@ -133,6 +133,7 @@ the image with `--binary-format bin --base-address` set to the same address.
 | | |
 |---|---|
 | [docs/fruit-jam.md](docs/fruit-jam.md) | setting up a Fruit Jam, step by step, as far as WiFi and the sensor page |
+| [docs/challenger.md](docs/challenger.md) | the Challenger+ RP2350 as a BLE-to-WiFi bridge: building, the C6's firmware, WiFi, and the board's quirks |
 | [docs/design.md](docs/design.md) | the long account: modules, display, console, shell, system calls, audio, pins, interrupts, scheduling |
 | [docs/writing-modules.md](docs/writing-modules.md) | writing a module |
 | [docs/the-sdk.md](docs/the-sdk.md) | building a module or an application outside this tree |
