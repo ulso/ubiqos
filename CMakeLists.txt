@@ -158,7 +158,8 @@ elseif(UBIQOS_BOARD STREQUAL "challenger")
     set(ubiqosBoardDefs PICO_PSRAM_CS_PIN=0 PICO_PSRAM_SIZE_BYTES=8388608)
     # The console over USB, the header's pins, and the radio -- with this
     # board's pins.
-    set(ubiqosBoardModules usbdesc gpiodesc espdescch ehdescch peek blescan)
+    set(ubiqosBoardModules usbdesc gpiodesc espdescch ehdescch peek blescan startup)
+    set(ubiqosBoardStartup boards/challenger-startup.c)
 else()
     message(FATAL_ERROR "UBIQOS_BOARD is '${UBIQOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -1718,6 +1719,13 @@ ubiqos_add_module(nodebeat modules/nodebeat/nodebeat.c)
 # to be restarted.
 ubiqos_add_module(init modules/init/init.c)
 ubiqos_add_data_module(inittab modules/inittab/inittab.c PLAIN REV 1)
+# startup: a board's boot script in flash, for a board with no card to keep
+# /sd/startup on. The board says which file; one board at a time has one.
+set(ubiqosStartupMod)
+if(ubiqosBoardStartup)
+    ubiqos_add_data_module(startup ${ubiqosBoardStartup} PLAIN REV 1)
+    set(ubiqosStartupMod ${CMAKE_CURRENT_BINARY_DIR}/startup.mod)
+endif()
 ubiqos_add_module(faultdemo modules/faultdemo/faultdemo.c)
 # peek: words of memory or registers, for bringing up a board a probe cannot reach.
 ubiqos_add_module(peek modules/peek/peek.c)
@@ -1807,7 +1815,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/espdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/ehdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/espdescch.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/ehdescch.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/ehdescch.mod
+            ${ubiqosStartupMod})
 
 # What lives in flash rather than on the card.
 #
