@@ -51,10 +51,12 @@ if(UBIQOS_H5_BOARD STREQUAL "nucleo-h563zi")
     set(H5_CHIP STM32H563xx)
     set(H5_LD   stm32h563zi.ld)
     set(H5_ETH  ON)
+    set(H5_NODE OFF)
 elseif(UBIQOS_H5_BOARD STREQUAL "nucleo-h503rb")
     set(H5_CHIP STM32H503xx)
     set(H5_LD   stm32h503rb.ld)
     set(H5_ETH  OFF)                       # the part has no Ethernet MAC
+    set(H5_NODE ON)                        # 32 kB: a node, not a computer
 else()
     message(FATAL_ERROR "UBIQOS_H5_BOARD: no board called ${UBIQOS_H5_BOARD}")
 endif()
@@ -70,9 +72,6 @@ file(GLOB H5_LWIP_SOURCES
 list(APPEND H5_LWIP_SOURCES ${UBIQOS_LWIP_DIR}/src/netif/ethernet.c)
 add_executable(ubiqos_h5
     ${K}/crashlog.c
-    ${K}/vfs.c
-    ${K}/tmpfs.c
-    ${K}/varfs.c
     ${K}/memcmp.c
     ${K}/main.c
     ${K}/tlsf.c
@@ -83,9 +82,6 @@ add_executable(ubiqos_h5
     ${K}/moddir.c
     ${K}/flashmod.c
     ${K}/net.c
-    ${K}/config.c
-    ${K}/clock.c
-    ${K}/fsserver.c
     ${K}/console_none.c
     ${K}/arm/scheduler.S
     ${K}/arm/stack.c
@@ -96,10 +92,27 @@ add_executable(ubiqos_h5
     sdk.c
     stubs.c
     kapi.c
-    flash.c
-    ${K}/keystore.c
-    ${K}/crypto.c
 )
+# A node or a computer. A node is the scheduler, messages, drivers and the
+# modules in flash, all of which it starts at boot and no others: no file
+# server, no files, no key store, no wall clock. See UBIQOS_NODE.
+set(UBIQOS_H5_NODE ${H5_NODE} CACHE BOOL "the node profile: no files, no shell")
+if(UBIQOS_H5_NODE)
+    target_sources(ubiqos_h5 PRIVATE ${K}/node.c)
+    target_compile_definitions(ubiqos_h5 PRIVATE UBIQOS_NODE=1)
+else()
+    target_sources(ubiqos_h5 PRIVATE
+        ${K}/vfs.c
+        ${K}/tmpfs.c
+        ${K}/varfs.c
+        ${K}/config.c
+        ${K}/clock.c
+        ${K}/fsserver.c
+        flash.c
+        ${K}/keystore.c
+        ${K}/crypto.c)
+    target_compile_definitions(ubiqos_h5 PRIVATE UBIQOS_NODE=0)
+endif()
 # Ethernet and the stack on it. Off, the kernel is what a board without a
 # network would carry -- which is also how to measure what the network costs.
 set(UBIQOS_H5_NET ${H5_ETH} CACHE BOOL "Ethernet, lwIP, mDNS and NTP")
