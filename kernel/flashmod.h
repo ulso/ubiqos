@@ -2,6 +2,7 @@
 #define UBIQOS_FLASHMOD_H
 
 #include "../common/modules.h"   // ubiqos_module_header_t
+#include "board.h"               // a board with less flash says where things go
 
 #include <stdint.h>
 
@@ -22,10 +23,18 @@
 //
 // The RP2350's addresses come first in this file on purpose: CMakeLists.txt
 // reads the module base out of it with a pattern and takes the first match.
-#if !UBIQOS_CHIP_STM32H5
+#if !UBIQOS_CHIP_STM32H5 && !defined(UBIQOS_BOARD_FLASH_APP_BASE)
 #define UBIQOS_FLASH_MODULE_BASE 0x10100000u
 #define UBIQOS_FLASH_APP_BASE    0x10800000u
 #define UBIQOS_FLASH_END         0x11000000u
+#elif !UBIQOS_CHIP_STM32H5
+// An RP2350 board with less than the Fruit Jam's 16 MB. Above the chip's size
+// the flash window wraps round to its start, so the Fruit Jam's application
+// region would lie on top of the kernel and its key store in the middle of the
+// modules. The modules still start a megabyte in; the rest is the board's.
+#define UBIQOS_FLASH_MODULE_BASE 0x10100000u
+#define UBIQOS_FLASH_APP_BASE    UBIQOS_BOARD_FLASH_APP_BASE
+#define UBIQOS_FLASH_END         UBIQOS_BOARD_FLASH_END
 #else
 // On the STM32H5 each board says where its regions are, because the family
 // runs from 128 kB of flash to 2 MB and a layout for one part is wrong for every
@@ -45,7 +54,7 @@
 // RP2350-E10 block addressed at 0x10ffff00, and the boot ROM writes it -- so
 // the last sector is erased every time a system is copied onto the board, and
 // anything kept there would go with it.
-#if !UBIQOS_CHIP_STM32H5
+#if !UBIQOS_CHIP_STM32H5 && !defined(UBIQOS_BOARD_FLASH_KEYS_BASE)
 #define UBIQOS_FLASH_KEYS_BASE   0x10FE0000u
 #define UBIQOS_FLASH_KEYS_SIZE   0x2000u
 #else
