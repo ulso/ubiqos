@@ -67,6 +67,7 @@ static const ubiqos_kernel_api_t *K;
 
 #define IF_STA      1u             // network frames, plain Ethernet
 #define IF_SERIAL   3u             // the RPC control plane
+#define IF_HCI      4u             // Bluetooth HCI, when the firmware has a controller
 #define IF_PRIV     5u
 #define IF_MAX      8u             // the dummy's interface type
 
@@ -158,6 +159,17 @@ static volatile uint32_t inbox_lost;
 // kernel takes them from there on its own terms -- see kernel/lwipnet.c. Eight
 // deep, because these arrive in bursts of whatever the air was carrying and a
 // tick is a long time on a network.
+// Bluetooth HCI in, eight packets deep. Allocated on the first packet out --
+// the Fruit Jam's firmware has no controller and never sends one, and its SRAM
+// is not to be spent on a queue that stays empty. A packet arriving before that
+// is dropped: nobody has asked for Bluetooth yet.
+#define HCI_SLOTS 8u
+#define HCI_MAX   264u                          // an LE report is at most 255 and the header
+static uint8_t *hcibox;
+static volatile uint16_t hcibox_used[HCI_SLOTS];
+static volatile uint32_t hcibox_head, hcibox_tail;
+static volatile uint32_t hcibox_lost;
+
 #define NET_SLOTS 8u
 
 static uint8_t *netbox;                         // NET_SLOTS frames, EH_BUF each
@@ -402,6 +414,20 @@ static void take_frame(void)
         for (uint16_t i = 0; i < n; i++) slot[i] = rxbuf[hdr + i];
         netbox_used[netbox_head] = n;
         netbox_head = next;
+        return;
+    }
+
+    // The type byte comes first in the payload in this direction, so the
+    // packet is kept exactly as it came: already H4.
+    if (iftype == IF_HCI) {
+        if (!hcibox) return;
+        uint32_t next = (hcibox_head + 1u) % HCI_SLOTS;
+        if (next == hcibox_tail) { hcibox_lost++; return; }
+        uint16_t n = len > HCI_MAX ? HCI_MAX : len;
+        uint8_t *slot = hcibox + hcibox_head * HCI_MAX;
+        for (uint16_t i = 0; i < n; i++) slot[i] = rxbuf[hdr + i];
+        hcibox_used[hcibox_head] = n;
+        hcibox_head = next;
         return;
     }
 
@@ -874,8 +900,13 @@ static bool radio_prepare(void)
 
     // Power save off. esp_wifi_init leaves the station asleep between DTIM
     // beacons, which put 232 milliseconds on a ping that takes 74 without.
+    //
+    // Refused, not fatal: with a Bluetooth controller beside the radio ESP-IDF
+    // will not let WiFi stay awake -- the two share it -- and a firmware that
+    // has one answers this with an error. WiFi works all the same, slower.
     n = put_field(body, 1, 0);                  // WIFI_PS_NONE
-    if (!rpc_ok("power save off", REQ_SET_PS, body, n, 5000)) return false;
+    if (!rpc_ok("power save off", REQ_SET_PS, body, n, 5000))
+        K->print("wifi: so the radio sleeps between beacons -- a Bluetooth controller shares it\n");
     return true;
 }
 
@@ -1210,6 +1241,17 @@ static int32_t eh_readable(void) { return inbox_tail != inbox_head ? 1 : 0; }
 
 static int32_t eh_getstat(uint32_t code, void *data, uint32_t len)
 {
+    if (code == UBIQOS_SS_EH_HCI_RX) {
+        if (!hcibox || hcibox_tail == hcibox_head) return 0;
+        const uint8_t *slot = hcibox + hcibox_tail * HCI_MAX;
+        uint32_t have = hcibox_used[hcibox_tail];
+        if (have > len) have = len;
+        uint8_t *out = (uint8_t*)data;
+        for (uint32_t i = 0; i < have; i++) out[i] = slot[i];
+        hcibox_tail = (hcibox_tail + 1u) % HCI_SLOTS;
+        return (int32_t)have;
+    }
+
     if (code == UBIQOS_SS_EH_RX) {
         if (netbox_tail == netbox_head) return 0;          // nothing waiting
         const uint8_t *slot = netbox + netbox_tail * EH_BUF;
@@ -1300,6 +1342,32 @@ static int32_t eh_setstat(uint32_t code, const void *data, uint32_t len)
         join_state = 1;
         join_wanted = true;
         return 0;
+    }
+
+    // Out the other way the type byte does NOT travel in the payload: it goes
+    // in the header's last byte, where a private frame's event type goes, and
+    // the co-processor puts the two back together for its controller.
+    if (code == UBIQOS_SS_EH_HCI_TX) {
+        if (len < 2u || len - 1u + HDR_V1 > EH_BUF) return -1;
+        if (!hcibox) {
+            hcibox = (uint8_t*)K->driver_alloc(HCI_MAX * HCI_SLOTS);
+            if (!hcibox) return -1;
+        }
+        uint32_t next = (nettx_head + 1u) % NET_TX_SLOTS;
+        if (next == nettx_tail) { nettx_refused++; return -1; }
+        const uint8_t *in = (const uint8_t*)data;
+        uint8_t *slot = netstage + nettx_head * EH_BUF;
+        for (uint32_t i = 0; i < HDR_V1; i++) slot[i] = 0;
+        slot[0] = IF_HCI;
+        put16(slot + 2, (uint16_t)(len - 1u));
+        put16(slot + 4, HDR_V1);
+        slot[11] = in[0];                               // the H4 type
+        for (uint32_t i = 1; i < len; i++) slot[HDR_V1 + i - 1u] = in[i];
+        put16(slot + 6, frame_checksum(slot, (uint16_t)(HDR_V1 + len - 1u), 6));
+        nettx_used[nettx_head] = (uint16_t)(HDR_V1 + len - 1u);
+        nettx_queued_us_slot[nettx_head] = (uint32_t)K->time_us();
+        nettx_head = next;
+        return (int32_t)len;
     }
 
     if (code == UBIQOS_SS_EH_TX) {

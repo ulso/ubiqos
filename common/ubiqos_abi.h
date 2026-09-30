@@ -747,6 +747,15 @@ typedef struct {
 #define UBIQOS_SS_EH_SCAN    0x0417u   // setstat: start; getstat -> uint32_t
 #define UBIQOS_SS_EH_SCAN_AP 0x0418u   // getstat: ubiqos_eh_ap_t, .index in
 
+// Bluetooth HCI, where the co-processor carries its controller's -- ESP-Hosted's
+// interface type 4 on the same link as the network. One packet a call, in H4
+// form: its type byte first (01 command, 02 ACL data, 04 event), then the
+// packet. The controller has to have been brought up first, which is an RPC;
+// see modules/blescan. getstat answers the length taken, 0 when nothing is
+// waiting; the driver keeps the last eight that arrived and drops the ninth.
+#define UBIQOS_SS_EH_HCI_RX  0x0419u   // getstat: uint8_t[], one H4 packet in
+#define UBIQOS_SS_EH_HCI_TX  0x041Au   // setstat: uint8_t[], one H4 packet out
+
 #define UBIQOS_SCAN_NEVER    0u        // nobody has asked yet
 #define UBIQOS_SCAN_RUNNING  1u
 #define UBIQOS_SCAN_DONE     2u
