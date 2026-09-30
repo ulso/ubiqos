@@ -996,6 +996,29 @@ static inline const ubiqos_split_t *ubiqos_module_split(const ubiqos_module_head
 // 11:52:03". What `uname` shows as the platform and the version.
 #define UBIQOS_CFG_BOARD    4u
 #define UBIQOS_CFG_BUILT    5u
+// The board's address on the USB cable, as text: "192.168.7.1".
+#define UBIQOS_CFG_USB_ADDRESS 6u
+// The settings a board keeps in flash, for a board with no card to keep
+// /sd/config.txt on: their text, in config.txt's own form, one "key = value"
+// a line. Zero length when none are kept.
+#define UBIQOS_CFG_STORED   7u
+// Keep one, or with an empty value forget it: a1 = &ubiqos_cfgreq_t. It is
+// written to flash, and takes effect at the next start -- a name mDNS has
+// announced cannot be unsaid, and an address is the link's. A card's
+// config.txt, where there is one, still wins. Answers 0, or one of these:
+#define UBIQOS_CFG_SET      8u
+#define UBIQOS_CFG_ENOKEY   (-2)   // not a setting kept in flash
+#define UBIQOS_CFG_EVALUE   (-3)   // not a value that setting can take
+#define UBIQOS_CFG_EFULL    (-4)   // the settings would not fit their sector
+#define UBIQOS_CFG_EFLASH   (-5)   // written, and read back different
+
+// The keys kept in flash are hostname, usb_address and timezone. The network
+// and its password are not among them: a password belongs in the key store,
+// sealed, and not in a sector anybody with a probe can read.
+typedef struct {
+    char key[16];
+    char value[48];     // empty: forget this key
+} ubiqos_cfgreq_t;
 
 // --- STATUS -----------------------------------------------------------------
 // Everything about a device that is not its data: how loud, how fast, how big.
@@ -1231,6 +1254,8 @@ typedef struct {
 // The search path lives with the loader that walks it, so that setting it can
 // never land halfway through a load that is reading it.
 #define UBIQOS_MSG_FS_PATH   19u   // data = ubiqos_fs_path_t
+// The settings kept in flash, rewritten: a sector erase again.
+#define UBIQOS_MSG_FS_CONFIG 20u   // data = ubiqos_cfgreq_t
 
 // Where a program not in flash is looked for: directories, each naming its
 // volume first, separated by colons -- "/sd/bin:/sd". One list for the whole
@@ -2105,6 +2130,20 @@ static inline int32_t ubiqos_wifi_join(const char *ssid_then_pass)
 static inline int32_t ubiqos_config_get(uint32_t what, char *buf, uint32_t len)
 {
     return ubiqos_syscall(SYS_CONFIG, what, (uint32_t)(uintptr_t)buf, len);
+}
+
+// Keep a setting in flash, or forget it with an empty value. See UBIQOS_CFG_SET.
+static inline int32_t ubiqos_config_set(const char *key, const char *value)
+{
+    ubiqos_cfgreq_t r;
+    uint32_t i = 0;
+    for (; key[i] && i < sizeof r.key - 1; i++) r.key[i] = key[i];
+    r.key[i] = 0;
+    if (key[i]) return UBIQOS_CFG_ENOKEY;
+    for (i = 0; value && value[i] && i < sizeof r.value - 1; i++) r.value[i] = value[i];
+    r.value[i] = 0;
+    if (value && value[i]) return UBIQOS_CFG_EVALUE;
+    return ubiqos_syscall(SYS_CONFIG, UBIQOS_CFG_SET, (uint32_t)(uintptr_t)&r, 0);
 }
 
 static inline int32_t ubiqos_wifi_network(int32_t index, char *ssid, uint32_t len)

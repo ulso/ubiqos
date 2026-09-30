@@ -250,6 +250,11 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
         return r->len ? ubiqos_keys_set(r->name, r->value, r->len)
                       : ubiqos_keys_remove(r->name);
     }
+    case UBIQOS_MSG_FS_CONFIG: {
+        // An erase, like the key store's: this thread can wait it out.
+        const ubiqos_cfgreq_t *r = (const ubiqos_cfgreq_t *)m->data;
+        return ubiqos_config_store(r->key, r->value);
+    }
     case UBIQOS_MSG_FS_RENAME: {
         const ubiqos_fs_rename_t *r = (const ubiqos_fs_rename_t*)m->data;
         char abs2[128];

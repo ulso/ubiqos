@@ -62,6 +62,19 @@
 #define UBIQOS_FLASH_KEYS_SIZE   UBIQOS_BOARD_FLASH_KEYS_SIZE
 #endif
 
+// The settings a board keeps without a card -- hostname, usb_address and
+// timezone, as config.txt would give them -- in the one sector after the key
+// store: past everything a UF2 writes, for the same reason, and short of the
+// RP2350's last sector, for the same reason. One sector and no second copy:
+// losing power in the middle of a write loses the settings, and the board
+// starts on its defaults, which is a nuisance and not a lockout. See
+// kernel/config.c.
+#ifdef UBIQOS_BOARD_FLASH_CONFIG_BASE
+#define UBIQOS_FLASH_CONFIG_BASE UBIQOS_BOARD_FLASH_CONFIG_BASE
+#else
+#define UBIQOS_FLASH_CONFIG_BASE (UBIQOS_FLASH_KEYS_BASE + UBIQOS_FLASH_KEYS_SIZE)
+#endif
+
 // The fixed data area: RAM set aside at a known address for the writable data
 // of the single-instance programs make_flash_image.py places there, so that
 // their code can stay in flash -- see UBIQOS_ATTR_SPLIT. None on the RP2350,

@@ -39,5 +39,13 @@ const char *ubiqos_config_credentials(void);
 // next one, by DHCP, on a /24 -- see kernel/lwipdhcpd.c.
 #include <stdint.h>
 uint32_t ubiqos_config_usb_address(void);
+void ubiqos_config_address_text(uint32_t a, char out[16]);
+
+// The settings kept in flash for a board with no card: their text into out,
+// and its length, 0 when none are kept. And keeping one, or forgetting it with
+// an empty value -- a sector erase, so the filesystem server's to call. 0, or
+// one of UBIQOS_CFG_E*. See the note in config.c.
+int32_t ubiqos_config_stored(char *out, uint32_t cap);
+int32_t ubiqos_config_store(const char *key, const char *value);
 
 #endif

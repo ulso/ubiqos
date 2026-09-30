@@ -843,6 +843,28 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 frame->a0 = ubiqos_config_has_password() ? 1u : 0u;
                 break;
             }
+#if !UBIQOS_NODE
+            // Reading what flash keeps is a copy; keeping something is an
+            // erase, and goes to the filesystem server like the key store's.
+            if (frame->a0 == UBIQOS_CFG_STORED) {
+                char *out = (char *)(uintptr_t)frame->a1;
+                frame->a0 = out ? (uint32_t)ubiqos_config_stored(out, frame->a2) : (uint32_t)-1;
+                break;
+            }
+            if (frame->a0 == UBIQOS_CFG_SET) {
+                ubiqos_cfgreq_t *r = (ubiqos_cfgreq_t *)(uintptr_t)frame->a1;
+                if (!r) { frame->a0 = (uint32_t)-1; break; }
+                r->key[sizeof r->key - 1] = 0;
+                r->value[sizeof r->value - 1] = 0;
+                if (!fs_request(UBIQOS_MSG_FS_CONFIG, r)) { frame->a0 = (uint32_t)-1; break; }
+                return ubiqos_switch(sp);
+            }
+#endif
+#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32H5
+            char addr[16];                  // no USB network on the STM32H5
+            if (frame->a0 == UBIQOS_CFG_USB_ADDRESS)
+                ubiqos_config_address_text(ubiqos_config_usb_address(), addr);
+#endif
             extern const char *ubiqos_version_string(void);
             extern const char *ubiqos_board_string(void);
             extern const char *ubiqos_built_string(void);
@@ -850,7 +872,11 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                           : frame->a0 == UBIQOS_CFG_SSID     ? ubiqos_config_ssid()
                           : frame->a0 == UBIQOS_CFG_VERSION  ? ubiqos_version_string()
                           : frame->a0 == UBIQOS_CFG_BOARD    ? ubiqos_board_string()
-                          : frame->a0 == UBIQOS_CFG_BUILT    ? ubiqos_built_string() : 0;
+                          : frame->a0 == UBIQOS_CFG_BUILT    ? ubiqos_built_string()
+#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32H5
+                          : frame->a0 == UBIQOS_CFG_USB_ADDRESS ? addr
+#endif
+                          : 0;
             if (!v) { frame->a0 = (uint32_t)-1; break; }
             char *out = (char *)(uintptr_t)frame->a1;
             uint32_t cap = frame->a2, n = 0;

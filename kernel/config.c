@@ -34,9 +34,17 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 #include "config.h"
 #include "fat32.h"
 #include "clock.h"
+#include "tlsf.h"
+#include "flashmod.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+#include "pico/platform.h"
+#include "hardware/regs/addressmap.h"
+#include "../common/ubiqos_abi.h"
 
 void ubiqos_print(const char *s);
 
@@ -137,28 +145,32 @@ static bool valid_hostname(const char *s, uint32_t n) {
 // is true today, and it is the user's to edit twice a year. Said plainly here
 // because a clock that is quietly an hour out is worse than one that is
 // obviously unset.
-static void take_timezone(const char *v, uint32_t n) {
+static bool parse_timezone(const char *v, uint32_t n, int32_t *minutes) {
     uint32_t i = 0;
     int32_t sign = 1;
     if (i < n && (v[i] == '+' || v[i] == '-')) { if (v[i] == '-') sign = -1; i++; }
 
     int32_t hours = 0, mins = 0;
     uint32_t digits = 0;
-    while (i < n && v[i] >= '0' && v[i] <= '9') { hours = hours * 10 + (v[i++] - '0'); digits++; }
-    if (!digits) { ubiqos_print("config: that timezone is not a number; staying on UTC\n"); return; }
+    while (i < n && v[i] >= '0' && v[i] <= '9' && digits < 3) { hours = hours * 10 + (v[i++] - '0'); digits++; }
+    if (!digits) return false;
 
     if (i < n && v[i] == ':') {
         i++;
         digits = 0;
-        while (i < n && v[i] >= '0' && v[i] <= '9') { mins = mins * 10 + (v[i++] - '0'); digits++; }
+        while (i < n && v[i] >= '0' && v[i] <= '9' && digits < 3) { mins = mins * 10 + (v[i++] - '0'); digits++; }
         if (!digits) mins = 0;
     }
 
-    if (i != n || hours > 14 || mins > 59) {
-        ubiqos_print("config: that timezone is not an offset; staying on UTC\n");
-        return;
-    }
-    ubiqos_clock_set_offset(sign * (hours * 60 + mins));
+    if (i != n || hours > 14 || mins > 59) return false;
+    *minutes = sign * (hours * 60 + mins);
+    return true;
+}
+
+static void take_timezone(const char *v, uint32_t n) {
+    int32_t minutes;
+    if (parse_timezone(v, n, &minutes)) ubiqos_clock_set_offset(minutes);
+    else ubiqos_print("config: that timezone is not an offset; leaving the clock as it was\n");
 }
 
 // "usb_address = 10.0.5.1": four numbers, each 0 to 255, and nothing else. Not
@@ -166,26 +178,46 @@ static void take_timezone(const char *v, uint32_t n) {
 // addresses a link can have; 169.254 is what this replaced; and the last number
 // must leave room for the computer's, which is one more, below the broadcast
 // address of the /24.
-static void take_usb_address(const char *v, uint32_t n) {
+static bool parse_usb_address(const char *v, uint32_t n, uint32_t *out) {
     uint32_t a = 0, i = 0;
     for (int part = 0; part < 4; part++) {
         uint32_t x = 0, digits = 0;
         while (i < n && v[i] >= '0' && v[i] <= '9' && digits < 4) { x = x * 10 + (uint32_t)(v[i++] - '0'); digits++; }
-        if (!digits || x > 255) goto bad;
+        if (!digits || x > 255) return false;
         a = (a << 8) | x;
-        if (part < 3) { if (i >= n || v[i] != '.') goto bad; i++; }
+        if (part < 3) { if (i >= n || v[i] != '.') return false; i++; }
     }
-    if (i != n) goto bad;
-    {
-        const uint32_t first = a >> 24, last = a & 0xffu;
-        if (first == 0 || first == 127 || first >= 224) goto bad;
-        if ((a >> 16) == ((169u << 8) | 254u)) goto bad;
-        if (last == 0 || last > 253) goto bad;
+    if (i != n) return false;
+    const uint32_t first = a >> 24, last = a & 0xffu;
+    if (first == 0 || first == 127 || first >= 224) return false;
+    if ((a >> 16) == ((169u << 8) | 254u)) return false;
+    if (last == 0 || last > 253) return false;
+    *out = a;
+    return true;
+}
+
+void ubiqos_config_address_text(uint32_t a, char out[16]) {
+    uint32_t n = 0;
+    for (int part = 3; part >= 0; part--) {
+        const uint32_t x = (a >> (part * 8)) & 0xffu;
+        if (x >= 100) out[n++] = (char)('0' + x / 100);
+        if (x >= 10)  out[n++] = (char)('0' + (x / 10) % 10);
+        out[n++] = (char)('0' + x % 10);
+        if (part) out[n++] = '.';
     }
-    usb_address = a;
-    return;
-bad:
-    ubiqos_print("config: that usb_address is not one to use; keeping 192.168.7.1\n");
+    out[n] = 0;
+}
+
+// What is kept is said, and not a number that was true on another board: this
+// said "keeping 192.168.7.1" on the Challenger, whose own default is .8.1.
+static void take_usb_address(const char *v, uint32_t n) {
+    uint32_t a;
+    if (parse_usb_address(v, n, &a)) { usb_address = a; return; }
+    char t[16];
+    ubiqos_config_address_text(usb_address, t);
+    ubiqos_print("config: that usb_address is not one to use; keeping ");
+    ubiqos_print(t);
+    ubiqos_print("\n");
 }
 
 // One line, already stripped of its newline.
@@ -227,7 +259,7 @@ static void take_line(char *l, uint32_t n) {
 
     if (key_is(l + key, keylen, "hostname")) {
         if (valid_hostname(l + val, vallen)) copy_into(host, sizeof(host), l + val, vallen);
-        else ubiqos_print("config: that hostname is not a name; keeping ubiqos\n");
+        else { ubiqos_print("config: that hostname is not a name; keeping "); ubiqos_print(host); ubiqos_print("\n"); }
     } else if (key_is(l + key, keylen, "ssid")) {
         copy_into(ssid, sizeof(ssid), l + val, vallen);
     } else if (key_is(l + key, keylen, "password")) {
@@ -279,8 +311,174 @@ static bool read_the_file(const char *path)
     return true;
 }
 
+// --- SETTINGS KEPT IN FLASH ------------------------------------------------
+//
+// A board with no card has nowhere to keep config.txt, so it keeps the part
+// of it that is nobody's secret in a flash sector of its own: hostname,
+// usb_address and timezone, as the same text the file would hold. Read here
+// before the card, so that a card, where there is one, still has the last word.
+// Written by `config set` through the filesystem server, since an erase is tens
+// of milliseconds and no trap's business -- see ubiqos_config_store.
+//
+// The sector is a header and the text: a magic number, the length, and an
+// FNV-1a sum over the text, so that a sector half written when the power went
+// reads as no settings rather than as some.
+#define CFG_MAGIC     0x47464355u          // "UCFG"
+#define CFG_TEXT_MAX  1024u
+
+typedef struct { uint32_t magic, len, sum; } cfg_head_t;
+
+static uint32_t fnv1a(const char *p, uint32_t n) {
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < n; i++) { h ^= (uint8_t)p[i]; h *= 16777619u; }
+    return h;
+}
+
+// The text kept in flash, or 0 when there is none or it does not add up.
+static const char *stored_text(uint32_t *len) {
+    const cfg_head_t *h = (const cfg_head_t *)(uintptr_t)UBIQOS_FLASH_CONFIG_BASE;
+    if (h->magic != CFG_MAGIC || h->len > CFG_TEXT_MAX) return 0;
+    const char *t = (const char *)(h + 1);
+    if (fnv1a(t, h->len) != h->sum) return 0;
+    *len = h->len;
+    return t;
+}
+
+int32_t ubiqos_config_stored(char *out, uint32_t cap) {
+    uint32_t n = 0;
+    const char *t = stored_text(&n);
+    if (!t || !cap) return 0;
+    if (n > cap - 1) n = cap - 1;
+    memcpy(out, t, n);
+    out[n] = 0;
+    return (int32_t)n;
+}
+
+// The key a line sets, or 0 when it sets none. What take_line reads, without
+// the acting on it.
+static const char *line_key(const char *l, uint32_t n, uint32_t *keylen) {
+    uint32_t k = 0;
+    while (k < n && (l[k] == ' ' || l[k] == '\t')) k++;
+    const uint32_t key = k;
+    while (k < n && l[k] != '=' && l[k] != ' ' && l[k] != '\t') k++;
+    *keylen = k - key;
+    return *keylen ? l + key : 0;
+}
+
+// Every line of a text, as the file's lines are taken.
+static uint32_t take_text(const char *t, uint32_t n) {
+    static char line[160];
+    uint32_t fill = 0, lines = 0;
+    for (uint32_t i = 0; i <= n; i++) {
+        if (i == n || t[i] == '\n') {
+            if (fill) { take_line(line, fill); lines++; }
+            fill = 0;
+            continue;
+        }
+        if (fill < sizeof line) line[fill++] = t[i];
+    }
+    return lines;
+}
+
+// Same copy as the key store's: erase, then program, with this core's
+// interrupts off throughout, from code that is not in the flash being erased.
+static void __not_in_flash_func(write_sector)(uint32_t offset, const uint8_t *data) {
+    const uint32_t st = save_and_disable_interrupts();
+    flash_range_erase(offset, FLASH_SECTOR_SIZE);
+    if (data) flash_range_program(offset, data, FLASH_SECTOR_SIZE);
+    restore_interrupts(st);
+}
+
+extern tlsf_pool_t ubiqos_mem_pool;
+
+// Keep KEY = VALUE, replacing what was kept for it, or with an empty VALUE
+// forget it. Checked as config.txt's own reading checks it, so that what is
+// kept is always something the next start will take. Nothing changes until
+// that start: the name has been announced, and the address is the link's.
+int32_t ubiqos_config_store(const char *key, const char *value) {
+    // usb_address only where there is a network on the USB cable: the STM32H5
+    // boards have Ethernet and a console on the ST-LINK, and an address kept
+    // for a link that does not exist is a setting that does nothing.
+#if UBIQOS_CHIP_STM32H5
+    static const char *const kept[] = { "hostname", "timezone" };
+#else
+    static const char *const kept[] = { "hostname", "usb_address", "timezone" };
+#endif
+    const uint32_t klen = (uint32_t)strlen(key), vlen = (uint32_t)strlen(value);
+    const char *canon = 0;
+    for (uint32_t i = 0; i < sizeof kept / sizeof kept[0]; i++)
+        if (key_is(key, klen, kept[i])) canon = kept[i];
+    if (!canon) return UBIQOS_CFG_ENOKEY;
+
+    if (vlen) {
+        uint32_t a;
+        int32_t m;
+        const bool ok = canon == kept[0]                ? valid_hostname(value, vlen)
+                      : strcmp(canon, "usb_address") == 0 ? parse_usb_address(value, vlen, &a)
+                      :                                     parse_timezone(value, vlen, &m);
+        if (!ok) return UBIQOS_CFG_EVALUE;
+    }
+
+    uint8_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, FLASH_SECTOR_SIZE);
+    if (!img) return UBIQOS_CFG_EFULL;
+    memset(img, 0xff, FLASH_SECTOR_SIZE);
+    char *text = (char *)(img + sizeof(cfg_head_t));
+    uint32_t n = 0;
+    bool full = false;
+
+    // What was kept, less this key's line.
+    uint32_t oldn = 0;
+    const char *old = stored_text(&oldn);
+    for (uint32_t at = 0; old && at < oldn; ) {
+        uint32_t end = at;
+        while (end < oldn && old[end] != '\n') end++;
+        uint32_t kl;
+        const char *k = line_key(old + at, end - at, &kl);
+        if (k && !key_is(k, kl, canon)) {
+            if (n + (end - at) + 1 > CFG_TEXT_MAX) full = true;
+            else { memcpy(text + n, old + at, end - at); n += end - at; text[n++] = '\n'; }
+        }
+        at = end + 1;
+    }
+    // And this one, last.
+    if (vlen) {
+        const uint32_t cl = (uint32_t)strlen(canon);
+        if (n + cl + 3 + vlen + 1 > CFG_TEXT_MAX) full = true;
+        else {
+            memcpy(text + n, canon, cl); n += cl;
+            memcpy(text + n, " = ", 3); n += 3;
+            memcpy(text + n, value, vlen); n += vlen;
+            text[n++] = '\n';
+        }
+    }
+    if (full) { ubiqos_tlsf_free(ubiqos_mem_pool, img); return UBIQOS_CFG_EFULL; }
+
+    cfg_head_t *h = (cfg_head_t *)img;
+    h->magic = CFG_MAGIC;
+    h->len = n;
+    h->sum = fnv1a(text, n);
+
+    // Nothing left to keep is an erased sector, which reads as none.
+    const uint32_t offset = UBIQOS_FLASH_CONFIG_BASE - XIP_BASE;
+    write_sector(offset, n ? img : 0);
+
+    const uint8_t *now = (const uint8_t *)(uintptr_t)UBIQOS_FLASH_CONFIG_BASE;
+    const bool same = n ? memcmp(now, img, FLASH_SECTOR_SIZE) == 0
+                        : ((const cfg_head_t *)now)->magic == 0xffffffffu;
+    ubiqos_tlsf_free(ubiqos_mem_pool, img);
+    return same ? 0 : UBIQOS_CFG_EFLASH;
+}
+
 void ubiqos_config_read(void)
 {
+    // Flash first; the card after it wins.
+    uint32_t kept_len = 0;
+    const char *kept = stored_text(&kept_len);
+    if (kept) {
+        const uint32_t lines = take_text(kept, kept_len);
+        ubiqos_print(lines == 1 ? "config: 1 setting kept in flash\n" : "config: settings kept in flash\n");
+    }
+
     read_the_file(CONFIG_PATH);
 
     // And then the network's own file, which wins: a card that has both is one
