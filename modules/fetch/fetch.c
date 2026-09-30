@@ -56,6 +56,38 @@ static uint32_t build_request(char *out, uint32_t cap, const char *host, const c
     return n;
 }
 
+// Where what arrives goes. By default all of it to stdout, headers and body.
+// With -o FILE only the body, into FILE: the headers are read past up to the
+// blank line that ends them, and the status line is said on stderr. That is
+// what getting a file onto a board without a card needs -- the ESP32-C6's
+// firmware onto iLabs' Challenger+, over the USB cable, for espflash to write.
+static int32_t out_fd = -1;
+static uint32_t head_state;        // how much of "\r\n\r\n" has been seen
+static bool in_body;
+static uint32_t body_bytes;
+static char status[64];
+static uint32_t status_len;
+static bool status_done;
+
+static void emit(const uint8_t *buf, uint32_t n) {
+    if (out_fd < 0) { ubiqos_write(UBIQOS_STDOUT, buf, n); return; }
+    uint32_t i = 0;
+    while (!in_body && i < n) {
+        const char c = (char)buf[i++];
+        if (!status_done) {
+            if (c == '\r' || c == '\n') status_done = true;
+            else if (status_len < sizeof status - 1) status[status_len++] = c;
+        }
+        static const char end[] = "\r\n\r\n";
+        head_state = c == end[head_state] ? head_state + 1 : (c == '\r' ? 1u : 0u);
+        if (head_state == 4) in_body = true;
+    }
+    if (i < n) {
+        ubiqos_write(out_fd, buf + i, n - i);
+        body_bytes += n - i;
+    }
+}
+
 static void fetch_tls(const char *host, uint16_t port, const char *req, uint32_t len) {
     char why[200];
     ubiqos_tls_t *t = ubiqos_tls_open(host, port, why, sizeof why);
@@ -68,7 +100,7 @@ static void fetch_tls(const char *host, uint16_t port, const char *req, uint32_t
     static uint8_t buf[1024];
     for (;;) {
         const int32_t n = ubiqos_tls_read(t, buf, sizeof buf, IDLE_MS);
-        if (n > 0) { ubiqos_write(UBIQOS_STDOUT, buf, (uint32_t)n); continue; }
+        if (n > 0) { emit(buf, (uint32_t)n); continue; }
         if (n == -2) err("\r\nfetch: nothing more arrived\r\n");
         if (n == -1) err("\r\nfetch: the connection failed\r\n");
         break;
@@ -118,7 +150,7 @@ static void fetch_plain(const char *host, uint16_t port, const char *req, uint32
             continue;
         }
         quiet = 0;
-        ubiqos_write(UBIQOS_STDOUT, buf, (uint32_t)n);
+        emit(buf, (uint32_t)n);
     }
     ubiqos_sock_close(sock);
 }
@@ -127,14 +159,21 @@ static void fetch_plain(const char *host, uint16_t port, const char *req, uint32
 // which sets up stdio and the heap and then calls this.
 int main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: fetch URL\n"
+            "usage: fetch [-o FILE] URL\n"
             "       fetch HOST [PATH] [PORT]\n\n"
-            "An HTTP GET, printed as it arrives: headers, then body. A URL may be\n"
+            "An HTTP GET, printed as it arrives: headers, then body -- or with -o,\n"
+            "the body alone written to FILE and the status line said. A URL may be\n"
             "http:// or https://. For https the server's certificate is checked\n"
             "against the roots built in -- and any in /sd/certs.pem -- and against\n"
             "the host name, and the wall clock must be set, which NTP does.\n"))
         return 0;
-    if (argc < 2) { say("usage: fetch URL, or fetch HOST [PATH] [PORT]\r\n"); return 1; }
+    const char *out_name = 0;
+    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'o' && !argv[1][2]) {
+        out_name = argv[2];
+        argv += 2;
+        argc -= 2;
+    }
+    if (argc < 2) { say("usage: fetch [-o FILE] URL, or fetch HOST [PATH] [PORT]\r\n"); return 1; }
 
     // Host and path are copied out of the URL: the host needs its own NUL.
     static char host[128];
@@ -169,7 +208,19 @@ int main(int argc, char **argv) {
     const uint32_t len = build_request(req, sizeof req, host, path);
     if (!len) { say("fetch: that host and path are too long\r\n"); return 1; }
 
+    if (out_name) {
+        out_fd = ubiqos_open_flags(out_name, UBIQOS_O_WRONLY | UBIQOS_O_CREAT | UBIQOS_O_TRUNC);
+        if (out_fd < 0) { err("fetch: cannot write "); err(out_name); err("\r\n"); return 1; }
+    }
     if (tls) fetch_tls(host, port, req, len);
     else     fetch_plain(host, port, req, len);
+    if (out_fd >= 0) {
+        ubiqos_close(out_fd);
+        status[status_len] = 0;
+        err("fetch: "); err(status_len ? status : "no status line"); err("; ");
+        char num[12]; uint32_t v = body_bytes; int k = 11; num[k] = 0;
+        do { num[--k] = (char)('0' + v % 10u); v /= 10u; } while (v);
+        err(&num[k]); err(" bytes to "); err(out_name); err("\r\n");
+    }
     return 0;
 }
