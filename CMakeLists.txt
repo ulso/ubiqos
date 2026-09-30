@@ -90,7 +90,7 @@ endif()
 # architecture and, where it has the pins for both, either video mode. Only the
 # facts that FOLLOW from the board belong here.
 set(UBIQOS_BOARD fruit-jam CACHE STRING "which board to build for")
-set_property(CACHE UBIQOS_BOARD PROPERTY STRINGS fruit-jam ws43b)
+set_property(CACHE UBIQOS_BOARD PROPERTY STRINGS fruit-jam ws43b challenger)
 
 if(UBIQOS_BOARD STREQUAL "fruit-jam")
     set(ubiqosPicoBoard adafruit_fruit_jam)
@@ -145,6 +145,20 @@ elseif(UBIQOS_BOARD STREQUAL "ws43b")
                      UBIQOS_SD_MISO_PIN=12 UBIQOS_SD_CS_PIN=15)
     set(ubiqosBoardModules usbdesc condesc acmdesc gt911 touchdesc touch backlight
                            sdlib fat32lib)
+elseif(UBIQOS_BOARD STREQUAL "challenger")
+    # iLabs' Challenger+ RP2350 WiFi6/BLE5: the Fruit Jam's radio on a Feather,
+    # with no video, no card and no USB host. The SDK carries the board, but
+    # says nothing of its PSRAM: where it is selected -- GPIO0, from iLabs'
+    # schematic -- and how big it is. The SDK's runtime sets PSRAM up only
+    # when it knows both, and the first boot said "PSRAM: none found".
+    set(ubiqosPicoBoard ilabs_challenger_rp2350_wifi_ble)
+    set(ubiqosBoardHeader "<boards/challenger-rp2350.h>")
+    set(ubiqosBoardRadio ON)
+    set(ubiqosBoardVideo none)
+    set(ubiqosBoardDefs PICO_PSRAM_CS_PIN=0 PICO_PSRAM_SIZE_BYTES=8388608)
+    # The console over USB, the header's pins, and the radio -- with this
+    # board's pins.
+    set(ubiqosBoardModules usbdesc gpiodesc espdescch ehdescch peek)
 else()
     message(FATAL_ERROR "UBIQOS_BOARD is '${UBIQOS_BOARD}'; there is a header for "
                         "each supported board in boards/, and no such file")
@@ -389,6 +403,9 @@ target_link_libraries(os_kernel pico_runtime pico_multicore pico_unique_id hardw
 # modules/sdlib inherits the kernel's definitions wholesale.
 if(ubiqosSdPins)
     target_compile_definitions(os_kernel PRIVATE ${ubiqosSdPins})
+endif()
+if(ubiqosBoardDefs)
+    target_compile_definitions(os_kernel PRIVATE ${ubiqosBoardDefs})
 endif()
 
 set(UBIQOS_BASEPRI "0x80" CACHE STRING "priority value to mask down to; empty for PRIMASK")
@@ -1524,6 +1541,7 @@ target_include_directories(esplink_app PRIVATE
 target_compile_definitions(esplink_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 ubiqos_add_data_module(espdesc modules/esplink/esp_desc.c)
+ubiqos_add_data_module(espdescch modules/esplink/esp_desc_challenger.c)
 ubiqos_add_module(espflash modules/espflash/espflash.c)
 
 # ESP-Hosted's SPI transport. The four pins WiFiNINA used, plus the two the
@@ -1535,6 +1553,7 @@ target_include_directories(ehspi_app PRIVATE
 target_compile_definitions(ehspi_app PRIVATE
     $<TARGET_PROPERTY:os_kernel,COMPILE_DEFINITIONS>)
 ubiqos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
+ubiqos_add_data_module(ehdescch modules/ehspi/eh_desc_challenger.c)
 ubiqos_add_module(ehstat modules/ehstat/ehstat.c)
 ubiqos_add_module(ping modules/ping/ping.c)
 ubiqos_add_module(netcon modules/netcon/netcon.c)
@@ -1782,7 +1801,9 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/condesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/acmdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/espdesc.mod
-            ${CMAKE_CURRENT_BINARY_DIR}/ehdesc.mod)
+            ${CMAKE_CURRENT_BINARY_DIR}/ehdesc.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/espdescch.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/ehdescch.mod)
 
 # What lives in flash rather than on the card.
 #
