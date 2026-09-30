@@ -1673,6 +1673,10 @@ ubiqos_add_module(rmdir modules/rmdir/rmdir.c)
 ubiqos_add_module(mount modules/mount/mount.c)
 ubiqos_add_module(msgtest modules/msgtest/msgtest.c SINGLE)
 ubiqos_add_module(msgcli modules/msgcli/msgcli.c)
+# The smallest example of a node: two programs started at boot that find each
+# other by name and talk over messages. See kernel/node.c.
+ubiqos_add_module(nodelog modules/nodelog/nodelog.c)
+ubiqos_add_module(nodebeat modules/nodebeat/nodebeat.c)
 ubiqos_add_module(font modules/font/font.c)
 ubiqos_add_module(color modules/color/color.c)
 ubiqos_add_module(kill modules/kill/kill.c)
@@ -1732,6 +1736,8 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/mount.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgtest.mod
             ${CMAKE_CURRENT_BINARY_DIR}/msgcli.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/nodelog.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/nodebeat.mod
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
