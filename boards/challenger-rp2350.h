@@ -71,6 +71,15 @@
 #define UBIQOS_BOARD_FLASH_KEYS_BASE   0x107E0000u
 #define UBIQOS_BOARD_FLASH_KEYS_SIZE   0x2000u
 
+// --- THE KEY STORE ---------------------------------------------------------
+// Open by default, as on the NUCLEO-H563ZI: there is no card to keep a key file
+// on, and a board that has to join its network by itself after every restart
+// -- a bridge on a battery -- cannot wait for somebody to type `key unlock`.
+// What that costs is the same: the store keeps its secrets from nobody who can
+// read the flash. See UBIQOS_KEYS_DEFAULT_PASS in kernel/fsserver.c; a store
+// sealed under a passphrase of its own stays shut until it is typed.
+#define UBIQOS_KEYS_OPEN_BY_DEFAULT 1
+
 // --- WHAT THE HARDWARE FIXES -----------------------------------------------
 #define UBIQOS_BOARD_FIXED_PINS                                              \
     /* GP4 and GP5, the C6's serial line, are esplink's and claimed by it --  \
