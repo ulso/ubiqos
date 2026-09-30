@@ -174,9 +174,18 @@ static int32_t term_close(void) { return 0; }
 
 static int32_t term_write(const uint8_t *buf, uint32_t len)
 {
-    // Room for the worst case, every byte a newline, or nothing: a partial
-    // write that split a CR from its LF would be harmless but a partial write
-    // that stops mid-line is what the caller retries, so count what went.
+    // All of it or none of it, when all of it can fit at all -- the rule POSIX
+    // gives a pipe for writes up to PIPE_BUF. A write that went out in part
+    // left the rest for a later turn, and whoever wrote in between landed in
+    // the middle of the line: on the NUCLEO-H503RB, whose ring is 512 bytes,
+    // init's "nodelog started" came out as "ini[11 ms] pid 3: ...t: nodeb".
+    // Nothing written is the caller blocking until there is room, as for any
+    // full device; only a write longer than the whole ring is still split.
+    uint32_t need = 0;
+    for (uint32_t i = 0; i < len; i++) need += buf[i] == '\n' ? 2u : 1u;
+    if (need <= TX_SIZE && h5_console_room() < need) return 0;
+
+    // A newline goes out as CR LF, and needs room for both.
     uint32_t n = 0;
     while (n < len) {
         const uint32_t need = buf[n] == '\n' ? 2u : 1u;
