@@ -228,8 +228,8 @@ static bool sync_rom(int32_t dev, bool quiet) {
     if (!quiet) {
         say("\r\n-------------------------------------------------------------\r\n");
         if (!heard) {
-            say("nothing at all. The chip is not talking on GP9, or it never "
-                "left reset.\r\n");
+            say("nothing at all. The chip is not talking on its serial line, "
+                "or it never left reset.\r\n");
         } else {
             say_u32(heard);
             say(" bytes\r\n");
@@ -398,7 +398,7 @@ static void do_write(int32_t dev, const char *path) {
     say(", ");
     say_u32(size);
     say(" bytes, to the C6 at offset 0\r\n");
-    say("This replaces NINA. 'wifi' stops working until it is put back.\r\n\r\n");
+    say("This replaces the firmware the chip has now.\r\n\r\n");
 
     if (!sync_rom(dev, true)) {
         ubiqos_close(f);
@@ -440,8 +440,11 @@ static void do_write(int32_t dev, const char *path) {
             say_u32(seq);
             say(" was not taken -- ");
             say(why(last_error));
-            say("\r\nThe chip now holds neither firmware. Adafruit's "
-                "SerialESPPassthrough UF2 is the way back.\r\n");
+            // Whatever it held is half overwritten. The board maker's own
+            // firmware and way of writing it are the way back: on a Fruit Jam
+            // Adafruit's SerialESPPassthrough UF2, on a Challenger iLabs'.
+            say("\r\nThe chip now holds neither firmware. Write it again, or put "
+                "the board maker's firmware back with their own tools.\r\n");
             ubiqos_close(f);
             return;
         }
@@ -498,7 +501,8 @@ static void do_log(int32_t dev, uint32_t ms) {
 
 static void do_sync(int32_t dev) {
     say("resetting the C6 into its serial bootloader\r\n");
-    say("(this drops the WiFi link, and the audio DAC shares the reset pin)\r\n\r\n");
+    say("(this drops the WiFi link, and on a Fruit Jam resets the audio DAC,\r\n"
+        " which shares the reset pin)\r\n\r\n");
 
     if (!sync_rom(dev, false)) {
         say("the chip has been reset back into its application\r\n");
@@ -509,7 +513,7 @@ static void do_sync(int32_t dev) {
         "all work.\r\n");
     say("putting the chip back the way it was\r\n");
     into_application(dev);
-    say("done -- 'wifi connect' will find NINA again\r\n");
+    say("done -- the chip runs its firmware again\r\n");
 }
 
 void module_main(int argc, char **argv) {
@@ -520,10 +524,10 @@ void module_main(int argc, char **argv) {
             "               the wire. Reads only; the chip comes back as it was.\n"
             "  log          reset it into its application and print what it says.\n"
             "  write FILE   write FILE to the chip's flash from offset 0. This\n"
-            "               REPLACES what is in it -- NINA, and with it every\n"
-            "               'wifi' command -- and takes minutes at 115200 baud.\n\n"
-            "Either way the WiFi link goes down, and the audio DAC is reset too,\n"
-            "since it shares the reset pin on this board.\n")) return;
+            "               REPLACES what is in it, and takes minutes at 115200\n"
+            "               baud.\n\n"
+            "Either way the WiFi link goes down. On a Fruit Jam the audio DAC is\n"
+            "reset too, since it shares the reset pin there.\n")) return;
 
     bool sync  = argc == 2 && is(argv[1], "sync");
     bool log   = argc == 2 && is(argv[1], "log");
