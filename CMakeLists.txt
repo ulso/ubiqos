@@ -1687,6 +1687,8 @@ ubiqos_add_module(key modules/key/key.c)
 ubiqos_add_module(date modules/date/date.c)
 ubiqos_add_module(uptime modules/uptime/uptime.c)
 ubiqos_add_module(uname modules/uname/uname.c)
+# config: the settings a board with no card keeps in flash.
+ubiqos_add_module(config modules/config/config.c)
 # SINGLE for the same reason as sshd below: its 168 kB of code can then stay in
 # flash on a board without PSRAM. One fetch at a time; a second is refused.
 ubiqos_add_module(fetch modules/fetch/fetch.c NEWLIB SINGLE)
@@ -1894,6 +1896,7 @@ set(UBIQOS_RESIDENT
     date
     uptime
     uname
+    config
     fetch
     tlsroots
     mount
