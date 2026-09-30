@@ -498,6 +498,11 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         if(UBIQOS_VIDEO STREQUAL "rgb")
             set(ubiqosHeapKB 96)
         endif()
+        # No display at all -- the Challenger+ -- and so no screen buffers of
+        # any kind in SRAM: the pool can have what a framebuffer would have.
+        if(UBIQOS_VIDEO STREQUAL "none")
+            set(ubiqosHeapKB 128)
+        endif()
     else()
         # 192 on both. It started at 256 on Arm, but every static the kernel
         # gains comes out of the C heap between end and the stack rather than
@@ -571,6 +576,10 @@ if(UBIQOS_DMESG_KB STREQUAL "auto")
         # began before anybody looked. With a time on every line, 32 kB is
         # days of that.
         set(ubiqosDmesgKB 32)
+    elseif(UBIQOS_VIDEO STREQUAL "none")
+        # No display, so the log is what there is to read the board by -- and
+        # with no framebuffer it has room. As the Waveshare's.
+        set(ubiqosDmesgKB 32)
     else()
         set(ubiqosDmesgKB 2)
     endif()
@@ -591,7 +600,9 @@ message(STATUS "Kernel log: ${ubiqosDmesgKB} kB")
 # is the one that gave up its framebuffer for it.
 set(UBIQOS_LWIP "auto" CACHE STRING "on, off, or auto to follow UBIQOS_VIDEO")
 if(UBIQOS_LWIP STREQUAL "auto")
-    if(UBIQOS_VIDEO STREQUAL "chargen")
+    # And a board with no display at all has no framebuffer to make room for:
+    # the Challenger+, whose network is the reason it is there.
+    if(UBIQOS_VIDEO STREQUAL "chargen" OR UBIQOS_VIDEO STREQUAL "none")
         set(ubiqosLwip ON)
     else()
         set(ubiqosLwip OFF)
