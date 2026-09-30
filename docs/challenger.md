@@ -95,6 +95,11 @@ reset on the bench:
 `key set ssh.password` does the same for `sshd`, which then starts at boot too:
 `ssh challenger.local`.
 
+Another name, or another address on the cable -- for a second Challenger on
+the same computer, say -- is kept in flash with `config set hostname NAME` and
+`config set usb_address 192.168.9.1`, and takes effect at the next start. See
+[config.md](config.md#without-a-card-settings-kept-in-flash).
+
 ## 4. The bridge
 
 Nothing to do: after a reset the boot script starts it. `hibouair` waits for

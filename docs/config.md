@@ -77,6 +77,44 @@ It was 169.254, from AutoIP, until 18 Sep 2026. On a computer with more than
 one network that address range is routed out of one of the others, and the
 board could not be reached on its own cable -- see `kernel/lwipdhcpd.c`.
 
+A board without a card gives each board its own default in its header -- the
+Challenger+ is 192.168.8.1 -- and can keep another in flash, below.
+
+## Without a card: settings kept in flash
+
+A board with no card -- the Challenger+, the NUCLEO boards -- keeps the part of
+config.txt that is nobody's secret in a flash sector of its own, set from the
+console:
+
+    ubiqos:/> config set hostname bridge
+    kept: hostname = bridge -- it takes effect at the next start
+    ubiqos:/> config set usb_address 10.0.9.1
+    kept: usb_address = 10.0.9.1 -- it takes effect at the next start
+    ubiqos:/> config
+    hostname     challenger
+    usb address  192.168.8.1
+    kept in flash:
+      hostname = bridge
+      usb_address = 10.0.9.1
+    ubiqos:/> config unset hostname
+    forgotten: hostname -- the default returns at the next start
+
+- **hostname, usb_address and timezone**, checked as config.txt's are:
+  `config set` refuses what the next start would refuse. On the STM32H5 boards
+  usb_address is not among them; they have no network on the USB cable.
+- **At the next start, not now.** mDNS has announced the name, and the address
+  is what the computer at the other end of the cable was given. `reboot`.
+- **A card still wins.** The flash is read first and config.txt after it, so a
+  board that has both takes the card's word: a Fruit Jam with `fjtest` in flash
+  and `hostname = fruit-jam` on its card is fruit-jam.
+- **No network and no password.** The password belongs in the key store, sealed:
+  `key set wifi.<ssid>`. The sector is plain text that anybody with a probe
+  can read.
+- **Where:** the one sector after the key store (`UBIQOS_FLASH_CONFIG_BASE` in
+  kernel/flashmod.h), clear of everything a UF2 writes, so a new system leaves
+  the settings as they were. One copy, with a checksum: power lost during a
+  write loses the settings and the board starts on its defaults.
+
 ## When it is read, and why that is the whole of it
 
 The filesystem server reads it as soon as the card is up and before
