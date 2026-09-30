@@ -144,6 +144,15 @@ static int32_t esp_configure(const void *config, uint32_t size)
     K->gpio_init(reset_pin);
     K->gpio_set_dir(reset_pin, false);
 
+    // And the chip's own pull-up under both, because not every board has one.
+    // The Fruit Jam pulls both nets up; iLabs' Challenger+ pulls neither, and
+    // an RP2350 pad comes up pulled DOWN -- so the first time this driver let
+    // go of EN there, it went low and stayed low, and the C6 sat in reset
+    // saying nothing to `espflash log` or `sync`. A pull-up of the chip's own
+    // is weak enough to sit under a board's without either noticing.
+    K->gpio_set_pulls(strap_pin, true, false);
+    K->gpio_set_pulls(reset_pin, true, false);
+
     K->print("  esp driver: uart1, tx GP");
     K->print_u32(c->tx_pin);
     K->print(", rx GP");
@@ -180,9 +189,10 @@ static int32_t esp_read(uint8_t *buf, uint32_t len)
 static int32_t esp_readable(void) { return rx_waiting() ? 1 : 0; }
 
 // A pin is held low by driving it, and released by letting go of it. Released
-// is an INPUT, not a one: both nets have a pull-up on the board, and the audio
-// DAC shares one of them. Driving a shared net high is how two outputs come to
-// fight over it.
+// is an INPUT, not a one: a pull-up takes it high -- the board's where it has
+// one, the pad's own, set at configure, where it has not -- and on the Fruit
+// Jam the audio DAC shares one of the nets. Driving a shared net high is how
+// two outputs come to fight over it.
 static void hold(uint32_t pin, bool low)
 {
     if (pin == 0xffffffffu) return;
