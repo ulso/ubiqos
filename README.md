@@ -1,13 +1,14 @@
 # UbiqOS
 
-A real-time operating system for the RP2350: programs are
-**position-independent modules**, one copy of the code is shared by every
-process running it, and a module runs where it lies -- straight out of flash,
-or from wherever it was loaded off the SD card.
+A real-time operating system for the RP2350, and since September 2026 for the
+STM32H5 too: programs are **position-independent modules**, one copy of the
+code is shared by every process running it, and a module runs where it lies --
+straight out of flash, or from wherever it was loaded off the SD card.
 
-It runs on the Cortex-M33 and on the Hazard3 RISC-V core, with a shell on an
-HDMI screen and a USB keyboard, a network over the USB cable and over WiFi, and
-modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
+On the RP2350 it runs on the Cortex-M33 and on the Hazard3 RISC-V core, with a
+shell on an HDMI screen and a USB keyboard, a network over the USB cable and
+over WiFi, and modules written in C, C++, D, Zig or Rust -- or compiled to
+WebAssembly.
 
 ## Boards
 
@@ -15,6 +16,9 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 |---|---|
 | **Adafruit Fruit Jam** (RP2350B) | HDMI console, USB keyboard through the on-board hub, microSD over 4-bit SDIO, 8 MB PSRAM, the TLV320 audio codec, WiFi through the ESP32-C6, NeoPixels and buttons |
 | **Waveshare RP2350-Touch-LCD-4.3B** | the 800x480 RGB panel, the GT911 touch controller, microSD, PSRAM; the USB-C port as device or as host |
+| **iLabs Challenger+ RP2350 WiFi6/BLE5** (RP2350A) | the USB console and network (192.168.8.1 on the cable), 8 MB PSRAM, WiFi and Bluetooth LE through the ESP32-C6 -- which must run UbiqOS's ESP-Hosted build, `esp/challenger-c6/build.sh`, instead of the AT firmware it ships with. No card, so its boot script is in flash: it starts as a BLE-to-WiFi bridge that shows HibouAir sensors on a web page |
+| **ST NUCLEO-H563ZI** (STM32H563) | Ethernet with lwIP, mDNS and NTP, `sshd`, `fetch`, the key store, the console on the ST-LINK's serial port; programs run in place from flash |
+| **ST NUCLEO-H503RB** (STM32H503, 32 kB RAM) | the node profile: the scheduler, messages and driver modules, with no files and no shell; `init` starts what `inittab` names and starts it again when it fails |
 
 ## What exists
 
@@ -36,7 +40,8 @@ modules written in C, C++, D, Zig or Rust -- or compiled to WebAssembly.
 - **Secrets**: named keys sealed in flash with a passphrase
   (ChaCha20-Poly1305, PBKDF2), typed at a console and never readable back
 - **Programs**: about ninety modules, among them an editor (Atto emacs), a
-  WAV player, `hibouair` for BLE air-quality sensors through a BleuIO dongle,
+  WAV player, `hibouair` for BLE air-quality sensors through a BleuIO dongle
+  or the radio's own Bluetooth,
   and the usual `ls`, `cat`, `cp`, `mv`, `rm`, `ps`, `kill`
 - **An SDK** for building a module, or a whole application image, outside
   this tree
@@ -85,6 +90,7 @@ configurations are chosen when configuring:
 | Fruit Jam, RISC-V | `-DUBIQOS_ARCH=riscv -DPICO_TOOLCHAIN_PATH=$HOME/.pico-sdk/toolchain/RISCV_ZCB_RPI_2_3_0_0` |
 | Waveshare 4.3B | `-DUBIQOS_BOARD=ws43b` |
 | Waveshare 4.3B, USB-C as host | `-DUBIQOS_BOARD=ws43b -DUBIQOS_NATIVE_USB=host` |
+| Challenger+ RP2350 | `-DUBIQOS_BOARD=challenger` |
 
 **The framebuffer builds do not work at present**, on Arm or RISC-V: they boot
 to a shell on the HDMI screen, but the 300 kB framebuffer leaves too little
@@ -94,6 +100,33 @@ still build, and are left out of releases until that is fixed.
 Use a separate build directory for each. Only Release builds fit in RAM, and
 that is forced. clang, `ldc2`, `zig` and `rustc` are used for modules in those
 languages when they are found, and skipped when they are not.
+
+### STM32H5
+
+The NUCLEO boards have a build of their own in `port/stm32h5`. It needs no Pico
+SDK -- only the Arm toolchain and lwIP, both taken from where the SDK's
+installer put them:
+
+```bash
+cmake -G Ninja -S port/stm32h5 -B build-h5
+ninja -C build-h5
+```
+
+That is the NUCLEO-H563ZI; add `-DUBIQOS_H5_BOARD=nucleo-h503rb` for the
+H503. The result is the kernel, `build-h5/ubiqos_h5.elf`. The programs are the
+same modules an RP2350 Arm build makes -- a module is the same bytes on both
+chips -- put into an image of their own with `make_flash_image.py`:
+
+```bash
+# NUCLEO-H563ZI: programs at 0x08040000, their data in a fixed 64 kB of SRAM
+python3 make_flash_image.py --base 0x08040000 --data-base 0x20090000 \
+    --data-size 0x10000 h5-modules.bin build/sh.mod build/ls.mod ...
+# NUCLEO-H503RB: at 0x08010000, 48 kB at most
+python3 make_flash_image.py --base 0x08010000 h503-modules.bin build/init.mod build/inittab.mod ...
+```
+
+Both go on with the ST-LINK, for example with probe-rs: the ELF as it is, and
+the image with `--binary-format bin --base-address` set to the same address.
 
 ## Documentation
 
