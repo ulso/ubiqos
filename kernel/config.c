@@ -67,7 +67,16 @@ static bool done;
 // 192.168.7.1, the address a Linux board in USB gadget mode takes, so that the
 // computer gets 192.168.7.2. A subnet of its own for the cable -- see
 // kernel/lwipdhcpd.c for why 169.254 was not one.
+//
+// A board header may name another, for the same reason it may name the host:
+// two boards on one computer that both say 192.168.7.1 give it two cables to
+// one subnet, and it answers one board down the other's cable. The card's
+// usb_address still wins where there is a card.
+#ifdef UBIQOS_DEFAULT_USB_ADDRESS
+#define USB_ADDRESS_DEFAULT UBIQOS_DEFAULT_USB_ADDRESS
+#else
 #define USB_ADDRESS_DEFAULT ((192u << 24) | (168u << 16) | (7u << 8) | 1u)
+#endif
 static uint32_t usb_address = USB_ADDRESS_DEFAULT;
 uint32_t ubiqos_config_usb_address(void) { return usb_address; }
 
