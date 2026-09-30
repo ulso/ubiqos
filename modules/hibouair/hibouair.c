@@ -7,6 +7,11 @@
 // answers in JSON, which is why the parsing below looks for `"data":"` and not
 // for a position in a line.
 //
+// A machine with no /dev/acm but a Bluetooth controller in its radio -- the
+// Challenger's ESP32-C6 -- is heard through /dev/eh instead, as raw HCI: a
+// passive scan, and each advertisement's manufacturer data handed to the same
+// decoder. See run_hci.
+//
 // The sensors broadcast; nothing is connected to. Each advertisement carries
 // manufacturer-specific data, and the layout of it is Smart Sensor Devices'
 // own. It is not guessed here: it is taken from the parser in the
@@ -14,6 +19,7 @@
 
 #include <stdbool.h>
 #include "../../common/ubiqos_stdio.h"
+#include "../../common/ubiqos_hci.h"
 
 // The reference HibouAir reader, and the SDK's worked example of one.
 //
@@ -146,6 +152,7 @@ __thread bool     dongle_quiet;        // said so already
 __thread uint32_t wakes_unanswered;    // set-ups sent since it last said anything
 __thread bool     waiting_bleuio;      // nothing that is a BleuIO on the socket
 __thread bool     said_no_reset;       // told the user this machine cannot reset it
+__thread bool     via_radio;           // hearing through /dev/eh, not a BleuIO
 
 /**
  * flush_input -- empty receive buffer.
@@ -459,7 +466,10 @@ static bool publish_to(const char *path)
     }
     put_str(fd, "],\"count\":");
     put_u32(fd, sensor_count);
-    put_str(fd, "}\n");
+    // What is doing the hearing, for the page to say: the same page is served
+    // by a Fruit Jam with a dongle and by a Challenger with none.
+    put_str(fd, via_radio ? ",\"source\":\"the radio's own Bluetooth\"}\n"
+                          : ",\"source\":\"BleuIO scanner over the USB host\"}\n");
     ubiqos_close(fd);
     return true;
 }
@@ -555,12 +565,115 @@ static void consume(const uint8_t *p, uint32_t n)
     }
 }
 
+// --- THE RADIO'S OWN CONTROLLER ---------------------------------------------
+// Where the BleuIO filters in the dongle, this hears every advertiser in the
+// room -- twenty reports a second on the bench -- and throws away what is not
+// HibouAir's. Cheap: a report is a few bytes to look at, and the controller
+// keeps no more than eight before the driver drops the rest.
+
+static void hci_address(const uint8_t *a, char *out)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    char *o = out;
+    for (int i = 5; i >= 0; i--) {             // the wire has it backwards
+        *o++ = hex[a[i] >> 4];
+        *o++ = hex[a[i] & 15];
+        if (i) *o++ = ':';
+    }
+    *o = 0;
+}
+
+// Sensors advertise several times a second; a controller that has sent no
+// report of theirs for this long has stopped scanning, not lost them all.
+#define HCI_QUIET_MS 15000u
+#define HCI_POLL_MS  50u    // the driver holds eight; twenty a second fill it in 400 ms
+
+static void run_hci(bool quiet)
+{
+    int32_t dev = ubiqos_open("/dev/eh");
+    bool waited = false;
+    while (dev < 0) {
+        if (!waited) printf("hibouair: no /dev/acm, and waiting for the radio on /dev/eh\n");
+        waited = true;
+        ubiqos_sleep(1000);
+        dev = ubiqos_open("/dev/eh");
+    }
+
+    // Started at boot, this is here before the network: the key store opens
+    // and `wifi auto` starts at the same moment as the boot script, and a join
+    // not yet begun cannot be waited out by ubiqos_hci_power_on. So up to half
+    // a minute for it to have happened, one way or the other; a board with no
+    // network to join spends that once.
+    for (int i = 0; i < 300; i++) {
+        uint32_t state = 0;
+        if (ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof state) < 0 || state >= 2) break;
+        ubiqos_sleep(100);
+    }
+
+    via_radio = true;
+    ubiqos_hci_power_on(dev);
+    while (ubiqos_hci_scan_start(dev) != 0) {
+        printf("hibouair: the radio's Bluetooth will not scan; trying again\n");
+        ubiqos_sleep(5000);
+        ubiqos_hci_power_on(dev);
+    }
+
+    ubiqos_catch_intr(PULSE_INTR);
+    if (!quiet) printf("scanning through the radio; ctrl-C to stop\n\n");
+
+    uint32_t next_draw = ubiqos_ticks_now() + REDRAW_MS;
+    uint32_t heard = ubiqos_ticks_now();
+    uint8_t ev[UBIQOS_HCI_EVENT_MAX];
+    char addr[20];
+
+    for (;;) {
+        // The driver cannot wake us for HCI, so this asks; the wait is a
+        // receive rather than a sleep so that ctrl-C still gets through.
+        ubiqos_msg_t m;
+        if (ubiqos_receive_tmo(&m, HCI_POLL_MS) == 0 && m.type == PULSE_INTR) {
+            ubiqos_hci_scan_stop(dev);
+            if (!quiet) printf("\nhibouair: scan stopped\n");
+            ubiqos_fs_remove(SENSORS_PATH);     // stale the moment it stops
+            break;
+        }
+
+        int32_t n;
+        while ((n = ubiqos_hci_recv(dev, ev, sizeof ev)) > 0) {
+            ubiqos_hci_report_t r;
+            if (!ubiqos_hci_report(ev, n, &r)) continue;
+            uint32_t len = 0;
+            const uint8_t *v = ubiqos_hci_ad(&r, 0xFF, &len);
+            if (!v || len < 2 || le16(v, 0) != HIBOU_COMPANY) continue;
+            heard = ubiqos_ticks_now();
+            hci_address(r.addr, addr);
+            remember(v, len, addr);
+        }
+
+        if (ubiqos_ticks_now() - heard >= HCI_QUIET_MS) {
+            printf("hibouair: nothing heard for %lu s; starting the scan again\n",
+                   (unsigned long)(HCI_QUIET_MS / 1000u));
+            forget_sensors();
+            ubiqos_hci_scan_start(dev);
+            heard = ubiqos_ticks_now();
+        }
+
+        if ((int32_t)(ubiqos_ticks_now() - next_draw) >= 0) {
+            if (!quiet) redraw();
+            publish();
+            next_draw = ubiqos_ticks_now() + REDRAW_MS;
+        }
+    }
+
+    ubiqos_close(dev);
+}
+
 void module_main(int argc, char **argv)
 {
     if (ubiqos_help(argc, argv,
             "usage: hibouair [-q]\n\n"
             "Scans for HibouAir sensors on the BleuIO dongle and shows a live\n"
-            "table. Ctrl-C tells the dongle to stop and exits.\n\n"
+            "table. Ctrl-C tells the dongle to stop and exits. A machine with no\n"
+            "/dev/acm scans with its radio's own Bluetooth instead, over /dev/eh.\n\n"
             "Either way the readings are written to /tmp/sensors.json, which is\n"
             "what httpd serves at /api/sensors. -q draws no table, which is what\n"
             "it wants in the background: 'hibouair -q &'.\n\n"
@@ -578,7 +691,7 @@ void module_main(int argc, char **argv)
 
     int32_t dev = ubiqos_open("/dev/acm");
     if (dev < 0) {
-        printf("hibouair: no /dev/acm on this machine\n");
+        run_hci(quiet);
         return;
     }
 
