@@ -404,11 +404,17 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
 // its link count, and make a process of it. The code is shared --
 // only the data area is new.
 #if UBIQOS_NODE
-            // A node starts its programs at boot and nothing after: what runs
-            // on it is fixed by its module image, as a task table fixes it in
-            // an RTOS configured at build time. See kernel/node.c.
-            frame->a0 = (uint32_t)UBIQOS_EXEC_STATIC;
-            break;
+            // A node starts nothing after boot but what init starts: what runs
+            // on it is fixed by init and its table in flash, as a task table
+            // fixes it in an RTOS configured at build time. Anybody else is
+            // refused. See kernel/node.c.
+            {
+                extern int32_t ubiqos_node_init_pid;
+                if (ubiqos_current_pid() != ubiqos_node_init_pid) {
+                    frame->a0 = (uint32_t)UBIQOS_EXEC_STATIC;
+                    break;
+                }
+            }
 #endif
             const char *want = (const char*)(uintptr_t)frame->a0;
             const char *stored = ubiqos_moddir_match(want);

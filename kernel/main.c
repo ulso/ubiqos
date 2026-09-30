@@ -476,6 +476,16 @@ const char *ubiqos_board_string(void) { return UBIQOS_BOARD_NAME; }
 const char *ubiqos_built_string(void) { return __DATE__ " " __TIME__; }
 
 // --- THE SYSTEM'S ENTRY POINT ---
+#if UBIQOS_NODE
+// The one process on a node that may start others; -1 until it is running.
+int32_t ubiqos_node_init_pid = -1;
+
+static bool is_named(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+#endif
+
 void ubiqos_kernel_main(void) {
     // The version comes from `git describe` at build time -- see
     // cmake/version.cmake. A board that says 0.1.6 is running that release;
@@ -831,14 +841,22 @@ void ubiqos_kernel_main(void) {
 
     uint32_t started = 0;
 #if UBIQOS_NODE
-    // A node starts every program in its module image, in the order the image
-    // has them, and nothing after: the image is the configuration. Each gets
-    // the console as stdin, stdout and stderr, so what it prints is the log.
-    // Drivers and libraries are not programs and are left to whoever uses them.
+    // A node starts init, if its module image has one, and init starts the
+    // rest from its table -- in its order, at its priorities, and again when
+    // one ends, if the table says so. See modules/init. It is the only process
+    // that may start another; SYS_EXEC refuses everybody else.
+    //
+    // Without an init every program in the image is started, in the image's
+    // order, and nothing after: the image alone is the configuration then.
+    // Either way each gets the console as stdin, stdout and stderr, so what it
+    // prints is the log. Drivers and libraries are not programs and are left
+    // to whoever uses them.
     const char *console = ubiqos_io_has_device("usb") ? "usb" : "term";
+    const bool has_init = ubiqos_moddir_match("init") != 0;
     for (uint32_t i = 0; i < ubiqos_moddir_count(); i++) {
         const ubiqos_module_entry_t *e = ubiqos_moddir_entry(i);
         if ((e->header->type_lang >> 8) != UBIQOS_TYPE_PROGRAM) continue;
+        if (has_init && !is_named(e->name, "init")) continue;
         const ubiqos_module_header_t *m = ubiqos_moddir_link(e->name);
         const int32_t pid = m ? ubiqos_process_create(m, "") : -1;
         ubiqos_print("node: ");
@@ -848,6 +866,7 @@ void ubiqos_kernel_main(void) {
         ubiqos_io_open_as(console, pid, UBIQOS_STDOUT);
         ubiqos_io_open_as(console, pid, UBIQOS_STDERR);
         ubiqos_print(" started\n");
+        if (has_init) ubiqos_node_init_pid = pid;
         started++;
     }
 #else

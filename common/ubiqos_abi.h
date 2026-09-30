@@ -1849,7 +1849,7 @@ static inline void ubiqos_reboot(void)
 #define UBIQOS_EXEC_RUNNING    (-2)   // one instance only, and it is running
 #define UBIQOS_EXEC_NO_SLOT    (-4)   // the process table is full
 #define UBIQOS_EXEC_NO_MEMORY  (-5)   // no room for its memory, or for its copy
-#define UBIQOS_EXEC_STATIC     (-6)   // a node: what runs was decided at boot
+#define UBIQOS_EXEC_STATIC     (-6)   // a node: only its init starts programs
 
 static inline int32_t ubiqos_exec(const char *module_name, const char *args)
 {
