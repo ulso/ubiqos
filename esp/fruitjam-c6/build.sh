@@ -33,7 +33,10 @@ if [ ! -d "$WORK/esp_hosted" ]; then
 fi
 git -C "$WORK/esp_hosted" submodule update --init --recursive --depth 1
 
-CP="$WORK/esp_hosted/examples/wifi/sta/cp"
+# Which of Espressif's co-processor programs: WiFi alone unless EXAMPLE names
+# another -- esp/challenger-c6/build.sh ble asks for the one with the Bluetooth
+# controller beside WiFi, its HCI carried over the same SPI link.
+CP="$WORK/esp_hosted/examples/${EXAMPLE:-wifi/sta/cp}"
 cd "$CP"
 # The board's wiring. The Fruit Jam's unless BOARD_DEFAULTS names another --
 # esp/challenger-c6/build.sh does, for iLabs' Challenger+ RP2350.
@@ -49,4 +52,4 @@ echo "Images in $CP/build:"
 echo "  0x0     bootloader/bootloader.bin"
 echo "  0x8000  partition_table/partition-table.bin"
 echo "  0xd000  ota_data_initial.bin"
-echo "  0x10000 eh_cp_wifi_sta.bin"
+echo "  0x10000 $(basename "$(ls "$CP"/build/*.bin | grep -v -e bootloader -e partition -e ota_data | head -1)")"
