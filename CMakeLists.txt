@@ -1700,6 +1700,8 @@ ubiqos_add_module(nodebeat modules/nodebeat/nodebeat.c)
 ubiqos_add_module(init modules/init/init.c)
 ubiqos_add_data_module(inittab modules/inittab/inittab.c PLAIN REV 1)
 ubiqos_add_module(faultdemo modules/faultdemo/faultdemo.c)
+# peek: words of memory or registers, for bringing up a board a probe cannot reach.
+ubiqos_add_module(peek modules/peek/peek.c)
 ubiqos_add_module(font modules/font/font.c)
 ubiqos_add_module(color modules/color/color.c)
 ubiqos_add_module(kill modules/kill/kill.c)
@@ -1764,6 +1766,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/init.mod
             ${CMAKE_CURRENT_BINARY_DIR}/inittab.mod
             ${CMAKE_CURRENT_BINARY_DIR}/faultdemo.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/peek.mod
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
