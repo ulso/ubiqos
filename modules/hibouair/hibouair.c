@@ -610,12 +610,22 @@ static void run_hci(bool quiet)
         ubiqos_sleep(100);
     }
 
+    // A radio whose firmware has no Bluetooth controller -- a Challenger's C6
+    // still on the AT firmware it shipped with -- is said once, with what to
+    // do about it, and then asked again quietly once a minute. It said so every
+    // ten seconds, twice, for as long as it ran; started at boot, that was the
+    // console for ever, until somebody killed it.
     via_radio = true;
-    ubiqos_hci_power_on(dev);
-    while (ubiqos_hci_scan_start(dev) != 0) {
-        printf("hibouair: the radio's Bluetooth will not scan; trying again\n");
-        ubiqos_sleep(5000);
-        ubiqos_hci_power_on(dev);
+    ubiqos_hci_power_on(dev, false);
+    if (ubiqos_hci_scan_start(dev) != 0) {
+        printf("hibouair: the radio's Bluetooth will not scan. It needs UbiqOS's\n"
+               "  ESP-Hosted with the Bluetooth controller -- see docs/challenger.md.\n"
+               "  Asking again once a minute, without saying so.\n");
+        do {
+            ubiqos_sleep(60000);
+            ubiqos_hci_power_on(dev, true);
+        } while (ubiqos_hci_scan_start(dev) != 0);
+        printf("hibouair: the radio's Bluetooth is up; scanning\n");
     }
 
     ubiqos_catch_intr(PULSE_INTR);

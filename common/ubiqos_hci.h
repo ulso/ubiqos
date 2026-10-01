@@ -14,20 +14,21 @@
 
 #define UBIQOS_HCI_EVENT_MAX 264        // what the driver keeps of one packet
 
-// Bring the controller up: `ehrpc bt`, run and waited for.
+// Bring the controller up: `ehrpc bt`, run and waited for -- `ehrpc bt quiet`
+// for a caller retrying in the background, which has said its piece once.
 //
 // Not while the driver is joining a network. Its join is RPCs too, on the
 // same control plane with the same one inbox, and a question asked in the
 // middle of it has its answer taken by whichever side reads first. A minute
 // at most: a join that takes longer has failed in some way of its own.
-static inline void ubiqos_hci_power_on(int32_t dev)
+static inline void ubiqos_hci_power_on(int32_t dev, bool quiet)
 {
     for (int i = 0; i < 600; i++) {
         uint32_t state = 0;
         if (ubiqos_getstat(dev, UBIQOS_SS_EH_JOINED, &state, sizeof state) < 0 || state != 1) break;
         ubiqos_sleep(100);
     }
-    const int32_t pid = ubiqos_exec("ehrpc", "bt");
+    const int32_t pid = ubiqos_exec("ehrpc", quiet ? "bt quiet" : "bt");
     if (pid >= 0) ubiqos_wait(pid);
 }
 

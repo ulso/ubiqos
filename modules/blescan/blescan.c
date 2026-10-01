@@ -92,7 +92,7 @@ void module_main(int argc, char **argv) {
 
     dev = ubiqos_open("/dev/eh");
     if (dev < 0) { say("blescan: no /dev/eh\r\n"); return; }
-    ubiqos_hci_power_on(dev);
+    ubiqos_hci_power_on(dev, false);
 
     static const char *const step[] = { "", "HCI reset", "the event mask", "the scan parameters", "scan on" };
     const int32_t failed = ubiqos_hci_scan_start(dev);

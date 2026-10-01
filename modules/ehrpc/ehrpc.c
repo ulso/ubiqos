@@ -726,7 +726,10 @@ static void do_phy(int32_t dev) {
 // FeatureControl with feature 1 (Bluetooth), command 1 (init) and then 3
 // (enable). A firmware built without a controller answers with an error, and
 // that is said. What talks HCI after this is modules/blescan.
-static void do_bt(int32_t dev) {
+// `bt quiet` says nothing: hibouair, retrying in the background on a radio
+// whose firmware has no controller, put the same line on the console every
+// ten seconds for as long as it ran.
+static void do_bt(int32_t dev, bool quiet) {
     static const char *const step[] = { "init", "enable" };
     static const uint32_t command[] = { 1u, 3u };
     for (int i = 0; i < 2; i++) {
@@ -747,7 +750,7 @@ static void do_bt(int32_t dev) {
         else if (resp == 0)           ubiqos_line_str(&l, ": ok");
         else { ubiqos_line_str(&l, ": refused, "); ubiqos_line_u32(&l, resp); }
         ubiqos_line_str(&l, "\r\n");
-        ubiqos_line_flush(UBIQOS_STDOUT, &l);
+        if (!quiet) ubiqos_line_flush(UBIQOS_STDOUT, &l);
         if (resp != 0) return;
     }
 }
@@ -779,7 +782,7 @@ void module_main(int argc, char **argv) {
     bool ps   = argc == 2 && is(argv[1], "ps");
     bool rssi = argc == 2 && is(argv[1], "rssi");
     bool phy  = argc == 2 && is(argv[1], "phy");
-    bool bt   = argc == 2 && is(argv[1], "bt");
+    bool bt   = (argc == 2 || (argc == 3 && is(argv[2], "quiet"))) && is(argv[1], "bt");
     if (!mode && !peek && !conn && !ps && !rssi && !phy && !bt && !automatic && !scanning) {
         say("usage: ehrpc mode | ps | rssi | phy | bt | peek | connect <ssid> | auto | scan\r\n");
         return;
@@ -793,7 +796,7 @@ void module_main(int argc, char **argv) {
     else if (ps)   do_ps(dev);
     else if (rssi) do_rssi(dev);
     else if (phy)  do_phy(dev);
-    else if (bt)   do_bt(dev);
+    else if (bt)   do_bt(dev, argc == 3);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
     ubiqos_close(dev);
