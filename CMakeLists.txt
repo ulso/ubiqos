@@ -158,7 +158,7 @@ elseif(UBIQOS_BOARD STREQUAL "challenger")
     set(ubiqosBoardDefs PICO_PSRAM_CS_PIN=0 PICO_PSRAM_SIZE_BYTES=8388608)
     # The console over USB, the header's pins, and the radio -- with this
     # board's pins.
-    set(ubiqosBoardModules usbdesc gpiodesc espdescch ehdescch peek blescan startup)
+    set(ubiqosBoardModules usbdesc gpiodesc espdescch ehdescch peek blescan bleadv startup)
     set(ubiqosBoardStartup boards/challenger-startup.c)
 else()
     message(FATAL_ERROR "UBIQOS_BOARD is '${UBIQOS_BOARD}'; there is a header for "
@@ -1736,6 +1736,8 @@ ubiqos_add_module(peek modules/peek/peek.c)
 # blescan: Bluetooth LE heard through the ESP32-C6's controller, raw HCI over
 # ESP-Hosted -- the first half of a BLE-to-WiFi bridge.
 ubiqos_add_module(blescan modules/blescan/blescan.c)
+# bleadv: send advertisements through the same controller, to test a scanner.
+ubiqos_add_module(bleadv modules/bleadv/bleadv.c)
 ubiqos_add_module(font modules/font/font.c)
 ubiqos_add_module(color modules/color/color.c)
 ubiqos_add_module(kill modules/kill/kill.c)
@@ -1802,6 +1804,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/faultdemo.mod
             ${CMAKE_CURRENT_BINARY_DIR}/peek.mod
             ${CMAKE_CURRENT_BINARY_DIR}/blescan.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/bleadv.mod
             ${CMAKE_CURRENT_BINARY_DIR}/font.mod
             ${CMAKE_CURRENT_BINARY_DIR}/color.mod
             ${CMAKE_CURRENT_BINARY_DIR}/kill.mod
