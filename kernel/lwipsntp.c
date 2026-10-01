@@ -32,16 +32,34 @@ void ubiqos_print(const char *s);
 // NTP counts from 1900, Unix from 1970. Seventy years, seventeen of them leap.
 #define NTP_TO_UNIX     2208988800u
 
-// How often to ask. Once an hour once answered, every half minute until then:
-// the first answer is what a log wants and the rest is drift.
+// How often to ask. Once an hour once answered, every five seconds until then:
+// the first answer is what a log wants and the rest is drift. It was every
+// half minute, and on 1 Oct 2026 a Challenger lost four rounds in a row and
+// had no time for two minutes after it had a network -- long enough for
+// `date` to show dashes to somebody who had just logged in.
 #define ASK_AGAIN_US    (3600ull * 1000000ull)
-#define RETRY_US        (30ull * 1000000ull)
+#define RETRY_US        (5ull * 1000000ull)
 #define RESOLVE_AGAIN_US (2ull * 1000000ull)
+
+// Said in the log while the clock is unset, so that a slow first answer can
+// be told apart: no name for the pool, or a question that got no answer. A
+// handful, and then quiet -- a board with no way to the internet would
+// otherwise say it every five seconds for as long as it runs.
+#define TELL_AT_MOST    6u
 
 static struct udp_pcb *pcb;
 static ip_addr_t server;
 static bool have_server;
 static uint64_t asked_at;
+static uint32_t told;
+
+static void tell(const char *what)
+{
+    if (ubiqos_clock_is_set() || told >= TELL_AT_MOST) return;
+    told++;
+    ubiqos_print(what);
+    if (told == TELL_AT_MOST) ubiqos_print("ntp: asking on, but saying no more\n");
+}
 
 static void took_it(uint32_t ntp_seconds)
 {
@@ -77,7 +95,7 @@ static void on_reply(void *arg, struct udp_pcb *p, struct pbuf *pb,
 static void on_resolved(const char *name, const ip_addr_t *addr, void *arg)
 {
     (void)name; (void)arg;
-    if (!addr) return;                             // ask again on the next turn
+    if (!addr) { tell("ntp: pool.ntp.org has no address yet; asking again\n"); return; }
     server = *addr;
     have_server = true;
 }
@@ -120,6 +138,10 @@ void ubiqos_sntp_poll(void)
     const uint64_t now = time_us_64();
     const uint64_t due = ubiqos_clock_is_set() ? ASK_AGAIN_US : RETRY_US;
     if (asked_at && now - asked_at < due) return;
+
+    // A round is due and the clock is still unset: the last question, if
+    // there was one, went unanswered.
+    if (asked_at && !ubiqos_clock_is_set()) tell("ntp: no answer; asking again\n");
 
     if (!have_server) {
         // Resolved fresh each round: the pool answers with a different server
