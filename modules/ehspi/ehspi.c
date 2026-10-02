@@ -347,6 +347,55 @@ static int icmp_type(const uint8_t *f, uint32_t n)
 static uint32_t ping_sent_us;       // our echo request left; 0 when none is out
 static uint32_t ping_came_us;       // theirs arrived; 0 when answered
 
+// --- WHAT THE CO-PROCESSOR SAYS UNASKED ------------------------------------
+//
+// The chip pushes events on the control interface as things happen, and one of
+// them matters more than all the rest: the station losing its access point.
+// ESP-Hosted's co-processor then stops handing received frames to the host and
+// does NOT join again by itself -- in its own words that is the host's job --
+// and says so with Event_StaDisconnected.
+//
+// Nothing here listened. The join set "joined" once and nothing ever unset it,
+// so when the house mesh was restarted on 1 Oct 2026 all three boards went on
+// believing they were on it, with leases from a router that no longer
+// remembered them, deaf on their WiFi until somebody restarted them. A phone
+// on the same network had simply joined again and asked for a new address.
+//
+// Read here, as the frame comes in, and only read: the frame still goes to the
+// inbox, where a process asking its own questions through /dev/eh may be
+// waiting for the frame after it. The radio thread acts on it -- see
+// watch_link.
+#define RPC_EVENT              3u
+#define EVENT_STA_DISCONNECTED 776u        // Event_StaDisconnected, rpc_v2.proto
+
+static volatile bool sta_lost;
+static uint32_t get_varint(const uint8_t *p, uint32_t len, uint32_t *at);
+
+static void watch_event(const uint8_t *f, uint32_t len)
+{
+    uint32_t p = 0;
+    if (len < 6 || f[p++] != 0x01u) return;             // TLV_EPNAME
+    const uint32_t eplen = (uint32_t)f[p] | ((uint32_t)f[p + 1] << 8);
+    p += 2 + eplen;
+    if (p + 3 > len || f[p++] != 0x02u) return;          // TLV_DATA
+    uint32_t dlen = (uint32_t)f[p] | ((uint32_t)f[p + 1] << 8);
+    p += 2;
+    if (p > len) return;
+    if (p + dlen > len) dlen = len - p;
+    const uint8_t *b = f + p;
+
+    // The type and the id are the first two fields, both varints.
+    uint32_t at = 0, type = 0, id = 0;
+    for (int fields = 0; fields < 2 && at < dlen; fields++) {
+        const uint32_t tag = get_varint(b, dlen, &at);
+        if ((tag & 7u) != 0) return;
+        const uint32_t v = get_varint(b, dlen, &at);
+        if ((tag >> 3) == 1)      type = v;
+        else if ((tag >> 3) == 2) id = v;
+    }
+    if (type == RPC_EVENT && id == EVENT_STA_DISCONNECTED) sta_lost = true;
+}
+
 static void take_frame(void)
 {
     uint16_t hdr, len, off, sum, want;
@@ -432,6 +481,7 @@ static void take_frame(void)
     }
 
     if (iftype == IF_SERIAL) {
+        watch_event(rxbuf + hdr, len);
         uint32_t next = (inbox_head + 1u) % INBOX_SLOTS;
         if (next == inbox_tail) { inbox_lost++; return; }   // full: keep the old
         uint16_t n = len > EH_BUF ? EH_BUF : len;
@@ -667,6 +717,11 @@ static void eh_thread(void)
 
 static int32_t eh_write(const uint8_t *buf, uint32_t len);
 static int32_t eh_read(uint8_t *buf, uint32_t len);
+
+// When a process last put a question to the chip, so that the radio thread's
+// own checking keeps out of the way: an RPC starts by emptying the inbox, and
+// the answer it would throw away might be somebody else's.
+static volatile uint32_t user_wrote_us;
 
 static volatile uint32_t join_state;            // UBIQOS_SS_EH_JOINED's answer
 static char join_creds[100];
@@ -1009,6 +1064,81 @@ static void do_scan(void)
     K->print("\n");
 }
 
+// --- STAYING JOINED ---------------------------------------------------------
+//
+// What a phone does when its access point goes: join again, and let DHCP ask
+// afresh. The event above says when; and every half minute, when nobody else
+// is talking to the chip, it is asked which access point it is on, for an
+// event that went astray. Two misses in a row and the network is taken as gone.
+//
+// The network interface follows join_state -- see kernel/ehnet.c -- and takes
+// the link down while this is not 2, which stops DHCP and gives the default
+// route back to the cable; and up again after, with a fresh DHCP request and
+// mDNS announcing itself again.
+#define CHECK_EVERY_US   30000000u
+#define USER_QUIET_US    10000000u
+
+// On an access point, or put there: true once the chip says which one.
+static bool associate(void)
+{
+    uint8_t body[4];
+    if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) return true;   // still on one
+    sta_lost = false;
+    if (rpc(REQ_WIFI_CONNECT, body, 0, 15000, 0) != 0) return false;
+    for (int tries = 0; tries < 40; tries++) {
+        ubiqos_sleep(500);
+        if (join_wanted) return false;
+        if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) return true;
+    }
+    return false;
+}
+
+// Until it is back, or somebody asks for another network instead. The wait
+// between attempts doubles to a minute, and the log hears about the first
+// failure and every tenth after it, not each one.
+static void rejoin(void)
+{
+    join_state = 1;
+    K->print("wifi: the network went away; joining it again\n");
+    uint32_t wait_s = 5, attempts = 0;
+    for (;;) {
+        if (join_wanted) return;
+        attempts++;
+        if (associate()) {
+            sta_lost = false;
+            join_state = 2;
+            K->print("wifi: joined again\n");
+            return;
+        }
+        if (attempts == 1 || attempts % 10 == 0) {
+            K->print("wifi: not back yet; trying every ");
+            K->print_u32(wait_s < 60 ? wait_s * 2 : 60);
+            K->print(" s\n");
+        }
+        for (uint32_t s = 0; s < wait_s && !join_wanted; s++) ubiqos_sleep(1000);
+        if (wait_s < 60) wait_s *= 2;
+    }
+}
+
+static void watch_link(void)
+{
+    static uint32_t checked_us, misses;
+    if (join_state != 2) { checked_us = 0; misses = 0; return; }
+    if (sta_lost) { misses = 0; rejoin(); return; }
+
+    const uint32_t now = (uint32_t)K->time_us();
+    if (!checked_us) { checked_us = now | 1u; return; }
+    if (now - checked_us < CHECK_EVERY_US) return;
+    checked_us = now | 1u;
+    if (user_wrote_us && now - user_wrote_us < USER_QUIET_US) return;
+
+    uint8_t body[4];
+    if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) { misses = 0; return; }
+    if (++misses < 2) return;
+    misses = 0;
+    rejoin();
+}
+
 static void join_thread(void);
 
 // The thread is made the first time somebody asks, not at boot: a machine
@@ -1027,7 +1157,7 @@ static bool start_radio_thread(void)
 static void join_thread(void)
 {
     for (;;) {
-        while (!join_wanted && !scan_wanted) ubiqos_sleep(50);
+        while (!join_wanted && !scan_wanted) { ubiqos_sleep(50); watch_link(); }
         if (scan_wanted) { scan_wanted = false; do_scan(); continue; }
         join_wanted = false;
 
@@ -1104,6 +1234,7 @@ static void join_thread(void)
         }
         for (int i = 0; i < 6; i++) sta_mac[i] = mac[i];
         sta_mac_known = true;
+        sta_lost = false;               // the attempts on the way may have said so
         join_state = 2;
         K->print("wifi: joined\n");
     }
@@ -1222,6 +1353,13 @@ static int32_t eh_write(const uint8_t *buf, uint32_t len)
     stage_len = HDR_V1 + len;
     tx_pending = true;
     return (int32_t)len;
+}
+
+// The same, from a process: noted, so that watch_link waits its turn.
+static int32_t eh_user_write(const uint8_t *buf, uint32_t len)
+{
+    user_wrote_us = (uint32_t)K->time_us() | 1u;
+    return eh_write(buf, len);
 }
 
 // One frame per read, because a frame is the unit here and two of them run
@@ -1406,7 +1544,7 @@ const ubiqos_driver_module_t ubiqos_driver = {
     .ops = {
         .module_name = "ehspi",
         .configure = eh_configure,
-        .open = eh_open, .write = eh_write, .read = eh_read,
+        .open = eh_open, .write = eh_user_write, .read = eh_read,
         .readable = eh_readable,
         .close = eh_close,
         .getstat = eh_getstat, .setstat = eh_setstat,
