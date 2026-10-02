@@ -31,6 +31,10 @@ void ubiqos_print_u32(uint32_t v);
 static struct netif nif;
 static bool started;
 
+// The cable's interface, for the WiFi to hand the default route back to when
+// its network goes -- see follow_the_radio in kernel/ehnet.c.
+struct netif *ubiqos_lwip_usb_netif(void) { return &nif; }
+
 uint32_t ubiqos_lwip_in, ubiqos_lwip_out, ubiqos_lwip_dropped;
 
 // What kind of frames arrive, counted before lwIP sees them. This separates

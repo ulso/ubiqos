@@ -35,6 +35,7 @@
 #include "netif/ethernet.h"
 #include "io.h"
 #include "config.h"
+#include "pico/time.h"
 
 void ubiqos_print(const char *s);
 void ubiqos_print_u32(uint32_t v);
@@ -248,9 +249,53 @@ bool ubiqos_eh_netif_up(void) { return up; }
 // Bounded, and deliberately: a burst of broadcast traffic is not a reason to
 // stop answering USB for as long as it lasts. What is left waits for the next
 // turn, which is a millisecond away.
+// The radio's state, followed: its link taken down when the driver says the
+// network has gone, and brought up when it is joined again. Down stops DHCP --
+// the lease is from a router that may no longer remember it, and the address
+// may be somebody else's by now -- and gives the default route back to the
+// cable, which is the one that still works. Up asks DHCP again and has mDNS
+// announce the name afresh, so that a browser's Bonjour list has it back
+// without waiting for a cache to expire. See watch_link in modules/ehspi.
+//
+// Asked four times a second from this loop, because lwIP may be touched from
+// here and nowhere else, and a getstat is a few comparisons.
+static void follow_the_radio(void)
+{
+    static uint64_t looked;
+    static bool linked = true;          // the netif is only made once joined
+    const uint64_t now = time_us_64();
+    if (now - looked < 250000u) return;
+    looked = now;
+
+    uint32_t state = 0;
+    if (ubiqos_io_getstat(eh_path, UBIQOS_SS_EH_JOINED, &state, sizeof state, KERNEL_PID) < 0)
+        return;
+    const bool joined = state == 2;
+    if (joined == linked) return;
+    linked = joined;
+
+    if (!joined) {
+        netif_set_link_down(&wnif);
+        dhcp_release_and_stop(&wnif);
+        if (netif_default == &wnif) {
+            extern struct netif *ubiqos_lwip_usb_netif(void);
+            netif_set_default(ubiqos_lwip_usb_netif());
+        }
+        ubiqos_print("wifi: off the network; the cable has the default route again\n");
+    } else {
+        netif_set_link_up(&wnif);
+        dhcp_start(&wnif);
+#if LWIP_MDNS_RESPONDER
+        mdns_resp_restart(&wnif);
+#endif
+        ubiqos_print("wifi: on the network again, asking DHCP for an address\n");
+    }
+}
+
 void ubiqos_eh_netif_poll(void)
 {
     if (!up) return;
+    follow_the_radio();
 
     for (int budget = 0; budget < 8; budget++) {
         static uint8_t frame[EH_FRAME_MAX];
