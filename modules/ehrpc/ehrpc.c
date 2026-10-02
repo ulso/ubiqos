@@ -671,6 +671,18 @@ static void do_ps(int32_t dev) {
 // How strong the signal is, which is the one fact about the radio that no
 // amount of measuring on this side can supply -- and the obvious explanation
 // for a slow link that had never been checked.
+// Leave the access point, as a network that went away would be left: the chip
+// says Event_StaDisconnected, and the driver should notice and join again by
+// itself. For testing that without restarting the house's WiFi -- see
+// watch_link in modules/ehspi.
+#define REQ_WIFI_DISCONNECT 283u
+static void do_drop(int32_t dev) {
+    uint32_t resp = call(dev, REQ_WIFI_DISCONNECT, 0, 0, 5000, 0, 0, 0);
+    if (resp == 0xffffffffu) { say("ehrpc: no answer\r\n"); return; }
+    if (resp != 0) { say("ehrpc: the chip would not leave the access point\r\n"); return; }
+    say("left the access point; the driver should join it again by itself\r\n");
+}
+
 static void do_rssi(int32_t dev) {
     uint8_t payload[64];
     uint32_t plen = 0;
@@ -764,6 +776,8 @@ void module_main(int argc, char **argv) {
             "  rssi    how strong the signal from the access point is\n"
             "  phy     which 802.11 mode the association settled on\n"
             "  bt      bring the Bluetooth controller up, for HCI\n"
+            "  drop    leave the access point, as a lost network would; the\n"
+            "          driver joins it again by itself. For testing that\n"
             "  peek    whatever the chip has said that nobody has taken\n"
             "  connect <ssid>  bring the radio up and join. A password kept in\n"
             "          the key store as 'wifi.<ssid>' is used without asking and\n"
@@ -783,8 +797,9 @@ void module_main(int argc, char **argv) {
     bool rssi = argc == 2 && is(argv[1], "rssi");
     bool phy  = argc == 2 && is(argv[1], "phy");
     bool bt   = (argc == 2 || (argc == 3 && is(argv[2], "quiet"))) && is(argv[1], "bt");
-    if (!mode && !peek && !conn && !ps && !rssi && !phy && !bt && !automatic && !scanning) {
-        say("usage: ehrpc mode | ps | rssi | phy | bt | peek | connect <ssid> | auto | scan\r\n");
+    const bool drop = argc == 2 && is(argv[1], "drop");
+    if (!mode && !peek && !conn && !ps && !rssi && !phy && !bt && !drop && !automatic && !scanning) {
+        say("usage: ehrpc mode | ps | rssi | phy | bt | drop | peek | connect <ssid> | auto | scan\r\n");
         return;
     }
 
@@ -797,6 +812,7 @@ void module_main(int argc, char **argv) {
     else if (rssi) do_rssi(dev);
     else if (phy)  do_phy(dev);
     else if (bt)   do_bt(dev, argc == 3);
+    else if (drop) do_drop(dev);
     else if (peek) do_peek(dev);
     else           do_connect(dev, argv[2]);
     ubiqos_close(dev);
