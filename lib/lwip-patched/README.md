@@ -35,5 +35,19 @@ have. So, in a build without IPv6:
 A legacy one-shot querier, one asking from a port other than 5353, is not
 answered with it.
 
+### Service records live 75 minutes, not two
+
+lwIP answers the service-name PTR (`_http._tcp.local` -> `fruit-jam._http._tcp.local`)
+and the TXT record with a TTL of 120 seconds. RFC 6762 section 10 gives 120
+seconds only to records that carry a host name -- A, AAAA, SRV -- and 4500 to
+everything else. At 120 a Mac had to hear from the board every two minutes or
+drop the service, and through the house mesh one refresh was sometimes lost:
+on 3 Oct 2026 every board answered to its name and was in no Bonjour list on
+the house network -- only over its USB cable -- while a printer with 4500-second
+records was listed throughout. Having dropped it, the Mac's browse backs off
+for up to an hour before asking again, and a new browser joins that same
+question, so the service stayed gone. `mdns_add_servicename_ptr_answer` and
+`mdns_add_txt_answer` (mdns_out.c) now use `MDNS_TTL_4500`.
+
 Every change is marked `UBIQOS:` in the source. To re-sync after an SDK
 upgrade, copy the new files over these and put those marked blocks back.

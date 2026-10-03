@@ -482,7 +482,12 @@ mdns_add_servicename_ptr_answer(struct mdns_outpacket *reply, struct mdns_outmsg
                                 struct mdns_service *service)
 {
   err_t res;
-  u32_t ttl = MDNS_TTL_120;
+  /* UBIQOS: 75 minutes, not two. RFC 6762 section 10 gives 120 s only to
+   * records that carry a host name (A, AAAA, SRV) and 4500 s to the rest. At
+   * 120 s one lost refresh took the service out of a Mac's browse list -- the
+   * name still resolved, the board was in no Bonjour list -- and the browser
+   * then backed off for up to an hour before asking again. See README.md. */
+  u32_t ttl = MDNS_TTL_4500;
   struct mdns_domain service_type, service_instance;
   mdns_build_service_domain(&service_type, service, 0);
   mdns_build_service_domain(&service_instance, service, 1);
@@ -554,7 +559,8 @@ mdns_add_txt_answer(struct mdns_outpacket *reply, struct mdns_outmsg *msg,
                     struct mdns_service *service)
 {
   err_t res;
-  u32_t ttl = MDNS_TTL_120;
+  /* UBIQOS: 4500 s, as the service name PTR above. */
+  u32_t ttl = MDNS_TTL_4500;
   struct mdns_domain service_instance;
   mdns_build_service_domain(&service_instance, service, 1);
   mdns_prepare_txtdata(service);
