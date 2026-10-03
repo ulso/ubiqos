@@ -571,7 +571,11 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # child ends -- with them the riscv chargen C heap was 1656 bytes. The
         # allocator had given this pool back 2.3 kB the day before, when its
         # free-list table stopped being sized for four gigabytes.
-        set(ubiqosHeapKB 100)
+        #
+        # 96 since 3 Oct 2026, for the mDNS responder hearing about address and
+        # link changes (LWIP_NETIF_EXT_STATUS_CALLBACK): the riscv chargen C heap
+        # was 1464 bytes.
+        set(ubiqosHeapKB 96)
     endif()
 else()
     set(ubiqosHeapKB ${UBIQOS_HEAP_KB})

@@ -55,6 +55,11 @@
 // required too, for the query jitter that keeps two responders from answering
 // in the same millisecond.
 #define LWIP_MDNS_RESPONDER         1
+// And the responder told when an interface's address or link changes, so that
+// it announces itself again (RFC 6762 section 8.4). Without it a DHCP renewal
+// that brought a new address -- the NUCLEO-H563ZI's went from .68 to .64 one
+// night -- was never announced, and caches kept the old one until it expired.
+#define LWIP_NETIF_EXT_STATUS_CALLBACK 1
 #define LWIP_IGMP                   1
 #define LWIP_NUM_NETIF_CLIENT_DATA  1
 #define MDNS_MAX_SERVICES           2
