@@ -633,6 +633,7 @@ static void run_hci(bool quiet)
 
     uint32_t next_draw = ubiqos_ticks_now() + REDRAW_MS;
     uint32_t heard = ubiqos_ticks_now();
+    uint32_t restarts = 0;          // scans started again with nothing heard
     uint8_t ev[UBIQOS_HCI_EVENT_MAX];
     char addr[20];
 
@@ -655,15 +656,31 @@ static void run_hci(bool quiet)
             const uint8_t *v = ubiqos_hci_ad(&r, 0xFF, &len);
             if (!v || len < 2 || le16(v, 0) != HIBOU_COMPANY) continue;
             heard = ubiqos_ticks_now();
+            if (restarts) {
+                printf("hibouair: hearing sensors again\n");
+                restarts = 0;
+            }
             hci_address(r.addr, addr);
             remember(v, len, addr);
         }
 
+        // Nothing for a while: the scan is started again, and if the
+        // controller will not take it, it is switched on first. A radio that
+        // restarted underneath us -- the Challengers' C6 did, when the Mac
+        // they hung from was unplugged -- comes back with its Bluetooth off,
+        // and only starting the scan again left it off for two hours, with
+        // this line on the console every fifteen seconds. Said the first time
+        // and every tenth after it now, and once more when sensors are heard.
         if (ubiqos_ticks_now() - heard >= HCI_QUIET_MS) {
-            printf("hibouair: nothing heard for %lu s; starting the scan again\n",
-                   (unsigned long)(HCI_QUIET_MS / 1000u));
+            if (restarts == 0 || restarts % 10 == 9)
+                printf("hibouair: nothing heard for %lu s; starting the scan again\n",
+                       (unsigned long)((restarts + 1) * (HCI_QUIET_MS / 1000u)));
+            restarts++;
             forget_sensors();
-            ubiqos_hci_scan_start(dev);
+            if (ubiqos_hci_scan_start(dev) != 0) {
+                ubiqos_hci_power_on(dev, true);
+                ubiqos_hci_scan_start(dev);
+            }
             heard = ubiqos_ticks_now();
         }
 
