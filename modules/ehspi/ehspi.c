@@ -369,6 +369,8 @@ static uint32_t ping_came_us;       // theirs arrived; 0 when answered
 #define EVENT_STA_DISCONNECTED 776u        // Event_StaDisconnected, rpc_v2.proto
 
 static volatile bool sta_lost;
+static volatile bool cp_restarted;
+static uint32_t hellos;
 static uint32_t get_varint(const uint8_t *p, uint32_t len, uint32_t *at);
 
 static void watch_event(const uint8_t *f, uint32_t len)
@@ -502,6 +504,11 @@ static void take_frame(void)
             i += 2u + rxbuf[hdr + i + 1];
         }
         want_hello = true;
+        // The chip says hello once, when it starts. A second hello is a chip
+        // that has started again -- its WiFi, and its Bluetooth, back to
+        // nothing -- and the radio thread has to set it all up anew. See
+        // rejoin.
+        if (++hellos > 1) cp_restarted = true;
     }
 
     // The one frame kept whole, because it is the one that says the link came
@@ -1075,22 +1082,29 @@ static void do_scan(void)
 // the link down while this is not 2, which stops DHCP and gives the default
 // route back to the cable; and up again after, with a fresh DHCP request and
 // mDNS announcing itself again.
+static bool join_full(bool quiet);
+
 #define CHECK_EVERY_US   30000000u
 #define USER_QUIET_US    10000000u
 
-// On an access point, or put there: true once the chip says which one.
-static bool associate(void)
+// On an access point, or put there: 1 once the chip says which one, 0 when not
+// yet, and -1 when the chip has forgotten everything -- its WiFi not
+// initialised, or not started, which is a chip that has restarted underneath
+// us. 0x3001 and 0x3002 are ESP_ERR_WIFI_NOT_INIT and _NOT_STARTED.
+static int associate(void)
 {
     uint8_t body[4];
-    if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) return true;   // still on one
+    if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) return 1;      // still on one
     sta_lost = false;
-    if (rpc(REQ_WIFI_CONNECT, body, 0, 15000, 0) != 0) return false;
+    const int32_t r = rpc(REQ_WIFI_CONNECT, body, 0, 15000, 0);
+    if (r == 0x3001 || r == 0x3002) return -1;
+    if (r != 0) return 0;
     for (int tries = 0; tries < 40; tries++) {
         ubiqos_sleep(500);
-        if (join_wanted) return false;
-        if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) return true;
+        if (join_wanted) return 0;
+        if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) return 1;
     }
-    return false;
+    return 0;
 }
 
 // Until it is back, or somebody asks for another network instead. The wait
@@ -1104,7 +1118,17 @@ static void rejoin(void)
     for (;;) {
         if (join_wanted) return;
         attempts++;
-        if (associate()) {
+        // A chip that has started again is set up from the beginning. It was
+        // only asked to connect, and answered "not initialised" once a minute
+        // for two hours: on 3 Oct 2026 both Challengers' C6 restarted when the
+        // Mac they hung from was unplugged, and neither came back.
+        int got = cp_restarted ? -1 : associate();
+        if (got < 0) {
+            cp_restarted = false;
+            K->print("wifi: the radio has started again; setting it up from the beginning\n");
+            got = join_full(true) ? 1 : 0;
+        }
+        if (got > 0) {
             sta_lost = false;
             join_state = 2;
             K->print("wifi: joined again\n");
@@ -1124,7 +1148,7 @@ static void watch_link(void)
 {
     static uint32_t checked_us, misses;
     if (join_state != 2) { checked_us = 0; misses = 0; return; }
-    if (sta_lost) { misses = 0; rejoin(); return; }
+    if (sta_lost || cp_restarted) { misses = 0; rejoin(); return; }
 
     const uint32_t now = (uint32_t)K->time_us();
     if (!checked_us) { checked_us = now | 1u; return; }
@@ -1154,6 +1178,88 @@ static bool start_radio_thread(void)
     return true;
 }
 
+// The whole of joining, from a radio that knows nothing: initialised, put in
+// station mode, told the network, started, connected, and asked until it is on
+// an access point. What a first join does, and what a rejoin does after the
+// chip has started again. Quiet leaves out the line for a network that did
+// not answer, which a rejoin trying once a minute would otherwise repeat.
+static bool join_full(bool quiet)
+{
+    uint8_t *body = rbody;
+    uint32_t n = 0;
+
+    if (!radio_prepare()) return false;
+
+    {
+        const char *ssid = join_creds;
+        uint32_t slen = 0;
+        while (ssid[slen] && slen < 32) slen++;
+        const char *pass = join_creds + slen + 1;
+        uint32_t plen = 0;
+        while (pass[plen] && plen < 64) plen++;
+
+        uint8_t sta[160];
+        uint32_t sn = 0;
+        sn += put_bytes(sta + sn, 1, (const uint8_t*)ssid, slen);
+        sn += put_bytes(sta + sn, 2, (const uint8_t*)pass, plen);
+
+        uint8_t cfg[200];
+        uint32_t cn = put_bytes(cfg, 2, sta, sn);   // wifi_config's station half
+
+        n = 0;
+        n += put_field(body + n, 1, WIFI_IF_STA);
+        n += put_bytes(body + n, 2, cfg, cn);
+
+        bool ok = rpc_ok("the network", REQ_WIFI_SET_CONFIG, body, n, 8000);
+        for (uint32_t i = 0; i < sizeof(sta); i++) sta[i] = 0;
+        for (uint32_t i = 0; i < sizeof(cfg); i++) cfg[i] = 0;
+        for (uint32_t i = 0; i < sizeof(rbody); i++) body[i] = 0;
+        if (!ok) return false;
+    }
+
+    if (!rpc_ok("start", REQ_WIFI_START, body, 0, 15000)) return false;
+    radio_started = true;
+    if (!rpc_ok("connect", REQ_WIFI_CONNECT, body, 0, 15000)) return false;
+
+    // And then ASK, because connect does not answer the question.
+    //
+    // esp_wifi_connect returns as soon as it has started trying; whether
+    // it worked arrives later as an event. The first version reported
+    // "joined" the moment that call returned zero, and said it just as
+    // cheerfully for a network called nosuchnetwork with a made-up
+    // password. A status line that says joined when it is not is worse
+    // than no status line.
+    //
+    // WifiStaGetApInfo is the direct question -- which access point am I
+    // on -- and it answers with an error until there is one.
+    {
+        bool associated = false;
+        for (int tries = 0; tries < 40 && !associated; tries++) {
+            ubiqos_sleep(500);
+            if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) associated = true;
+        }
+        if (!associated) {
+            if (!quiet) K->print("wifi: it did not join that network\n");
+            return false;
+        }
+    }
+
+    // Its own address last, because the network interface cannot be built
+    // without it: the co-processor turns 802.11 into 802.3 using the
+    // address the access point knows, and a netif with any other discards
+    // everything meant for the machine it is part of.
+    n = put_field(body, 1, WIFI_IF_STA);
+    uint8_t mac[6];
+    if (rpc(REQ_GET_MAC, body, n, 8000, mac) < 0 || !mac[0]) {
+        K->print("wifi: the chip would not give its address\n");
+        return false;
+    }
+    for (int i = 0; i < 6; i++) sta_mac[i] = mac[i];
+    sta_mac_known = true;
+    sta_lost = false;               // the attempts on the way may have said so
+    return true;
+}
+
 static void join_thread(void)
 {
     for (;;) {
@@ -1161,80 +1267,7 @@ static void join_thread(void)
         if (scan_wanted) { scan_wanted = false; do_scan(); continue; }
         join_wanted = false;
 
-        uint8_t *body = rbody;
-        uint32_t n = 0;
-
-        if (!radio_prepare()) { join_state = 3; continue; }
-
-        {
-            const char *ssid = join_creds;
-            uint32_t slen = 0;
-            while (ssid[slen] && slen < 32) slen++;
-            const char *pass = join_creds + slen + 1;
-            uint32_t plen = 0;
-            while (pass[plen] && plen < 64) plen++;
-
-            uint8_t sta[160];
-            uint32_t sn = 0;
-            sn += put_bytes(sta + sn, 1, (const uint8_t*)ssid, slen);
-            sn += put_bytes(sta + sn, 2, (const uint8_t*)pass, plen);
-
-            uint8_t cfg[200];
-            uint32_t cn = put_bytes(cfg, 2, sta, sn);   // wifi_config's station half
-
-            n = 0;
-            n += put_field(body + n, 1, WIFI_IF_STA);
-            n += put_bytes(body + n, 2, cfg, cn);
-
-            bool ok = rpc_ok("the network", REQ_WIFI_SET_CONFIG, body, n, 8000);
-            for (uint32_t i = 0; i < sizeof(sta); i++) sta[i] = 0;
-            for (uint32_t i = 0; i < sizeof(cfg); i++) cfg[i] = 0;
-            for (uint32_t i = 0; i < sizeof(rbody); i++) body[i] = 0;
-            if (!ok) { join_state = 3; continue; }
-        }
-
-        if (!rpc_ok("start", REQ_WIFI_START, body, 0, 15000)) { join_state = 3; continue; }
-        radio_started = true;
-        if (!rpc_ok("connect", REQ_WIFI_CONNECT, body, 0, 15000)) { join_state = 3; continue; }
-
-        // And then ASK, because connect does not answer the question.
-        //
-        // esp_wifi_connect returns as soon as it has started trying; whether
-        // it worked arrives later as an event. The first version reported
-        // "joined" the moment that call returned zero, and said it just as
-        // cheerfully for a network called nosuchnetwork with a made-up
-        // password. A status line that says joined when it is not is worse
-        // than no status line.
-        //
-        // WifiStaGetApInfo is the direct question -- which access point am I
-        // on -- and it answers with an error until there is one.
-        {
-            bool associated = false;
-            for (int tries = 0; tries < 40 && !associated; tries++) {
-                ubiqos_sleep(500);
-                if (rpc(REQ_STA_GET_AP_INFO, body, 0, 4000, 0) == 0) associated = true;
-            }
-            if (!associated) {
-                K->print("wifi: it did not join that network\n");
-                join_state = 3;
-                continue;
-            }
-        }
-
-        // Its own address last, because the network interface cannot be built
-        // without it: the co-processor turns 802.11 into 802.3 using the
-        // address the access point knows, and a netif with any other discards
-        // everything meant for the machine it is part of.
-        n = put_field(body, 1, WIFI_IF_STA);
-        uint8_t mac[6];
-        if (rpc(REQ_GET_MAC, body, n, 8000, mac) < 0 || !mac[0]) {
-            K->print("wifi: the chip would not give its address\n");
-            join_state = 3;
-            continue;
-        }
-        for (int i = 0; i < 6; i++) sta_mac[i] = mac[i];
-        sta_mac_known = true;
-        sta_lost = false;               // the attempts on the way may have said so
+        if (!join_full(false)) { join_state = 3; continue; }
         join_state = 2;
         K->print("wifi: joined\n");
     }
