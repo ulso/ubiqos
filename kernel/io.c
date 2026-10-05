@@ -375,8 +375,13 @@ void ubiqos_io_init(void) {
     drivers[driver_count++] = &driver_null;
 #if UBIQOS_CHIP_STM32
     // The serial console's driver is part of the port there -- see
-    // port/stm32/h5/console.c -- and not a module.
+    // port/stm32/common/console.c -- and not a module.
     { extern const ubiqos_driver_t stm32_term_driver; drivers[driver_count++] = &stm32_term_driver; }
+#endif
+#if UBIQOS_STM32_I2C
+    // And so is the I2C bus's, under the RP2350 driver module's name, so that
+    // the same descriptor names it -- see port/stm32/f4/i2c.c.
+    { extern const ubiqos_driver_t stm32_i2c_driver; drivers[driver_count++] = &stm32_i2c_driver; }
 #endif
     device_count = 0;
     for (int p = 0; p < UBIQOS_MAX_PROCS; p++) {

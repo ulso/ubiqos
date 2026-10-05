@@ -46,6 +46,7 @@ elseif(UBIQOS_STM32_BOARD STREQUAL "feather-f405")
     set(STM32_NETIF  usb)                  # CDC-NCM on the cable, as on the RP2350
     set(STM32_NODE   OFF)
     set(STM32_USB    ON)                   # OTG FS
+    set(STM32_I2C    ON)                   # I2C1, the STEMMA QT connector
 else()
     message(FATAL_ERROR "UBIQOS_STM32_BOARD: no board called ${UBIQOS_STM32_BOARD}")
 endif()
@@ -185,6 +186,14 @@ target_include_directories(ubiqos_stm32 PRIVATE
     ${UBIQOS_ROOT}/third_party/cmsis-device-${STM32_FAMILY}/Include
     ${UBIQOS_ROOT}/third_party/cmsis-core/Include
 )
+# The I2C bus, built into the port under the name the RP2350's driver module
+# has, so that i2cdesc gives /dev/i2c on both.
+if(STM32_I2C)
+    target_sources(ubiqos_stm32 PRIVATE ${FAMILY}/i2c.c)
+    target_compile_definitions(ubiqos_stm32 PRIVATE UBIQOS_STM32_I2C=1)
+else()
+    target_compile_definitions(ubiqos_stm32 PRIVATE UBIQOS_STM32_I2C=0)
+endif()
 # The USB device: TinyUSB, from the same copy the RP2350 kernel is built with,
 # and the kernel's own USB console and descriptors on top. Only the device side
 # and only the classes in use; kernel/tusb_config.h says which.

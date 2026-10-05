@@ -39,6 +39,12 @@
 #define UBIQOS_STM32_CONSOLE_RX    11u
 #define UBIQOS_STM32_CONSOLE_AF    7u
 
+// I2C1 on PB6 (SCL) and PB7 (SDA): the STEMMA QT connector and the SCL and SDA
+// pins beside it. A descriptor, i2cdesc, makes it /dev/i2c.
+#define UBIQOS_STM32_I2C_PORT      'B'
+#define UBIQOS_STM32_I2C_SCL       6u
+#define UBIQOS_STM32_I2C_SDA       7u
+
 // --- FLASH AND RAM ----------------------------------------------------------
 // See port/stm32/f4/stm32f405rg.ld, which must say the same: the key store in
 // sectors 1 and 2, the settings in sector 3 (the sector after the key store,
