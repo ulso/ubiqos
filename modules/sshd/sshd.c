@@ -14,6 +14,7 @@
 #include "mbedtls/ecp.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/gcm.h"
+#include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 #include "../../third_party/mlkem768/api.h"
 
@@ -54,14 +55,22 @@
 // servers have historically gone wrong. Put it on your own network. Do not put
 // it on the internet.
 
-UBIQOS_MEM_SIZE(49152);
+// The process's own area: its thread-local storage at the bottom, about a
+// kilobyte, and its stack. It was 48 kB, which nothing measured. Measured on
+// the Feather STM32F405 -- the pool zeroed over the J-Link before boot, then
+// an ML-KEM-768 + X25519 exchange, an ECDSA signature and a password check --
+// the stack reached 15.7 kB deep. 32 kB is twice that; the H5's PSPLIM would
+// catch it if a session went deeper, and the F405 has nothing that would.
+UBIQOS_MEM_SIZE(32768);
 // The C library's heap, taken in one piece at the first malloc. It was 192 kB,
 // which in PSRAM cost nothing; on a board without PSRAM it is SRAM, and on the
 // NUCLEO-H563ZI it left 27 kB for everything else, so a pipe in an ssh session
 // had no room for its second command. Measured there after a login and a
 // session, the heap's high-water mark was 2800 bytes: sshd's large state is
-// static. 64 kB is twenty times that.
-uint32_t ubiqos_heap_bytes = 64u * 1024u;
+// static. It was 64 kB, twenty times that, until the Feather STM32F405, whose
+// whole pool is 99 kB: with the 48 kB above it would not start at all. 16 kB
+// is still nearly six times what was ever used.
+uint32_t ubiqos_heap_bytes = 16u * 1024u;
 
 #define DEFAULT_PORT 22
 #define NET_WAIT_S   30
@@ -1548,9 +1557,15 @@ int main(int argc, char **argv) {
     mbedtls_ctr_drbg_init(&drbg);
     mbedtls_entropy_add_source(&entropy, trng_source, NULL, 32, MBEDTLS_ENTROPY_SOURCE_STRONG);
     static const char pers[] = "ubiqos sshd";
-    if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
-                              (const unsigned char *)pers, sizeof pers - 1) != 0) {
-        say("sshd: no entropy\r\n");
+    const int seeded = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
+                                             (const unsigned char *)pers, sizeof pers - 1);
+    if (seeded != 0) {
+        // The first malloc takes the whole heap from the pool, and the entropy
+        // pool's hashing is what asks first -- so a pool too short for the heap
+        // shows up here, and used to be reported as the generator's fault.
+        say(seeded == MBEDTLS_ERR_MD_ALLOC_FAILED
+                ? "sshd: no room in the memory pool for its 16 kB heap\r\n"
+                : "sshd: no entropy\r\n");
         return 0;
     }
 
