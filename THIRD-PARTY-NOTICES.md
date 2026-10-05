@@ -20,7 +20,8 @@ the BSD licences below ask for exactly that.
 | Atto | `modules/atto/upstream/` | public domain |
 | ML-KEM-768 and Keccak (FIPS 202), from PQClean | `third_party/mlkem768/`; the `sshd` module | public domain (CC0) |
 | CMSIS device headers for the STM32H5, from ST (cmsis-device-h5 1.7.0) | `third_party/cmsis-device-h5/`; the STM32H5 port | Apache-2.0 |
-| CMSIS-Core 5.9.0, from Arm | `third_party/cmsis-core/`; the STM32H5 port | Apache-2.0 |
+| CMSIS device headers for the STM32F4, from ST (cmsis-device-f4 2.6.11) | `third_party/cmsis-device-f4/`; the STM32F4 port | Apache-2.0 |
+| CMSIS-Core 5.9.0, from Arm | `third_party/cmsis-core/`; the STM32 port | Apache-2.0 |
 | newlib-nano | the toolchain's C library, linked into modules that ask for it | BSD-style, see below |
 | libgcc | the toolchain's runtime | GPL-3.0 with the GCC Runtime Library Exception |
 
