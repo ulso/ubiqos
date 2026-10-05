@@ -88,7 +88,15 @@
 #define CFG_TUD_MAX_SPEED       OPT_MODE_FULL_SPEED
 #define CFG_TUD_ENDPOINT0_SIZE  64
 
+// The console on the cable. The STM32F4's OTG FS has three endpoints besides
+// the control one; the console takes two IN endpoints and the network two, so
+// a build with the network has no console there -- it has the serial line,
+// and ssh over the network it does have.
+#if UBIQOS_STM32_F4 && UBIQOS_LWIP
+#define CFG_TUD_CDC             0
+#else
 #define CFG_TUD_CDC             1
+#endif
 
 // The card lent to the host. Not on the STM32 port, which has no card driver
 // yet -- and whose OTG FS controller has three endpoints besides the control

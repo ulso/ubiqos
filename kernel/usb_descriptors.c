@@ -44,28 +44,37 @@ const uint8_t *tud_descriptor_device_cb(void) {
 #define UBIQOS_LWIP 0
 #endif
 
-// The storage function is there whenever TinyUSB is built with it: always on
-// the RP2350, never on the STM32 port -- see tusb_config.h.
-#if UBIQOS_LWIP && CFG_TUD_MSC
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC,
-       ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
-#elif UBIQOS_LWIP
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA,
-       ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
-#elif CFG_TUD_MSC
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
-#else
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
+// Each function is there when TinyUSB is built with it. On the RP2350 that is
+// all three. The STM32 port has no storage, and the STM32F4's controller has
+// three endpoints besides the control one, which is the console or the
+// network but not both -- see tusb_config.h.
+enum {
+#if CFG_TUD_CDC
+    ITF_NUM_CDC, ITF_NUM_CDC_DATA,
 #endif
+#if CFG_TUD_MSC
+    ITF_NUM_MSC,
+#endif
+#if UBIQOS_LWIP
+    ITF_NUM_NCM, ITF_NUM_NCM_DATA,
+#endif
+    ITF_NUM_TOTAL
+};
 
 #define EPNUM_CDC_NOTIF   0x81
 #define EPNUM_CDC_OUT     0x02
 #define EPNUM_CDC_IN      0x82
 #define EPNUM_MSC_OUT     0x03
 #define EPNUM_MSC_IN      0x83
+#if CFG_TUD_CDC
 #define EPNUM_NCM_NOTIF   0x84
 #define EPNUM_NCM_OUT     0x05
 #define EPNUM_NCM_IN      0x85
+#else
+#define EPNUM_NCM_NOTIF   0x81      // the console's, which this build has not got
+#define EPNUM_NCM_OUT     0x02
+#define EPNUM_NCM_IN      0x82
+#endif
 
 // The SDK's TUD_CDC_NCM_DESCRIPTOR with ONE BYTE CHANGED, which is why it is
 // copied here rather than used: its NCM functional descriptor ends with
@@ -90,21 +99,28 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
   7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0,\
   7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0
 
+#if CFG_TUD_CDC
+#define CDC_DESC_LEN      TUD_CDC_DESC_LEN
+#else
+#define CDC_DESC_LEN      0
+#endif
 #if CFG_TUD_MSC
 #define MSC_DESC_LEN      TUD_MSC_DESC_LEN
 #else
 #define MSC_DESC_LEN      0
 #endif
 #if UBIQOS_LWIP
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + MSC_DESC_LEN \
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + CDC_DESC_LEN + MSC_DESC_LEN \
                            + TUD_CDC_NCM_DESC_LEN)
 #else
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + MSC_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + CDC_DESC_LEN + MSC_DESC_LEN)
 #endif
 
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
+#if CFG_TUD_CDC
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+#endif
 #if CFG_TUD_MSC
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
 #endif

@@ -39,6 +39,17 @@ const char *ubiqos_config_credentials(void);
 // next one, by DHCP, on a /24 -- see kernel/lwipdhcpd.c.
 #include <stdint.h>
 uint32_t ubiqos_config_usb_address(void);
+
+// Whether there is a network on the USB cable, which is what usb_address is
+// the board's end of: on every RP2350 build, and on an STM32 built with both
+// the USB device and lwIP -- the Feather STM32F405. The NUCLEO boards' network
+// is Ethernet, and an address kept for a link that does not exist is a
+// setting that does nothing.
+#if UBIQOS_CHIP_STM32
+#define UBIQOS_HAS_USB_NETWORK (UBIQOS_STM32_USB && UBIQOS_LWIP)
+#else
+#define UBIQOS_HAS_USB_NETWORK 1
+#endif
 void ubiqos_config_address_text(uint32_t a, char out[16]);
 
 // The settings kept in flash for a board with no card: their text into out,

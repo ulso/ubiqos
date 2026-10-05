@@ -21,7 +21,9 @@ void ubiqos_usb_init(void) {
     // irq_add_shared_handler. That only works now that we stopped taking over
     // mtvec: the SDK's external dispatch is what looks up in that table.
     tud_init(0);
+#if CFG_TUD_CDC
     tud_cdc_set_wanted_char(3);         // Ctrl-C -- see tud_cdc_rx_wanted_cb
+#endif
 
     // And stay OFF the bus until something can answer it. tud_connect is in
     // usb_thread, below.
@@ -236,16 +238,24 @@ void tud_umount_cb(void) {
 // program that is gone, and handing them to the shell instead would run them.
 // When nothing is in front the key stays, as data for the shell to abandon its
 // line with. Called from tud_task, in the USB thread, as the old check was.
+//
+// A build may have no console on the cable at all -- the STM32F4, whose
+// controller has the endpoints for the network or the console and not both.
+// Then the console's calls below answer as a console nobody has plugged in.
+#if CFG_TUD_CDC
 void tud_cdc_rx_wanted_cb(uint8_t itf, char wanted_char) {
     (void)wanted_char;
     if (itf != 0) return;               // the console, not the network
     if (ubiqos_io_interrupt("usb")) tud_cdc_read_flush();
 }
 
+#endif
+
 void ubiqos_usb_task(void) {
     tud_task();
 }
 
+#if CFG_TUD_CDC
 bool ubiqos_usb_ready(void) {
     return tud_cdc_connected();
 }
@@ -295,6 +305,10 @@ int32_t ubiqos_usb_write(const uint8_t *buf, uint32_t len) {
     if (written < len && !tud_cdc_connected()) return (int32_t)len;
     return (int32_t)written;
 }
+#else
+bool ubiqos_usb_ready(void) { return false; }
+int32_t ubiqos_usb_write(const uint8_t *buf, uint32_t len) { (void)buf; (void)len; return -1; }
+#endif
 
 // USB is serviced by a process of its own, high enough that an application
 // cannot silence the console by being busy. One millisecond is far more often
@@ -475,6 +489,7 @@ void ubiqos_usb_start_task(void) {
     }
 }
 
+#if CFG_TUD_CDC
 uint32_t ubiqos_usb_writable(void) {
     return tud_mounted() ? tud_cdc_write_available() : 0;
 }
@@ -487,6 +502,11 @@ int32_t ubiqos_usb_read(uint8_t *buf, uint32_t len) {
     if (!tud_mounted() || !tud_cdc_available()) return 0;
     return (int32_t)tud_cdc_read(buf, len);
 }
+#else
+uint32_t ubiqos_usb_writable(void) { return 0; }
+uint32_t ubiqos_usb_available(void) { return 0; }
+int32_t ubiqos_usb_read(uint8_t *buf, uint32_t len) { (void)buf; (void)len; return 0; }
+#endif
 
 #else   // UBIQOS_USB_NATIVE_HOST
 

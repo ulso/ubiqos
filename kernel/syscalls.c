@@ -860,8 +860,8 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 return ubiqos_switch(sp);
             }
 #endif
-#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32
-            char addr[16];                  // no USB network on an STM32
+#if !UBIQOS_NODE && UBIQOS_HAS_USB_NETWORK
+            char addr[16];                  // only where there is a network on the cable
             if (frame->a0 == UBIQOS_CFG_USB_ADDRESS)
                 ubiqos_config_address_text(ubiqos_config_usb_address(), addr);
 #endif
@@ -873,7 +873,7 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                           : frame->a0 == UBIQOS_CFG_VERSION  ? ubiqos_version_string()
                           : frame->a0 == UBIQOS_CFG_BOARD    ? ubiqos_board_string()
                           : frame->a0 == UBIQOS_CFG_BUILT    ? ubiqos_built_string()
-#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32
+#if !UBIQOS_NODE && UBIQOS_HAS_USB_NETWORK
                           : frame->a0 == UBIQOS_CFG_USB_ADDRESS ? addr
 #endif
                           : 0;
