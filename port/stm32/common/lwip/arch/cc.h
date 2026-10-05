@@ -1,4 +1,4 @@
-// lwIP's view of this compiler and this machine, for the STM32H5 port. The
+// lwIP's view of this compiler and this machine, for the STM32 port. The
 // RP2350 build takes the pico-sdk's; this says the same things without it.
 #pragma once
 #include <stdint.h>

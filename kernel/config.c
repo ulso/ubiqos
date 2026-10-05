@@ -396,10 +396,11 @@ extern tlsf_pool_t ubiqos_mem_pool;
 // kept is always something the next start will take. Nothing changes until
 // that start: the name has been announced, and the address is the link's.
 int32_t ubiqos_config_store(const char *key, const char *value) {
-    // usb_address only where there is a network on the USB cable: the STM32H5
-    // boards have Ethernet and a console on the ST-LINK, and an address kept
-    // for a link that does not exist is a setting that does nothing.
-#if UBIQOS_CHIP_STM32H5
+    // usb_address only where there is a network on the USB cable: the STM32
+    // boards have none yet -- Ethernet, and a console on a UART -- and an
+    // address kept for a link that does not exist is a setting that does
+    // nothing.
+#if UBIQOS_CHIP_STM32
     static const char *const kept[] = { "hostname", "timezone" };
 #else
     static const char *const kept[] = { "hostname", "usb_address", "timezone" };

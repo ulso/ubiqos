@@ -18,7 +18,7 @@ int32_t ubiqos_console_trace_at(uint32_t offset);
 #include "crashlog.h"
 #include "keystore.h"
 #include "crypto.h"
-#if UBIQOS_CHIP_STM32H5
+#if UBIQOS_CHIP_STM32
 #include "port.h"          // the RNG, in place of the RP2350's TRNG and ROSC
 #else
 #include "hardware/structs/rosc.h"
@@ -165,7 +165,7 @@ void ubiqos_random_bytes(uint8_t *out, uint32_t len)
 
 static int32_t trng_raw(uint8_t *out, uint32_t want)
 {
-#if UBIQOS_CHIP_STM32H5
+#if UBIQOS_CHIP_STM32
     // The H5's RNG, which runs its own health tests and hands out conditioned
     // words -- more than the RP2350's raw samples are, and hashed by the caller
     // all the same.
@@ -860,8 +860,8 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 return ubiqos_switch(sp);
             }
 #endif
-#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32H5
-            char addr[16];                  // no USB network on the STM32H5
+#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32
+            char addr[16];                  // no USB network on an STM32
             if (frame->a0 == UBIQOS_CFG_USB_ADDRESS)
                 ubiqos_config_address_text(ubiqos_config_usb_address(), addr);
 #endif
@@ -873,7 +873,7 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                           : frame->a0 == UBIQOS_CFG_VERSION  ? ubiqos_version_string()
                           : frame->a0 == UBIQOS_CFG_BOARD    ? ubiqos_board_string()
                           : frame->a0 == UBIQOS_CFG_BUILT    ? ubiqos_built_string()
-#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32H5
+#if !UBIQOS_NODE && !UBIQOS_CHIP_STM32
                           : frame->a0 == UBIQOS_CFG_USB_ADDRESS ? addr
 #endif
                           : 0;
@@ -1068,7 +1068,7 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
             if (want > 256) want = 256;          // see the note in the header
-#if UBIQOS_CHIP_STM32H5
+#if UBIQOS_CHIP_STM32
             frame->a0 = (uint32_t)h5_rng_read(out, want);
 #else
             uint32_t n = 0;

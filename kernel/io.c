@@ -2,7 +2,7 @@
 #include "keystore.h"
 #include "critical.h"
 #include "tusb.h"          // the CDC host class, for the acm driver
-#if !UBIQOS_CHIP_STM32H5
+#if !UBIQOS_CHIP_STM32
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #endif
@@ -373,7 +373,7 @@ void ubiqos_io_init(void) {
     drivers[driver_count++] = &driver_console;
     drivers[driver_count++] = &driver_acm;
     drivers[driver_count++] = &driver_null;
-#if UBIQOS_CHIP_STM32H5
+#if UBIQOS_CHIP_STM32
     // The serial console's driver is part of the port there -- see
     // port/stm32/h5/console.c -- and not a module.
     { extern const ubiqos_driver_t h5_term_driver; drivers[driver_count++] = &h5_term_driver; }

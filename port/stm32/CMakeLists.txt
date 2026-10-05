@@ -155,7 +155,8 @@ target_include_directories(ubiqos_h5 PRIVATE
 )
 target_compile_definitions(ubiqos_h5 PRIVATE
     ${H5_CHIP}
-    UBIQOS_CHIP_STM32H5=1
+    UBIQOS_CHIP_STM32=1
+    UBIQOS_STM32_H5=1
     "UBIQOS_BOARD_HEADER=<boards/${UBIQOS_H5_BOARD}.h>"
     UBIQOS_HAS_VIDEO=0 UBIQOS_HAS_CONSOLE=0
     UBIQOS_POOL_FROM_LINKER=1

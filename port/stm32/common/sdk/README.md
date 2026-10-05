@@ -1,4 +1,4 @@
-# The pico-sdk calls the kernel makes, answered for the STM32H5
+# The pico-sdk calls the kernel makes, answered for the STM32
 
 The kernel was written on the RP2350 against the Raspberry Pi pico-sdk, and a
 handful of its files include SDK headers for a handful of functions: the time
@@ -8,8 +8,9 @@ what the kernel uses, so that the kernel's sources need not change for this
 chip and the RP2350 build stays byte for byte what it was.
 
 Nothing here is the SDK or derived from it. Each function is a few lines over
-the Cortex-M33's own registers or over this port; see sdk.c and timer.c.
+the Cortex-M's own registers or over this port; see each family's sdk.c and
+timer.c.
 
 What is RP2350 hardware rather than SDK -- the TRNG, the ring oscillator, the
 PSRAM, POWMAN's reset reason -- is not faked here. The kernel asks the port for
-those under UBIQOS_CHIP_STM32H5, and port.h says what the port offers.
+those under UBIQOS_CHIP_STM32, and port.h says what the port offers.

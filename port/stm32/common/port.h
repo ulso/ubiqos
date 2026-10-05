@@ -1,9 +1,14 @@
-// The STM32H5 port: what the kernel asks of this chip, and nothing else.
+// The STM32 port: what the kernel asks of the chip, and nothing else. Each
+// family in its own directory answers it -- h5/ for now.
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
+#if UBIQOS_STM32_H5
 #include "stm32h5xx.h"
+#else
+#error "port.h: no STM32 family -- the build defines UBIQOS_STM32_H5"
+#endif
 
 // The system clock after h5_clock_init: 240 MHz from the PLL when the ST-LINK's
 // 8 MHz reaches HSE, or the 32 MHz reset clock when it does not.

@@ -23,11 +23,11 @@
 //
 // The RP2350's addresses come first in this file on purpose: CMakeLists.txt
 // reads the module base out of it with a pattern and takes the first match.
-#if !UBIQOS_CHIP_STM32H5 && !defined(UBIQOS_BOARD_FLASH_APP_BASE)
+#if !UBIQOS_CHIP_STM32 && !defined(UBIQOS_BOARD_FLASH_APP_BASE)
 #define UBIQOS_FLASH_MODULE_BASE 0x10100000u
 #define UBIQOS_FLASH_APP_BASE    0x10800000u
 #define UBIQOS_FLASH_END         0x11000000u
-#elif !UBIQOS_CHIP_STM32H5
+#elif !UBIQOS_CHIP_STM32
 // An RP2350 board with less than the Fruit Jam's 16 MB. Above the chip's size
 // the flash window wraps round to its start, so the Fruit Jam's application
 // region would lie on top of the kernel and its key store in the middle of the
@@ -36,8 +36,8 @@
 #define UBIQOS_FLASH_APP_BASE    UBIQOS_BOARD_FLASH_APP_BASE
 #define UBIQOS_FLASH_END         UBIQOS_BOARD_FLASH_END
 #else
-// On the STM32H5 each board says where its regions are, because the family
-// runs from 128 kB of flash to 2 MB and a layout for one part is wrong for every
+// On an STM32 each board says where its regions are, because the parts run
+// from 128 kB of flash to 2 MB and a layout for one part is wrong for every
 // other. The board header's UBIQOS_BOARD_FLASH_* -- see boards/nucleo-h563zi.h.
 #include "board.h"
 #define UBIQOS_FLASH_MODULE_BASE UBIQOS_BOARD_FLASH_MODULE_BASE
@@ -54,7 +54,7 @@
 // RP2350-E10 block addressed at 0x10ffff00, and the boot ROM writes it -- so
 // the last sector is erased every time a system is copied onto the board, and
 // anything kept there would go with it.
-#if !UBIQOS_CHIP_STM32H5 && !defined(UBIQOS_BOARD_FLASH_KEYS_BASE)
+#if !UBIQOS_CHIP_STM32 && !defined(UBIQOS_BOARD_FLASH_KEYS_BASE)
 #define UBIQOS_FLASH_KEYS_BASE   0x10FE0000u
 #define UBIQOS_FLASH_KEYS_SIZE   0x2000u
 #else
@@ -78,9 +78,9 @@
 // The fixed data area: RAM set aside at a known address for the writable data
 // of the single-instance programs make_flash_image.py places there, so that
 // their code can stay in flash -- see UBIQOS_ATTR_SPLIT. None on the RP2350,
-// whose PSRAM makes a copy cost nothing worth the address. On the STM32H5 the
+// whose PSRAM makes a copy cost nothing worth the address. On an STM32 the
 // board says, and its linker script keeps the area out of everything else.
-#if !UBIQOS_CHIP_STM32H5
+#if !UBIQOS_CHIP_STM32
 #define UBIQOS_FIXED_DATA_BASE   0u
 #define UBIQOS_FIXED_DATA_SIZE   0u
 #else
