@@ -160,12 +160,14 @@ static void note_event(const char *what, uint32_t count) {
 // that the design is wrong.
 uint32_t ubiqos_net_link_ups, ubiqos_net_link_downs;
 
+#if UBIQOS_LWIP                 // the link is the network's; without one, no link
 static void note_link(const char *what, uint32_t count) {
     if (count > USB_EVENT_LOG_LIMIT) return;
     ubiqos_print("net: cable link ");
     ubiqos_print(what);
     say_when(count);
 }
+#endif
 
 // The longest the bus has ever been quiet, and when that started. This exists
 // because counting suspends turned out to answer the wrong question: a host
@@ -326,12 +328,14 @@ int32_t ubiqos_usb_write(const uint8_t *buf, uint32_t len) {
 // Done HERE, from the USB task, and never from boot: the same call at boot is
 // what wedged the machine on 11 Sep, because between tud_init and this task
 // there is nobody to answer an enumerating host. See ubiqos_usb_init.
+#if UBIQOS_LWIP
 static void present_again(void) {
     ubiqos_print("net: introducing this board to the host again\n");
     tud_disconnect();
     ubiqos_sleep(150);          // past a hub's debounce; a yield, not a spin
     tud_connect();
 }
+#endif
 
 static void usb_thread(void) {
     // NOW join the bus. ubiqos_usb_init left the pull-up down on purpose: from

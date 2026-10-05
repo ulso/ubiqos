@@ -44,11 +44,18 @@ const uint8_t *tud_descriptor_device_cb(void) {
 #define UBIQOS_LWIP 0
 #endif
 
-#if UBIQOS_LWIP
+// The storage function is there whenever TinyUSB is built with it: always on
+// the RP2350, never on the STM32 port -- see tusb_config.h.
+#if UBIQOS_LWIP && CFG_TUD_MSC
 enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC,
        ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
-#else
+#elif UBIQOS_LWIP
+enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA,
+       ITF_NUM_NCM, ITF_NUM_NCM_DATA, ITF_NUM_TOTAL };
+#elif CFG_TUD_MSC
 enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
+#else
+enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
 #endif
 
 #define EPNUM_CDC_NOTIF   0x81
@@ -83,17 +90,24 @@ enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_MSC, ITF_NUM_TOTAL };
   7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0,\
   7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_epsize), 0
 
+#if CFG_TUD_MSC
+#define MSC_DESC_LEN      TUD_MSC_DESC_LEN
+#else
+#define MSC_DESC_LEN      0
+#endif
 #if UBIQOS_LWIP
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN \
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + MSC_DESC_LEN \
                            + TUD_CDC_NCM_DESC_LEN)
 #else
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + MSC_DESC_LEN)
 #endif
 
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+#if CFG_TUD_MSC
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+#endif
 #if UBIQOS_LWIP
     UBIQOS_NCM_DESCRIPTOR(ITF_NUM_NCM, 6, 7, EPNUM_NCM_NOTIF, 64,
                           EPNUM_NCM_OUT, EPNUM_NCM_IN, 64, CFG_TUD_NET_MTU),

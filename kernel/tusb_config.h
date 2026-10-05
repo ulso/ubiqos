@@ -3,8 +3,13 @@
 
 // TinyUSB configuration for UbiqOS. CFG_TUSB_MCU is normally set by TinyUSB's
 // own BSP, but we do not use it -- the kernel sets up USB itself.
-// The RP2350 uses the same port as the RP2040.
+// The RP2350 uses the same port as the RP2040; the STM32F4 the Synopsys
+// controller's, with the clocks and pins set up by port/stm32/f4/usb.c.
+#if UBIQOS_STM32_F4
+#define CFG_TUSB_MCU            OPT_MCU_STM32F4
+#else
 #define CFG_TUSB_MCU            OPT_MCU_RP2040
+#endif
 
 // The SDK's CMake puts CFG_TUSB_OS=OPT_OS_PICO on the command line, and this
 // deliberately disagrees: OPT_OS_PICO makes TinyUSB reach for the SDK's mutexes
@@ -27,7 +32,13 @@
 // Or, built with UBIQOS_NATIVE_USB=host, the hardware controller is the host
 // and there is no device side at all: no USB console, no usbdisk, no network
 // over the cable. The same host stack, on root port 0 instead of PIO.
+//
+// The STM32 port has the device side alone: no keyboard and no PIO.
+#if UBIQOS_CHIP_STM32
+#define CFG_TUH_ENABLED         0
+#else
 #define CFG_TUH_ENABLED         1
+#endif
 #if UBIQOS_USB_NATIVE_HOST
 #define CFG_TUH_RPI_PIO_USB     0
 #define CFG_TUH_RHPORT          0
@@ -78,7 +89,15 @@
 #define CFG_TUD_ENDPOINT0_SIZE  64
 
 #define CFG_TUD_CDC             1
+
+// The card lent to the host. Not on the STM32 port, which has no card driver
+// yet -- and whose OTG FS controller has three endpoints besides the control
+// one, which the console and the network need more than an empty card reader.
+#if UBIQOS_CHIP_STM32
+#define CFG_TUD_MSC             0
+#else
 #define CFG_TUD_MSC             1
+#endif
 
 // A whole sector in one transfer. The SD driver reads and writes 512 bytes at a
 // time and nothing smaller is useful, so this is the natural size -- and the
