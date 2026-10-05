@@ -622,6 +622,9 @@ void ubiqos_kernel_main(void) {
     __asm__ volatile("cpsie i" ::: "memory");
 #endif
 
+#if UBIQOS_CHIP_STM32
+    stm32_usb_hw_init();        // the clocks and pins TinyUSB leaves to the board
+#endif
     ubiqos_usb_init();
 
     // Prove the trap path before anything relies on it. If we get back here the
@@ -823,8 +826,17 @@ void ubiqos_kernel_main(void) {
     // the RP2350 boards, which carry descriptors in flash; the first board with
     // none -- the NUCLEO-H563ZI -- started a shell with no stdin, which read -1
     // in a loop a million times a second.
+    //
+    // On an STM32 the USART is registered whether or not there is a USB
+    // console: it is the board's own serial line and where the kernel's log
+    // goes, and with the shell on USB it is the way in when USB is not.
+#if UBIQOS_CHIP_STM32
+    if (!ubiqos_io_has_device("term")) {
+        ubiqos_print("Registering the built-in serial console as 'term'.\n");
+#else
     if (!ubiqos_io_has_device("term") && !ubiqos_io_has_device("usb")) {
         ubiqos_print("No descriptors found; registering the built-in console.\n");
+#endif
         static const struct {
             ubiqos_descriptor_t desc;
             ubiqos_uart_config_t uart;

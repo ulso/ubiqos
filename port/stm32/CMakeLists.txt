@@ -31,18 +31,21 @@ if(UBIQOS_STM32_BOARD STREQUAL "nucleo-h563zi")
     set(STM32_LD     stm32h563zi.ld)
     set(STM32_ETH    ON)
     set(STM32_NODE   OFF)
+    set(STM32_USB    OFF)                  # the H5's controller wants a newer TinyUSB
 elseif(UBIQOS_STM32_BOARD STREQUAL "nucleo-h503rb")
     set(STM32_FAMILY h5)
     set(STM32_CHIP   STM32H503xx)
     set(STM32_LD     stm32h503rb.ld)
     set(STM32_ETH    OFF)                  # the part has no Ethernet MAC
     set(STM32_NODE   ON)                   # 32 kB: a node, not a computer
+    set(STM32_USB    OFF)
 elseif(UBIQOS_STM32_BOARD STREQUAL "feather-f405")
     set(STM32_FAMILY f4)
     set(STM32_CHIP   STM32F405xx)
     set(STM32_LD     stm32f405rg.ld)
     set(STM32_ETH    OFF)
     set(STM32_NODE   OFF)
+    set(STM32_USB    ON)                   # OTG FS, the console on the USB cable
 else()
     message(FATAL_ERROR "UBIQOS_STM32_BOARD: no board called ${UBIQOS_STM32_BOARD}")
 endif()
@@ -168,6 +171,29 @@ target_include_directories(ubiqos_stm32 PRIVATE
     ${UBIQOS_ROOT}/third_party/cmsis-device-${STM32_FAMILY}/Include
     ${UBIQOS_ROOT}/third_party/cmsis-core/Include
 )
+# The USB device: TinyUSB, from the same copy the RP2350 kernel is built with,
+# and the kernel's own USB console and descriptors on top. Only the device side
+# and only the classes in use; kernel/tusb_config.h says which.
+set(UBIQOS_TINYUSB_DIR "$ENV{HOME}/.pico-sdk/sdk/2.3.1/lib/tinyusb" CACHE PATH "TinyUSB's source tree")
+if(STM32_USB)
+    set(TU ${UBIQOS_TINYUSB_DIR}/src)
+    target_sources(ubiqos_stm32 PRIVATE
+        ${FAMILY}/usb.c
+        ${K}/usbdev.c
+        ${K}/usb_descriptors.c
+        ${TU}/tusb.c
+        ${TU}/common/tusb_fifo.c
+        ${TU}/device/usbd.c
+        ${TU}/device/usbd_control.c
+        ${TU}/class/cdc/cdc_device.c
+        ${TU}/portable/synopsys/dwc2/dcd_dwc2.c
+        ${TU}/portable/synopsys/dwc2/dwc2_common.c)
+    # After common/sdk, whose tusb.h passes on to this one.
+    target_include_directories(ubiqos_stm32 PRIVATE ${TU})
+    target_compile_definitions(ubiqos_stm32 PRIVATE UBIQOS_STM32_USB=1)
+else()
+    target_compile_definitions(ubiqos_stm32 PRIVATE UBIQOS_STM32_USB=0)
+endif()
 target_compile_definitions(ubiqos_stm32 PRIVATE
     ${STM32_CHIP}
     UBIQOS_CHIP_STM32=1

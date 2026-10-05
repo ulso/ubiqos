@@ -37,10 +37,11 @@ WEAK_HANDLER(BusFault_Handler);
 WEAK_HANDLER(UsageFault_Handler);
 WEAK_HANDLER(DebugMon_Handler);
 
-// The port's own device interrupts: the microsecond clock's overflow and the
-// console.
+// The port's own device interrupts: the microsecond clock's overflow, the
+// console, and USB.
 WEAK_HANDLER(TIM2_IRQHandler);
 WEAK_HANDLER(USART3_IRQHandler);
+WEAK_HANDLER(OTG_FS_IRQHandler);
 
 void ubiqos_reset(void);
 
@@ -68,6 +69,7 @@ const vector_t ubiqos_vectors[16 + F4_IRQ_COUNT] = {
     [16 ... 16 + F4_IRQ_COUNT - 1] = ubiqos_default_handler,
     [16 + TIM2_IRQn]   = TIM2_IRQHandler,
     [16 + USART3_IRQn] = USART3_IRQHandler,
+    [16 + OTG_FS_IRQn] = OTG_FS_IRQHandler,
 };
 
 void ubiqos_reset(void)

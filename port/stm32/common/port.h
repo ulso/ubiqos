@@ -38,6 +38,7 @@ uint32_t stm32_console_read(uint8_t *buf, uint32_t len);
 uint32_t stm32_console_available(void);
 void stm32_console_start_thread(void);          // Ctrl-C; see console.c
 void stm32_net_start(void);                     // Ethernet and lwIP; see ethnet.c
+void stm32_usb_hw_init(void);                   // USB's clocks and pins, before tud_init
 
 // What the kernel asks of the chip that the pico-sdk answered on the RP2350.
 const char *stm32_reset_reason(void);           // why this boot happened, in words
