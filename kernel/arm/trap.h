@@ -119,14 +119,23 @@ static inline uint32_t ubiqos_arm_fault_address(void)
 // those whatever the allocator keeps next door. It is set on every switch, so
 // it always names the running process's stack; handlers run on MSP and are not
 // affected. Eight-byte aligned -- the low three bits are ignored.
+//
+// ARMv7-M -- the Cortex-M4 -- has no PSPLIM, and nothing catches an overflow
+// there yet: an MPU region below each stack would. The limit is not set, and
+// no fault is taken for an overflow.
 #define ARM_CFSR_STKOF  (1u << 20)
 #define ARM_HFSR_FORCED (1u << 30)
+#if defined(__ARM_ARCH_8M_MAIN__)
 static inline void ubiqos_arch_set_stack_limit(uint32_t limit)
 {
     __asm__ volatile("msr psplim, %0" : : "r"(limit));
 }
 #define UBIQOS_TRAP_IS_STACK_OVERFLOW(f) ((f)->cause == ARM_EXC_HARDFAULT && \
                                           (ARM_SCB_CFSR & ARM_CFSR_STKOF) != 0)
+#else
+static inline void ubiqos_arch_set_stack_limit(uint32_t limit) { (void)limit; }
+#define UBIQOS_TRAP_IS_STACK_OVERFLOW(f) ((void)(f), 0)
+#endif
 // Both bits are write-one-to-clear. Left set, the next fault of any kind would
 // look like another overflow.
 //

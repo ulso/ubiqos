@@ -498,6 +498,8 @@ void ubiqos_kernel_main(void) {
     ubiqos_print("========================================\n");
 #ifdef __riscv
     ubiqos_print("System: RISC-V 32-bit (Hazard3)\n");
+#elif defined(__ARM_ARCH_7EM__)
+    ubiqos_print("System: ARM 32-bit (Cortex-M4)\n");
 #else
     ubiqos_print("System: ARM 32-bit (Cortex-M33)\n");
 #endif

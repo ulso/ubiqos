@@ -30,13 +30,19 @@
 // entry weak, and these definitions replace the four that matter.
 
 .syntax unified
-.cpu cortex-m33
 // Named for the assembler's sake. .cpu alone leaves it without an FPU and the
 // d8-d15 save below will not assemble. FPv5-SP-D16 is what a Cortex-M33 has:
 // single precision, sixteen double-width registers -- and d8 to d15 are s16 to
 // s31 under another name, which is the half of the register file nothing else
-// saves.
+// saves. A Cortex-M4 has FPv4-SP-D16, the same registers, and nothing below
+// uses an instruction the two do not share.
+#if defined(__ARM_ARCH_7EM__)
+.cpu cortex-m4
+.fpu fpv4-sp-d16
+#else
+.cpu cortex-m33
 .fpu fpv5-sp-d16
+#endif
 .thumb
 
 .section .text
