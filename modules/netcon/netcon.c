@@ -19,16 +19,37 @@
 //
 // WHAT IT IS NOT: encrypted, or authenticated. Anybody who can reach the port
 // gets a shell, and every keystroke crosses the network in the clear. That is
-// why the default is the cable and nothing else -- 192.168.7.0/24 is a wire
-// between two machines with no third party on it. `-a` opens the same shell to
+// why the default is the cable and nothing else -- its /24, 192.168.7.0 unless
+// usb_address says otherwise, is a wire between two machines with no third
+// party on it. `-a` opens the same shell to
 // anybody on the WiFi, which is a decision, not a convenience.
 //
 // This is also the half of SSH that has nothing to do with cryptography, which
 // is the other reason it exists first.
 
 #define DEFAULT_PORT   23
-#define USB_SUBNET     0xC0A80700u      // 192.168.7.0
 #define USB_MASK       0xFFFFFF00u
+
+// The cable's subnet: the board's own address on it, as the kernel has it,
+// with the last number dropped. It was 192.168.7.0, written in -- and the
+// Challenger+ boards on this bench are on .8 and .9, so netcon turned their
+// own cable away. 0 when the board has no network on its cable, and then
+// nothing matches it.
+static uint32_t cable_subnet(void)
+{
+    char t[20];
+    if (ubiqos_config_get(UBIQOS_CFG_USB_ADDRESS, t, sizeof t) <= 0) return 0;
+    uint32_t a = 0, part = 0, dots = 0;
+    for (const char *p = t; ; p++) {
+        if (*p >= '0' && *p <= '9') { part = part * 10u + (uint32_t)(*p - '0'); continue; }
+        if (part > 255u) return 0;
+        a = (a << 8) | part;
+        part = 0;
+        if (*p != '.') break;
+        dots++;
+    }
+    return dots == 3 ? (a & USB_MASK) : 0;
+}
 #define NET_WAIT_S     30
 #define BUFSZ          256
 
@@ -268,7 +289,8 @@ void module_main(int argc, char **argv) {
             "prompt as the screen and the serial port have.\n\n"
             "  port   which port to answer on; 23 by default\n"
             "  -a     answer on every interface. Without it only the USB\n"
-            "         cable's own subnet, 192.168.7.x, is let in\n\n"
+            "         cable's own subnet is let in -- 192.168.7.x, or\n"
+            "         whatever usb_address names\n\n"
             "Nothing here is encrypted and nothing is asked for a password:\n"
             "whoever reaches the port gets the shell. The cable is a wire\n"
             "between two machines; the WiFi is not. Run it in the background\n"
@@ -309,6 +331,7 @@ void module_main(int argc, char **argv) {
         return;
     }
 
+    const uint32_t subnet = cable_subnet();
     ubiqos_line_t l;
     ubiqos_line_reset(&l);
     ubiqos_line_str(&l, "netcon: a shell on port ");
@@ -328,7 +351,7 @@ void module_main(int argc, char **argv) {
         ubiqos_line_str(&l, "netcon: ");
         put_addr(&l, ip);
 
-        if (!anywhere && (ip & USB_MASK) != USB_SUBNET) {
+        if (!anywhere && (!subnet || (ip & USB_MASK) != subnet)) {
             // Said to them as well as to the log. A refusal that looks like a
             // broken port is worse than one that says what it is.
             const char *no = "netcon: this shell answers on the USB cable only.\r\n"
