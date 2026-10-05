@@ -328,6 +328,14 @@ static bool read_the_file(const char *path)
 
 typedef struct { uint32_t magic, len, sum; } cfg_head_t;
 
+// What is written and what is borrowed from the pool to write it: the header
+// and the most text there may be, rounded up to the unit the flash programs
+// in. Not the sector, which on the STM32F4 is 16 kB -- more than the Feather
+// STM32F405 had free with sshd running. The rest of the sector stays erased.
+#define CFG_IMAGE_BYTES \
+    ((sizeof(cfg_head_t) + CFG_TEXT_MAX + FLASH_PAGE_SIZE - 1u) / FLASH_PAGE_SIZE * FLASH_PAGE_SIZE)
+_Static_assert(CFG_IMAGE_BYTES <= FLASH_SECTOR_SIZE, "the settings must fit their sector");
+
 static uint32_t fnv1a(const char *p, uint32_t n) {
     uint32_t h = 2166136261u;
     for (uint32_t i = 0; i < n; i++) { h ^= (uint8_t)p[i]; h *= 16777619u; }
@@ -385,7 +393,7 @@ static uint32_t take_text(const char *t, uint32_t n) {
 static void __not_in_flash_func(write_sector)(uint32_t offset, const uint8_t *data) {
     const uint32_t st = save_and_disable_interrupts();
     flash_range_erase(offset, FLASH_SECTOR_SIZE);
-    if (data) flash_range_program(offset, data, FLASH_SECTOR_SIZE);
+    if (data) flash_range_program(offset, data, CFG_IMAGE_BYTES);
     restore_interrupts(st);
 }
 
@@ -418,9 +426,9 @@ int32_t ubiqos_config_store(const char *key, const char *value) {
         if (!ok) return UBIQOS_CFG_EVALUE;
     }
 
-    uint8_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, FLASH_SECTOR_SIZE);
-    if (!img) return UBIQOS_CFG_EFULL;
-    memset(img, 0xff, FLASH_SECTOR_SIZE);
+    uint8_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, CFG_IMAGE_BYTES);
+    if (!img) return UBIQOS_CFG_ENOMEM;
+    memset(img, 0xff, CFG_IMAGE_BYTES);
     char *text = (char *)(img + sizeof(cfg_head_t));
     uint32_t n = 0;
     bool full = false;
@@ -462,7 +470,7 @@ int32_t ubiqos_config_store(const char *key, const char *value) {
     write_sector(offset, n ? img : 0);
 
     const uint8_t *now = (const uint8_t *)(uintptr_t)UBIQOS_FLASH_CONFIG_BASE;
-    const bool same = n ? memcmp(now, img, FLASH_SECTOR_SIZE) == 0
+    const bool same = n ? memcmp(now, img, CFG_IMAGE_BYTES) == 0
                         : ((const cfg_head_t *)now)->magic == 0xffffffffu;
     ubiqos_tlsf_free(ubiqos_mem_pool, img);
     return same ? 0 : UBIQOS_CFG_EFLASH;

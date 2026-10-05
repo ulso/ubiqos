@@ -32,6 +32,8 @@ static void say_error(int32_t rc, const char *key) {
         printf("config: the settings would not fit their sector\n");
     else if (rc == UBIQOS_CFG_EFLASH)
         printf("config: written, but the flash reads back different\n");
+    else if (rc == UBIQOS_CFG_ENOMEM)
+        printf("config: not enough free memory to write the settings; stop a program and try again\n");
     else
         printf("config: this machine keeps no settings in flash\n");
 }

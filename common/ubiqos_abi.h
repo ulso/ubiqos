@@ -1011,6 +1011,7 @@ static inline const ubiqos_split_t *ubiqos_module_split(const ubiqos_module_head
 #define UBIQOS_CFG_EVALUE   (-3)   // not a value that setting can take
 #define UBIQOS_CFG_EFULL    (-4)   // the settings would not fit their sector
 #define UBIQOS_CFG_EFLASH   (-5)   // written, and read back different
+#define UBIQOS_CFG_ENOMEM   (-6)   // no room in the memory pool to write it
 
 // The keys kept in flash are hostname, usb_address and timezone. The network
 // and its password are not among them: a password belongs in the key store,
