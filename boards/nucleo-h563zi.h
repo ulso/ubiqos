@@ -51,7 +51,7 @@
 // from there across the bank boundary, the application after them, and the
 // key store in the last sectors, 8 kB each on this chip. The modules once had
 // half of the second bank and had filled 95 % of it, while the kernel sat in a
-// megabyte of its own. port/stm32h5/stm32h563zi.ld must say the same.
+// megabyte of its own. port/stm32/h5/stm32h563zi.ld must say the same.
 #define UBIQOS_BOARD_FLASH_MODULE_BASE 0x08040000u
 #define UBIQOS_BOARD_FLASH_APP_BASE    0x08180000u
 #define UBIQOS_BOARD_FLASH_END         0x081F0000u

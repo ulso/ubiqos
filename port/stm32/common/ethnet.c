@@ -26,7 +26,7 @@
 #include "netif/ethernet.h"
 #include "config.h"
 #include "usbdev.h"
-#include "../../common/ubiqos_abi.h"
+#include "../../../common/ubiqos_abi.h"
 #include "pico/time.h"
 #include "port.h"
 #include "eth.h"

@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../common/ubiqos_abi.h"
+#include "../../../common/ubiqos_abi.h"
 #include "io.h"
 #include "pico/time.h"
 

@@ -15,7 +15,7 @@
 
 #include "stm32h5xx.h"
 #include "port.h"
-#include "../../common/ubiqos_abi.h"
+#include "../../../common/ubiqos_abi.h"
 #include "board.h"
 
 #define CONSOLE_TX_PIN UBIQOS_H5_CONSOLE_TX

@@ -103,12 +103,12 @@ languages when they are found, and skipped when they are not.
 
 ### STM32H5
 
-The NUCLEO boards have a build of their own in `port/stm32h5`. It needs no Pico
+The NUCLEO boards have a build of their own in `port/stm32`. It needs no Pico
 SDK -- only the Arm toolchain and lwIP, both taken from where the SDK's
 installer put them:
 
 ```bash
-cmake -G Ninja -S port/stm32h5 -B build-h5
+cmake -G Ninja -S port/stm32 -B build-h5
 ninja -C build-h5
 ```
 

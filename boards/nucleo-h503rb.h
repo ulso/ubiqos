@@ -39,7 +39,7 @@
 // Two banks of 64 kB, 8 kB sectors. The kernel has the first bank; the modules
 // the second, less its last two sectors, which are the key store. There is no
 // room for an application region: it starts where it ends.
-// port/stm32h5/stm32h503rb.ld must say the same.
+// port/stm32/h5/stm32h503rb.ld must say the same.
 #define UBIQOS_BOARD_FLASH_MODULE_BASE 0x08010000u
 #define UBIQOS_BOARD_FLASH_APP_BASE    0x0801C000u
 #define UBIQOS_BOARD_FLASH_END         0x0801C000u

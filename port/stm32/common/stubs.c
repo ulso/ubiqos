@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "../../common/ubiqos_abi.h"
+#include "../../../common/ubiqos_abi.h"
 #include "keystore.h"
 #include "usbdev.h"
 #include "sdcard.h"

@@ -1,7 +1,7 @@
 # The STM32H5 port's own build: the kernel for an STM32H5 board -- the
 # NUCLEO-H563ZI unless UBIQOS_H5_BOARD says otherwise -- without the pico-sdk.
 #
-#   cmake -G Ninja -S port/stm32h5 -B build-h5
+#   cmake -G Ninja -S port/stm32 -B build-h5
 #   ninja -C build-h5
 #   probe-rs download --chip STM32H563ZITx build-h5/ubiqos_h5.elf && probe-rs reset --chip STM32H563ZITx
 
@@ -18,6 +18,10 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 project(ubiqos_stm32h5 C ASM)
 
 set(UBIQOS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+# What every STM32 shares -- the kernel's view of the port, the stand-ins for
+# the pico-sdk's headers, the Ethernet glue -- and what one family needs.
+set(COMMON ${CMAKE_CURRENT_SOURCE_DIR}/common)
+set(FAMILY ${CMAKE_CURRENT_SOURCE_DIR}/h5)
 
 # The RP2350's Arm flags, less -mcmse: that chip runs its code in the secure
 # state, and this one, with TrustZone off, has none. softfp keeps a module built
@@ -45,7 +49,7 @@ set(K ${UBIQOS_ROOT}/kernel)
 # rest -- the clock, the console's pins, where things are in flash, how big the
 # kernel's tables are.
 #
-#   cmake -G Ninja -S port/stm32h5 -B build-h503 -DUBIQOS_H5_BOARD=nucleo-h503rb
+#   cmake -G Ninja -S port/stm32 -B build-h503 -DUBIQOS_H5_BOARD=nucleo-h503rb
 set(UBIQOS_H5_BOARD "nucleo-h563zi" CACHE STRING "nucleo-h563zi or nucleo-h503rb")
 if(UBIQOS_H5_BOARD STREQUAL "nucleo-h563zi")
     set(H5_CHIP STM32H563xx)
@@ -63,7 +67,7 @@ endif()
 
 # lwIP itself, from the same copy the RP2350 kernel is built with: the one in
 # the pico-sdk's tree, which is lwIP 2.2 as released. Nothing else of the SDK is
-# used; lib/lwip-patched has UbiqOS's two mDNS files, and port/stm32h5/lwip has
+# used; lib/lwip-patched has UbiqOS's two mDNS files, and port/stm32/common/lwip has
 # the arch header the SDK would otherwise supply.
 set(UBIQOS_LWIP_DIR "$ENV{HOME}/.pico-sdk/sdk/2.3.1/lib/lwip" CACHE PATH "lwIP's source tree")
 file(GLOB H5_LWIP_SOURCES
@@ -85,13 +89,13 @@ add_executable(ubiqos_h5
     ${K}/console_none.c
     ${K}/arm/scheduler.S
     ${K}/arm/stack.c
-    startup.c
-    clock.c
-    console.c
-    timer.c
-    sdk.c
-    stubs.c
-    kapi.c
+    ${FAMILY}/startup.c
+    ${FAMILY}/clock.c
+    ${FAMILY}/console.c
+    ${FAMILY}/timer.c
+    ${FAMILY}/sdk.c
+    ${COMMON}/stubs.c
+    ${COMMON}/kapi.c
 )
 # A node or a computer. A node is the scheduler, messages, drivers and the
 # modules in flash, all of which it starts at boot and no others: no file
@@ -108,7 +112,7 @@ else()
         ${K}/config.c
         ${K}/clock.c
         ${K}/fsserver.c
-        flash.c
+        ${FAMILY}/flash.c
         ${K}/keystore.c
         ${K}/crypto.c)
     target_compile_definitions(ubiqos_h5 PRIVATE UBIQOS_NODE=0)
@@ -121,8 +125,8 @@ if(UBIQOS_H5_NET AND NOT H5_ETH)
 endif()
 if(UBIQOS_H5_NET)
     target_sources(ubiqos_h5 PRIVATE
-        eth.c
-        ethnet.c
+        ${FAMILY}/eth.c
+        ${COMMON}/ethnet.c
         ${K}/lwipsock.c
         ${K}/lwipping.c
         ${K}/lwipmdns.c
@@ -137,9 +141,10 @@ else()
 endif()
 add_dependencies(ubiqos_h5 ubiqos_version)
 target_include_directories(ubiqos_h5 PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk
-    ${CMAKE_CURRENT_SOURCE_DIR}/lwip
+    ${FAMILY}
+    ${COMMON}
+    ${COMMON}/sdk
+    ${COMMON}/lwip
     ${UBIQOS_LWIP_DIR}/src/include
     ${CMAKE_CURRENT_BINARY_DIR}
     ${UBIQOS_ROOT}
@@ -160,6 +165,6 @@ target_compile_definitions(ubiqos_h5 PRIVATE
 target_compile_options(ubiqos_h5 PRIVATE ${H5_CPU_FLAGS} -O2 -g -Wall
     -ffunction-sections -fdata-sections -fno-math-errno)
 target_link_options(ubiqos_h5 PRIVATE ${H5_CPU_FLAGS} -nostartfiles --specs=nano.specs
-    -T${CMAKE_CURRENT_SOURCE_DIR}/${H5_LD} -Wl,--gc-sections
+    -T${FAMILY}/${H5_LD} -Wl,--gc-sections
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/ubiqos_h5.map)
 set_target_properties(ubiqos_h5 PROPERTIES SUFFIX ".elf")

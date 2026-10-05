@@ -16,7 +16,7 @@
 #include "keystore.h"
 #include "pico/time.h"
 #if UBIQOS_CHIP_STM32H5
-// The STM32H5 port: the console, the reset reason, the reboot. See port/stm32h5.
+// The STM32H5 port: the console, the reset reason, the reboot. See port/stm32.
 #include "port.h"
 #include "hardware/sync.h"     // which the SDK's uart header brought in on the RP2350
 #else
@@ -53,7 +53,7 @@ void ubiqos_usbhost_init(void);
 // build time rather than a peripheral left alone: ubiqos_putc WAITS on the
 // UART, so an uninitialised one hangs the kernel on its first line.
 #if UBIQOS_CHIP_STM32H5
-// One serial line to the computer, shared with the shell: see port/stm32h5/console.c.
+// One serial line to the computer, shared with the shell: see port/stm32/h5/console.c.
 void ubiqos_uart_init(void) { h5_console_init(UBIQOS_UART_BAUD); }
 #define UBIQOS_UART_PUT(c) h5_console_putc(c)
 #elif UBIQOS_HAS_DIAG_UART
