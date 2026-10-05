@@ -170,7 +170,7 @@ static int32_t trng_raw(uint8_t *out, uint32_t want)
     // words -- more than the RP2350's raw samples are, and hashed by the caller
     // all the same.
     if (want > 64) want = 64;
-    return h5_rng_read(out, want);
+    return stm32_rng_read(out, want);
 #else
     static bool up;
     if (!up) {
@@ -1069,7 +1069,7 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             }
             if (want > 256) want = 256;          // see the note in the header
 #if UBIQOS_CHIP_STM32
-            frame->a0 = (uint32_t)h5_rng_read(out, want);
+            frame->a0 = (uint32_t)stm32_rng_read(out, want);
 #else
             uint32_t n = 0;
             while (n < want) {

@@ -36,15 +36,15 @@
 // No crystal is fitted for HSE. The ST-LINK drives its 8 MHz MCO into OSC_IN,
 // which makes HSE an external clock in bypass mode. 240 MHz is what Zephyr runs
 // this board at, under the chip's 250.
-#define UBIQOS_H5_HSE_HZ        8000000u
-#define UBIQOS_H5_HSE_BYPASS    1
-#define UBIQOS_H5_SYSCLK_HZ     240000000u
+#define UBIQOS_STM32_HSE_HZ        8000000u
+#define UBIQOS_STM32_HSE_BYPASS    1
+#define UBIQOS_STM32_SYSCLK_HZ     240000000u
 
 // The ST-LINK's virtual serial port: USART3 on PD8 (TX) and PD9 (RX), AF7.
-#define UBIQOS_H5_CONSOLE_PORT  'D'
-#define UBIQOS_H5_CONSOLE_TX    8u
-#define UBIQOS_H5_CONSOLE_RX    9u
-#define UBIQOS_H5_CONSOLE_AF    7u
+#define UBIQOS_STM32_CONSOLE_PORT  'D'
+#define UBIQOS_STM32_CONSOLE_TX    8u
+#define UBIQOS_STM32_CONSOLE_RX    9u
+#define UBIQOS_STM32_CONSOLE_AF    7u
 
 // --- FLASH AND RAM ----------------------------------------------------------
 // 2 MB: the kernel in the first 256 kB -- it uses 123 -- the system's modules

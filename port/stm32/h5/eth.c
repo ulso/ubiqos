@@ -44,7 +44,7 @@ static uint8_t rx_buf[RX_DESC][BUF_BYTES] __attribute__((aligned(4)));
 static uint8_t tx_buf[TX_DESC][BUF_BYTES] __attribute__((aligned(4)));
 static uint32_t rx_next, tx_next;
 
-uint32_t h5_eth_rx_frames, h5_eth_rx_errors, h5_eth_tx_frames, h5_eth_tx_busy;
+uint32_t stm32_eth_rx_frames, stm32_eth_rx_errors, stm32_eth_tx_frames, stm32_eth_tx_busy;
 
 // --- the pins -----------------------------------------------------------------
 
@@ -143,7 +143,7 @@ static void rings_init(void)
 
 // --- bring-up --------------------------------------------------------------------
 
-const char *h5_eth_start(const uint8_t mac[6])
+const char *stm32_eth_start(const uint8_t mac[6])
 {
     // RMII, chosen in the system configuration block before the MAC is clocked:
     // the MAC samples the choice when it comes out of reset.
@@ -163,7 +163,7 @@ const char *h5_eth_start(const uint8_t mac[6])
         if (++n > 2000000u) return "the MAC did not come out of reset (no 50 MHz from the PHY?)";
 
     // The PHY: reset, then autonegotiation, whose result is read when the link
-    // comes up -- see h5_eth_link.
+    // comes up -- see stm32_eth_link.
     const int32_t id = mdio_read(PHY_ID1);
     if (id < 0 || id == 0xFFFF || id == 0) return "no PHY answers at MDIO address 0";
     mdio_write(PHY_BMCR, BMCR_RESET);
@@ -201,7 +201,7 @@ const char *h5_eth_start(const uint8_t mac[6])
 
 // Whether the PHY has a link, and on a change the MAC is told the speed and
 // duplex it came up at. 0 no link, 10 or 100 with a link; *full says duplex.
-uint32_t h5_eth_link(bool *full)
+uint32_t stm32_eth_link(bool *full)
 {
     // BMSR latches a link loss until read, so it is read twice: the first says
     // whether the link went away since last time, the second what it is now.
@@ -226,11 +226,11 @@ uint32_t h5_eth_link(bool *full)
 
 // One frame into the next free transmit buffer, or false when all four are
 // still the DMA's. The MAC adds the padding and the CRC.
-bool h5_eth_send(const uint8_t *frame, uint32_t len)
+bool stm32_eth_send(const uint8_t *frame, uint32_t len)
 {
     if (len > BUF_BYTES) return false;
     desc_t *d = &tx_desc[tx_next];
-    if (d->d3 & DES3_OWN) { h5_eth_tx_busy++; return false; }
+    if (d->d3 & DES3_OWN) { stm32_eth_tx_busy++; return false; }
 
     memcpy(tx_buf[tx_next], frame, len);
     d->d0 = (uint32_t)tx_buf[tx_next];
@@ -242,23 +242,23 @@ bool h5_eth_send(const uint8_t *frame, uint32_t len)
     tx_next = (tx_next + 1u) % TX_DESC;
     __DMB();
     ETH->DMACTDTPR = (uint32_t)&tx_desc[tx_next];      // the DMA runs up to here
-    h5_eth_tx_frames++;
+    stm32_eth_tx_frames++;
     return true;
 }
 
 // The next received frame, handed to deliver and then given back to the DMA.
 // Returns false when the DMA still owns the next descriptor -- nothing waiting.
-bool h5_eth_receive(void (*deliver)(const uint8_t *frame, uint32_t len))
+bool stm32_eth_receive(void (*deliver)(const uint8_t *frame, uint32_t len))
 {
     desc_t *d = &rx_desc[rx_next];
     const uint32_t d3 = d->d3;
     if (d3 & DES3_OWN) return false;
 
     if ((d3 & (DES3_FD | DES3_LD)) == (DES3_FD | DES3_LD) && !(d3 & RDES3_ES)) {
-        h5_eth_rx_frames++;
+        stm32_eth_rx_frames++;
         deliver(rx_buf[rx_next], d3 & RDES3_PL);
     } else {
-        h5_eth_rx_errors++;
+        stm32_eth_rx_errors++;
     }
 
     rx_give(rx_next);

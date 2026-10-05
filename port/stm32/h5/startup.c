@@ -97,7 +97,7 @@ void ubiqos_reset(void)
 
     SCB->VTOR = (uint32_t)ubiqos_vectors;
 
-    h5_clock_init();
+    stm32_clock_init();
     main();
     for (;;) __WFI();
 }

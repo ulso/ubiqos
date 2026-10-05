@@ -21,10 +21,10 @@ static volatile uint32_t us_high;
 // left at its reset value -- and at PCLK1 when it is not.
 static uint32_t tim2_clock_hz(void)
 {
-    return h5_pclk1_hz == h5_sysclk_hz ? h5_pclk1_hz : 2u * h5_pclk1_hz;
+    return stm32_pclk1_hz == stm32_sysclk_hz ? stm32_pclk1_hz : 2u * stm32_pclk1_hz;
 }
 
-void h5_time_init(void)
+void stm32_time_init(void)
 {
     RCC->APB1LENR |= RCC_APB1LENR_TIM2EN;
     (void)RCC->APB1LENR;
@@ -81,7 +81,7 @@ void ubiqos_timer_rearm(void) { }       // SysTick reloads itself
 
 void ubiqos_timer_init(uint32_t interval_us)
 {
-    uint32_t per_us = h5_sysclk_hz / 8u / 1000000u;
+    uint32_t per_us = stm32_sysclk_hz / 8u / 1000000u;
     uint32_t reload = interval_us * per_us;
     reload = reload ? reload - 1u : 0u;
     if (reload > 0x00ffffffu) reload = 0x00ffffffu;

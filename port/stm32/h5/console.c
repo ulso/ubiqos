@@ -18,11 +18,11 @@
 #include "../../../common/ubiqos_abi.h"
 #include "board.h"
 
-#define CONSOLE_TX_PIN UBIQOS_H5_CONSOLE_TX
-#define CONSOLE_RX_PIN UBIQOS_H5_CONSOLE_RX
-#define CONSOLE_AF     UBIQOS_H5_CONSOLE_AF
-#define CONSOLE_GPIO   ((GPIO_TypeDef *)(GPIOA_BASE + (UBIQOS_H5_CONSOLE_PORT - 'A') * 0x400u))
-#define CONSOLE_GPIOEN (1u << (UBIQOS_H5_CONSOLE_PORT - 'A'))   // RCC_AHB2ENR, A=0 to I=8
+#define CONSOLE_TX_PIN UBIQOS_STM32_CONSOLE_TX
+#define CONSOLE_RX_PIN UBIQOS_STM32_CONSOLE_RX
+#define CONSOLE_AF     UBIQOS_STM32_CONSOLE_AF
+#define CONSOLE_GPIO   ((GPIO_TypeDef *)(GPIOA_BASE + (UBIQOS_STM32_CONSOLE_PORT - 'A') * 0x400u))
+#define CONSOLE_GPIOEN (1u << (UBIQOS_STM32_CONSOLE_PORT - 'A'))   // RCC_AHB2ENR, A=0 to I=8
 
 // Powers of two: the indices wrap by mask. A board short of RAM names a
 // smaller transmit ring; a line or two is enough to keep the shell from waiting.
@@ -51,7 +51,7 @@ static void pin_af(GPIO_TypeDef *g, uint32_t pin, uint32_t af)
     *afr = (*afr & ~(0xFu << shift)) | (af << shift);
 }
 
-void h5_console_init(uint32_t baud)
+void stm32_console_init(uint32_t baud)
 {
     RCC->AHB2ENR  |= CONSOLE_GPIOEN;
     RCC->APB1LENR |= RCC_APB1LENR_USART3EN;
@@ -62,7 +62,7 @@ void h5_console_init(uint32_t baud)
 
     // USART3's kernel clock is PCLK1 out of reset (CCIPR1.USART3SEL = 0).
     USART3->CR1 = 0;
-    USART3->BRR = (h5_pclk1_hz + baud / 2u) / baud;
+    USART3->BRR = (stm32_pclk1_hz + baud / 2u) / baud;
     USART3->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE_RXFNEIE;
 
     // With the other devices, below the kernel's critical sections.
@@ -104,8 +104,8 @@ void USART3_IRQHandler(void)
 }
 
 // As much as fits, now; a full ring gives a short count. The kernel's print
-// path wants every byte and uses h5_console_put below.
-uint32_t h5_console_write(const uint8_t *buf, uint32_t len)
+// path wants every byte and uses stm32_console_put below.
+uint32_t stm32_console_write(const uint8_t *buf, uint32_t len)
 {
     if (!up) return len;
     const uint32_t st = __get_PRIMASK();
@@ -117,15 +117,15 @@ uint32_t h5_console_write(const uint8_t *buf, uint32_t len)
     return n;
 }
 
-uint32_t h5_console_room(void) { return TX_SIZE - (tx_head - tx_tail); }
+uint32_t stm32_console_room(void) { return TX_SIZE - (tx_head - tx_tail); }
 
 // Every byte, whatever the state of the interrupts.
-void h5_console_putc(char c)
+void stm32_console_putc(char c)
 {
     if (!up) return;
     for (;;) {
         const uint8_t b = (uint8_t)c;
-        if (h5_console_write(&b, 1)) return;
+        if (stm32_console_write(&b, 1)) return;
         if (irq_can_run()) continue;           // the interrupt will make room
         const uint32_t st = __get_PRIMASK();
         __disable_irq();
@@ -134,27 +134,27 @@ void h5_console_putc(char c)
     }
 }
 
-void h5_console_puts(const char *s)
+void stm32_console_puts(const char *s)
 {
     while (*s) {
-        if (*s == '\n') h5_console_putc('\r');
-        h5_console_putc(*s++);
+        if (*s == '\n') stm32_console_putc('\r');
+        stm32_console_putc(*s++);
     }
 }
 
-uint32_t h5_console_read(uint8_t *buf, uint32_t len)
+uint32_t stm32_console_read(uint8_t *buf, uint32_t len)
 {
     uint32_t n = 0;
     while (n < len && rx_tail != rx_head) buf[n++] = rx_ring[rx_tail++ & (RX_SIZE - 1u)];
     return n;
 }
 
-uint32_t h5_console_available(void) { return rx_head - rx_tail; }
+uint32_t stm32_console_available(void) { return rx_head - rx_tail; }
 
-int h5_console_getc(void)
+int stm32_console_getc(void)
 {
     uint8_t c;
-    return h5_console_read(&c, 1) ? c : -1;
+    return stm32_console_read(&c, 1) ? c : -1;
 }
 
 // --- /dev/term --------------------------------------------------------------
@@ -183,25 +183,25 @@ static int32_t term_write(const uint8_t *buf, uint32_t len)
     // full device; only a write longer than the whole ring is still split.
     uint32_t need = 0;
     for (uint32_t i = 0; i < len; i++) need += buf[i] == '\n' ? 2u : 1u;
-    if (need <= TX_SIZE && h5_console_room() < need) return 0;
+    if (need <= TX_SIZE && stm32_console_room() < need) return 0;
 
     // A newline goes out as CR LF, and needs room for both.
     uint32_t n = 0;
     while (n < len) {
         const uint32_t need = buf[n] == '\n' ? 2u : 1u;
-        if (h5_console_room() < need) break;
-        if (buf[n] == '\n') h5_console_write((const uint8_t *)"\r", 1);
-        h5_console_write(&buf[n], 1);
+        if (stm32_console_room() < need) break;
+        if (buf[n] == '\n') stm32_console_write((const uint8_t *)"\r", 1);
+        stm32_console_write(&buf[n], 1);
         n++;
     }
     return (int32_t)n;
 }
 
-static int32_t term_read(uint8_t *buf, uint32_t len) { return (int32_t)h5_console_read(buf, len); }
-static int32_t term_readable(void) { return (int32_t)h5_console_available(); }
-static int32_t term_writable(void) { return (int32_t)(h5_console_room() / 2u); }
+static int32_t term_read(uint8_t *buf, uint32_t len) { return (int32_t)stm32_console_read(buf, len); }
+static int32_t term_readable(void) { return (int32_t)stm32_console_available(); }
+static int32_t term_writable(void) { return (int32_t)(stm32_console_room() / 2u); }
 
-const ubiqos_driver_t h5_term_driver = {
+const ubiqos_driver_t stm32_term_driver = {
     .module_name = "h5uart",
     .configure = term_configure,
     .open = term_open, .write = term_write, .read = term_read, .close = term_close,
@@ -242,7 +242,7 @@ static void console_thread(void)
     }
 }
 
-void h5_console_start_thread(void)
+void stm32_console_start_thread(void)
 {
     if (ubiqos_kernel_thread(console_thread, 1024, UBIQOS_PRIO_USB) < 0)
         ubiqos_print("console: could not start its thread; Ctrl-C will not end commands\n");

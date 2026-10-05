@@ -1,7 +1,7 @@
 // The STM32H5's clocks: PLL1 from HSE, at whatever the board header asks for.
 //
-// The board says three things -- UBIQOS_H5_HSE_HZ, UBIQOS_H5_HSE_BYPASS and
-// UBIQOS_H5_SYSCLK_HZ -- and the PLL is worked out from them: HSE divided down
+// The board says three things -- UBIQOS_STM32_HSE_HZ, UBIQOS_STM32_HSE_BYPASS and
+// UBIQOS_STM32_SYSCLK_HZ -- and the PLL is worked out from them: HSE divided down
 // to a 4 MHz reference, multiplied to twice the system clock, divided by two.
 // On the NUCLEO-H563ZI that is the ST-LINK's 8 MHz, in bypass, to 240 MHz; on
 // the NUCLEO-H503RB a 24 MHz crystal to 250.
@@ -15,26 +15,26 @@
 #include "port.h"
 #include "board.h"
 
-#if !defined(UBIQOS_H5_HSE_HZ) || !defined(UBIQOS_H5_HSE_BYPASS) || !defined(UBIQOS_H5_SYSCLK_HZ)
-#error "the board header must say UBIQOS_H5_HSE_HZ, UBIQOS_H5_HSE_BYPASS and UBIQOS_H5_SYSCLK_HZ"
+#if !defined(UBIQOS_STM32_HSE_HZ) || !defined(UBIQOS_STM32_HSE_BYPASS) || !defined(UBIQOS_STM32_SYSCLK_HZ)
+#error "the board header must say UBIQOS_STM32_HSE_HZ, UBIQOS_STM32_HSE_BYPASS and UBIQOS_STM32_SYSCLK_HZ"
 #endif
 #define PLL_REF_HZ 4000000u         // input range 4-8 MHz, PLL1RGE 2
-#define PLL_M (UBIQOS_H5_HSE_HZ / PLL_REF_HZ)
-#define PLL_N (UBIQOS_H5_SYSCLK_HZ * 2u / PLL_REF_HZ)
-_Static_assert(UBIQOS_H5_HSE_HZ % PLL_REF_HZ == 0, "HSE must be a multiple of 4 MHz");
-_Static_assert(UBIQOS_H5_SYSCLK_HZ * 2u % PLL_REF_HZ == 0, "the system clock must be a multiple of 2 MHz");
+#define PLL_M (UBIQOS_STM32_HSE_HZ / PLL_REF_HZ)
+#define PLL_N (UBIQOS_STM32_SYSCLK_HZ * 2u / PLL_REF_HZ)
+_Static_assert(UBIQOS_STM32_HSE_HZ % PLL_REF_HZ == 0, "HSE must be a multiple of 4 MHz");
+_Static_assert(UBIQOS_STM32_SYSCLK_HZ * 2u % PLL_REF_HZ == 0, "the system clock must be a multiple of 2 MHz");
 _Static_assert(PLL_M >= 1 && PLL_M <= 63, "PLL1M is six bits");
 _Static_assert(PLL_N >= 4 && PLL_N <= 512, "PLL1N is 4 to 512");
-_Static_assert(UBIQOS_H5_SYSCLK_HZ <= 250000000u, "250 MHz is the STM32H5's limit");
+_Static_assert(UBIQOS_STM32_SYSCLK_HZ <= 250000000u, "250 MHz is the STM32H5's limit");
 
-uint32_t h5_uid_words[3];       // the device id; see the note before ICACHE below
-uint32_t h5_sysclk_hz = 32000000u;
-uint32_t h5_pclk1_hz  = 32000000u;
-bool     h5_clock_from_hse;
+uint32_t stm32_uid_words[3];       // the device id; see the note before ICACHE below
+uint32_t stm32_sysclk_hz = 32000000u;
+uint32_t stm32_pclk1_hz  = 32000000u;
+bool     stm32_clock_from_hse;
 
 #define HSE_TIMEOUT 2000000u    // loop turns, some tens of milliseconds at 32 MHz
 
-void h5_clock_init(void)
+void stm32_clock_init(void)
 {
     // The core voltage first, VOS0, the highest: every scale below it caps the
     // clock, and the flash's wait states are counted per scale.
@@ -44,7 +44,7 @@ void h5_clock_init(void)
     // HSE: a clock input in analog bypass when something drives OSC_IN, as the
     // ST-LINK's MCO does; the oscillator when a crystal sits across the pins.
     RCC->CR = (RCC->CR & ~(RCC_CR_HSEEXT | RCC_CR_HSEBYP))
-            | (UBIQOS_H5_HSE_BYPASS ? RCC_CR_HSEBYP : 0u);
+            | (UBIQOS_STM32_HSE_BYPASS ? RCC_CR_HSEBYP : 0u);
     RCC->CR |= RCC_CR_HSEON;
     uint32_t n = 0;
     while (!(RCC->CR & RCC_CR_HSERDY)) {
@@ -93,14 +93,14 @@ void h5_clock_init(void)
     // read-only area at 0x08FFF800, and with the instruction cache on a read
     // there is a bus fault: ST's answer is an MPU region marking the area
     // uncacheable, and this one is to read the twelve bytes once, first. Found
-    // by the kernel faulting in h5_unique_id with BFARVALID set.
-    for (int w = 0; w < 3; w++) h5_uid_words[w] = ((const volatile uint32_t *)UID_BASE)[w];
+    // by the kernel faulting in stm32_unique_id with BFARVALID set.
+    for (int w = 0; w < 3; w++) stm32_uid_words[w] = ((const volatile uint32_t *)UID_BASE)[w];
 
     // The instruction cache in front of the flash: with five wait states,
     // running without it is running at a fraction of the clock.
     ICACHE->CR |= ICACHE_CR_EN;
 
-    h5_sysclk_hz = UBIQOS_H5_SYSCLK_HZ;
-    h5_pclk1_hz  = UBIQOS_H5_SYSCLK_HZ / 2u;
-    h5_clock_from_hse = true;
+    stm32_sysclk_hz = UBIQOS_STM32_SYSCLK_HZ;
+    stm32_pclk1_hz  = UBIQOS_STM32_SYSCLK_HZ / 2u;
+    stm32_clock_from_hse = true;
 }

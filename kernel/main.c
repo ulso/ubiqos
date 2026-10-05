@@ -54,8 +54,8 @@ void ubiqos_usbhost_init(void);
 // UART, so an uninitialised one hangs the kernel on its first line.
 #if UBIQOS_CHIP_STM32
 // One serial line to the computer, shared with the shell: see port/stm32/h5/console.c.
-void ubiqos_uart_init(void) { h5_console_init(UBIQOS_UART_BAUD); }
-#define UBIQOS_UART_PUT(c) h5_console_putc(c)
+void ubiqos_uart_init(void) { stm32_console_init(UBIQOS_UART_BAUD); }
+#define UBIQOS_UART_PUT(c) stm32_console_putc(c)
 #elif UBIQOS_HAS_DIAG_UART
 void ubiqos_uart_init(void) {
     uart_init(UBIQOS_UART, UBIQOS_UART_BAUD);
@@ -512,7 +512,7 @@ void ubiqos_kernel_main(void) {
     // own reboot command, and the glitch detector is its own kind of news.
 #if UBIQOS_CHIP_STM32
     ubiqos_print("Reset: ");
-    ubiqos_print(h5_reset_reason());
+    ubiqos_print(stm32_reset_reason());
     ubiqos_print("\n");
 #else
     {
@@ -686,7 +686,7 @@ void ubiqos_kernel_main(void) {
         extern void ubiqos_usb_net_id(const uint8_t *unique, uint32_t n);
 #if UBIQOS_CHIP_STM32
         uint8_t id[12];
-        h5_unique_id(id);
+        stm32_unique_id(id);
         ubiqos_usb_net_id(id, sizeof id);
 #else
         pico_unique_board_id_t id;
@@ -853,10 +853,10 @@ void ubiqos_kernel_main(void) {
     // thread of its own. Not on a node: Ctrl-C ends the command in front, and
     // a node has no command in front of anything.
 #if !UBIQOS_NODE
-    h5_console_start_thread();
+    stm32_console_start_thread();
 #endif
 #if UBIQOS_LWIP
-    h5_net_start();
+    stm32_net_start();
 #endif
 #endif
 
@@ -970,7 +970,7 @@ void ubiqos_kernel_main(void) {
 // place.
 void ubiqos_reboot_bootsel(void) {
 #if UBIQOS_CHIP_STM32
-    h5_reboot_bootloader();
+    stm32_reboot_bootloader();
 #else
     reset_usb_boot(0, 0);
 #endif
@@ -1010,7 +1010,7 @@ int main(void) {
 #if UBIQOS_CHIP_STM32
     // The clock is already up -- the port's reset handler starts it before any
     // C that could care -- and the microsecond clock is all that is missing.
-    h5_time_init();
+    stm32_time_init();
 #else
     set_sys_clock_khz(120000, true);
 #endif

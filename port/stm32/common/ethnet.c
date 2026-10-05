@@ -53,7 +53,7 @@ u32_t sys_now(void) { return (u32_t)(time_us_64() / 1000u); }
 int rand(void)
 {
     uint32_t v = 0;
-    h5_rng_read((uint8_t *)&v, sizeof v);
+    stm32_rng_read((uint8_t *)&v, sizeof v);
     return (int)(v & 0x7FFFFFFFu);
 }
 
@@ -65,7 +65,7 @@ static err_t link_output(struct netif *n, struct pbuf *p)
     static uint8_t flat[1536];
     if (p->tot_len > sizeof flat) return ERR_IF;
     const uint16_t len = pbuf_copy_partial(p, flat, p->tot_len, 0);
-    if (!h5_eth_send(flat, len)) { ubiqos_lwip_dropped++; return ERR_IF; }
+    if (!stm32_eth_send(flat, len)) { ubiqos_lwip_dropped++; return ERR_IF; }
     ubiqos_lwip_out++;
     return ERR_OK;
 }
@@ -121,7 +121,7 @@ static void on_status(struct netif *n)
 static void make_mac(uint8_t mac[6])
 {
     uint8_t id[12];
-    h5_unique_id(id);
+    stm32_unique_id(id);
     mac[0] = 0x02;                        // local, unicast
     for (int i = 1; i < 6; i++) mac[i] = id[i - 1] ^ id[i + 5];
     mac[5] ^= id[11];
@@ -138,7 +138,7 @@ static void net_thread(void)
     while (!ubiqos_config_done()) ubiqos_sleep(10);
 
     make_mac(tud_network_mac_address);
-    const char *why = h5_eth_start(tud_network_mac_address);
+    const char *why = stm32_eth_start(tud_network_mac_address);
     if (why) {
         ubiqos_print("net: no Ethernet: ");
         ubiqos_print(why);
@@ -174,13 +174,13 @@ static void net_thread(void)
 
     uint32_t next_link = 0;
     for (;;) {
-        for (int budget = 0; budget < 8 && h5_eth_receive(deliver); budget++) { }
+        for (int budget = 0; budget < 8 && stm32_eth_receive(deliver); budget++) { }
 
         const uint32_t now = sys_now();
         if ((int32_t)(now - next_link) >= 0) {
             next_link = now + LINK_POLL_MS;
             bool full = false;
-            const uint32_t speed = h5_eth_link(&full);
+            const uint32_t speed = stm32_eth_link(&full);
             if (speed && !netif_is_link_up(&en)) {
                 netif_set_link_up(&en);
                 ubiqos_print("net: link up, ");
@@ -204,7 +204,7 @@ static void net_thread(void)
     }
 }
 
-void h5_net_start(void)
+void stm32_net_start(void)
 {
     if (ubiqos_kernel_thread(net_thread, 6144, UBIQOS_PRIO_WIFI) < 0)
         ubiqos_print("net: could not start its thread\n");

@@ -376,7 +376,7 @@ void ubiqos_io_init(void) {
 #if UBIQOS_CHIP_STM32
     // The serial console's driver is part of the port there -- see
     // port/stm32/h5/console.c -- and not a module.
-    { extern const ubiqos_driver_t h5_term_driver; drivers[driver_count++] = &h5_term_driver; }
+    { extern const ubiqos_driver_t stm32_term_driver; drivers[driver_count++] = &stm32_term_driver; }
 #endif
     device_count = 0;
     for (int p = 0; p < UBIQOS_MAX_PROCS; p++) {

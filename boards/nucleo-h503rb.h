@@ -24,16 +24,16 @@
 // A 24 MHz crystal is fitted for HSE, so HSE is the oscillator and not a
 // bypassed input. 250 MHz, the chip's limit, is what ST's own templates for
 // this board run at.
-#define UBIQOS_H5_HSE_HZ        24000000u
-#define UBIQOS_H5_HSE_BYPASS    0
-#define UBIQOS_H5_SYSCLK_HZ     250000000u
+#define UBIQOS_STM32_HSE_HZ        24000000u
+#define UBIQOS_STM32_HSE_BYPASS    0
+#define UBIQOS_STM32_SYSCLK_HZ     250000000u
 
 // The ST-LINK's virtual serial port is USART3 here too, but on PA4 (TX) and
 // PA3 (RX) with AF13 -- ST's BSP for the Nucleo-64 H5 boards, COM1.
-#define UBIQOS_H5_CONSOLE_PORT  'A'
-#define UBIQOS_H5_CONSOLE_TX    4u
-#define UBIQOS_H5_CONSOLE_RX    3u
-#define UBIQOS_H5_CONSOLE_AF    13u
+#define UBIQOS_STM32_CONSOLE_PORT  'A'
+#define UBIQOS_STM32_CONSOLE_TX    4u
+#define UBIQOS_STM32_CONSOLE_RX    3u
+#define UBIQOS_STM32_CONSOLE_AF    13u
 
 // --- FLASH AND RAM ----------------------------------------------------------
 // Two banks of 64 kB, 8 kB sectors. The kernel has the first bank; the modules

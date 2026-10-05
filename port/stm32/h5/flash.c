@@ -27,7 +27,7 @@
 #define ERRORS (FLASH_SR_WRPERR_Msk | FLASH_SR_PGSERR_Msk | FLASH_SR_STRBERR_Msk \
               | FLASH_SR_INCERR_Msk | FLASH_SR_OPTCHANGEERR_Msk)
 
-uint32_t h5_flash_errors;            // the status bits of the last failure, for a probe
+uint32_t stm32_flash_errors;            // the status bits of the last failure, for a probe
 
 static void wait_idle(void)
 {
@@ -57,7 +57,7 @@ static void cache_forget(void)
 static void note_errors(void)
 {
     const uint32_t e = FLASH->NSSR & ERRORS;
-    if (e) { h5_flash_errors = e; FLASH->NSCCR = e; }
+    if (e) { stm32_flash_errors = e; FLASH->NSCCR = e; }
 }
 
 void flash_range_erase(uint32_t offset, size_t count)

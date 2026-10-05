@@ -17,7 +17,7 @@ int32_t ubiqos_kernel_thread(void (*entry)(void), uint32_t stack_bytes, uint32_t
 void *ubiqos_mem_alloc(uint32_t size);
 void *ubiqos_tlsf_malloc(void *pool, uint32_t size);
 extern void *ubiqos_mem_pool;
-extern uint32_t h5_sysclk_hz;
+extern uint32_t stm32_sysclk_hz;
 
 static void     k_busy_wait(uint64_t us)   { busy_wait_us(us); }
 static uint64_t k_time_us(void)            { return time_us_64(); }
@@ -26,7 +26,7 @@ static void    *k_bulk_alloc(uint32_t n)   { return ubiqos_mem_alloc(n); }   // 
 static void     k_putc(char c)             { ubiqos_putc(c); }
 static bool     k_dma_safe(const void *p)  { (void)p; return true; }         // all of it is SRAM
 static void     k_sleep_ms(uint32_t ms)    { busy_wait_ms(ms); }
-static uint32_t k_clock_hz(void)           { return h5_sysclk_hz; }
+static uint32_t k_clock_hz(void)           { return stm32_sysclk_hz; }
 static void    *k_driver_alloc(uint32_t n)
 { return ubiqos_mem_pool ? ubiqos_tlsf_malloc(ubiqos_mem_pool, n) : 0; }
 
