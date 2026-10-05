@@ -47,6 +47,7 @@ elseif(UBIQOS_STM32_BOARD STREQUAL "feather-f405")
     set(STM32_NODE   OFF)
     set(STM32_USB    ON)                   # OTG FS
     set(STM32_I2C    ON)                   # I2C1, the STEMMA QT connector
+    set(STM32_STARTUP boards/feather-f405-startup.c)
 else()
     message(FATAL_ERROR "UBIQOS_STM32_BOARD: no board called ${UBIQOS_STM32_BOARD}")
 endif()
@@ -173,6 +174,29 @@ else()
     target_compile_definitions(ubiqos_stm32 PRIVATE UBIQOS_LWIP=0)
 endif()
 add_dependencies(ubiqos_stm32 ubiqos_version)
+
+# The board's boot script, for a board with no card to keep /sd/startup on: a
+# data module called startup, as the Challenger+ has -- see
+# run_startup_module in kernel/fsserver.c. It is the board's and not the
+# programs', so it is made here, beside the kernel, and the module image takes
+# it from this directory: the text alone, the same bytes the RP2350 build's
+# ubiqos_add_data_module makes, packed by the same make_module.py.
+if(STM32_STARTUP)
+    add_library(stm32_startup_obj OBJECT ${UBIQOS_ROOT}/${STM32_STARTUP})
+    target_compile_options(stm32_startup_obj PRIVATE ${STM32_CPU_FLAGS} -O2 -fno-common -ffreestanding)
+    target_include_directories(stm32_startup_obj PRIVATE ${UBIQOS_ROOT}/common)
+    set(STARTUP_BIN ${CMAKE_CURRENT_BINARY_DIR}/startup_app.bin)
+    set(STARTUP_MOD ${CMAKE_CURRENT_BINARY_DIR}/startup.mod)
+    add_custom_command(OUTPUT ${STARTUP_MOD}
+        COMMAND ${UBIQOS_ARM_TOOLCHAIN}/arm-none-eabi-objcopy -O binary -j .rodata.descriptor
+                $<TARGET_OBJECTS:stm32_startup_obj> ${STARTUP_BIN}
+        COMMAND python3 ${UBIQOS_ROOT}/make_module.py ${STARTUP_BIN} ${STARTUP_MOD}
+                startup --data --plain --rev 1
+        DEPENDS stm32_startup_obj $<TARGET_OBJECTS:stm32_startup_obj> ${UBIQOS_ROOT}/make_module.py
+        COMMAND_EXPAND_LISTS
+        COMMENT "Building the board's startup module")
+    add_custom_target(stm32_startup ALL DEPENDS ${STARTUP_MOD})
+endif()
 target_include_directories(ubiqos_stm32 PRIVATE
     ${FAMILY}
     ${COMMON}
