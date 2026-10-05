@@ -11,6 +11,7 @@
 
 extern uint32_t __data_start, __data_end, __data_load;
 extern uint32_t __bss_start, __bss_end;
+extern uint32_t __sram_bss_start, __sram_bss_end;     // the network's, in SRAM
 extern uint32_t __stack_top;
 
 int main(void);
@@ -77,6 +78,7 @@ void ubiqos_reset(void)
     uint32_t *src = &__data_load, *dst = &__data_start;
     while (dst < &__data_end) *dst++ = *src++;
     for (dst = &__bss_start; dst < &__bss_end; dst++) *dst = 0;
+    for (dst = &__sram_bss_start; dst < &__sram_bss_end; dst++) *dst = 0;
 
     // CP10 and CP11, full access: the FPU, before any C that could use it.
     SCB->CPACR |= (3u << 20) | (3u << 22);

@@ -17,9 +17,14 @@
  * the key store. UBIQOS_BOARD_FLASH_* in boards/feather-f405.h must say the
  * same.
  *
- * RAM: the kernel's data, its stack and its tables are in CCM, and the whole
- * of SRAM is the module pool -- processes, their stacks and heaps, and any
- * buffer a DMA might want, which CCM could not give it.
+ * RAM: the kernel's data, its stack and its tables are in CCM. SRAM has the
+ * network's buffers first -- lwIP's pools and heap, TinyUSB's -- which do not
+ * fit beside the tables in 64 kB, and the module pool after them: processes,
+ * their stacks and heaps, and any buffer a DMA might want, which CCM could
+ * not give it. The top 22 kB of CCM are the fixed data area, where
+ * make_flash_image.py puts sshd's writable data so that its code can stay in
+ * flash -- UBIQOS_BOARD_FIXED_DATA_* in the board header, which must say the
+ * same.
  */
 
 ENTRY(ubiqos_reset)
@@ -28,7 +33,8 @@ MEMORY
 {
     VECTORS (rx) : ORIGIN = 0x08000000, LENGTH = 16K
     FLASH (rx)   : ORIGIN = 0x08010000, LENGTH = 192K
-    CCM (rw)     : ORIGIN = 0x10000000, LENGTH = 64K
+    CCM (rw)     : ORIGIN = 0x10000000, LENGTH = 42K
+    FIXED (rw)   : ORIGIN = 0x1000A800, LENGTH = 22K
     RAM (rwx)    : ORIGIN = 0x20000000, LENGTH = 128K
 }
 
@@ -72,6 +78,19 @@ SECTIONS
         *(.uninitialized_data .uninitialized_data.*)
     } > CCM
 
+    /* The network's zeroed data, chosen by the object it comes from: lwIP
+     * and UbiqOS's lwIP glue (every path with lwip in it), and TinyUSB.
+     * Cleared by the startup code like .bss. Before .bss in this script,
+     * which would otherwise take these too: the first rule to match wins. */
+    .bss_sram (NOLOAD) : ALIGN(4)
+    {
+        __sram_bss_start = .;
+        *lwip*(.bss .bss.* COMMON)
+        *tinyusb*(.bss .bss.* COMMON)
+        . = ALIGN(8);
+        __sram_bss_end = .;
+    } > RAM
+
     .bss (NOLOAD) : ALIGN(4)
     {
         __bss_start = .;
@@ -87,8 +106,8 @@ SECTIONS
         __stack_top = .;
     } > CCM
 
-    /* The module pool: all of SRAM -- see UBIQOS_POOL_FROM_LINKER in
+    /* The module pool: the rest of SRAM -- see UBIQOS_POOL_FROM_LINKER in
      * kernel/main.c. There is no C heap, and _sbrk in stubs.c refuses. */
-    __pool_start = ORIGIN(RAM);
+    __pool_start = __sram_bss_end;
     __pool_end   = ORIGIN(RAM) + LENGTH(RAM);
 }

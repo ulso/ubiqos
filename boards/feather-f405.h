@@ -51,9 +51,15 @@
 #define UBIQOS_BOARD_FLASH_KEYS_BASE   0x08004000u
 #define UBIQOS_BOARD_FLASH_KEYS_SIZE   0x8000u
 
-// No fixed data area yet: the programs that use one are the network's.
-#define UBIQOS_BOARD_FIXED_DATA_BASE   0u
-#define UBIQOS_BOARD_FIXED_DATA_SIZE   0u
+// The top 22 kB of the core-coupled memory, for the data of sshd, whose 190
+// kB of code then stays in flash. Only the CPU reaches CCM, and only the CPU
+// reaches a program's data; SRAM stays whole for the module pool, which sshd
+// takes 48 kB of. port/stm32/f4/stm32f405rg.ld keeps the kernel below it.
+#define UBIQOS_BOARD_FIXED_DATA_BASE   0x1000A800u
+#define UBIQOS_BOARD_FIXED_DATA_SIZE   0x5800u
+
+// Half the usual log, so that the kernel and sshd's data share the 64 kB.
+#define UBIQOS_BOARD_DMESG_SIZE        8192
 
 #define UBIQOS_BOARD_FIXED_PINS                                              \
     { UBIQOS_PIN('B', 10), "console" }, { UBIQOS_PIN('B', 11), "console" },   \

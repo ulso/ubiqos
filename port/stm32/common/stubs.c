@@ -49,6 +49,16 @@ uint32_t ubiqos_usbhost_info(uint32_t what) { (void)what; return 0; }
 void     ubiqos_usbhost_set_keymap(const ubiqos_keymap_t *k) { (void)k; }
 void     ubiqos_usbhost_drain(void) { }
 
+// --- The WiFi's network interface, which the USB task polls ------------------
+// On the RP2350 the USB task carries lwIP for the cable and the WiFi both. The
+// Feather STM32F405 runs the same task for its cable, and has no radio.
+#if UBIQOS_STM32_USB && UBIQOS_LWIP
+void     stm32_net_start(void) { }       // the USB task carries lwIP here
+bool     ubiqos_eh_netif_start(void) { return false; }
+bool     ubiqos_eh_netif_up(void) { return false; }
+void     ubiqos_eh_netif_poll(void) { }
+#endif
+
 // --- PIO, WiFi: RP2350 and Fruit Jam hardware -----------------------------
 void     ubiqos_pio_probe(void) { }
 void     ubiqos_wifi_start_server(void) { }

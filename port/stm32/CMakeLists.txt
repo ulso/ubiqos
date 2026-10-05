@@ -29,23 +29,23 @@ if(UBIQOS_STM32_BOARD STREQUAL "nucleo-h563zi")
     set(STM32_FAMILY h5)
     set(STM32_CHIP   STM32H563xx)
     set(STM32_LD     stm32h563zi.ld)
-    set(STM32_ETH    ON)
+    set(STM32_NETIF  eth)
     set(STM32_NODE   OFF)
     set(STM32_USB    OFF)                  # the H5's controller wants a newer TinyUSB
 elseif(UBIQOS_STM32_BOARD STREQUAL "nucleo-h503rb")
     set(STM32_FAMILY h5)
     set(STM32_CHIP   STM32H503xx)
     set(STM32_LD     stm32h503rb.ld)
-    set(STM32_ETH    OFF)                  # the part has no Ethernet MAC
+    set(STM32_NETIF  none)                 # the part has no Ethernet MAC
     set(STM32_NODE   ON)                   # 32 kB: a node, not a computer
     set(STM32_USB    OFF)
 elseif(UBIQOS_STM32_BOARD STREQUAL "feather-f405")
     set(STM32_FAMILY f4)
     set(STM32_CHIP   STM32F405xx)
     set(STM32_LD     stm32f405rg.ld)
-    set(STM32_ETH    OFF)
+    set(STM32_NETIF  usb)                  # CDC-NCM on the cable, as on the RP2350
     set(STM32_NODE   OFF)
-    set(STM32_USB    ON)                   # OTG FS, the console on the USB cable
+    set(STM32_USB    ON)                   # OTG FS
 else()
     message(FATAL_ERROR "UBIQOS_STM32_BOARD: no board called ${UBIQOS_STM32_BOARD}")
 endif()
@@ -135,16 +135,30 @@ else()
         ${K}/crypto.c)
     target_compile_definitions(ubiqos_stm32 PRIVATE UBIQOS_NODE=0)
 endif()
-# Ethernet and the stack on it. Off, the kernel is what a board without a
-# network would carry -- which is also how to measure what the network costs.
-set(UBIQOS_STM32_NET ${STM32_ETH} CACHE BOOL "Ethernet, lwIP, mDNS and NTP")
-if(UBIQOS_STM32_NET AND NOT STM32_ETH)
-    message(FATAL_ERROR "${UBIQOS_STM32_BOARD} has no Ethernet: UBIQOS_STM32_NET=OFF")
+# The network and the stack on it: Ethernet on the NUCLEO-H563ZI, CDC-NCM on
+# the USB cable on the Feather STM32F405. Off, the kernel is what a board
+# without a network would carry -- which is also how to measure what the
+# network costs. On the Feather, off also gives the USB cable back to the
+# console: the controller has the endpoints for one or the other.
+if(STM32_NETIF STREQUAL "none")
+    set(STM32_HAS_NET OFF)
+else()
+    set(STM32_HAS_NET ON)
+endif()
+set(UBIQOS_STM32_NET ${STM32_HAS_NET} CACHE BOOL "the network: lwIP, mDNS and NTP over the board's interface")
+if(UBIQOS_STM32_NET AND NOT STM32_HAS_NET)
+    message(FATAL_ERROR "${UBIQOS_STM32_BOARD} has no network interface: UBIQOS_STM32_NET=OFF")
 endif()
 if(UBIQOS_STM32_NET)
+    if(STM32_NETIF STREQUAL "eth")
+        target_sources(ubiqos_stm32 PRIVATE ${FAMILY}/eth.c ${COMMON}/ethnet.c)
+    else()
+        # The RP2350's own: a fixed address on the cable, a DHCP server for
+        # the computer at the other end, all in the USB task.
+        target_sources(ubiqos_stm32 PRIVATE ${K}/lwipnet.c ${K}/lwipdhcpd.c)
+    endif()
     target_sources(ubiqos_stm32 PRIVATE
-        ${FAMILY}/eth.c
-        ${COMMON}/ethnet.c
+        ${COMMON}/lwiparch.c
         ${K}/lwipsock.c
         ${K}/lwipping.c
         ${K}/lwipmdns.c
@@ -186,6 +200,7 @@ if(STM32_USB)
         ${TU}/device/usbd.c
         ${TU}/device/usbd_control.c
         ${TU}/class/cdc/cdc_device.c
+        ${TU}/class/net/ncm_device.c
         ${TU}/portable/synopsys/dwc2/dcd_dwc2.c
         ${TU}/portable/synopsys/dwc2/dwc2_common.c)
     # After common/sdk, whose tusb.h passes on to this one.

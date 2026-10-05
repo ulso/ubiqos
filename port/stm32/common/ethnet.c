@@ -20,6 +20,7 @@
 #include "lwip/etharp.h"
 #include "lwip/dhcp.h"
 #include "lwip/timeouts.h"
+#include "lwip/sys.h"           // sys_now, which lwiparch.c gives
 #include "lwip/pbuf.h"
 #include "lwip/stats.h"
 #include "lwip/apps/mdns.h"
@@ -44,18 +45,8 @@ static bool started;
 uint32_t ubiqos_lwip_in, ubiqos_lwip_out, ubiqos_lwip_dropped;
 uint8_t  tud_network_mac_address[6];
 
-u32_t sys_now(void) { return (u32_t)(time_us_64() / 1000u); }
-
-// LWIP_RAND is rand(), for DHCP's transaction ids and the ports a connection
-// starts from. newlib's rand keeps its state in a structure it allocates, which
-// drags in malloc, sbrk and a dozen system calls this kernel has no use for; the
-// chip has a random number generator, so it is asked instead.
-int rand(void)
-{
-    uint32_t v = 0;
-    stm32_rng_read((uint8_t *)&v, sizeof v);
-    return (int)(v & 0x7FFFFFFFu);
-}
+// sys_now and rand, which lwIP asks of the platform, are in lwiparch.c: the
+// USB network on the STM32F4 asks them too.
 
 // --- out and in -----------------------------------------------------------------
 
