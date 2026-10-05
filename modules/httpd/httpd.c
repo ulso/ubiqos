@@ -144,14 +144,109 @@ static const char SENSOR_PAGE[] =
     "    .catch(function(){});\n"
     "  fetch(\"/api/status\", {cache:\"no-store\"}).then(function(r){ return r.json(); })\n"
     "    .then(function(m){\n"
-    "      MEM.textContent = \"SRAM \" + m.sramFree + \" B free, PSRAM \" +\n"
-    "                        Math.round(m.psramFree/1024) + \" kB free, \" + m.processes + \" processes\";\n"
+    "      MEM.textContent = \"SRAM \" + m.sramFree + \" B in the largest free block, \" +\n"
+    "        (m.psramTotal ? \"PSRAM \" + Math.round(m.psramFree/1024) + \" kB free, \" : \"\") +\n"
+    "        m.processes + \" processes\";\n"
     "      FILES.hidden = !m.card;\n"
     "    }).catch(function(){});\n"
     "}\n"
     "tick(); setInterval(tick, 2000);\n"
     "</script>\n"
     "\n";
+
+// The page for a board that is not a HibouAir bridge: its name, what is on
+// its I2C bus, and how to reach the bus from a program. The bus is scanned
+// when the page loads and when asked to, not on a timer -- a scan is 112
+// transactions, and a sensor in the middle of a measurement does not need
+// them. At 0x76 and 0x77 the chip id says which Bosch part it is; elsewhere
+// the address is all there is, and the page says what usually sits there.
+// It is "/" on a board without the scanner, and /board on every board.
+static const char BOARD_PAGE[] =
+    "<!doctype html><meta charset=\"utf-8\"><title>UbiqOS</title>\n"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+    "<style>\n"
+    ":root{--bg:#0f1720;--card:#152029;--line:#233240;--ink:#e6edf3;--dim:#8b9bab;--ok:#4ade80;--off:#64748b}\n"
+    "*{box-sizing:border-box}\n"
+    "body{margin:0;padding:24px;background:var(--bg);color:var(--ink);\n"
+    "     font:15px/1.45 system-ui,-apple-system,\"Segoe UI\",sans-serif}\n"
+    "h1{margin:0 0 20px;font-size:26px}\n"
+    "h2{font-size:17px;margin:24px 0 12px;display:flex;gap:12px;align-items:baseline}\n"
+    ".grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}\n"
+    ".card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}\n"
+    ".addr{font-size:20px;font-weight:600;font-family:ui-monospace,Menlo,monospace}\n"
+    ".what{color:var(--dim);margin-top:4px}\n"
+    ".note,a,button{color:var(--dim)}\n"
+    "button{background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}\n"
+    "code{font-family:ui-monospace,Menlo,monospace;font-size:13px}\n"
+    "</style>\n"
+    "<h1 id=name>UbiqOS</h1>\n"
+    "<h2>I2C bus <button id=again>scan again</button></h2>\n"
+    "<div class=grid id=devs></div>\n"
+    "<p class=note id=note>scanning</p>\n"
+    "<p class=note>From a program: <code>/api/i2c</code> scans, and\n"
+    "<code>/api/i2c?addr=77&amp;w=d0&amp;n=1</code> writes d0 to 0x77 and reads one byte back.</p>\n"
+    "<p class=note id=mem></p>\n"
+    "<script>\n"
+    "var NAME = location.hostname.replace(/\\.local\\.?$/, \"\");\n"
+    "document.getElementById(\"name\").textContent = \"UbiqOS \\u00b7 \" + NAME;\n"
+    "document.title = \"UbiqOS \\u00b7 \" + NAME;\n"
+    "var DEVS = document.getElementById(\"devs\"), NOTE = document.getElementById(\"note\");\n"
+    "// What usually answers at an address on a STEMMA QT bus. A guess, and said as one.\n"
+    "var USUAL = {0x18:\"LIS3DH, MCP9808\", 0x19:\"LIS3DH, LSM303\", 0x1e:\"LIS2MDL, LSM303\",\n"
+    "  0x29:\"VL53L0X, VL53L1X, TCS34725\", 0x38:\"AHT20, FT6206\", 0x39:\"APDS-9960, TSL2561\",\n"
+    "  0x3c:\"SSD1306 display\", 0x3d:\"SSD1306 display\", 0x40:\"INA219, HTU21D, Si7021\",\n"
+    "  0x44:\"SHT31, SHT4x\", 0x45:\"SHT31\", 0x48:\"ADS1115, TMP117, PCT2075\", 0x4a:\"BNO08x\",\n"
+    "  0x5a:\"CCS811, MLX90614\", 0x5c:\"LPS22, AM2320\", 0x5d:\"LPS22\", 0x60:\"MPL3115A2, Si1145\",\n"
+    "  0x62:\"SCD4x\", 0x68:\"DS3231, MPU-6050, PCF8523\", 0x69:\"MPU-6050, SPS30\", 0x6a:\"LSM6DS\",\n"
+    "  0x6b:\"LSM6DS\", 0x70:\"HT16K33, TCA9548A\"};\n"
+    "var BOSCH = {0x60:\"BME280\", 0x58:\"BMP280\"};          // chip id in register 0xd0\n"
+    "function hex(a){ return \"0x\" + (a < 16 ? \"0\" : \"\") + a.toString(16); }\n"
+    "function get(q){ return fetch(\"/api/i2c\" + q, {cache:\"no-store\"}).then(function(r){ return r.json(); }); }\n"
+    "function card(a, what){ return \"<div class=card><div class=addr>\" + hex(a) + \"</div><div class=what>\" + what + \"</div></div>\"; }\n"
+    "function scan(){\n"
+    "  NOTE.textContent = \"scanning\";\n"
+    "  get(\"\").then(function(d){\n"
+    "    var devs = d.devices || [];\n"
+    "    NOTE.textContent = !d.ok ? (d.error || \"no I2C bus\") : devs.length ? \"\" : \"Nothing answered.\";\n"
+    "    DEVS.innerHTML = devs.map(function(a){ return card(a, USUAL[a] ? \"usually \" + USUAL[a] : \"\"); }).join(\"\");\n"
+    "    devs.filter(function(a){ return a == 0x76 || a == 0x77; }).forEach(function(a){\n"
+    "      get(\"?addr=\" + a.toString(16) + \"&w=d0&n=1\").then(function(r){\n"
+    "        if (!r.ok || !r.data.length) return;\n"
+    "        var v = r.data[0], i = devs.indexOf(a);\n"
+    "        if (r.data[0] == 0x61) {\n"
+    "          // 0x61 is both; the variant register tells them apart.\n"
+    "          get(\"?addr=\" + a.toString(16) + \"&w=f0&n=1\").then(function(w){\n"
+    "            var name = w.ok && w.data[0] == 1 ? \"BME688\" : \"BME680\";\n"
+    "            DEVS.children[i].outerHTML = card(a, name + \" (chip id 0x61)\");\n"
+    "          });\n"
+    "        } else {\n"
+    "          DEVS.children[i].outerHTML = card(a, (BOSCH[v] || \"unknown\") + \" (chip id \" + hex(v) + \")\");\n"
+    "        }\n"
+    "      });\n"
+    "    });\n"
+    "  }).catch(function(){ NOTE.textContent = \"no answer from the board\"; });\n"
+    "}\n"
+    "document.getElementById(\"again\").onclick = scan;\n"
+    "scan();\n"
+    "fetch(\"/api/status\", {cache:\"no-store\"}).then(function(r){ return r.json(); }).then(function(m){\n"
+    "  document.getElementById(\"mem\").textContent = \"SRAM \" + m.sramFree + \" B in the largest free block, \" +\n"
+    "    (m.psramTotal ? \"PSRAM \" + Math.round(m.psramFree/1024) + \" kB free, \" : \"\") + m.processes + \" processes\";\n"
+    "}).catch(function(){});\n"
+    "</script>\n";
+
+// Whether this board has the HibouAir scanner at all. Where it has, "/" is the
+// sensor page; where it has not -- the Feather STM32F405 -- that page could
+// only ever say that nothing is scanning, and the board's own page is served.
+static bool has_module(const char *name)
+{
+    ubiqos_modinfo_t m;
+    for (uint32_t i = 0; ubiqos_moddir_get(i, &m) == 0; i++) {
+        uint32_t k = 0;
+        while (name[k] && m.name[k] == name[k]) k++;
+        if (!name[k] && !m.name[k]) return true;
+    }
+    return false;
+}
 
 static void say(const char *s) { ubiqos_write_str(UBIQOS_STDOUT, s); }
 
@@ -537,6 +632,14 @@ static void serve(int32_t sock, const char *req) {
         return;
     }
 
+    // Asked every time rather than remembered: a variable to remember it in
+    // would be writable data, and a module with any is copied into RAM to run
+    // instead of running from flash -- 17 kB the Feather has not got.
+    if ((path[1] == 0 && !has_module("hibouair")) || starts(path, "/board")) {
+        send_head(sock, "200 OK", "text/html; charset=utf-8", sizeof BOARD_PAGE - 1);
+        send_str(sock, BOARD_PAGE);
+        return;
+    }
     if (path[1] == 0 || starts(path, "/sensors")) {      // "/" is the sensor page
         send_head(sock, "200 OK", "text/html; charset=utf-8", sizeof SENSOR_PAGE - 1);
         send_str(sock, SENSOR_PAGE);
