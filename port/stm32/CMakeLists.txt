@@ -24,7 +24,7 @@ set(UBIQOS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 # flash, how big the kernel's tables are.
 #
 #   cmake -G Ninja -S port/stm32 -B build-h503 -DUBIQOS_STM32_BOARD=nucleo-h503rb
-set(UBIQOS_STM32_BOARD "nucleo-h563zi" CACHE STRING "nucleo-h563zi or nucleo-h503rb")
+set(UBIQOS_STM32_BOARD "nucleo-h563zi" CACHE STRING "nucleo-h563zi, nucleo-h503rb or feather-f405")
 if(UBIQOS_STM32_BOARD STREQUAL "nucleo-h563zi")
     set(STM32_FAMILY h5)
     set(STM32_CHIP   STM32H563xx)
@@ -37,6 +37,12 @@ elseif(UBIQOS_STM32_BOARD STREQUAL "nucleo-h503rb")
     set(STM32_LD     stm32h503rb.ld)
     set(STM32_ETH    OFF)                  # the part has no Ethernet MAC
     set(STM32_NODE   ON)                   # 32 kB: a node, not a computer
+elseif(UBIQOS_STM32_BOARD STREQUAL "feather-f405")
+    set(STM32_FAMILY f4)
+    set(STM32_CHIP   STM32F405xx)
+    set(STM32_LD     stm32f405rg.ld)
+    set(STM32_ETH    OFF)
+    set(STM32_NODE   OFF)
 else()
     message(FATAL_ERROR "UBIQOS_STM32_BOARD: no board called ${UBIQOS_STM32_BOARD}")
 endif()
@@ -52,6 +58,9 @@ if(STM32_FAMILY STREQUAL "h5")
     # secure state, and this one, with TrustZone off, has none. softfp keeps a
     # module built for one calling the same way on the other.
     set(STM32_CPU_FLAGS -mcpu=cortex-m33 -mthumb -march=armv8-m.main+fp+dsp -mfloat-abi=softfp)
+elseif(STM32_FAMILY STREQUAL "f4")
+    # A Cortex-M4 and its single-precision FPU, softfp for the same reason.
+    set(STM32_CPU_FLAGS -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=softfp)
 endif()
 
 # --- The kernel ---------------------------------------------------------------

@@ -24,7 +24,13 @@ static uint64_t k_time_us(void)            { return time_us_64(); }
 static void    *k_mem_alloc(uint32_t n)    { return ubiqos_mem_alloc(n); }
 static void    *k_bulk_alloc(uint32_t n)   { return ubiqos_mem_alloc(n); }   // no PSRAM: one pool
 static void     k_putc(char c)             { ubiqos_putc(c); }
+#if UBIQOS_STM32_F4
+// The F4's core-coupled memory, where the kernel keeps its own data, is on the
+// CPU's data bus only: no DMA reaches it. Everything else is SRAM.
+static bool     k_dma_safe(const void *p)  { return (uintptr_t)p >= 0x20000000u; }
+#else
 static bool     k_dma_safe(const void *p)  { (void)p; return true; }         // all of it is SRAM
+#endif
 static void     k_sleep_ms(uint32_t ms)    { busy_wait_ms(ms); }
 static uint32_t k_clock_hz(void)           { return stm32_sysclk_hz; }
 static void    *k_driver_alloc(uint32_t n)
