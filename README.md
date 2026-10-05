@@ -101,9 +101,10 @@ Use a separate build directory for each. Only Release builds fit in RAM, and
 that is forced. clang, `ldc2`, `zig` and `rustc` are used for modules in those
 languages when they are found, and skipped when they are not.
 
-### STM32H5
+### STM32
 
-The NUCLEO boards have a build of their own in `port/stm32`. It needs no Pico
+The NUCLEO boards have a build of their own in `port/stm32`, with what every
+STM32 shares in `common/` and what one family needs in `h5/`. It needs no Pico
 SDK -- only the Arm toolchain and lwIP, both taken from where the SDK's
 installer put them:
 
@@ -112,8 +113,8 @@ cmake -G Ninja -S port/stm32 -B build-h5
 ninja -C build-h5
 ```
 
-That is the NUCLEO-H563ZI; add `-DUBIQOS_H5_BOARD=nucleo-h503rb` for the
-H503. The result is the kernel, `build-h5/ubiqos_h5.elf`. The programs are the
+That is the NUCLEO-H563ZI; add `-DUBIQOS_STM32_BOARD=nucleo-h503rb` for the
+H503. The result is the kernel, `build-h5/ubiqos_stm32.elf`. The programs are the
 same modules an RP2350 Arm build makes -- a module is the same bytes on both
 chips -- put into an image of their own with `make_flash_image.py`:
 
