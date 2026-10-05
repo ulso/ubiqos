@@ -19,7 +19,7 @@ WebAssembly.
 | **iLabs Challenger+ RP2350 WiFi6/BLE5** (RP2350A) | the USB console and network (192.168.8.1 on the cable), 8 MB PSRAM, WiFi and Bluetooth LE through the ESP32-C6 -- which must run UbiqOS's ESP-Hosted build, `esp/challenger-c6/build.sh`, instead of the AT firmware it ships with. No card, so its boot script is in flash: it starts as a BLE-to-WiFi bridge that shows HibouAir sensors on a web page -- see [docs/challenger.md](docs/challenger.md) |
 | **ST NUCLEO-H563ZI** (STM32H563) | Ethernet with lwIP, mDNS and NTP, `sshd`, `fetch`, the key store, the console on the ST-LINK's serial port; programs run in place from flash |
 | **ST NUCLEO-H503RB** (STM32H503, 32 kB RAM) | the node profile: the scheduler, messages and driver modules, with no files and no shell; `init` starts what `inittab` names and starts it again when it fails |
-| **Adafruit Feather STM32F405 Express** (Cortex-M4) | the network on the USB cable (CDC-NCM, DHCP for the computer, mDNS), `sshd`, `httpd` and `netcon` on it, the shell and the kernel's log on a serial console (USART3 on TX/RX), the key store and settings in flash, programs run in place from flash; no card or I2C yet |
+| **Adafruit Feather STM32F405 Express** (Cortex-M4) | the network on the USB cable (CDC-NCM, DHCP for the computer, mDNS), `sshd`, `httpd` and `netcon` on it, `/dev/i2c` on the STEMMA QT connector and over HTTP at `/api/i2c`, the shell and the kernel's log on a serial console (USART3 on TX/RX), the key store and settings in flash, programs run in place from flash; no card yet |
 
 ## What exists
 
