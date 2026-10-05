@@ -278,6 +278,141 @@ static uint32_t status_json(char *out, uint32_t max) {
     return n;
 }
 
+// --- /api/i2c ------------------------------------------------------------------
+//
+// The I2C bus over HTTP, for an app on a phone: one transaction per request,
+// the same transaction /dev/i2c takes, in the URL.
+//
+//   /api/i2c                       scan: {"ok":true,"devices":[119]}
+//   /api/i2c?addr=77&w=d0&n=1      write d0, read one byte back:
+//                                  {"ok":true,"addr":119,"data":[97]}
+//   /api/i2c?addr=77&w=7202        write 72 02 and read nothing
+//
+// addr and w are hex, as a datasheet writes them -- "0x77" or "77", and w the
+// bytes back to back -- and n is a decimal count, 0 to 64. The data comes back
+// as numbers, which is what JSON has. A device that does not answer is
+// {"ok":false,"error":"no answer"} with 200, since the request was a good one;
+// a request that is not one is 400, and a board with no bus is 503.
+#define I2C_WRITE_MAX 32
+
+static int hexval(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// The value of name= in the query, and its length; 0 when it is not there.
+static const char *param(const char *query, const char *name, uint32_t *len) {
+    for (const char *q = query; q && *q; ) {
+        const char *s = q;
+        uint32_t k = 0;
+        while (name[k] && s[k] == name[k]) k++;
+        const char *end = q;
+        while (*end && *end != '&') end++;
+        if (!name[k] && s[k] == '=') { *len = (uint32_t)(end - (s + k + 1)); return s + k + 1; }
+        q = *end ? end + 1 : 0;
+    }
+    return 0;
+}
+
+static bool parse_hex(const char *s, uint32_t n, uint32_t *out) {
+    if (n >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { s += 2; n -= 2; }
+    if (!n || n > 8) return false;
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const int d = hexval(s[i]);
+        if (d < 0) return false;
+        v = v * 16u + (uint32_t)d;
+    }
+    *out = v;
+    return true;
+}
+
+static void send_json(int32_t sock, const char *status, const char *body, uint32_t len) {
+    send_head(sock, status, "application/json", len);
+    send_all(sock, (const uint8_t *)body, len);
+}
+
+static uint32_t put_str(char *out, uint32_t n, const char *s) {
+    while (*s) out[n++] = *s++;
+    return n;
+}
+
+static void api_i2c(int32_t sock, const char *query, char *out) {
+    uint32_t n = 0;
+    const int32_t fd = ubiqos_open("/dev/i2c");
+    if (fd < 0) {
+        n = put_str(out, 0, "{\"ok\":false,\"error\":\"no I2C bus on this board\"}");
+        send_json(sock, "503 Service Unavailable", out, n);
+        return;
+    }
+
+    uint32_t alen = 0, wlen = 0, nlen = 0;
+    const char *a = param(query, "addr", &alen);
+    const char *w = param(query, "w", &wlen);
+    const char *c = param(query, "n", &nlen);
+
+    uint8_t x[4 + I2C_WRITE_MAX];
+    if (!a) {
+        // A scan: address each in turn and ask for a byte, as `i2c` does.
+        n = put_str(out, 0, "{\"ok\":true,\"devices\":[");
+        bool first = true;
+        for (uint32_t addr = 0x08; addr <= 0x77; addr++) {
+            x[0] = (uint8_t)addr; x[1] = 0; x[2] = 1; x[3] = 0;
+            if (ubiqos_write(fd, x, 4) < 0) continue;
+            if (!first) out[n++] = ',';
+            n += u32_to_dec(addr, out + n);
+            first = false;
+        }
+        n = put_str(out, n, "]}");
+        ubiqos_close(fd);
+        send_json(sock, "200 OK", out, n);
+        return;
+    }
+
+    uint32_t addr = 0, count = 0;
+    bool good = parse_hex(a, alen, &addr) && addr <= 0x7Fu && wlen % 2 == 0 && wlen / 2 <= I2C_WRITE_MAX;
+    for (uint32_t i = 0; good && i < wlen / 2; i++) {
+        const int hi = hexval(w[2 * i]), lo = hexval(w[2 * i + 1]);
+        if (hi < 0 || lo < 0) good = false;
+        else x[4 + i] = (uint8_t)(hi << 4 | lo);
+    }
+    for (uint32_t i = 0; good && c && i < nlen; i++) {
+        if (c[i] < '0' || c[i] > '9') good = false;
+        else count = count * 10u + (uint32_t)(c[i] - '0');
+    }
+    if (!good || count > UBIQOS_I2C_MAX_READ || (!wlen && !count)) {
+        ubiqos_close(fd);
+        n = put_str(out, 0, "{\"ok\":false,\"error\":\"addr is hex, w is hex bytes (up to 32), n is 0 to 64, and one of w and n is needed\"}");
+        send_json(sock, "400 Bad Request", out, n);
+        return;
+    }
+
+    x[0] = (uint8_t)addr; x[1] = (uint8_t)(wlen / 2); x[2] = (uint8_t)count; x[3] = 0;
+    if (ubiqos_write(fd, x, 4 + wlen / 2) < 0) {
+        ubiqos_close(fd);
+        n = put_str(out, 0, "{\"ok\":false,\"addr\":");
+        n += u32_to_dec(addr, out + n);
+        n = put_str(out, n, ",\"error\":\"no answer\"}");
+        send_json(sock, "200 OK", out, n);
+        return;
+    }
+    uint8_t got[UBIQOS_I2C_MAX_READ];
+    const int32_t r = count ? ubiqos_read(fd, got, count) : 0;
+    ubiqos_close(fd);
+
+    n = put_str(out, 0, "{\"ok\":true,\"addr\":");
+    n += u32_to_dec(addr, out + n);
+    n = put_str(out, n, ",\"data\":[");
+    for (int32_t i = 0; i < r; i++) {
+        if (i) out[n++] = ',';
+        n += u32_to_dec(got[i], out + n);
+    }
+    n = put_str(out, n, "]}");
+    send_json(sock, "200 OK", out, n);
+}
+
 // The card's root as a page of links. Written with the same directory call ls
 // uses, so what the browser lists and what the console lists cannot disagree.
 static uint32_t index_page(char *out, uint32_t max) {
@@ -339,9 +474,9 @@ static bool send_file(int32_t sock, const char *path, const char *as_type) {
 }
 
 static void serve(int32_t sock, const char *req) {
-    // GET and nothing else. A machine that cannot be written to over the
-    // network is a machine one fewer thing can go wrong with, and nothing here
-    // wants a PUT.
+    // GET and nothing else: nothing here wants a PUT. Not quite read-only any
+    // more, though -- /api/i2c can write to a device on the bus, because that
+    // is what it is for: a phone's app driving a sensor over the network.
     if (!starts(req, "GET ")) {
         const char *msg = "method not allowed";
         send_head(sock, "405 Method Not Allowed", "text/plain", 18);
@@ -357,8 +492,13 @@ static void serve(int32_t sock, const char *req) {
 
     char page[PAGE_MAX];
 
+    if (starts(path, "/api/i2c") && (path[8] == 0 || path[8] == '?')) {
+        api_i2c(sock, path[8] == '?' ? path + 9 : "", page);
+        return;
+    }
+
     // --- /api ---------------------------------------------------------------
-    // Two endpoints and no more. The sensors are not read here: the scanner
+    // Two endpoints besides /api/i2c above. The sensors are not read here: the scanner
     // owns the dongle and publishes what it has seen to /tmp/sensors.json, and
     // this serves that file like any other. Two readers of one dongle is what
     // that arrangement exists to prevent, and it means /api/sensors needed no
