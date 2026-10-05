@@ -172,6 +172,7 @@ static void unattended(const char *what) {
                               : "off: the store no longer opens from a file, and " UBIQOS_KEY_FILE " is gone\r\n");
     else if (rc == -8) say("key: no card to write " UBIQOS_KEY_FILE " to, or it would not take it\r\n");
     else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
+    else if (rc == -7) say("key: not enough free memory to write the store; stop a program and try again\r\n");
     else               say("key: the write did not take\r\n");
 }
 
@@ -197,6 +198,7 @@ static void unlock(void) {
     }
     if (rc == -6)      say("key: that is not the passphrase, or the store has been changed\r\n");
     else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
+    else if (rc == -7) say("key: not enough free memory to open the store; stop a program and try again\r\n");
     else               say("key: could not open the store\r\n");
 }
 
@@ -327,5 +329,6 @@ void module_main(int argc, char **argv) {
     else if (rc == -1) say("key: no such key, or the value is too long\r\n");
     else if (rc == -2) say("key: the store is full\r\n");
     else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
+    else if (rc == -7) say("key: not enough free memory to write the store; stop a program and try again\r\n");
     else               say("key: the write did not take\r\n");
 }

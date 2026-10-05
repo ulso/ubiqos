@@ -70,6 +70,18 @@ typedef struct {
 
 _Static_assert(sizeof(key_store_t) <= FLASH_SECTOR_SIZE, "the store must fit a sector");
 
+// What is written: the store, rounded up to the unit the flash programs in.
+// The rest of the sector is left erased. On the RP2350 that is the sector all
+// but a few bytes; on the STM32F4, whose small sectors are 16 kB, it is a
+// quarter of one -- and the image is borrowed from the pool while it is
+// written, where 16 kB was more than the Feather STM32F405 had free with sshd
+// running.
+#define KEYS_IMAGE_BYTES \
+    ((sizeof(key_store_t) + FLASH_PAGE_SIZE - 1u) / FLASH_PAGE_SIZE * FLASH_PAGE_SIZE)
+
+// No room in the pool for the image: told apart from a bad name, which -1 is.
+#define KEYS_ENOMEM (-7)
+
 static const key_store_t *live;      // in flash, or NULL when there is none
 
 // Unlocked means these exist: the derived key and the records in the clear,
@@ -288,20 +300,22 @@ static void release_core1(void)
 static uint32_t pending_wrap;
 static uint8_t  wrap_nonce_new[12], wrap_tag_new[16], wrapped_new[32];
 
-// What goes to flash is a whole sector, so the image is one: allocated at
-// FLASH_SECTOR_SIZE and zeroed. It used to be allocated at the size of the
-// store and programmed as a sector, which wrote whatever the heap held after
-// it -- somebody else's memory, in the clear -- into the tail of every copy.
+// The image is allocated at KEYS_IMAGE_BYTES, zeroed, and programmed at that
+// size and no more. It once was allocated at the size of the store and
+// programmed as a whole sector, which wrote whatever the heap held after it --
+// somebody else's memory, in the clear -- into the tail of every copy; the
+// cure then was a sector-sized image, and the cure now is to program only what
+// was allocated.
 static key_store_t *new_image(void)
 {
-    key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, FLASH_SECTOR_SIZE);
-    if (img) memset(img, 0, FLASH_SECTOR_SIZE);
+    key_store_t *img = ubiqos_tlsf_malloc(ubiqos_mem_pool, KEYS_IMAGE_BYTES);
+    if (img) memset(img, 0, KEYS_IMAGE_BYTES);
     return img;
 }
 
 static void drop_image(key_store_t *img)
 {
-    memset(img, 0, FLASH_SECTOR_SIZE);
+    memset(img, 0, KEYS_IMAGE_BYTES);
     ubiqos_tlsf_free(ubiqos_mem_pool, img);
 }
 
@@ -311,7 +325,7 @@ static void __not_in_flash_func(do_write)(uint32_t offset, const uint8_t *data)
 {
     const uint32_t st = save_and_disable_interrupts();
     flash_range_erase(offset, FLASH_SECTOR_SIZE);
-    if (data) flash_range_program(offset, data, FLASH_SECTOR_SIZE);
+    if (data) flash_range_program(offset, data, KEYS_IMAGE_BYTES);
     restore_interrupts(st);
 }
 
@@ -323,7 +337,7 @@ static int32_t seal_and_write(void)
     if (!plain || !live) return -1;
 
     key_store_t *img = new_image();
-    if (!img) return -1;
+    if (!img) return KEYS_ENOMEM;
     memcpy(img, live, sizeof *img);
     img->seq = live->seq + 1;
     // The key file's wrapping is the store's key under another key; neither
@@ -436,13 +450,13 @@ int32_t ubiqos_keys_unlock(const uint8_t *pass, uint32_t plen)
     if (plain) return 0;                         // already open
 
     key_plain_t *fresh = ubiqos_tlsf_malloc(ubiqos_mem_pool, sizeof *fresh);
-    if (!fresh) return -1;
+    if (!fresh) return KEYS_ENOMEM;
 
     if (!live) {
         // No store yet: this passphrase becomes the one, and an empty store is
         // written so that the next unlock has something to check against.
         key_store_t *img = new_image();
-        if (!img) { ubiqos_tlsf_free(ubiqos_mem_pool, fresh); return -1; }
+        if (!img) { ubiqos_tlsf_free(ubiqos_mem_pool, fresh); return KEYS_ENOMEM; }
         img->magic  = KEYS_MAGIC;
         img->format = KEYS_FORMAT;
         img->seq    = 1;
