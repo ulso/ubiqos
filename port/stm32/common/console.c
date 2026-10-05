@@ -1,6 +1,7 @@
-// The serial console: USART3, on the pins the board header names, which both
-// Nucleo boards wire to the ST-LINK's virtual serial port -- PD8 and PD9 with
-// AF7 on the NUCLEO-H563ZI, PA4 and PA3 with AF13 on the NUCLEO-H503RB.
+// The serial console: USART3, on the pins the board header names -- on both
+// Nucleo boards the ST-LINK's virtual serial port, PD8 and PD9 with AF7 on the
+// NUCLEO-H563ZI, PA4 and PA3 with AF13 on the NUCLEO-H503RB. The registers are
+// the family's, in its uart.h; this file is the same for every family.
 //
 // Two rings and one interrupt. The shell's output and the kernel's own lines
 // both go into the transmit ring -- the board has one serial line to the
@@ -13,16 +14,14 @@
 // interrupt to make room, so it sends the oldest byte itself. That is what lets
 // the kernel print from a trap, and from before interrupts are on at all.
 
-#include "stm32h5xx.h"
 #include "port.h"
+#include "uart.h"
 #include "../../../common/ubiqos_abi.h"
 #include "board.h"
 
 #define CONSOLE_TX_PIN UBIQOS_STM32_CONSOLE_TX
 #define CONSOLE_RX_PIN UBIQOS_STM32_CONSOLE_RX
 #define CONSOLE_AF     UBIQOS_STM32_CONSOLE_AF
-#define CONSOLE_GPIO   ((GPIO_TypeDef *)(GPIOA_BASE + (UBIQOS_STM32_CONSOLE_PORT - 'A') * 0x400u))
-#define CONSOLE_GPIOEN (1u << (UBIQOS_STM32_CONSOLE_PORT - 'A'))   // RCC_AHB2ENR, A=0 to I=8
 
 // Powers of two: the indices wrap by mask. A board short of RAM names a
 // smaller transmit ring; a line or two is enough to keep the shell from waiting.
@@ -53,17 +52,13 @@ static void pin_af(GPIO_TypeDef *g, uint32_t pin, uint32_t af)
 
 void stm32_console_init(uint32_t baud)
 {
-    RCC->AHB2ENR  |= CONSOLE_GPIOEN;
-    RCC->APB1LENR |= RCC_APB1LENR_USART3EN;
-    (void)RCC->APB1LENR;              // the enable takes effect before the first access
-
+    uart_clocks_on();
     pin_af(CONSOLE_GPIO, CONSOLE_TX_PIN, CONSOLE_AF);
     pin_af(CONSOLE_GPIO, CONSOLE_RX_PIN, CONSOLE_AF);
 
-    // USART3's kernel clock is PCLK1 out of reset (CCIPR1.USART3SEL = 0).
-    USART3->CR1 = 0;
-    USART3->BRR = (stm32_pclk1_hz + baud / 2u) / baud;
-    USART3->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE_RXFNEIE;
+    // Sixteen times oversampling on both families, where the divider is the
+    // bus clock over the rate.
+    uart_start((stm32_pclk1_hz + baud / 2u) / baud);
 
     // With the other devices, below the kernel's critical sections.
     NVIC_SetPriority(USART3_IRQn, 0x80u >> (8u - __NVIC_PRIO_BITS));
@@ -82,24 +77,22 @@ static bool irq_can_run(void)
 
 static void send_oldest(void)
 {
-    while (!(USART3->ISR & USART_ISR_TXE_TXFNF)) { }
-    USART3->TDR = tx_ring[tx_tail & (TX_SIZE - 1u)];
+    while (!uart_can_send()) { }
+    uart_send(tx_ring[tx_tail & (TX_SIZE - 1u)]);
     tx_tail++;
 }
 
 void USART3_IRQHandler(void)
 {
-    const uint32_t isr = USART3->ISR;
-    if (isr & USART_ISR_ORE) USART3->ICR = USART_ICR_ORECF;
-    if (isr & USART_ISR_RXNE_RXFNE) {
-        const uint8_t c = (uint8_t)USART3->RDR;
-        if (rx_head - rx_tail < RX_SIZE) rx_ring[rx_head++ & (RX_SIZE - 1u)] = c;
+    const int c = uart_receive();
+    if (c >= 0) {
+        if (rx_head - rx_tail < RX_SIZE) rx_ring[rx_head++ & (RX_SIZE - 1u)] = (uint8_t)c;
         else rx_dropped++;
         if (c == 0x03) intr_seen = true;
     }
-    if ((USART3->CR1 & USART_CR1_TXEIE_TXFNFIE) && (isr & USART_ISR_TXE_TXFNF)) {
-        if (tx_head != tx_tail) USART3->TDR = tx_ring[tx_tail++ & (TX_SIZE - 1u)];
-        else USART3->CR1 &= ~USART_CR1_TXEIE_TXFNFIE;
+    if (uart_send_irq_on() && uart_can_send()) {
+        if (tx_head != tx_tail) uart_send(tx_ring[tx_tail++ & (TX_SIZE - 1u)]);
+        else uart_send_irq(false);
     }
 }
 
@@ -112,7 +105,7 @@ uint32_t stm32_console_write(const uint8_t *buf, uint32_t len)
     __disable_irq();
     uint32_t n = 0;
     while (n < len && tx_head - tx_tail < TX_SIZE) tx_ring[tx_head++ & (TX_SIZE - 1u)] = buf[n++];
-    if (n) USART3->CR1 |= USART_CR1_TXEIE_TXFNFIE;
+    if (n) uart_send_irq(true);
     __set_PRIMASK(st);
     return n;
 }
@@ -202,7 +195,7 @@ static int32_t term_readable(void) { return (int32_t)stm32_console_available(); 
 static int32_t term_writable(void) { return (int32_t)(stm32_console_room() / 2u); }
 
 const ubiqos_driver_t stm32_term_driver = {
-    .module_name = "h5uart",
+    .module_name = STM32_TERM_DRIVER_NAME,
     .configure = term_configure,
     .open = term_open, .write = term_write, .read = term_read, .close = term_close,
     .readable = term_readable, .writable = term_writable,

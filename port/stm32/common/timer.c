@@ -1,4 +1,4 @@
-// Time on the STM32H5: the free-running microsecond clock and the tick.
+// Time on an STM32: the free-running microsecond clock and the tick.
 //
 // The RP2350 has a 64-bit microsecond timer in hardware, and the kernel was
 // written against one -- time_us_64 in the log's stamps, ubiqos_timer_now in the
@@ -11,7 +11,6 @@
 // functions for that chip. Only the reference clock differs: 1 MHz there, the
 // core clock divided by eight here.
 
-#include "stm32h5xx.h"
 #include "port.h"
 #include "pico/time.h"
 
@@ -26,8 +25,13 @@ static uint32_t tim2_clock_hz(void)
 
 void stm32_time_init(void)
 {
+#if UBIQOS_STM32_H5
     RCC->APB1LENR |= RCC_APB1LENR_TIM2EN;
     (void)RCC->APB1LENR;
+#else
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+    (void)RCC->APB1ENR;
+#endif
 
     TIM2->CR1 = 0;
     TIM2->PSC = tim2_clock_hz() / 1000000u - 1u;

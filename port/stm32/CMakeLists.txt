@@ -97,8 +97,8 @@ add_executable(ubiqos_stm32
     ${K}/arm/stack.c
     ${FAMILY}/startup.c
     ${FAMILY}/clock.c
-    ${FAMILY}/console.c
-    ${FAMILY}/timer.c
+    ${COMMON}/console.c
+    ${COMMON}/timer.c
     ${FAMILY}/sdk.c
     ${COMMON}/stubs.c
     ${COMMON}/kapi.c

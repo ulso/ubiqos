@@ -832,7 +832,7 @@ void ubiqos_kernel_main(void) {
             // On an STM32 the port's own USART driver, built in; the
             // uart module is the RP2350's and its registers are not here.
 #if UBIQOS_CHIP_STM32
-            .desc = { .device_name = "term", .driver_name = "h5uart",
+            .desc = { .device_name = "term", .driver_name = STM32_TERM_DRIVER_NAME,
 #else
             .desc = { .device_name = "term", .driver_name = "uart",
 #endif

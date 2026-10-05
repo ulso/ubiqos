@@ -1,13 +1,17 @@
 // The STM32 port: what the kernel asks of the chip, and nothing else. Each
-// family in its own directory answers it -- h5/ for now.
+// family in its own directory answers it: h5/ and f4/.
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
 #if UBIQOS_STM32_H5
 #include "stm32h5xx.h"
+#define STM32_TERM_DRIVER_NAME "h5uart"     // the console's built-in driver, by name
+#elif UBIQOS_STM32_F4
+#include "stm32f4xx.h"
+#define STM32_TERM_DRIVER_NAME "f4uart"
 #else
-#error "port.h: no STM32 family -- the build defines UBIQOS_STM32_H5"
+#error "port.h: no STM32 family -- the build defines UBIQOS_STM32_H5 or _F4"
 #endif
 
 // The system clock after stm32_clock_init: what the board header asks for, from
