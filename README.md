@@ -1,7 +1,7 @@
 # UbiqOS
 
 A real-time operating system for the RP2350, and since September 2026 for the
-STM32H5 too: programs are **position-independent modules**, one copy of the
+STM32H5 and STM32F4 too: programs are **position-independent modules**, one copy of the
 code is shared by every process running it, and a module runs where it lies --
 straight out of flash, or from wherever it was loaded off the SD card.
 
@@ -19,6 +19,7 @@ WebAssembly.
 | **iLabs Challenger+ RP2350 WiFi6/BLE5** (RP2350A) | the USB console and network (192.168.8.1 on the cable), 8 MB PSRAM, WiFi and Bluetooth LE through the ESP32-C6 -- which must run UbiqOS's ESP-Hosted build, `esp/challenger-c6/build.sh`, instead of the AT firmware it ships with. No card, so its boot script is in flash: it starts as a BLE-to-WiFi bridge that shows HibouAir sensors on a web page -- see [docs/challenger.md](docs/challenger.md) |
 | **ST NUCLEO-H563ZI** (STM32H563) | Ethernet with lwIP, mDNS and NTP, `sshd`, `fetch`, the key store, the console on the ST-LINK's serial port; programs run in place from flash |
 | **ST NUCLEO-H503RB** (STM32H503, 32 kB RAM) | the node profile: the scheduler, messages and driver modules, with no files and no shell; `init` starts what `inittab` names and starts it again when it fails |
+| **Adafruit Feather STM32F405 Express** (Cortex-M4) | the shell on a serial console (USART3 on TX/RX), the key store and settings in flash, programs run in place from flash; no USB, card or I2C yet |
 
 ## What exists
 
@@ -103,8 +104,8 @@ languages when they are found, and skipped when they are not.
 
 ### STM32
 
-The NUCLEO boards have a build of their own in `port/stm32`, with what every
-STM32 shares in `common/` and what one family needs in `h5/`. It needs no Pico
+The STM32 boards have a build of their own in `port/stm32`, with what every
+STM32 shares in `common/` and what one family needs in `h5/` or `f4/`. It needs no Pico
 SDK -- only the Arm toolchain and lwIP, both taken from where the SDK's
 installer put them:
 
@@ -114,9 +115,12 @@ ninja -C build-h5
 ```
 
 That is the NUCLEO-H563ZI; add `-DUBIQOS_STM32_BOARD=nucleo-h503rb` for the
-H503. The result is the kernel, `build-h5/ubiqos_stm32.elf`. The programs are the
-same modules an RP2350 Arm build makes -- a module is the same bytes on both
-chips -- put into an image of their own with `make_flash_image.py`:
+H503 or `-DUBIQOS_STM32_BOARD=feather-f405` for the Feather. The result is the
+kernel, `build-h5/ubiqos_stm32.elf`. The programs are the same modules an
+RP2350 Arm build makes -- a module is the same bytes on both chips -- put into
+an image of their own with `make_flash_image.py`. The Feather's Cortex-M4 runs
+them too, except what uses an FPv5 instruction the M4 does not have: of the
+modules today, only `wasm`.
 
 ```bash
 # NUCLEO-H563ZI: programs at 0x08040000, their data in a fixed 64 kB of SRAM
@@ -124,10 +128,14 @@ python3 make_flash_image.py --base 0x08040000 --data-base 0x20090000 \
     --data-size 0x10000 h5-modules.bin build/sh.mod build/ls.mod ...
 # NUCLEO-H503RB: at 0x08010000, 48 kB at most
 python3 make_flash_image.py --base 0x08010000 h503-modules.bin build/init.mod build/inittab.mod ...
+# Feather STM32F405: at 0x08040000, 768 kB at most
+python3 make_flash_image.py --base 0x08040000 f405-modules.bin build/sh.mod build/ls.mod ...
 ```
 
-Both go on with the ST-LINK, for example with probe-rs: the ELF as it is, and
-the image with `--binary-format bin --base-address` set to the same address.
+The NUCLEO boards' go on with the ST-LINK, for example with probe-rs: the ELF
+as it is, and the image with `--binary-format bin --base-address` set to the
+same address. The Feather has no debugger of its own; a J-Link on its SWD pads
+does the same, with `loadfile` for the ELF and `loadbin` for the image.
 
 ## Documentation
 
