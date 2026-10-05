@@ -68,9 +68,12 @@ UBIQOS_MEM_SIZE(32768);
 // had no room for its second command. Measured there after a login and a
 // session, the heap's high-water mark was 2800 bytes: sshd's large state is
 // static. It was 64 kB, twenty times that, until the Feather STM32F405, whose
-// whole pool is 99 kB: with the 48 kB above it would not start at all. 16 kB
-// is still nearly six times what was ever used.
-uint32_t ubiqos_heap_bytes = 16u * 1024u;
+// whole pool is 99 kB: with the 48 kB above it would not start at all. Then 16
+// kB, of which a key exchange used about 2 kB there; now 8, nearly three times
+// the most ever seen. Running out is a malloc that answers NULL and a session
+// that ends, not memory written over -- which is why this can be cut closer
+// than the stack above, where an overflow on the F405 is caught by nothing.
+uint32_t ubiqos_heap_bytes = 8u * 1024u;
 
 #define DEFAULT_PORT 22
 #define NET_WAIT_S   30
@@ -1564,7 +1567,7 @@ int main(int argc, char **argv) {
         // pool's hashing is what asks first -- so a pool too short for the heap
         // shows up here, and used to be reported as the generator's fault.
         say(seeded == MBEDTLS_ERR_MD_ALLOC_FAILED
-                ? "sshd: no room in the memory pool for its 16 kB heap\r\n"
+                ? "sshd: no room in the memory pool for its 8 kB heap\r\n"
                 : "sshd: no entropy\r\n");
         return 0;
     }
