@@ -273,6 +273,26 @@ static uint32_t beam_epoch;     // active lines completed in whole frames
 static uint32_t beam_last;      // the line seen last time, to catch the wrap
 static uint32_t rendered_to;    // the next line to build, on the same scale
 
+// How far beam_epoch and rendered_to count before both are taken back by the
+// same amount: a whole number of frames, about five hours of them.
+//
+// They used to count for ever, and 32 bits of active lines is 43 hours of
+// them. At the wrap the target, now + 46, sat just under 2^32 while
+// rendered_to went past it to 0 inside the loop -- and the loop then had four
+// billion lines to build. On 7 Oct 2026 a Fruit Jam 45 hours up was found
+// with beam_epoch at FFFFFF00, one pump that had never ended, the tick
+// starved and the screen half-drawn. Taking both back together leaves their
+// difference alone, and a multiple of V_ACTIVE is a multiple of LINE_BUFS and
+// of the glyph height too, so every line keeps its buffer and its glyph row.
+// UBIQOS_VIDEO_REBASE_FRAMES is there to be made small in a test build, so
+// that the rebase happens many times a second rather than once in five hours.
+#ifndef UBIQOS_VIDEO_REBASE_FRAMES
+#define UBIQOS_VIDEO_REBASE_FRAMES 1048576u
+#endif
+#define REBASE_LINES (V_ACTIVE * UBIQOS_VIDEO_REBASE_FRAMES)
+_Static_assert(REBASE_LINES % LINE_BUFS == 0, "a rebase must keep each line's buffer");
+_Static_assert(REBASE_LINES % UBIQOS_CELL_H == 0, "a rebase must keep the bands aligned");
+
 uint32_t ubiqos_video_buffers(void) { return LINE_BUFS; }
 
 // Everything the one measurement needs, in the order vidstat prints it. beam
@@ -338,10 +358,22 @@ static void video_pump(void)
         rendered_to = now;
     }
 
+    // rendered_to is not behind now here, so both come down together.
+    if (beam_epoch >= REBASE_LINES) {
+        beam_epoch  -= REBASE_LINES;
+        rendered_to -= REBASE_LINES;
+        now         -= REBASE_LINES;
+    }
+
     // One buffer of margin at each end: the one being played, and the one the
     // DMA may have already latched the address of.
+    //
+    // And never more than a ring's worth in one pump, whatever the counters
+    // say. A pump that cannot end takes the machine with it -- this one runs
+    // above everything the kernel can mask -- where a pump that stops short
+    // costs, at worst, a frame of wrong lines.
     uint32_t target = now + LINE_BUFS - 2;
-    while (rendered_to < target) {
+    for (uint32_t built = 0; rendered_to < target && built < LINE_BUFS; ) {
         uint32_t y = rendered_to % V_ACTIVE;
         uint8_t *buf = linebuf[rendered_to % LINE_BUFS];
 
@@ -362,6 +394,7 @@ static void video_pump(void)
             rendered_to += UBIQOS_CELL_H;
             ubiqos_video_lines += UBIQOS_CELL_H;
             bands_done++;
+            built += UBIQOS_CELL_H;
             continue;
         }
 
@@ -369,6 +402,7 @@ static void video_pump(void)
         rendered_to++;
         singles_done++;
         ubiqos_video_lines++;
+        built++;
     }
     ubiqos_video_pumps++;
 
