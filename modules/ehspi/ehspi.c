@@ -369,6 +369,8 @@ static uint32_t ping_came_us;       // theirs arrived; 0 when answered
 #define EVENT_STA_DISCONNECTED 776u        // Event_StaDisconnected, rpc_v2.proto
 
 static volatile bool sta_lost;
+static volatile uint32_t lost_reason;   // the chip's wifi_err_reason_t, 0 for none told
+static volatile int32_t  lost_rssi;     // the signal when it went, 0 for none told
 static volatile bool cp_restarted;
 static uint32_t hellos;
 static uint32_t get_varint(const uint8_t *p, uint32_t len, uint32_t *at);
@@ -395,7 +397,79 @@ static void watch_event(const uint8_t *f, uint32_t len)
         if ((tag >> 3) == 1)      type = v;
         else if ((tag >> 3) == 2) id = v;
     }
-    if (type == RPC_EVENT && id == EVENT_STA_DISCONNECTED) sta_lost = true;
+    if (type != RPC_EVENT || id != EVENT_STA_DISCONNECTED) return;
+
+    // And why: Rpc.event_sta_disconnected (776) holds sta_disconnected (2),
+    // which holds reason (4) and rssi (5). Skipped past whatever else comes.
+    lost_reason = 0;
+    lost_rssi = 0;
+    while (at < dlen) {
+        const uint32_t tag = get_varint(b, dlen, &at);
+        if ((tag & 7u) == 0) { (void)get_varint(b, dlen, &at); continue; }
+        if ((tag & 7u) != 2) break;
+        const uint32_t n = get_varint(b, dlen, &at);
+        if (n > dlen - at) break;
+        if ((tag >> 3) == EVENT_STA_DISCONNECTED) {
+            const uint8_t *e = b + at;
+            for (uint32_t ea = 0; ea < n; ) {
+                const uint32_t et = get_varint(e, n, &ea);
+                if ((et & 7u) == 0) { (void)get_varint(e, n, &ea); continue; }
+                if ((et & 7u) != 2) break;
+                const uint32_t en = get_varint(e, n, &ea);
+                if (en > n - ea) break;
+                if ((et >> 3) == 2) {
+                    const uint8_t *d = e + ea;
+                    for (uint32_t da = 0; da < en; ) {
+                        const uint32_t dt = get_varint(d, en, &da);
+                        if ((dt & 7u) == 0) {
+                            const uint32_t v = get_varint(d, en, &da);
+                            if ((dt >> 3) == 4) lost_reason = v;
+                            else if ((dt >> 3) == 5) lost_rssi = (int32_t)v;
+                        } else if ((dt & 7u) == 2) {
+                            da += get_varint(d, en, &da);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                ea += en;
+            }
+        }
+        at += n;
+    }
+    sta_lost = true;
+}
+
+// The reasons the chip gives most, in words: ESP-IDF's wifi_err_reason_t,
+// which takes 802.11's own reason codes and adds its own from 200 up. The
+// rest are said as the number, to be looked up. What matters most is who
+// broke it off: the access point sending us away (3), the chip leaving (8 --
+// `ehrpc drop` gives it), or nothing heard from the access point at all (200).
+static const char *reason_words(uint32_t r)
+{
+    switch (r) {
+    case 1:   return "unspecified";
+    case 2:   return "authentication expired";
+    case 3:   return "the access point deauthenticated us";
+    case 4:   return "disassociated for inactivity";
+    case 5:   return "the access point has too many stations";
+    case 6:   return "not authenticated";
+    case 7:   return "not associated";
+    case 8:   return "disassociated, leaving";
+    case 15:  return "the 4-way handshake timed out";
+    case 34:  return "too many frames unacknowledged";
+    case 39:  return "timeout";
+    case 200: return "no beacons heard from the access point";
+    case 201: return "no access point found";
+    case 202: return "authentication failed";
+    case 203: return "association failed";
+    case 204: return "handshake timed out";
+    case 205: return "connection failed";
+    case 206: return "the access point's clock was reset";
+    case 207: return "roaming";
+    case 209: return "SA query timed out";
+    default:  return 0;
+    }
 }
 
 static void take_frame(void)
@@ -1113,7 +1187,26 @@ static int associate(void)
 static void rejoin(void)
 {
     join_state = 1;
-    K->print("wifi: the network went away; joining it again\n");
+    K->print("wifi: the network went away");
+    if (lost_reason) {
+        // Why, as the chip said it in the event: whether the access point
+        // sent us away or simply stopped being heard is the first question
+        // after a drop, and nothing but the event can answer it.
+        const char *w = reason_words(lost_reason);
+        K->print(" (reason ");
+        K->print_u32(lost_reason);
+        if (w) { K->print(", "); K->print(w); }
+        if (lost_rssi) {
+            K->print("; signal ");
+            if (lost_rssi < 0) { K->print("-"); K->print_u32((uint32_t)-lost_rssi); }
+            else K->print_u32((uint32_t)lost_rssi);
+            K->print(" dBm");
+        }
+        K->print(")");
+        lost_reason = 0;
+        lost_rssi = 0;
+    }
+    K->print("; joining it again\n");
     uint32_t wait_s = 5, attempts = 0;
     for (;;) {
         if (join_wanted) return;
