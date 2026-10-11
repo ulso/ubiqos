@@ -1393,6 +1393,15 @@ typedef struct {
 // that may be reached over one but not the other has to know which it is.
 #define UBIQOS_SOCK_PEER   14u
 
+// Datagrams: UDP, over IPv4 and, where the build has it, IPv6. A socket that
+// sends and receives whole messages to and from anybody, with an address on
+// each -- see ubiqos_udp_open and the three after it. ADDR turns a name or a
+// numeric address into one of those addresses, asking DNS if it must.
+#define UBIQOS_SOCK_UDP      15u  // arg = (stack << 16) | local port, 0 for any -> socket
+#define UBIQOS_SOCK_SENDTO   16u  // arg = socket, buf = &ubiqos_dgram_t -> bytes sent
+#define UBIQOS_SOCK_RECVFROM 17u  // arg = socket, buf = &ubiqos_dgram_t -> bytes, 0 none
+#define UBIQOS_SOCK_ADDR     18u  // arg = stack << 16, buf = &ubiqos_dgram_t -> 0, 1 asking
+
 // --- WHICH STACK ------------------------------------------------------------
 //
 // There is going to be more than one. The NINA coprocessor carries its own
@@ -1437,6 +1446,34 @@ typedef struct {
     uint8_t *buf;
     uint32_t len;
 } ubiqos_wifi_sock_t;
+
+// Where a datagram goes or came from. One shape for both protocols, so that a
+// program that only answers whoever wrote to it never needs to know which.
+//
+// zone matters only for a link-local IPv6 address -- fe80:: -- which means
+// nothing without saying which interface it is on. A datagram that arrives
+// carries the zone of the interface it came in on, and sending back to the
+// same address goes out of the same one. Zero is "no zone", which is right for
+// every other kind of address.
+#define UBIQOS_AF_INET   4u
+#define UBIQOS_AF_INET6  6u
+typedef struct {
+    uint8_t  family;     // UBIQOS_AF_INET or UBIQOS_AF_INET6
+    uint8_t  zone;       // the interface of a link-local IPv6 address, else 0
+    uint16_t port;       // in host order
+    uint8_t  addr[16];   // in network order; an IPv4 address is the first four
+} ubiqos_sockaddr_t;
+
+// One datagram's worth of arguments: an address, and a buffer with its length.
+// SENDTO reads all three. RECVFROM fills in the address and as much of the
+// datagram as len has room for; the rest of a longer one is lost, which is
+// what a datagram socket does everywhere. ADDR reads data and len as the name
+// to look up, and fills in addr.
+typedef struct {
+    ubiqos_sockaddr_t addr;
+    uint8_t *data;
+    uint32_t len;
+} ubiqos_dgram_t;
 
 // --- A TOUCH SCREEN --------------------------------------------------------
 //
@@ -2275,6 +2312,67 @@ static inline int32_t ubiqos_sock_peer(int32_t sock, uint32_t *out)
     ubiqos_sockbuf_t b = { (uint8_t *)out, sizeof(uint32_t) };
     return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_PEER, (uint32_t)sock,
                           (uint32_t)(uintptr_t)&b);
+}
+
+// --- DATAGRAMS ---------------------------------------------------------------
+//
+// A UDP socket on a stack, on a local port of your choosing or -- with 0 -- one
+// the stack picks. It takes datagrams from IPv4 and IPv6 alike. Closed with
+// ubiqos_sock_close like any other socket, and closed for you if the program
+// ends without.
+static inline int32_t ubiqos_udp_open(uint32_t stack, uint16_t port)
+{
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_UDP, (stack << 16) | port, 0);
+}
+
+// One datagram to `to`. The answer is the bytes sent, 0 if the stack had no
+// room this instant -- ask again -- or -1 if it never will: no route, no such
+// socket, or more than one datagram can carry.
+static inline int32_t ubiqos_udp_sendto(int32_t sock, const ubiqos_sockaddr_t *to,
+                                        const void *data, uint32_t len)
+{
+    ubiqos_dgram_t d = { *to, (uint8_t *)(uintptr_t)data, len };
+    ubiqos_sockbuf_t b = { (uint8_t *)&d, sizeof d };
+    return ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_SENDTO, (uint32_t)sock,
+                          (uint32_t)(uintptr_t)&b);
+}
+
+// The oldest datagram waiting, and who sent it. Zero means none has arrived;
+// it does not wait, like everything in this family. A datagram can be empty,
+// which also reads as 0 -- `from` then has a port in it, and a waiting socket
+// never touches `from`.
+static inline int32_t ubiqos_udp_recvfrom(int32_t sock, ubiqos_sockaddr_t *from,
+                                          void *data, uint32_t room)
+{
+    ubiqos_dgram_t d;
+    d.addr.port = 0;
+    d.data = (uint8_t *)data;
+    d.len = room;
+    ubiqos_sockbuf_t b = { (uint8_t *)&d, sizeof d };
+    int32_t n = ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_RECVFROM, (uint32_t)sock,
+                               (uint32_t)(uintptr_t)&b);
+    if (n >= 0 && from) *from = d.addr;
+    return n;
+}
+
+// A name, or an address written out -- "192.168.7.2", "fe80::1%cable" -- as an
+// address to send to, with `port` in it. 0 when `out` is filled in; 1 while
+// the stack is asking DNS, so ask again in a while; -1 if there is no such
+// name. Names are looked up as IPv4 only. A link-local IPv6 address needs
+// %cable or %wifi after it to say which link; the board has two.
+static inline int32_t ubiqos_net_addr(uint32_t stack, const char *name, uint16_t port,
+                                      ubiqos_sockaddr_t *out)
+{
+    uint32_t n = 0;
+    while (name[n]) n++;
+    ubiqos_dgram_t d;
+    d.data = (uint8_t *)(uintptr_t)name;
+    d.len = n;
+    ubiqos_sockbuf_t b = { (uint8_t *)&d, sizeof d };
+    int32_t rc = ubiqos_syscall(SYS_WIFISOCK, UBIQOS_SOCK_ADDR, stack << 16,
+                                (uint32_t)(uintptr_t)&b);
+    if (rc == 0) { *out = d.addr; out->port = port; }
+    return rc;
 }
 
 static inline int32_t ubiqos_sock_send(int32_t sock, const uint8_t *buf, uint32_t len)

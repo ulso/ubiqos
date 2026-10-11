@@ -16,8 +16,10 @@
 
 #include "../common/ubiqos_abi.h"
 #include "lwip/tcp.h"
+#include "lwip/udp.h"
 #include "lwip/pbuf.h"
 #include "lwip/dns.h"
+#include "lwip/netif.h"
 #include "tlsf.h"
 
 extern tlsf_pool_t ubiqos_bulk_pool;
@@ -56,9 +58,10 @@ int32_t ubiqos_current_pid(void);
 
 typedef struct {
     struct tcp_pcb *pcb;
+    struct udp_pcb *udp;         // a datagram socket's, instead of pcb
     struct pbuf    *rx;          // what has arrived and not been read
     int32_t         owner;       // the pid that asked for it
-    uint16_t        port;        // non-zero only for a listener
+    uint16_t        port;        // a listener's port, or a datagram socket's own
     bool            used;
     bool            gone;        // the peer closed; the data before it stays
     bool            connecting;  // ours, on its way out: resolving or handshaking
@@ -76,6 +79,8 @@ static sock_t sk[NSOCK];
 // all, which separates "httpd never asked" from "the stack never offered".
 uint32_t ubiqos_lwipsock_served, ubiqos_lwipsock_queued, ubiqos_lwipsock_taken;
 uint32_t ubiqos_lwipsock_recv, ubiqos_lwipsock_sent;
+// Datagrams that arrived with no room left for them in their socket's ring.
+uint32_t ubiqos_lwipsock_udp_dropped;
 
 uint32_t ubiqos_lwipsock_why;
 uint32_t ubiqos_lwipsock_lastop, ubiqos_lwipsock_lastreply;
@@ -101,6 +106,7 @@ static void give_ring(int i)
 
 static void free_sock(int i)
 {
+    if (sk[i].udp) { udp_remove(sk[i].udp); sk[i].udp = NULL; }
     if (sk[i].ring) { ubiqos_tlsf_free(ring_pool(), sk[i].ring); sk[i].ring = NULL; }
     sk[i].rcount = 0;
     if (sk[i].rx) { pbuf_free(sk[i].rx); sk[i].rx = NULL; }
@@ -263,6 +269,223 @@ static int32_t do_connect(const char *host, uint16_t port, int32_t owner)
         return -1;
     }
     return UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, i);
+}
+
+// --- DATAGRAMS ------------------------------------------------------------
+//
+// UDP, on the same table and the same ring as a connection. What goes into the
+// ring is whole datagrams, each as a record -- its length, who sent it, and the
+// bytes -- copied out of lwIP's buffer the moment it arrives, for the reason
+// the ring exists at all: a program that stops reading must not be able to
+// hold the network's six buffers. A datagram that does not fit is dropped and
+// counted, which is what UDP promises anyway.
+
+typedef struct { uint16_t len; ubiqos_sockaddr_t from; } dgram_head_t;
+
+static void ring_put(int i, const void *src, uint16_t n)
+{
+    const uint16_t tail  = (uint16_t)((sk[i].rhead + sk[i].rcount) % RXRING);
+    const uint16_t first = (uint16_t)(n < RXRING - tail ? n : RXRING - tail);
+    memcpy(sk[i].ring + tail, src, first);
+    if (first < n) memcpy(sk[i].ring, (const uint8_t *)src + first, n - first);
+    sk[i].rcount = (uint16_t)(sk[i].rcount + n);
+}
+
+// n bytes from the head of the ring into dst, or past them when dst is NULL.
+static void ring_take(int i, void *dst, uint16_t n)
+{
+    const uint16_t first = (uint16_t)(n < RXRING - sk[i].rhead ? n : RXRING - sk[i].rhead);
+    if (dst) {
+        memcpy(dst, sk[i].ring + sk[i].rhead, first);
+        if (first < n) memcpy((uint8_t *)dst + first, sk[i].ring, n - first);
+    }
+    sk[i].rhead  = (uint16_t)((sk[i].rhead + n) % RXRING);
+    sk[i].rcount = (uint16_t)(sk[i].rcount - n);
+}
+
+static void to_sockaddr(ubiqos_sockaddr_t *out, const ip_addr_t *a, uint16_t port)
+{
+    memset(out, 0, sizeof *out);
+    out->port = port;
+#if LWIP_IPV6
+    if (IP_IS_V6(a)) {
+        out->family = UBIQOS_AF_INET6;
+        memcpy(out->addr, ip_2_ip6(a)->addr, 16);
+#if LWIP_IPV6_SCOPES
+        out->zone = ip6_addr_zone(ip_2_ip6(a));
+#endif
+        return;
+    }
+#endif
+    out->family = UBIQOS_AF_INET;
+    const uint32_t v4 = ip4_addr_get_u32(ip_2_ip4(a));    // network order already
+    memcpy(out->addr, &v4, 4);
+}
+
+// False for a family this build cannot send to.
+static bool from_sockaddr(ip_addr_t *a, const ubiqos_sockaddr_t *in)
+{
+    if (in->family == UBIQOS_AF_INET) {
+        uint32_t v4;
+        memcpy(&v4, in->addr, 4);
+        ip_addr_set_ip4_u32(a, v4);
+        return true;
+    }
+#if LWIP_IPV6
+    if (in->family == UBIQOS_AF_INET6) {
+        ip_addr_set_zero_ip6(a);
+        memcpy(ip_2_ip6(a)->addr, in->addr, 16);
+#if LWIP_IPV6_SCOPES
+        ip6_addr_set_zone(ip_2_ip6(a), in->zone);
+#endif
+        return true;
+    }
+#endif
+    return false;
+}
+
+static void on_dgram(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
+{
+    (void)pcb;
+    int i = (int)(intptr_t)arg;
+    if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].ring) { pbuf_free(p); return; }
+    dgram_head_t h;
+    h.len = p->tot_len;
+    to_sockaddr(&h.from, addr, port);
+    if ((uint32_t)sizeof h + h.len > (uint32_t)(RXRING - sk[i].rcount)) {
+        ubiqos_lwipsock_udp_dropped++;
+        pbuf_free(p);
+        return;
+    }
+    ring_put(i, &h, sizeof h);
+    // Through a bounce buffer would cost a second copy; pbuf_copy_partial into
+    // the ring needs the two halves of a wrap done separately instead.
+    const uint16_t tail  = (uint16_t)((sk[i].rhead + sk[i].rcount) % RXRING);
+    const uint16_t first = (uint16_t)(h.len < RXRING - tail ? h.len : RXRING - tail);
+    pbuf_copy_partial(p, sk[i].ring + tail, first, 0);
+    if (first < h.len) pbuf_copy_partial(p, sk[i].ring, (uint16_t)(h.len - first), first);
+    sk[i].rcount = (uint16_t)(sk[i].rcount + h.len);
+    pbuf_free(p);
+}
+
+// Each refusal says which one it was, as do_listen's do: 40 the table, 41 no
+// ring, 42 no pcb, 43 the bind.
+static int32_t do_udp(uint16_t port, int32_t owner)
+{
+    int i = alloc_sock();
+    if (i < 0) { ubiqos_lwipsock_why = 40; return -1; }
+    give_ring(i);
+    if (!sk[i].ring) { ubiqos_lwipsock_why = 41; free_sock(i); return -1; }
+#if LWIP_IPV6
+    struct udp_pcb *u = udp_new_ip_type(IPADDR_TYPE_ANY);
+#else
+    struct udp_pcb *u = udp_new();
+#endif
+    if (!u) { ubiqos_lwipsock_why = 42; free_sock(i); return -1; }
+    sk[i].udp = u;
+    if (udp_bind(u, IP_ANY_TYPE, port) != ERR_OK) { ubiqos_lwipsock_why = 43; free_sock(i); return -1; }
+    sk[i].owner = owner;
+    sk[i].port = u->local_port;
+    udp_recv(u, on_dgram, (void *)(intptr_t)i);
+    return UBIQOS_SOCK_MAKE(UBIQOS_NET_LWIP, i);
+}
+
+// The largest datagram that leaves in one frame: 1500 less the IP and UDP
+// headers. There is no fragmenting on the way out, so more than this is
+// refused rather than sent in pieces some networks drop.
+#define UDP_MAX_V4 1472u
+#define UDP_MAX_V6 1452u
+
+static int32_t do_sendto(int i, const ubiqos_dgram_t *d)
+{
+    if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].udp) return -1;
+    ip_addr_t to;
+    if (!from_sockaddr(&to, &d->addr) || !d->addr.port) return -1;
+    if (d->len > (d->addr.family == UBIQOS_AF_INET ? UDP_MAX_V4 : UDP_MAX_V6)) return -1;
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)d->len, PBUF_RAM);
+    if (!p) return 0;                             // no room this instant; ask again
+    if (d->len) pbuf_take(p, d->data, (u16_t)d->len);
+    const err_t e = udp_sendto(sk[i].udp, p, &to, d->addr.port);
+    pbuf_free(p);
+    if (e == ERR_OK) { ubiqos_lwipsock_sent += d->len; return (int32_t)d->len; }
+    // Out of buffers, or the cable's transfer blocks both full: worth asking
+    // again. No route, or an address lwIP will not send to: not.
+    return (e == ERR_MEM || e == ERR_BUF || e == ERR_IF) ? 0 : -1;
+}
+
+static int32_t do_recvfrom(int i, ubiqos_dgram_t *d)
+{
+    if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].udp || !sk[i].ring) return -1;
+    if (sk[i].rcount < sizeof(dgram_head_t)) return 0;
+    dgram_head_t h;
+    ring_take(i, &h, sizeof h);
+    const uint16_t n = (uint16_t)(h.len < d->len ? h.len : d->len);
+    ring_take(i, d->data, n);
+    ring_take(i, NULL, (uint16_t)(h.len - n));    // what did not fit is gone
+    d->addr = h.from;
+    ubiqos_lwipsock_recv += n;
+    return n;
+}
+
+// A name the last look-up said does not exist, so that the next ask about it
+// hears so once rather than starting the same question again for ever.
+static char addr_failed[64];
+
+static void on_addr(const char *name, const ip_addr_t *addr, void *arg)
+{
+    (void)arg;
+    if (addr) return;                             // the answer waits in lwIP's cache
+    strncpy(addr_failed, name, sizeof addr_failed - 1);
+}
+
+static int32_t do_addr(ubiqos_dgram_t *d)
+{
+    char name[64];
+    const uint32_t n = d->len > sizeof name - 1 ? sizeof name - 1 : d->len;
+    memcpy(name, d->data, n);
+    name[n] = 0;
+    if (!n) return -1;
+
+    // A link-local IPv6 address means nothing without the interface it is on,
+    // and a board may have two: "fe80::1%cable" or "fe80::1%wifi" says which,
+    // and so does the number a received address carries, "fe80::1%1".
+    // Without one, lwIP refuses to guess, and the send says it would not go.
+    uint8_t zone = 0;
+    for (char *pc = name; *pc; pc++) {
+        if (*pc != '%') continue;
+        *pc = 0;
+        // By the interfaces' own two-letter names, which every board sets the
+        // same way: us for the USB cable, wl for the WiFi, en for Ethernet.
+        const char *want = !strcmp(pc + 1, "cable")    ? "us"
+                         : !strcmp(pc + 1, "wifi")     ? "wl"
+                         : !strcmp(pc + 1, "ethernet") ? "en" : NULL;
+        struct netif *z = NULL;
+        if (want) {
+            NETIF_FOREACH(z) if (z->name[0] == want[0] && z->name[1] == want[1]) break;
+        } else if (pc[1] >= '1' && pc[1] <= '9' && !pc[2]) {
+            z = netif_get_by_index((u8_t)(pc[1] - '0'));   // as a received address prints it
+        }
+        if (!z) return -1;
+        zone = netif_get_index(z);
+        break;
+    }
+
+    // An address written out is taken as it is, in either family. Asking DNS
+    // with it would not do: names are looked up as IPv4, and dns_gethostbyname
+    // turns an IPv6 literal into a question about a host called "fe80::1".
+    ip_addr_t a;
+    if (ipaddr_aton(name, &a)) {
+        to_sockaddr(&d->addr, &a, 0);
+        if (d->addr.family == UBIQOS_AF_INET6) d->addr.zone = zone;
+        return 0;
+    }
+    if (zone) return -1;                          // a zone belongs on an address
+
+    if (addr_failed[0] && !strcmp(addr_failed, name)) { addr_failed[0] = 0; return -1; }
+    const err_t e = dns_gethostbyname(name, &a, on_addr, NULL);
+    if (e == ERR_OK) { to_sockaddr(&d->addr, &a, 0); return 0; }
+    return e == ERR_INPROGRESS ? 1 : -1;
 }
 
 // --- THE OPERATIONS -------------------------------------------------------
@@ -428,6 +651,16 @@ int32_t ubiqos_lwip_sock_handle(const ubiqos_wifi_sock_t *r, int32_t from)
     case UBIQOS_SOCK_RECV:   return do_recv(i, r->buf, r->len);
     case UBIQOS_SOCK_SEND:   return do_send(i, r->buf, r->len);
     case UBIQOS_SOCK_CLOSE:  return do_close(i);
+    case UBIQOS_SOCK_UDP:      return do_udp((uint16_t)r->arg, from);
+    case UBIQOS_SOCK_SENDTO:
+        if (!r->buf || r->len < sizeof(ubiqos_dgram_t)) return -1;
+        return do_sendto(i, (const ubiqos_dgram_t *)r->buf);
+    case UBIQOS_SOCK_RECVFROM:
+        if (!r->buf || r->len < sizeof(ubiqos_dgram_t)) return -1;
+        return do_recvfrom(i, (ubiqos_dgram_t *)r->buf);
+    case UBIQOS_SOCK_ADDR:
+        if (!r->buf || r->len < sizeof(ubiqos_dgram_t)) return -1;
+        return do_addr((ubiqos_dgram_t *)r->buf);
     case UBIQOS_SOCK_PEER: {
         if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].pcb) return -1;
         if (!r->buf || r->len < sizeof(uint32_t)) return -1;

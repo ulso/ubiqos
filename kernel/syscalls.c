@@ -645,8 +645,10 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             uint32_t stack;
             uint32_t arg = frame->a1;
             if (frame->a0 == UBIQOS_SOCK_LISTEN_ON
-                || frame->a0 == UBIQOS_SOCK_CONNECT) {
-                // Both name the stack in the argument for the same reason:
+                || frame->a0 == UBIQOS_SOCK_CONNECT
+                || frame->a0 == UBIQOS_SOCK_UDP
+                || frame->a0 == UBIQOS_SOCK_ADDR) {
+                // All four name the stack in the argument for the same reason:
                 // there is no socket yet to carry it.
                 stack = (arg >> 16) & 0xffu;
                 arg   = arg & 0xffffu;              // the port

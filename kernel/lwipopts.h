@@ -111,7 +111,9 @@
 // cannot allocate a segment simply stops, and the client waits.
 #define MEM_SIZE                    8000
 #define MEMP_NUM_PBUF               8
-#define MEMP_NUM_UDP_PCB            7    // a responder on each interface, and the cable's DHCP server
+// A responder on each interface, the cable's DHCP server, the DHCP and DNS
+// clients and the clock -- and four for programs' datagram sockets.
+#define MEMP_NUM_UDP_PCB            11
 // Six connections and four things listening.
 //
 // It was two listeners, which is how many the board had when this was written:
