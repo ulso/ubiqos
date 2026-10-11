@@ -431,7 +431,11 @@ int32_t ubiqos_lwip_sock_handle(const ubiqos_wifi_sock_t *r, int32_t from)
     case UBIQOS_SOCK_PEER: {
         if (i < 0 || i >= NSOCK || !sk[i].used || !sk[i].pcb) return -1;
         if (!r->buf || r->len < sizeof(uint32_t)) return -1;
-        *(uint32_t *)r->buf = lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&sk[i].pcb->remote_ip)));
+        // An IPv6 peer is 0.0.0.0, never its first four bytes read as an
+        // IPv4 address: netcon decides "is this the cable?" from this, and a
+        // sender on the WiFi may pick an IPv6 source that starts c0a8:07.
+        const ip_addr_t *a = &sk[i].pcb->remote_ip;
+        *(uint32_t *)r->buf = IP_IS_V4(a) ? lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(a))) : 0u;
         return 0;
     }
     case UBIQOS_SOCK_CONNECT: {

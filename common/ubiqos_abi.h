@@ -1387,7 +1387,8 @@ typedef struct {
 #define UBIQOS_SOCK_CONNECT 13u
 
 // Who is at the other end. buf = &uint32_t, filled with the peer's IPv4
-// address in host order -- 0xC0A80701 for 192.168.7.1. A server that answers on
+// address in host order -- 0xC0A80701 for 192.168.7.1 -- and 0 for a peer
+// that came over IPv6. A server that answers on
 // every interface cannot otherwise tell the cable from the WiFi, and a shell
 // that may be reached over one but not the other has to know which it is.
 #define UBIQOS_SOCK_PEER   14u
