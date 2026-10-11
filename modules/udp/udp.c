@@ -80,7 +80,7 @@ static void do_send(const char *host, uint16_t port, int argc, char **argv) {
     }
     if (rc != 0) { say("udp: nobody answers to that name\r\n"); return; }
 
-    static uint8_t text[256];
+    uint8_t text[256];
     uint32_t n = 0;
     for (int i = 0; i < argc; i++) {
         for (const char *p = argv[i]; *p && n < sizeof text - 1; p++) text[n++] = (uint8_t)*p;
@@ -120,7 +120,10 @@ static void do_listen(uint16_t port, bool echo) {
     ubiqos_line_str(&l, ", IPv4 and IPv6; Ctrl-C stops\r\n");
     ubiqos_line_flush(UBIQOS_STDOUT, &l);
 
-    static uint8_t buf[1500];
+    // On the stack, not static: a module's static data comes out of the same
+    // pool as its stack, on top of the 4 kB stack it gets anyway, and on the
+    // Feather F405 that pool has about 9 kB left once sshd and httpd run.
+    uint8_t buf[1500];
     for (;;) {
         ubiqos_sockaddr_t from;
         from.port = 0;
