@@ -127,6 +127,18 @@
 #define CFG_TUD_ECM_RNDIS       0
 #define CFG_TUD_NCM             UBIQOS_LWIP
 #define CFG_TUD_NET_MTU         1514
+// Two transfer blocks toward the host, not TinyUSB's one. With one, a frame
+// sent while the previous one is still waiting for the host to collect it is
+// refused -- link_output in kernel/lwipnet.c gets "no room" -- and two frames
+// in a row is exactly what the mDNS responder sends once there is IPv6: a
+// probe to 224.0.0.251 and the same probe to ff02::fb. lwIP counts a probe
+// only when both went, so it probed every 250 ms for ever and never answered
+// a question on the cable. 3.2 kB of SRAM. Only with IPv6 so far, because the
+// other boards have not been run with it; nothing there sends two at once
+// that cannot be sent again.
+#if defined(UBIQOS_IPV6) && UBIQOS_IPV6
+#define CFG_TUD_NCM_IN_NTB_N    2
+#endif
 #define CFG_TUD_VENDOR          0
 
 #define CFG_TUD_CDC_RX_BUFSIZE  256
