@@ -1590,6 +1590,7 @@ ubiqos_add_data_module(ehdesc modules/ehspi/eh_desc.c)
 ubiqos_add_data_module(ehdescch modules/ehspi/eh_desc_challenger.c)
 ubiqos_add_module(ehstat modules/ehstat/ehstat.c)
 ubiqos_add_module(ping modules/ping/ping.c)
+ubiqos_add_module(udp modules/udp/udp.c)
 ubiqos_add_module(netcon modules/netcon/netcon.c)
 ubiqos_add_module(browse modules/browse/browse.c)
 ubiqos_add_module(ehrpc modules/ehrpc/ehrpc.c)
@@ -1892,6 +1893,7 @@ set(UBIQOS_RESIDENT
     ehstat
     ehrpc
     ping
+    udp
     browse
     neopixel
     i2cbus
