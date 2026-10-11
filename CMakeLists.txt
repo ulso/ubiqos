@@ -662,6 +662,33 @@ if(ubiqosLwip)
     target_compile_definitions(os_kernel PRIVATE UBIQOS_LWIP=1)
 endif()
 
+# IPv6 beside IPv4: a link-local address on every interface, and the global
+# ones a router advertises on the WiFi. "auto" is the Fruit Jam's character-
+# generator builds, the ones released for it. The framebuffer builds have no
+# SRAM to spare even with lwIP's IPv6 code kept in flash (below), and the other
+# boards have not been run with it yet.
+set(UBIQOS_IPV6 "auto" CACHE STRING "IPv6 in lwIP: ON, OFF, or auto")
+if(UBIQOS_IPV6 STREQUAL "auto")
+    if(UBIQOS_BOARD STREQUAL "fruit-jam" AND UBIQOS_VIDEO STREQUAL "chargen")
+        set(ubiqosIpv6 ON)
+    else()
+        set(ubiqosIpv6 OFF)
+    endif()
+else()
+    set(ubiqosIpv6 ${UBIQOS_IPV6})
+endif()
+if(ubiqosLwip AND ubiqosIpv6)
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_IPV6=1)
+    # lwIP's IPv6 files, and the parts of it that are never in a hurry, run
+    # from flash rather than being copied into SRAM --
+    # kernel/ld/section_copy_to_ram_rodata.incl says which and why that is safe.
+    pico_add_linker_script_override_path(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ld
+        FILES section_copy_to_ram_rodata.incl)
+else()
+    set(ubiqosIpv6 OFF)
+endif()
+message(STATUS "IPv6: ${ubiqosIpv6}")
+
 # The repository root is on the path so that <boards/...> resolves; the kernel
 # asks for its board through kernel/board.h and never by name.
 target_compile_definitions(os_kernel PRIVATE UBIQOS_BOARD_HEADER=${ubiqosBoardHeader})

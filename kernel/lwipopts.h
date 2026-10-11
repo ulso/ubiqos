@@ -14,7 +14,42 @@
 #define SYS_LIGHTWEIGHT_PROT        0
 
 #define LWIP_IPV4                   1
-#define LWIP_IPV6                   0
+// IPv6 where the build asks for it: UBIQOS_IPV6, set by CMakeLists.txt, which
+// says which boards and why. Off, the stack is exactly what it was.
+#ifndef UBIQOS_IPV6
+#define UBIQOS_IPV6                 0
+#endif
+#define LWIP_IPV6                   UBIQOS_IPV6
+#if LWIP_IPV6
+// A link-local address on every interface, and on the WiFi the global ones a
+// router advertises (SLAAC). No DHCPv6: a home router that hands out IPv6
+// addresses advertises a prefix to build them from, and the board needs no
+// more than that. Three addresses: link-local, and room for a global prefix
+// and a ULA one, which is what a router with IPv6 typically sends.
+#define LWIP_IPV6_AUTOCONFIG        1
+#define LWIP_IPV6_DHCP6             0
+#define LWIP_IPV6_NUM_ADDRESSES     3
+// Multicast listener reports: mDNS joins ff02::fb, and every address has a
+// solicited-node group that neighbour discovery is sent to. Two interfaces,
+// each with all-nodes, mDNS and up to three solicited-node groups.
+#define LWIP_IPV6_MLD               1
+#define MEMP_NUM_MLD6_GROUP         10
+// No fragments either way. IPv6 routers never fragment, so a fragment only
+// arrives from a sender that chose to send one, and nothing here sends a
+// datagram larger than the MTU.
+#define LWIP_IPV6_FRAG              0
+#define LWIP_IPV6_REASS             0
+// Small caches: a board talks to a computer on the cable and a router and a
+// handful of hosts on the WiFi.
+#define LWIP_ND6_NUM_NEIGHBORS      6
+#define LWIP_ND6_NUM_DESTINATIONS   6
+#define LWIP_ND6_NUM_PREFIXES       3
+#define LWIP_ND6_NUM_ROUTERS        2
+// A name is looked up as IPv4 only, as before. Everything that resolves one --
+// connect, ping, the clock -- takes the answer as an IPv4 address, and lwIP's
+// default would hand it an IPv6 one whenever a name has no A record.
+#define LWIP_DNS_ADDRTYPE_DEFAULT   LWIP_DNS_ADDRTYPE_IPV4
+#endif
 #define LWIP_ARP                    1
 #define LWIP_ETHERNET               1
 #define LWIP_ICMP                   1

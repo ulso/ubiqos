@@ -1,0 +1,43 @@
+/* The SDK's section_copy_to_ram_rodata.incl, with one section in front of it.
+ *
+ * The kernel is linked copy_to_ram: all code is copied into SRAM at boot, and
+ * SRAM is what this machine is short of. Turning IPv6 on cost the riscv
+ * chargen build 27 kB of it -- lwIP's IPv6 files, and every file that speaks
+ * both protocols growing -- when that build had about 5 kB of C heap to give.
+ *
+ * So the parts of lwIP that are never in a hurry stay in flash and run from
+ * there: IPv6 itself, the mDNS responder, the DNS client, the DHCP client and
+ * IGMP and address conflict detection. Each runs a few times a minute at
+ * most. TCP, IPv4, ARP and the buffers -- the path every byte of a connection
+ * takes -- stay in SRAM.
+ *
+ * Safe because of WHO runs them: lwIP is entered from the USB device task and
+ * from nowhere else -- NO_SYS, see kernel/lwipopts.h -- never from an
+ * interrupt. The danger with flash on this machine is an INTERRUPT reading it
+ * while the QMI is in the middle of a PSRAM fetch (docs/the-board-stopped.md);
+ * a thread fetching instructions from flash is what every module run in place
+ * already does. And a flash write parks core 1 and runs with this core's
+ * interrupts off, so no thread is fetching while the flash cannot answer.
+ *
+ * The section comes before the SDK's .text, and the first rule in a linker
+ * script to match an input section takes it, so .text never sees these.
+ * Matching nothing -- a build without IPv6 -- leaves it empty.
+ */
+SECTIONS
+{
+    .flash_lwip : {
+        *lwip/src/core/ipv6/*.o(.text* .rodata*)
+        */apps/mdns/*.o(.text* .rodata*)
+        *lwip/src/core/dns.c.o(.text* .rodata*)
+        *lwip/src/core/ipv4/dhcp.c.o(.text* .rodata*)
+        *lwip/src/core/ipv4/igmp.c.o(.text* .rodata*)
+        *lwip/src/core/ipv4/acd.c.o(.text* .rodata*)
+        . = ALIGN(4);
+    } > TEXT_STORE
+
+    .rodata : {
+        /* segments not marked as .flashdata are instead pulled into .data (in RAM) to avoid accidental flash accesses */
+        *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.flashdata*)))
+        . = ALIGN(4);
+    } > TEXT_STORE
+}

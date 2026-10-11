@@ -21,6 +21,10 @@
 #include "lwip/timeouts.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
+#if LWIP_IPV6
+#include "lwip/ethip6.h"
+#include "lwip/ip6_addr.h"
+#endif
 #include "lwip/apps/mdns.h"
 #include "config.h"
 #include "class/net/net_device.h"
@@ -112,6 +116,51 @@ bool tud_network_recv_cb(const uint8_t *src, uint16_t size)
 
 void tud_network_init_cb(void) { }
 
+// --- IPv6 -----------------------------------------------------------------
+// Shared with the WiFi's interface in kernel/ehnet.c: the half that belongs in
+// a netif's init function, the half that comes after netif_add, and one line in
+// the log for each address the moment it can be used.
+#if LWIP_IPV6
+void ubiqos_ip6_if_init(struct netif *n)
+{
+    // MLD6, or mld6_joingroup_netif refuses the interface and the mDNS
+    // responder never hears a question asked over IPv6 -- the same trap as
+    // NETIF_FLAG_IGMP, one protocol over.
+    n->flags |= NETIF_FLAG_MLD6;
+    n->output_ip6 = ethip6_output;
+}
+
+// A link-local address made from the hardware address, as every IPv6
+// interface has; and with autoconfig, the global ones a router advertises.
+// The cable has no router, so it is link-local only, which is all a computer
+// at the other end needs.
+void ubiqos_ip6_start(struct netif *n, bool autoconfig)
+{
+    netif_create_ip6_linklocal_address(n, 1);
+    netif_set_ip6_autoconfig_enabled(n, autoconfig ? 1 : 0);
+}
+
+// An address is announced when duplicate address detection has passed and it
+// is VALID -- usable -- which is a second or so after it was made. Printed
+// once, then, rather than at each state it passes through.
+static void ip6_said(struct netif *n, netif_nsc_reason_t reason, const netif_ext_callback_args_t *args)
+{
+    if (!(reason & LWIP_NSC_IPV6_ADDR_STATE_CHANGED)) return;
+    const int i = args->ipv6_addr_state_changed.addr_index;
+    const u8_t was = args->ipv6_addr_state_changed.old_state;
+    const u8_t now = netif_ip6_addr_state(n, i);
+    if (ip6_addr_isvalid(was) || !ip6_addr_isvalid(now)) return;
+    char text[IP6ADDR_STRLEN_MAX];
+    ip6addr_ntoa_r(netif_ip6_addr(n, i), text, sizeof text);
+    // In lower case, as RFC 5952 writes them and as macOS prints them.
+    for (char *c = text; *c; c++)
+        if (*c >= 'A' && *c <= 'F') *c = (char)(*c - 'A' + 'a');
+    ubiqos_print(n->name[0] == 'w' ? "wifi: IPv6 " : "net: IPv6 on the cable ");
+    ubiqos_print(text);
+    ubiqos_print("\n");
+}
+#endif
+
 // --- THE INTERFACE --------------------------------------------------------
 static err_t if_init(struct netif *n)
 {
@@ -142,6 +191,9 @@ static err_t if_init(struct netif *n)
              | NETIF_FLAG_IGMP;
     n->output = etharp_output;
     n->linkoutput = link_output;
+#if LWIP_IPV6
+    ubiqos_ip6_if_init(n);
+#endif
     return ERR_OK;
 }
 
@@ -198,6 +250,13 @@ void ubiqos_lwip_start(void)
     ip4_addr_set_u32(&mask, lwip_htonl(0xffffff00u));
     ip4_addr_set_zero(&gw);
     netif_add(&nif, &addr, &mask, &gw, NULL, if_init, ethernet_input);
+#if LWIP_IPV6
+    {
+        static netif_ext_callback_t ip6_watch;
+        netif_add_ext_callback(&ip6_watch, ip6_said);
+    }
+    ubiqos_ip6_start(&nif, false);
+#endif
     // The name the card gave, or "ubiqos" when it gave none. The filesystem
     // server has already read it: usbdev waits for that before starting this.
     const char *host = ubiqos_config_hostname();

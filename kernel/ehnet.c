@@ -33,6 +33,10 @@
 #include "lwip/apps/mdns.h"
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
+#if LWIP_IPV6
+void ubiqos_ip6_if_init(struct netif *n);     // kernel/lwipnet.c
+void ubiqos_ip6_start(struct netif *n, bool autoconfig);
+#endif
 #include "io.h"
 #include "config.h"
 #include "pico/time.h"
@@ -108,6 +112,9 @@ static err_t wifi_if_init(struct netif *n)
              | NETIF_FLAG_IGMP;
     n->output = etharp_output;
     n->linkoutput = wifi_link_output;
+#if LWIP_IPV6
+    ubiqos_ip6_if_init(n);
+#endif
     return ERR_OK;
 }
 
@@ -220,6 +227,11 @@ bool ubiqos_eh_netif_start(void)
     netif_set_up(&wnif);
     netif_set_link_up(&wnif);
     dhcp_start(&wnif);
+#if LWIP_IPV6
+    // And IPv6 beside it: a link-local address at once, and global ones when
+    // the router advertises a prefix -- if it does; many home routers do not.
+    ubiqos_ip6_start(&wnif, true);
+#endif
 
     // And the responder on this interface too. mDNS was registered on the USB
     // netif alone, so the board answered to its name over the cable and only
