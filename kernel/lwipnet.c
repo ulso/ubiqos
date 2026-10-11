@@ -156,6 +156,17 @@ static void http_txt(struct mdns_service *service, void *arg)
 }
 #endif
 
+// What probing for the name came to, on each interface. A conflict stops the
+// responder on that interface for good -- lwIP leaves it probing and answers
+// nothing -- so it is worth a line in the log.
+static void name_result(struct netif *n, u8_t result, s8_t slot)
+{
+    ubiqos_print(n->name[0] == 'w' ? "wifi: mDNS: " : "net: mDNS on the cable: ");
+    ubiqos_print(result == MDNS_PROBING_SUCCESSFUL ? "the name is ours" : "CONFLICT on ");
+    if (result != MDNS_PROBING_SUCCESSFUL) ubiqos_print(slot ? "a service" : "the host name");
+    ubiqos_print("\n");
+}
+
 static void on_status(struct netif *n)
 {
     if (!ip4_addr_isany_val(*netif_ip4_addr(n))) {
@@ -208,6 +219,7 @@ void ubiqos_lwip_start(void)
     // the link comes up -- see ubiqos_lwip_set_link.
 #if LWIP_MDNS_RESPONDER
     mdns_resp_init();
+    mdns_resp_register_name_result_cb(name_result);
     if (mdns_resp_add_netif(&nif, host) == ERR_OK) {
         mdns_resp_add_service(&nif, host, "_http", DNSSD_PROTO_TCP, 80, http_txt, NULL);
         mdns_resp_announce(&nif);
