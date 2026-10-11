@@ -118,7 +118,7 @@ static void reply(const uint8_t *req, uint8_t type, bool give_address)
     }
     *o = 255;
 
-    udp_sendto_if(pcb, p, IP4_ADDR_BROADCAST, CLIENT_PORT, cable);
+    udp_sendto_if(pcb, p, IP_ADDR_BROADCAST, CLIENT_PORT, cable);
     pbuf_free(p);
 }
 
