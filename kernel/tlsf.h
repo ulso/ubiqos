@@ -24,5 +24,6 @@ void ubiqos_tlsf_free(tlsf_pool_t pool, void* ptr);
 // at 0x20000000, so "above the PSRAM base" is true of both.
 bool ubiqos_tlsf_owns(tlsf_pool_t pool, const void* p);
 size_t ubiqos_tlsf_largest_free(tlsf_pool_t pool);
+size_t ubiqos_tlsf_total_free(tlsf_pool_t pool);
 
 #endif // UBIQOS_TLSF_H

@@ -1014,6 +1014,15 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 frame->a0 = ubiqos_bulk_pool ? (uint32_t)ubiqos_psram_bytes() : 0;
                 break;
             }
+            if (frame->a0 == UBIQOS_MEM_TOTAL_FREE) {
+                frame->a0 = (uint32_t)ubiqos_tlsf_total_free(ubiqos_mem_pool);
+                break;
+            }
+            if (frame->a0 == UBIQOS_MEM_BULK_TOTAL) {
+                frame->a0 = ubiqos_bulk_pool
+                          ? (uint32_t)ubiqos_tlsf_total_free(ubiqos_bulk_pool) : 0;
+                break;
+            }
             if (frame->a0 == UBIQOS_MEM_PIPES)   { frame->a0 = ubiqos_io_pipes_used(); break; }
             if (frame->a0 == UBIQOS_MEM_SOCKETS) {
 #if UBIQOS_LWIP

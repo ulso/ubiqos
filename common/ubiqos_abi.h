@@ -1599,6 +1599,11 @@ typedef struct {
 // how an afternoon went once.
 #define UBIQOS_MEM_PIPES        6u   // rings in use
 #define UBIQOS_MEM_SOCKETS      7u   // lwIP sockets in use
+// Every free byte in a pool, not only the largest piece. The two together say
+// how fragmented it is. A kernel older than these answers with the largest
+// free block instead, which is what it answers anything it does not know.
+#define UBIQOS_MEM_TOTAL_FREE   8u   // SRAM
+#define UBIQOS_MEM_BULK_TOTAL   9u   // PSRAM
 #define UBIQOS_MEM_ASSERTS      4u
 #define UBIQOS_MEM_ASSERT_LAST  5u
 

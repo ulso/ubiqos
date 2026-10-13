@@ -23,6 +23,7 @@ typedef struct {
     uint32_t sl_bitmap[FL_INDEX_MAX];
     uintptr_t pool_start;
     uintptr_t pool_end;
+    size_t free_bytes;                           // the payloads of every free block
     block_header_t* blocks[][SL_INDEX_COUNT];    // fl_count rows
 } tlsf_ctrl_t;
 
@@ -60,6 +61,7 @@ static void tlsf_insert(tlsf_ctrl_t* ctrl, block_header_t* block) {
     tlsf_mapping(ctrl, BLOCK_SIZE(block), &fl, &sl);
 
     block->size |= BLOCK_FREE_BIT;
+    ctrl->free_bytes += BLOCK_SIZE(block);
     block->next_free = ctrl->blocks[fl][sl];
     block->prev_free = &ctrl->block_null;
     if (ctrl->blocks[fl][sl] != &ctrl->block_null) {
@@ -88,6 +90,7 @@ static void tlsf_remove(tlsf_ctrl_t* ctrl, block_header_t* block) {
     if (block->next_free != &ctrl->block_null) {
         block->next_free->prev_free = block->prev_free;
     }
+    ctrl->free_bytes -= BLOCK_SIZE(block);
     block->size &= ~(size_t)BLOCK_FREE_BIT;
 }
 
@@ -104,6 +107,7 @@ tlsf_pool_t ubiqos_tlsf_create(void* mem, size_t bytes) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)mem;
     ctrl->fl_bitmap = 0;
     ctrl->fl_count = rows;
+    ctrl->free_bytes = 0;
     ctrl->block_null.next_free = &ctrl->block_null;
     ctrl->block_null.prev_free = &ctrl->block_null;
     ctrl->block_null.size = 0;
@@ -209,6 +213,20 @@ static size_t ubiqos_tlsf_largest_free_unlocked(tlsf_pool_t pool) {
     return best;
 }
 
+
+// Every free byte, wherever it lies -- kept as the free lists change rather
+// than counted, because a block enters or leaves a list in exactly two places,
+// tlsf_insert and tlsf_remove, and each adds or takes away its own size there.
+// So asking costs one load and never walks the pool, and needs no lock: the
+// word is written whole, inside the lock that every change already holds.
+//
+// It counts payloads, not the headers between them, so it is what could be
+// handed out if nothing were in the way -- the largest block says how much of
+// it can be had in one piece.
+size_t ubiqos_tlsf_total_free(tlsf_pool_t pool) {
+    const tlsf_ctrl_t* ctrl = (const tlsf_ctrl_t*)pool;
+    return ctrl ? ((volatile const tlsf_ctrl_t*)ctrl)->free_bytes : 0;
+}
 
 bool ubiqos_tlsf_owns(tlsf_pool_t pool, const void* p) {
     tlsf_ctrl_t* ctrl = (tlsf_ctrl_t*)pool;
