@@ -2,7 +2,8 @@
 
 // free -- the largest contiguous free block, in both pools, and how many
 // processes are alive. The largest block is the number that matters in a
-// real-time system: fragmentation shows there, not in the total.
+// real-time system: fragmentation shows there, not in the total. The total is
+// beside it all the same, because the two together are what shows it.
 
 static void row(const char *label, uint32_t v, const char *unit) {
     ubiqos_line_t l;
@@ -16,6 +17,7 @@ static void row(const char *label, uint32_t v, const char *unit) {
 
 void module_main(void) {
     row("SRAM  largest free: ", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_LARGEST_FREE), " bytes");
+    row("SRAM  free in all:  ", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_TOTAL_FREE), " bytes");
     row("Pipe rings in use:  ", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_PIPES), " of 8");
     row("Sockets in use:     ", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_SOCKETS), " of 8");
     row("  connections queued: ", (uint32_t)ubiqos_syscall(SYS_MEMINFO, UBIQOS_MEM_SOCKETS, 100, 0), "");
@@ -46,6 +48,7 @@ void module_main(void) {
     uint32_t bulk = (uint32_t)ubiqos_meminfo(UBIQOS_MEM_BULK_SIZE);
     if (bulk) {
         row("PSRAM largest free: ", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_BULK_FREE), " bytes");
+        row("PSRAM free in all:  ", (uint32_t)ubiqos_meminfo(UBIQOS_MEM_BULK_TOTAL), " bytes");
         row("PSRAM total:        ", bulk / 1024, " kB");
     } else {
         ubiqos_write_str(UBIQOS_STDOUT, "PSRAM: none\n");
