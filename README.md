@@ -163,8 +163,15 @@ guard rail.
 
 ## Licence
 
-UbiqOS is released under the [MIT License](LICENSE). The third-party code it
-includes keeps its own licence, as below.
+Copyright 2026 Ulf Söderberg.
+
+UbiqOS is released under the [Apache License, Version 2.0](LICENSE). Its patent
+clause is the reason: every contributor grants a patent licence for what they
+contribute, and anyone who sues claiming UbiqOS infringes a patent loses that
+licence. Releases up to and including v0.1.31 were published under the MIT
+License, and stay under it.
+
+The third-party code it includes keeps its own licence, as below.
 
 ## Third-party code
 
