@@ -183,6 +183,72 @@ static void load_tools(char *space) {
     parse_tools(space);
 }
 
+// Is a program of this name to be had? Flash first, then the same search the
+// loader makes along the path, as the name and as the name with .mod after it.
+// Only asking: loading it to see would leave it in memory.
+static bool on_path(const char *dir, uint32_t dir_n, const char *name, const char *suffix) {
+    char file[UBIQOS_PATH_MAX + 32];
+    const uint32_t name_n = len(name), suffix_n = len(suffix);
+    if (dir_n + 1 + name_n + suffix_n + 1 > sizeof file) return false;
+    copy(file, dir, dir_n);
+    file[dir_n] = '/';
+    copy(file + dir_n + 1, name, name_n);
+    copy(file + dir_n + 1 + name_n, suffix, suffix_n + 1);
+    uint32_t size;
+    const int32_t attr = ubiqos_fs_stat(file, &size);
+    return attr >= 0 && !(attr & 0x10);          // 0x10: it is a directory
+}
+
+static bool program_exists(const char *name) {
+    ubiqos_modinfo_t m;
+    for (uint32_t i = 0; ubiqos_moddir_get(i, &m) == 0; i++)
+        if (is(m.name, name)) return true;
+
+    char path[UBIQOS_PATH_MAX];
+    if (ubiqos_path_get(path, sizeof path) < 0) return false;
+    for (const char *dir = path; *dir; ) {
+        uint32_t n = 0;
+        while (dir[n] && dir[n] != ':') n++;
+        if (n && (on_path(dir, n, name, "") || on_path(dir, n, name, ".mod"))) return true;
+        dir += n;
+        if (*dir == ':') dir++;
+    }
+    return false;
+}
+
+// The first word of a command, which is the program.
+static const char *first_word(const char *command, char *word, uint32_t cap) {
+    uint32_t n = 0;
+    while (*command && *command != ' ') {
+        if (n + 1 >= cap) return 0;
+        word[n++] = *command++;
+    }
+    word[n] = 0;
+    return command;
+}
+
+// A tool that could only ever answer that it does not exist is no use to an
+// agent, and it would be told about it anyway. The list is written for a Fruit
+// Jam and the NUCLEO has no usbstat. Said at the start, or a line in /sd/mcp.txt
+// with a mistake in it would simply be gone.
+static void drop_missing(void) {
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < ntools; i++) {
+        char program[16];
+        if (first_word(tools[i].command, program, sizeof program) && program_exists(program)) {
+            tools[kept++] = tools[i];
+            continue;
+        }
+        ubiqos_line_t l;
+        ubiqos_line_reset(&l);
+        ubiqos_line_str(&l, "mcpd: no tool ");
+        ubiqos_line_str(&l, tools[i].name);
+        ubiqos_line_str(&l, ": this board has no such program\r\n");
+        ubiqos_line_flush(UBIQOS_STDOUT, &l);
+    }
+    ntools = kept;
+}
+
 static const tool_t *find_tool(const char *name) {
     for (uint32_t i = 0; i < ntools; i++)
         if (is(tools[i].name, name)) return &tools[i];
@@ -636,7 +702,8 @@ static void run(const char *module, const char *args, answer_t *a) {
     if (pid < 0) {
         ubiqos_close(pair[0]);
         a->failed = true;
-        const char *no = "this board has no such program";
+        const char *no = pid == UBIQOS_EXEC_NOT_FOUND ? "this board has no such program"
+                                                      : "the program could not be started";
         a->out_n = len(no);
         copy(out_buf, no, a->out_n);
         return;
@@ -680,15 +747,10 @@ static bool build_command(const char *template, const char *word,
         if (*w == ' ' || *w == '\t' || *w == '\n' || *w == '\r') return false;
         if (w[0] == '.' && w[1] == '.') return false;
     }
-    const char *p = template;
-    uint32_t n = 0;
-    while (*p && *p != ' ') {
-        if (n + 1 >= module_cap) return false;
-        module[n++] = *p++;
-    }
-    module[n] = 0;
+    const char *p = first_word(template, module, module_cap);
+    if (!p) return false;
     while (*p == ' ') p++;
-    n = 0;
+    uint32_t n = 0;
     for (; *p; p++) {
         if (*p != '*') {
             if (n + 1 >= args_cap) return false;
@@ -1041,6 +1103,7 @@ void module_main(int argc, char **argv) {
     request_buf = space;
     out_buf = space + REQ_MAX;
     load_tools(space + REQ_MAX + OUT_MAX);
+    drop_missing();
 
     if (ubiqos_config_get(UBIQOS_CFG_HOSTNAME, hostname, sizeof hostname) <= 0)
         copy(hostname, "ubiqos", 7);

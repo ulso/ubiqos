@@ -104,7 +104,20 @@ A tool is a program that already exists. Calling one starts that module with a
 pipe on its descriptors, the way `netcon` starts the shell, and what it printed
 is the answer. So `ps` over MCP cannot differ from `ps` at the prompt.
 
-Every tool above only reads. In `/sd/mcp.txt` a description may hold further colons; the first two end the name and the
+Every tool above only reads. A tool whose program this board does not have is
+left out of the list, flash and the search path both having been looked in, and
+`mcpd` says so when it starts:
+
+```
+mcpd: no tool usbstat: this board has no such program
+mcpd: 11 tools on port 8080, to the USB cable only
+```
+
+A tool that needs a card is a different matter: on a board without one,
+`list_files` and `read_file` are still offered, and answer that there is no such
+file.
+
+In `/sd/mcp.txt` a description may hold further colons; the first two end the name and the
 command. A `*` in the command is where the caller's word goes. That word cannot
 carry a space or a `..`, and the command is not given to `sh`, so a pipe or a
 redirection in it is only text. An agent can reach what the list names and
@@ -158,7 +171,8 @@ without `-a`: the check for the cable's subnet can only recognise IPv4.
 | No connection | `mcpd` is not running: look for it in `ps`. It says on the console what it did at start |
 | `mcpd` printed nothing at start | It waits up to 30 seconds for the network; after that it says the stack would not take the port |
 | `claude mcp list` shows it, a session has no tools | That session was started before the server was added |
-| A tool answers `this board has no such program` | The module is not on this board: `lsmod`, or `/sd/mcp.txt` names something it does not have |
+| A tool from `/sd/mcp.txt` is missing | Its program is not on this board. `mcpd` said so when it started |
+| A tool answers `the program could not be started` | The process table is full, or there is no memory for it: `ps`, `free` |
 | `sensors` says `no such file` | Nothing is scanning: `hibouair -q &` |
 | `[stopped: it did not finish in time]` | The program ran past 5 seconds and was killed |
 
