@@ -1592,6 +1592,7 @@ ubiqos_add_module(ehstat modules/ehstat/ehstat.c)
 ubiqos_add_module(ping modules/ping/ping.c)
 ubiqos_add_module(udp modules/udp/udp.c)
 ubiqos_add_module(netcon modules/netcon/netcon.c)
+ubiqos_add_module(mcpd modules/mcpd/mcpd.c)
 ubiqos_add_module(browse modules/browse/browse.c)
 ubiqos_add_module(ehrpc modules/ehrpc/ehrpc.c)
 # `wifi` again, as a front for ehrpc: the NINA client of that name retired with
@@ -1910,6 +1911,7 @@ set(UBIQOS_RESIDENT
     httpd
     sockstat
     netcon
+    mcpd
     sshd
     rhello
     mv
