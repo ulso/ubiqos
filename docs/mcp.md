@@ -113,6 +113,11 @@ mcpd: no tool usbstat: this board has no such program
 mcpd: 11 tools on port 8080, to the USB cable only
 ```
 
+On the search path the check only sees that a file of that name is there, and
+loads nothing. A file that is not a module, or a module copied to a name that is
+not its own, stays on the list and answers `this board has no such program`
+when called.
+
 A tool that needs a card is a different matter: on a board without one,
 `list_files` and `read_file` are still offered, and answer that there is no such
 file.
