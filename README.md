@@ -148,6 +148,7 @@ does the same, with `loadfile` for the ELF and `loadbin` for the image.
 | [docs/the-sdk.md](docs/the-sdk.md) | building a module or an application outside this tree |
 | [docs/ssh.md](docs/ssh.md) | `sshd`: a shell over SSH, and what it cost to get the signature right |
 | [docs/netcon.md](docs/netcon.md) | `netcon`: the shell over TCP, and the kernel bug it found |
+| [docs/mcp.md](docs/mcp.md) | `mcpd`: the board's programs as tools for an AI agent |
 | [docs/config.md](docs/config.md) | `/sd/config.txt` and `/sd/wificfg.txt`: name, WiFi, time zone, the cable's address |
 | [docs/esp-hosted](docs/esp-hosted/README.md) | the WiFi co-processor and how its firmware gets there |
 | [docs/tls.md](docs/tls.md) | https: what is checked, the roots, and using it from a module |
