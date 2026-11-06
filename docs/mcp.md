@@ -2,22 +2,92 @@
 
 The Model Context Protocol is how an AI agent finds out what a thing can do and
 asks it to. `mcpd` speaks it over HTTP, so an agent on the computer at the other
-end of the cable can ask the board how it is:
+end of the cable can ask the board how it is, read its log and its sensors, and
+look at the card, without a serial console or a script written for the purpose.
+
+An MCP server is only ever asked. Nothing happens on the board unless somebody
+calls, so a machine with no agent in the room is doing what it always did, and
+`mcpd` is a process asleep in `accept`.
+
+## Getting started
+
+Start it on the board:
 
 ```
 ubiqos:/> mcpd &
 mcpd: 12 tools on port 8080, to the USB cable only
 ```
 
-and from the computer, for Claude Code:
+To have it start with the board, add it to the card's `startup` file. It waits
+up to 30 seconds for the network, which is not up yet when the file runs:
 
 ```
-claude mcp add --transport http ubiqos http://192.168.7.1:8080/mcp
+ubiqos:/> echo mcpd & >> /sd/startup
 ```
 
-An MCP server is only ever asked. Nothing happens on the board unless somebody
-calls, so a machine with no agent in the room is doing what it always did, and
-`mcpd` is a process asleep in `accept`.
+Then tell the agent where it is. With Claude Code, in a terminal on the computer
+at the other end of the cable:
+
+```
+claude mcp add --transport http --scope user ubiqos http://192.168.7.1:8080/mcp
+claude mcp list
+```
+
+`--scope user` makes it available in every project; without it the server
+belongs to the directory the command was typed in. A session reads its servers
+when it starts, so a session already running will not see this one: start a new
+one, or restart the app.
+
+Any MCP client that speaks Streamable HTTP will do. Its setting is the same URL.
+
+The board can also be tried by hand, with no agent at all:
+
+```
+$ curl http://192.168.7.1:8080/mcp -H 'MCP-Protocol-Version: 2025-06-18' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"uptime"}}'
+{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[{"type":
+"text","text":"up 15 min 45 s, since 2026-11-06 19:40\n"}],"isError":false,...
+```
+
+## What to use it for
+
+Ask in ordinary words. The agent picks the tools; there is no syntax to learn.
+
+- **How is the board?** "How much memory is free, and what is running?" calls
+  `free` and `ps`. An agent that sees a process it does not expect, or a number
+  that has moved since it last looked, can say so.
+- **Why did it do that?** "Is there anything odd in the kernel log?" calls
+  `dmesg`. This is the most useful one during development: the agent reading the
+  code on the computer can read what the board said about it, in one step.
+- **What do the sensors say?** "Which room has the highest CO2?" calls `sensors`,
+  which needs `hibouair` running. It answers with the last reading and nothing
+  older: for "what happened last night" something has to write a log to the
+  card, and `read_file` can then read that.
+- **What is on the card?** `list_files` and `read_file`.
+
+And a board can offer what only that board has, by naming it in `/sd/mcp.txt`.
+This one watches its WiFi and its I2C bus, and reads a log directory:
+
+```
+# name: command: what to tell the agent
+rssi: wifi rssi: The signal strength of the access point
+i2c: i2c: What answers on the I2C bus
+log: cat /sd/logs/*: A file from the log directory; args is its name
+```
+
+The file replaces the built-in list rather than adding to it, so copy over the
+lines worth keeping from the table below. It is read when `mcpd` starts: `kill
+mcpd`, then `mcpd &`. A line can be added at the prompt:
+
+```
+ubiqos:/> echo "rssi: wifi rssi: The signal strength of the access point" >> /sd/mcp.txt
+```
+
+A `|` cannot be used in such a line, even inside quotes: the shell splits on it
+regardless.
+
+Write the description for the agent, since it is all the agent knows about the
+tool. "A file from the log directory; args is its name" tells it what to pass.
 
 ## The tools
 
@@ -34,17 +104,7 @@ A tool is a program that already exists. Calling one starts that module with a
 pipe on its descriptors, the way `netcon` starts the shell, and what it printed
 is the answer. So `ps` over MCP cannot differ from `ps` at the prompt.
 
-Every tool above only reads. `/sd/mcp.txt` replaces the list on a board that
-wants another one, a tool to a line:
-
-```
-# name: command: what to tell the agent
-rssi: wifi rssi: The signal strength of the access point
-i2c: i2c: What answers on the I2C bus
-log: cat /sd/logs/*: A file from the log directory; args is its name
-```
-
-The description may hold further colons; the first two end the name and the
+Every tool above only reads. In `/sd/mcp.txt` a description may hold further colons; the first two end the name and the
 command. A `*` in the command is where the caller's word goes. That word cannot
 carry a space or a `..`, and the command is not given to `sh`, so a pipe or a
 redirection in it is only text. An agent can reach what the list names and
@@ -70,8 +130,37 @@ carries an `Origin` header is refused on every interface: only a browser sends
 one, and a web page must not be able to reach the board by way of a name that
 resolves to it.
 
+A tool that changes something is a program that changes something, run by a
+caller who cannot be asked twice. Weigh a line in `/sd/mcp.txt` as you would
+weigh giving the agent that command at a prompt.
+
 `read_file` cannot open `/sd/config.txt`, `/sd/wificfg.txt` or the key file. That
 is the file server's own rule, and it holds for every program.
+
+## By address or by name
+
+Use the address, `192.168.7.1`. It is always the cable, and it is what the
+default lets in.
+
+`fruit-jam.local` resolves to the cable, the WiFi and several IPv6 addresses
+together, and which of them a client picks is up to the client. Without `-a`,
+curl landed on the WiFi or IPv6 address and was given a 403; Node's `fetch` tried
+them in turn and got through by the cable, after 5 s on the first call and about
+half a second on each one after. With `-a` every client got an answer, by
+whichever way it happened to choose. An IPv6 client is refused on the cable too,
+without `-a`: the check for the cable's subnet can only recognise IPv4.
+
+## When it does not answer
+
+| What you see | What it means |
+|---|---|
+| `403 Forbidden` | The request did not come over the cable: use `192.168.7.1`, or start `mcpd -a`. A request with an `Origin` header gets the same answer |
+| No connection | `mcpd` is not running: look for it in `ps`. It says on the console what it did at start |
+| `mcpd` printed nothing at start | It waits up to 30 seconds for the network; after that it says the stack would not take the port |
+| `claude mcp list` shows it, a session has no tools | That session was started before the server was added |
+| A tool answers `this board has no such program` | The module is not on this board: `lsmod`, or `/sd/mcp.txt` names something it does not have |
+| `sensors` says `no such file` | Nothing is scanning: `hibouair -q &` |
+| `[stopped: it did not finish in time]` | The program ran past 5 seconds and was killed |
 
 ## The protocol
 

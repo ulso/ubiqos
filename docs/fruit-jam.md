@@ -176,6 +176,26 @@ To stop them, from the keyboard or the serial console:
     kill hibouair
     kill httpd
 
+## 6. Let an AI agent look at the board
+
+`mcpd` offers the board's programs to an AI agent: it can read the processes,
+the memory, the kernel's log, the sensors and the card, and by default it can
+change nothing. On the board:
+
+    mcpd &
+
+and, to have it start by itself as in step 5:
+
+    echo mcpd & >> /sd/startup
+
+On a computer joined to the board by the USB cable, with Claude Code:
+
+    claude mcp add --transport http --scope user ubiqos http://192.168.7.1:8080/mcp
+
+Start a new session and ask it how the board is doing. It answers on the cable
+only, because it asks for no password. [mcp.md](mcp.md) has what to ask it, how
+to give it other tools, and what to do if it does not answer.
+
 ## Back to Adafruit's firmware
 
 To give the WiFi chip NINA back: put Adafruit's `SerialESPPassthrough.ino.uf2`

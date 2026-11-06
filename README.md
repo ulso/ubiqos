@@ -37,7 +37,8 @@ WebAssembly.
 - **Network**: lwIP over USB CDC-NCM -- the board is 192.168.7.1 on the cable
   and hands the computer an address by DHCP -- and over WiFi through Espressif's
   ESP-Hosted; mDNS, SNTP, `ping`, a web server, `httpd`, and a TLS client:
-  `fetch https://...` checks the server's certificate as a browser does
+  `fetch https://...` checks the server's certificate as a browser does.
+  `mcpd` offers the board's programs to an AI agent over MCP
 - **Secrets**: named keys sealed in flash with a passphrase
   (ChaCha20-Poly1305, PBKDF2), typed at a console and never readable back
 - **Programs**: about ninety modules, among them an editor (Atto emacs), a
@@ -148,7 +149,7 @@ does the same, with `loadfile` for the ELF and `loadbin` for the image.
 | [docs/the-sdk.md](docs/the-sdk.md) | building a module or an application outside this tree |
 | [docs/ssh.md](docs/ssh.md) | `sshd`: a shell over SSH, and what it cost to get the signature right |
 | [docs/netcon.md](docs/netcon.md) | `netcon`: the shell over TCP, and the kernel bug it found |
-| [docs/mcp.md](docs/mcp.md) | `mcpd`: the board's programs as tools for an AI agent |
+| [docs/mcp.md](docs/mcp.md) | `mcpd`: the board's programs as tools for an AI agent, setting it up and what to ask |
 | [docs/config.md](docs/config.md) | `/sd/config.txt` and `/sd/wificfg.txt`: name, WiFi, time zone, the cable's address |
 | [docs/esp-hosted](docs/esp-hosted/README.md) | the WiFi co-processor and how its firmware gets there |
 | [docs/tls.md](docs/tls.md) | https: what is checked, the roots, and using it from a module |
