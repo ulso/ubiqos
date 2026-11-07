@@ -22,6 +22,15 @@ void module_main(int argc, char **argv) {
             "usage: sockstat\n\nWhat the WiFi coprocessor says about each socket.\n"))
         return;
 
+    // Without the coprocessor there is no server to ask, and every question
+    // comes back -1: ten rows of "no answer" on port 4294967295. lwIP's sockets
+    // are in free.
+    if (ubiqos_sock_port(0) < 0) {
+        ubiqos_write_str(UBIQOS_STDOUT,
+            "sockstat: this board has no NINA coprocessor; free lists its sockets\n");
+        return;
+    }
+
     ubiqos_line_t l;
     ubiqos_write_str(UBIQOS_STDOUT, "sock  state        port   owner\n");
 

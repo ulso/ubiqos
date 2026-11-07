@@ -15,7 +15,7 @@ Start it on the board:
 
 ```
 ubiqos:/> mcpd &
-mcpd: 12 tools on port 8080, to the USB cable only
+mcpd: 11 tools on port 8080, to the USB cable only
 ```
 
 To have it start with the board, add it to the card's `startup` file. It waits
@@ -112,6 +112,11 @@ left out of the list, flash and the search path both having been looked in, and
 mcpd: no tool usbstat: this board has no such program
 mcpd: 11 tools on port 8080, to the USB cable only
 ```
+
+`sockstat` is left out in the same way on a board without a NINA coprocessor,
+such as a Fruit Jam on ESP-Hosted or the NUCLEO on Ethernet: it reports what
+that chip thinks of its sockets, and with no chip it could only answer with ten
+rows of `no answer`. The sockets lwIP holds are in `free`.
 
 On the search path the check only sees that a file of that name is there, and
 loads nothing. A file that is not a module, or a module copied to a name that is

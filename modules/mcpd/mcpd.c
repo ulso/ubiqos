@@ -227,6 +227,21 @@ static const char *first_word(const char *command, char *word, uint32_t cap) {
     return command;
 }
 
+// Socket 0 on the NINA stack has a port of zero or more when the coprocessor
+// is there. Without it the kernel has no server to ask and says -1. This reads
+// the driver's own table; the chip itself is not asked.
+static bool has_nina(void) {
+    return ubiqos_sock_port(0) >= 0;
+}
+
+// Why a tool cannot be offered, or 0 if it can.
+static const char *unusable(const char *program) {
+    if (!program_exists(program)) return "this board has no such program";
+    if (is(program, "sockstat") && !has_nina())
+        return "it asks the NINA coprocessor, and this board has none";
+    return 0;
+}
+
 // A tool that could only ever answer that it does not exist is no use to an
 // agent, and it would be told about it anyway. The list is written for a Fruit
 // Jam and the NUCLEO has no usbstat. Said at the start, or a line in /sd/mcp.txt
@@ -235,7 +250,10 @@ static void drop_missing(void) {
     uint32_t kept = 0;
     for (uint32_t i = 0; i < ntools; i++) {
         char program[16];
-        if (first_word(tools[i].command, program, sizeof program) && program_exists(program)) {
+        const char *why = first_word(tools[i].command, program, sizeof program)
+                              ? unusable(program)
+                              : "this board has no such program";
+        if (!why) {
             tools[kept++] = tools[i];
             continue;
         }
@@ -243,7 +261,9 @@ static void drop_missing(void) {
         ubiqos_line_reset(&l);
         ubiqos_line_str(&l, "mcpd: no tool ");
         ubiqos_line_str(&l, tools[i].name);
-        ubiqos_line_str(&l, ": this board has no such program\r\n");
+        ubiqos_line_str(&l, ": ");
+        ubiqos_line_str(&l, why);
+        ubiqos_line_str(&l, "\r\n");
         ubiqos_line_flush(UBIQOS_STDOUT, &l);
     }
     ntools = kept;
