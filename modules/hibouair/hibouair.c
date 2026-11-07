@@ -384,6 +384,37 @@ static void put_str(int32_t fd, const char *s)
 
 // A tenths-of-a-unit integer as a decimal with one place. Every reading the
 // dongle gives arrives this way except CO2 and VOC, which are whole numbers.
+// Offset 7 is light or noise, depending on the model. On the CO2/noise model
+// (0x09) it is the sound amplitude, stored big-endian where everything else is
+// little-endian, and the level is 20 log10(amplitude) dB SPL: 220265's beacon
+// said 79 and 85 on 15 Sep 2026, which is 38.0 and 38.6 dB, and the HibouAir
+// app said 39. On the other models it is read as light in lux, which was
+// checked against the app on the PM model only. This used to go out as one
+// field, alsNoise, and a model reading it called a noise sensor a light one.
+#define BOARD_NOISE 0x09u
+
+// log2(v) in 16.16 fixed point, as airview computes it: the integer part is the
+// top bit, the fraction comes from squaring the remainder, a bit per round.
+static uint64_t log2_16(uint32_t v)
+{
+    uint32_t n = 0, x = v;
+    while (x > 1) { x >>= 1; n++; }
+    uint64_t y = ((uint64_t)v << 16) >> n;      // 1.0 <= y < 2.0
+    uint32_t frac = 0;
+    for (uint32_t i = 0; i < 16; i++) {
+        y = (y * y) >> 16;
+        frac <<= 1;
+        if (y >= (2u << 16)) { y >>= 1; frac |= 1u; }
+    }
+    return ((uint64_t)n << 16) | frac;
+}
+
+// 20 log10(v) in tenths of a dB: 200 / log2(10) = 60.206, as 3945660 in 16.16.
+static uint32_t db_spl_tenths(uint32_t v)
+{
+    return (uint32_t)((log2_16(v) * 3945660u + (1ull << 31)) >> 32);
+}
+
 static void put_tenths(int32_t fd, int32_t v)
 {
     char b[16];
@@ -461,7 +492,14 @@ static bool publish_to(const char *path)
         put_str(fd, ",\"pm1\":");        put_tenths(fd, (int32_t)e->pm1);
         put_str(fd, ",\"pm25\":");       put_tenths(fd, (int32_t)e->pm25);
         put_str(fd, ",\"pm10\":");       put_tenths(fd, (int32_t)e->pm10);
-        put_str(fd, ",\"alsNoise\":");   put_u32(fd, e->als);
+        if (e->type == BOARD_NOISE) {
+            const uint32_t amplitude = ((e->als & 0xffu) << 8) | (e->als >> 8);
+            put_str(fd, ",\"noiseDbSpl\":");
+            if (amplitude < 2) put_str(fd, "null");
+            else               put_tenths(fd, (int32_t)db_spl_tenths(amplitude));
+        } else {
+            put_str(fd, ",\"lightLux\":");  put_u32(fd, e->als);
+        }
         put_str(fd, "}");
     }
     put_str(fd, "],\"count\":");
