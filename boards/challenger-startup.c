@@ -6,8 +6,11 @@
 //
 // The bridge: the radio's Bluetooth heard for HibouAir sensors, and what they
 // say served over its WiFi. hibouair waits for the network to have joined
-// before it asks the radio for Bluetooth; httpd waits for nothing.
+// before it asks the radio for Bluetooth; httpd waits for nothing. mcpd
+// answers MCP over the USB cable only, as on the Fruit Jam: `mcpd -a` by hand
+// opens it to the WiFi too.
 __attribute__((section(".rodata.descriptor"), used))
 const char startup[] =
     "hibouair -q &\n"
-    "httpd &\n";
+    "httpd &\n"
+    "mcpd &\n";
