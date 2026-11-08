@@ -25,6 +25,10 @@ up to 30 seconds for the network, which is not up yet when the file runs:
 ubiqos:/> echo mcpd & >> /sd/startup
 ```
 
+A board with no card starts it from the boot script in its flash instead:
+the Challenger+ runs `mcpd`, answering its cable, and the NUCLEO-H563ZI runs
+`mcpd -a`, since it has no cable network and answers on its Ethernet.
+
 Then tell the agent where it is. With Claude Code, in a terminal on the computer
 at the other end of the cable:
 
