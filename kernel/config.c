@@ -4,7 +4,7 @@
 //     hostname = jamboree
 //     ssid     = the-network
 //     password = ...
-//     timezone = +2
+//     timezone = CET-1CEST,M3.5.0,M10.5.0/3
 //     usb_address = 192.168.7.1
 //
 // Keys are case-insensitive, everything after '#' is a comment, and a value
@@ -138,39 +138,23 @@ static bool valid_hostname(const char *s, uint32_t n) {
     return s[0] != '-' && s[n - 1] != '-';
 }
 
-// "timezone = +2" or "-3:30" or "0". Hours east of UTC, with optional minutes.
+// "timezone = +2" or "-3:30" or "0": hours east of UTC, with optional minutes,
+// and no summer time -- the offset that is true today, the user's to edit
+// twice a year.
 //
-// No daylight saving: the board would have to carry the rules for wherever it
-// is and the date they change, and it has neither. So this is the offset that
-// is true today, and it is the user's to edit twice a year. Said plainly here
-// because a clock that is quietly an hour out is worse than one that is
-// obviously unset.
-static bool parse_timezone(const char *v, uint32_t n, int32_t *minutes) {
-    uint32_t i = 0;
-    int32_t sign = 1;
-    if (i < n && (v[i] == '+' || v[i] == '-')) { if (v[i] == '-') sign = -1; i++; }
-
-    int32_t hours = 0, mins = 0;
-    uint32_t digits = 0;
-    while (i < n && v[i] >= '0' && v[i] <= '9' && digits < 3) { hours = hours * 10 + (v[i++] - '0'); digits++; }
-    if (!digits) return false;
-
-    if (i < n && v[i] == ':') {
-        i++;
-        digits = 0;
-        while (i < n && v[i] >= '0' && v[i] <= '9' && digits < 3) { mins = mins * 10 + (v[i++] - '0'); digits++; }
-        if (!digits) mins = 0;
-    }
-
-    if (i != n || hours > 14 || mins > 59) return false;
-    *minutes = sign * (hours * 60 + mins);
-    return true;
+// Or "timezone = CET-1CEST,M3.5.0,M10.5.0/3": a POSIX TZ rule, which carries
+// its own summer time, so the board changes its clock itself. The rule rather
+// than a table of the world's zones, because the board has room for neither
+// the table nor its updates; see ubiqos_clock_parse_zone in clock.c.
+static bool parse_timezone(const char *v, uint32_t n) {
+    ubiqos_zone_t z;
+    return ubiqos_clock_parse_zone(v, n, &z);
 }
 
 static void take_timezone(const char *v, uint32_t n) {
-    int32_t minutes;
-    if (parse_timezone(v, n, &minutes)) ubiqos_clock_set_offset(minutes);
-    else ubiqos_print("config: that timezone is not an offset; leaving the clock as it was\n");
+    ubiqos_zone_t z;
+    if (ubiqos_clock_parse_zone(v, n, &z)) ubiqos_clock_set_zone(&z);
+    else ubiqos_print("config: that timezone is neither an offset nor a TZ rule; leaving the clock as it was\n");
 }
 
 // "usb_address = 10.0.5.1": four numbers, each 0 to 255, and nothing else. Not
@@ -419,10 +403,9 @@ int32_t ubiqos_config_store(const char *key, const char *value) {
 
     if (vlen) {
         uint32_t a;
-        int32_t m;
         const bool ok = canon == kept[0]                ? valid_hostname(value, vlen)
                       : strcmp(canon, "usb_address") == 0 ? parse_usb_address(value, vlen, &a)
-                      :                                     parse_timezone(value, vlen, &m);
+                      :                                     parse_timezone(value, vlen);
         if (!ok) return UBIQOS_CFG_EVALUE;
     }
 

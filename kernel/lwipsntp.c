@@ -73,7 +73,11 @@ static void took_it(uint32_t ntp_seconds)
         ubiqos_clock_stamp(stamp, sizeof stamp);
         ubiqos_print("ntp: the time is ");
         ubiqos_print(stamp);
-        ubiqos_print(ubiqos_clock_offset() ? "\n" : " UTC\n");
+        // The zone's name when it has one -- "CET", or "CEST" in summer --
+        // so that a log read later says which of the two it was.
+        const char *name = ubiqos_clock_zone_name();
+        if (name[0]) { ubiqos_print(" "); ubiqos_print(name); ubiqos_print("\n"); }
+        else ubiqos_print(ubiqos_clock_offset() ? "\n" : " UTC\n");
     }
 }
 

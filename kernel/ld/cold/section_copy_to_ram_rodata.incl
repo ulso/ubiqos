@@ -1,0 +1,22 @@
+/* The SDK's section_copy_to_ram_rodata.incl, with one section in front of it,
+ * for a kernel built without IPv6. ../section_copy_to_ram_rodata.incl is the
+ * one with it, and says why code may run from flash here at all.
+ *
+ * Only the kernel's own code marked for it: sections named .text.flash.*, run
+ * at boot or on a command, by a thread, never from an interrupt -- the time
+ * zone's parser in clock.c. lwIP stays in SRAM in these builds, as it always
+ * has; moving it as well is a decision of its own.
+ */
+SECTIONS
+{
+    .flash_cold : {
+        *(.text.flash.*)
+        . = ALIGN(4);
+    } > TEXT_STORE
+
+    .rodata : {
+        /* segments not marked as .flashdata are instead pulled into .data (in RAM) to avoid accidental flash accesses */
+        *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.flashdata*)))
+        . = ALIGN(4);
+    } > TEXT_STORE
+}

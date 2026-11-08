@@ -22,10 +22,17 @@
  * The section comes before the SDK's .text, and the first rule in a linker
  * script to match an input section takes it, so .text never sees these.
  * Matching nothing -- a build without IPv6 -- leaves it empty.
+ *
+ * Kernel code of the same kind -- run at boot or on a command, by a thread,
+ * never from an interrupt -- goes in a section named .text.flash.*, and is
+ * kept here too: the time zone's parser in clock.c, 8 Nov 2026, whose 2 kB in
+ * SRAM moved the riscv framebuffer build's .bss a whole page. Without this
+ * file the SDK's own *(.text*) takes such a section into SRAM as before.
  */
 SECTIONS
 {
     .flash_lwip : {
+        *(.text.flash.*)
         *lwip/src/core/ipv6/*.o(.text* .rodata*)
         */apps/mdns/*.o(.text* .rodata*)
         *lwip/src/core/dns.c.o(.text* .rodata*)

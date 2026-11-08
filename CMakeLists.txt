@@ -686,6 +686,10 @@ if(ubiqosLwip AND ubiqosIpv6)
         FILES section_copy_to_ram_rodata.incl)
 else()
     set(ubiqosIpv6 OFF)
+    # Without IPv6, only the kernel's own .text.flash.* code stays in flash;
+    # lwIP is copied as before. See kernel/ld/cold/.
+    pico_add_linker_script_override_path(os_kernel ${CMAKE_CURRENT_SOURCE_DIR}/kernel/ld/cold
+        FILES section_copy_to_ram_rodata.incl)
 endif()
 message(STATUS "IPv6: ${ubiqosIpv6}")
 

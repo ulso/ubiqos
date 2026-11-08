@@ -6,7 +6,7 @@ runs.
 
     # /sd/config.txt -- what this machine is
     hostname = jamboree
-    timezone = +2
+    timezone = CET-1CEST,M3.5.0,M10.5.0/3
 
     # /sd/wificfg.txt -- what network it joins
     ssid     = the-network
@@ -57,6 +57,53 @@ is lost: the machine is called `ubiqos`, as it always has been.
 A hostname is also an mDNS label, so it may hold letters, digits and hyphens
 and nothing else, and may not begin or end with one. Anything else is said out
 loud and ignored rather than announced and refused later by the responder.
+
+## The time zone
+
+    timezone = CET-1CEST,M3.5.0,M10.5.0/3
+
+The clock comes from the network in UTC (`ntp:` in the log), and this says how
+far the board is from it. Two forms:
+
+- **A TZ rule, with summer time.** The POSIX form Linux, ESP-IDF and Zephyr
+  take: the standard time's name and offset, the summer time's name, and when
+  each starts. The board works out each year's two dates from the rule and
+  changes its clock by itself, at the hour the rule names. The line above is
+  Sweden, and most of Europe: summer time from the last Sunday of March
+  (`M3.5.0`) at two in the morning, to the last Sunday of October (`M10.5.0`)
+  at three.
+- **A bare offset, without it:** `timezone = +2`, `-3:30` or `0`, hours east of
+  UTC. That is the offset that is true today, and somebody has to change it
+  twice a year, as the boards' `+2` needed changing on 25 Oct 2026.
+
+**A TZ rule's offset counts hours west of UTC**, as POSIX's always has: CET is
+an hour east, and is written `CET-1`. The bare offset counts east. The two read
+the same sign the other way round, and the first character tells them apart:
+a rule starts with its name.
+
+Some more, from the zones' own rules:
+
+| Where | timezone |
+|---|---|
+| Sweden, most of Europe | `CET-1CEST,M3.5.0,M10.5.0/3` |
+| Finland, the Baltics | `EET-2EEST,M3.5.0/3,M10.5.0/4` |
+| UK, Ireland, Portugal | `GMT0BST,M3.5.0/1,M10.5.0` |
+| US Eastern | `EST5EDT,M3.2.0,M11.1.0` |
+| US Pacific | `PST8PDT,M3.2.0,M11.1.0` |
+| Sydney | `AEST-10AEDT,M10.1.0,M4.1.0/3` |
+| India, no summer time | `IST-5:30` |
+| UTC | `0` or `UTC0` |
+
+A rule must name its dates: one with a summer time and no dates (`CET-1CEST`)
+is refused, since POSIX leaves those dates to the implementation and that would
+mean guessing. Only the `Mm.w.d` form of date is taken -- day `d` (0 is Sunday)
+of week `w` (5 is the last) of month `m` -- not the Julian-day ones. Anything
+refused is said at boot, and the clock keeps the zone it had: the one kept in
+flash, if any, else UTC. `config set timezone` refuses it before it is kept.
+The log's `ntp:` line names
+the zone in force, `CET` or `CEST`. The rules were checked against macOS's own
+time zone files for every half hour from 2025 to 2030 for the zones above, and
+New Zealand, Tokyo and São Paulo besides.
 
 ## The USB cable's address
 
