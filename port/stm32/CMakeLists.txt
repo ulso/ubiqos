@@ -32,6 +32,7 @@ if(UBIQOS_STM32_BOARD STREQUAL "nucleo-h563zi")
     set(STM32_NETIF  eth)
     set(STM32_NODE   OFF)
     set(STM32_USB    OFF)                  # the H5's controller wants a newer TinyUSB
+    set(STM32_STARTUP boards/nucleo-h563zi-startup.c)
 elseif(UBIQOS_STM32_BOARD STREQUAL "nucleo-h503rb")
     set(STM32_FAMILY h5)
     set(STM32_CHIP   STM32H503xx)
