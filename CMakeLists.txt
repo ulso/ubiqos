@@ -227,14 +227,16 @@ if(NOT ubiqosPatchedFrom STREQUAL sdkVersion)
     message(FATAL_ERROR
         "lib/tinyusb-patched holds copies of TinyUSB ${ubiqosPatchedFrom} and "
         "this build uses ${sdkVersion}.\n"
-        "  Two files are patched: class/cdc/cdc_host.c and host/hub.c. Diff each "
-        "against the new SDK, carry the change over -- each is one callback -- "
+        "  Three files are patched: class/cdc/cdc_host.c, host/hub.c and "
+        "class/net/ncm_device.c. Diff each against the new SDK, carry the "
+        "change over -- the README says what each one is -- "
         "and set ubiqosPatchedFrom to ${sdkVersion}.\n"
         "  If upstream has fixed them, delete the copy, put the SDK's path back "
         "in the list below, and say so in lib/tinyusb-patched/README.md.\n"
         "  What is at stake: without these, an unplugged CDC device halts the "
-        "core the USB host runs on, and one failed hub transfer makes every "
-        "device behind the hub unremovable for the rest of the run.\n"
+        "core the USB host runs on, one failed hub transfer makes every "
+        "device behind the hub unremovable for the rest of the run, and the "
+        "network over the cable stays down after a Mac wakes up.\n"
         "  lib/lwip-patched holds lwIP's apps/mdns/mdns.c and mdns_out.c from the "
         "same SDK, changed to answer an AAAA question with NSEC. Carry that "
         "over too -- see lib/lwip-patched/README.md -- or name look-ups of the "
@@ -257,7 +259,17 @@ endif()
 set(UBIQOS_NATIVE_USB "device" CACHE STRING "the chip's own USB port: device or host")
 set_property(CACHE UBIQOS_NATIVE_USB PROPERTY STRINGS device host)
 if(UBIQOS_NATIVE_USB STREQUAL "device")
-    set(ubiqosUsbDeviceSources kernel/usb_descriptors.c kernel/usbmsc.c)
+    # Our copy of TinyUSB's CDC-NCM driver, in place of the SDK's: it tells the
+    # host the link is up every time the data interface is selected, and accepts
+    # SET_ETHERNET_PACKET_FILTER. Without it a Mac waking up leaves the cable's
+    # network down now and then -- see lib/tinyusb-patched/README.md. The SDK's
+    # file comes in with tinyusb_device, so it is switched off here rather than
+    # left out of a list; were it compiled as well, the link would fail on two
+    # netd_init, which is the check that this line still works.
+    set(ubiqosUsbDeviceSources kernel/usb_descriptors.c kernel/usbmsc.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/class/net/ncm_device.c)
+    set_source_files_properties(${PICO_SDK_PATH}/lib/tinyusb/src/class/net/ncm_device.c
+        PROPERTIES HEADER_FILE_ONLY ON)
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
     # as a submodule so the version is written down: the copy that was lying
     # around was eleven months old and missing an out-of-bounds memcpy fix and
@@ -709,6 +721,7 @@ target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     # A quoted include falls back to the include path, so the copy needs no edit
     # of its own to compile from somewhere else.
     ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc
+    ${PICO_SDK_PATH}/lib/tinyusb/src/class/net
     ${PICO_SDK_PATH}/lib/tinyusb/src/host)
 
 # Enable extra warnings and optimisation for the RTOS

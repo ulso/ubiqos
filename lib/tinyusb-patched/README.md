@@ -1,9 +1,14 @@
-# TinyUSB, with two files changed
+# TinyUSB, with three files changed
 
-The Pico SDK's TinyUSB is used as it ships, except for two files copied here,
-each with a single change: `class/cdc/cdc_host.c` and `host/hub.c`. `CMakeLists.txt` lists the host
+The Pico SDK's TinyUSB is used as it ships, except for three files copied here:
+`class/cdc/cdc_host.c` and `host/hub.c` with a single change each, and
+`class/net/ncm_device.c` with three small ones. `CMakeLists.txt` lists the host
 sources by path, so pointing one of them at this directory is the whole of the
-mechanism -- there is no patch step and nothing to remember to apply.
+mechanism -- there is no patch step and nothing to remember to apply. The NCM
+driver is the exception: it comes in with `tinyusb_device`, so the SDK's copy
+is switched off with `HEADER_FILE_ONLY` beside the line that adds ours. Were
+both compiled, the link would fail on two `netd_init` -- that failure is the
+check that the switch still works.
 
 ## What is changed, and why
 
@@ -57,9 +62,47 @@ So this is not a note anybody has to remember to read — it is what the error
 tells you to come here for.
 
     SDK=~/.pico-sdk/sdk/<version>/lib/tinyusb/src
-    diff $SDK/class/cdc/cdc_host.c lib/tinyusb-patched/class/cdc/cdc_host.c
-    diff $SDK/host/hub.c           lib/tinyusb-patched/host/hub.c
+    diff $SDK/class/cdc/cdc_host.c  lib/tinyusb-patched/class/cdc/cdc_host.c
+    diff $SDK/host/hub.c            lib/tinyusb-patched/host/hub.c
+    diff $SDK/class/net/ncm_device.c lib/tinyusb-patched/class/net/ncm_device.c
 
-Everything outside the two callbacks named above should be identical. If
-upstream has fixed either one, delete that copy and put the path in
-CMakeLists.txt back.
+Everything outside the places marked `UBIQOS:` should be identical. If
+upstream has fixed one, delete that copy and put the path in CMakeLists.txt
+back -- for the NCM driver, also remove the `HEADER_FILE_ONLY` line.
+
+## class/net/ncm_device.c
+
+A Mac that wakes from sleep behind a dock re-enumerates every board -- about
+every seventeen minutes through a night of DarkWakes on macOS 27.2.1. Each
+time, it selects the data interface's alternate setting 1, and now and then it
+does so more than once in the same enumeration. Its own log shows each
+selection as `AppleUSBNCMData::setupDataTransfers` and the result as
+`updateLinkStatus`.
+
+Upstream sends CONNECTION_SPEED_CHANGE and NETWORK_CONNECTION once per bus
+reset and then sits in `NOTIFICATION_DONE`, with `notification_xmit_is_running`
+left true for ever. After a second selection the Mac waits for
+NETWORK_CONNECTION, gets nothing, and keeps the link down until the next
+re-enumeration. Measured from the Mac's log on 12-13 Nov 2026, the Challenger+
+behind a USB 2 hub on a CalDigit TS5 dock: **8 of 35 bring-ups ended with the
+link down, and those 8 were exactly the ones with more than one selection.**
+
+Three changes, each marked `UBIQOS:`:
+
+* SET_INTERFACE to alternate setting 1 starts the notifications again from
+  CONNECTION_SPEED_CHANGE, every time.
+* `notification_xmit_is_running` goes false once the last notification has
+  been delivered, so the next SET_INTERFACE is not turned away as busy. If a
+  notification is still in flight when the host selects again, its completion
+  carries on, because `netd_xfer_cb` asks for the next one.
+* SET_ETHERNET_PACKET_FILTER (0x43) is accepted and ignored instead of
+  stalled. `kernel/usb_descriptors.c` declares it in bmNetworkCapabilities,
+  which macOS needs to see. The stall came back to the Mac as EIO on
+  SIOCADDMULTI and SIOCDELMULTI, which is when it tore the data interface
+  down and selected it again. embassy made the same request a no-op
+  (embassy-rs/embassy#6844) and measured 0 failed attachments in 19 against
+  macOS, against 3 in 9 before.
+
+The second selection is what costs the link, and the first change makes it
+harmless; the third should make it rarer. The Mac's log tells them apart:
+count `setupDataTransfers` per bring-up, and look at the last `linkStatus`.
