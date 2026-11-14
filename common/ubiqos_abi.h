@@ -1642,6 +1642,12 @@ typedef struct {
 // second command.
 #define UBIQOS_USB_CORE1_BEATS 12u   // passes of the host loop since boot
 #define UBIQOS_USB_CORE1_AGE   13u   // ms since the last one began
+
+// Times the host cleared a halt on one of our endpoints while the controller
+// still held a buffer there, and the driver took it back. Each one is a panic
+// that did not happen -- see lib/tinyusb-patched/README.md -- and a count of
+// zero after a Mac restart says the path was never exercised, not that it works.
+#define UBIQOS_USB_HALT_TAKEBACKS 14u
 // addr | instance<<8 | wanted<<16 | armed<<17 | idle<<24, for eight slots
 #define UBIQOS_USB_HID          0x10u
 // dev<<0 | ep<<8 | has_transfer<<16 | started<<17 | stalled<<18 | failed<<24

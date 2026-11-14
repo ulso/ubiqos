@@ -227,16 +227,18 @@ if(NOT ubiqosPatchedFrom STREQUAL sdkVersion)
     message(FATAL_ERROR
         "lib/tinyusb-patched holds copies of TinyUSB ${ubiqosPatchedFrom} and "
         "this build uses ${sdkVersion}.\n"
-        "  Three files are patched: class/cdc/cdc_host.c, host/hub.c and "
-        "class/net/ncm_device.c. Diff each against the new SDK, carry the "
+        "  Four files are patched: class/cdc/cdc_host.c, host/hub.c, "
+        "class/net/ncm_device.c and portable/raspberrypi/rp2040/dcd_rp2040.c. "
+        "Diff each against the new SDK, carry the "
         "change over -- the README says what each one is -- "
         "and set ubiqosPatchedFrom to ${sdkVersion}.\n"
         "  If upstream has fixed them, delete the copy, put the SDK's path back "
         "in the list below, and say so in lib/tinyusb-patched/README.md.\n"
         "  What is at stake: without these, an unplugged CDC device halts the "
         "core the USB host runs on, one failed hub transfer makes every "
-        "device behind the hub unremovable for the rest of the run, and the "
-        "network over the cable stays down after a Mac wakes up.\n"
+        "device behind the hub unremovable for the rest of the run, the "
+        "network over the cable stays down after a Mac wakes up, and a Mac "
+        "that restarts can panic the board off USB and WiFi alike.\n"
         "  lib/lwip-patched holds lwIP's apps/mdns/mdns.c and mdns_out.c from the "
         "same SDK, changed to answer an AAAA question with NSEC. Carry that "
         "over too -- see lib/lwip-patched/README.md -- or name look-ups of the "
@@ -266,9 +268,18 @@ if(UBIQOS_NATIVE_USB STREQUAL "device")
     # file comes in with tinyusb_device, so it is switched off here rather than
     # left out of a list; were it compiled as well, the link would fail on two
     # netd_init, which is the check that this line still works.
+    #
+    # And our copy of the controller's device driver, dcd_rp2040.c, switched in
+    # the same way: clearing an endpoint's halt takes back a buffer the
+    # hardware still holds, instead of leaving it there to make the next
+    # transfer panic. A Mac taking the board back after a restart did exactly
+    # that, and the board left USB and the WiFi together.
     set(ubiqosUsbDeviceSources kernel/usb_descriptors.c kernel/usbmsc.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/class/net/ncm_device.c)
-    set_source_files_properties(${PICO_SDK_PATH}/lib/tinyusb/src/class/net/ncm_device.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/class/net/ncm_device.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/tinyusb-patched/portable/raspberrypi/rp2040/dcd_rp2040.c)
+    set_source_files_properties(
+        ${PICO_SDK_PATH}/lib/tinyusb/src/class/net/ncm_device.c
+        ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040/dcd_rp2040.c
         PROPERTIES HEADER_FILE_ONLY ON)
     # Pico-PIO-USB bit-bangs a USB host on two PIO state machines. It is pinned
     # as a submodule so the version is written down: the copy that was lying
@@ -722,6 +733,7 @@ target_include_directories(os_kernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
     # of its own to compile from somewhere else.
     ${PICO_SDK_PATH}/lib/tinyusb/src/class/cdc
     ${PICO_SDK_PATH}/lib/tinyusb/src/class/net
+    ${PICO_SDK_PATH}/lib/tinyusb/src/portable/raspberrypi/rp2040
     ${PICO_SDK_PATH}/lib/tinyusb/src/host)
 
 # Enable extra warnings and optimisation for the RTOS

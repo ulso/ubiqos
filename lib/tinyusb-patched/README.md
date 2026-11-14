@@ -1,14 +1,15 @@
-# TinyUSB, with three files changed
+# TinyUSB, with four files changed
 
-The Pico SDK's TinyUSB is used as it ships, except for three files copied here:
-`class/cdc/cdc_host.c` and `host/hub.c` with a single change each, and
+The Pico SDK's TinyUSB is used as it ships, except for four files copied here:
+`class/cdc/cdc_host.c`, `host/hub.c` and
+`portable/raspberrypi/rp2040/dcd_rp2040.c` with a single change each, and
 `class/net/ncm_device.c` with three small ones. `CMakeLists.txt` lists the host
 sources by path, so pointing one of them at this directory is the whole of the
-mechanism -- there is no patch step and nothing to remember to apply. The NCM
-driver is the exception: it comes in with `tinyusb_device`, so the SDK's copy
-is switched off with `HEADER_FILE_ONLY` beside the line that adds ours. Were
-both compiled, the link would fail on two `netd_init` -- that failure is the
-check that the switch still works.
+mechanism -- there is no patch step and nothing to remember to apply. The two
+device-side files are the exception: they come in with `tinyusb_device`, so the
+SDK's copies are switched off with `HEADER_FILE_ONLY` beside the line that adds
+ours. Were both compiled, the link would fail on a duplicate symbol -- that
+failure is the check that the switch still works.
 
 ## What is changed, and why
 
@@ -65,10 +66,13 @@ tells you to come here for.
     diff $SDK/class/cdc/cdc_host.c  lib/tinyusb-patched/class/cdc/cdc_host.c
     diff $SDK/host/hub.c            lib/tinyusb-patched/host/hub.c
     diff $SDK/class/net/ncm_device.c lib/tinyusb-patched/class/net/ncm_device.c
+    diff $SDK/portable/raspberrypi/rp2040/dcd_rp2040.c \
+         lib/tinyusb-patched/portable/raspberrypi/rp2040/dcd_rp2040.c
 
 Everything outside the places marked `UBIQOS:` should be identical. If
 upstream has fixed one, delete that copy and put the path in CMakeLists.txt
-back -- for the NCM driver, also remove the `HEADER_FILE_ONLY` line.
+back -- for the two device-side files, also take the SDK's path out of the
+`HEADER_FILE_ONLY` line.
 
 ## class/net/ncm_device.c
 
@@ -106,3 +110,36 @@ Three changes, each marked `UBIQOS:`:
 The second selection is what costs the link, and the first change makes it
 harmless; the third should make it rarer. The Mac's log tells them apart:
 count `setupDataTransfers` per bring-up, and look at the last `linkStatus`.
+
+## portable/raspberrypi/rp2040/dcd_rp2040.c
+
+When a Mac restarts, it takes the boards on its dock back and, as part of the
+mass storage class's reset recovery, sends CLEAR_FEATURE(ENDPOINT_HALT) to the
+mass storage OUT endpoint -- an endpoint that was never stalled and still has
+the next CBW read queued in the controller.
+
+`usbd_edpt_clear_stall` marks the endpoint idle whatever was queued, and then
+hands the request to the class driver. `mscd_control_xfer_cb` sees an idle OUT
+endpoint and queues the CBW read again. But upstream's `dcd_edpt_clear_stall`
+cleared only the STALL bit, so the controller still held the first buffer,
+and `_hw_endpoint_buffer_control_update32` stopped the board with
+`panic("ep %02X was already available")`. It did so in the USB thread, which
+is also where lwIP runs: the board left USB and the WiFi together, and stayed
+gone until it was reset.
+
+Seen on 14 Nov 2026 after a run of Mac restarts: the Fruit Jam and one
+Challenger+ vanished, one Challenger+ came through. The Fruit Jam's backtrace,
+read over its Debug Probe with the board still hung: `panic` <-
+`_hw_endpoint_buffer_control_update32` <- `hw_endpoint_xfer_start` <-
+`dcd_edpt_xfer` <- `usbd_edpt_xfer` <- `prepare_cbw` <- `mscd_control_xfer_cb`
+<- `process_control_request` <- `tud_task`. Two boards had vanished the same
+way after a Mac restart two days earlier; nothing was read from them before
+they were reset, so whether it was this is not known, though it fits. A reset
+by the RUN pin did not keep the crash record (`ubiqos_crash`) for the next
+boot to report, so read a hung board over its probe before resetting it.
+
+The change: `dcd_edpt_clear_stall` takes back a buffer the controller still
+holds, with EP_ABORT in the same order `reset_ep0` already uses for endpoint
+0, so the endpoint is as idle as `usbd` believes. Each takeback is counted,
+and `usbstat` shows the count as `halt takebacks` -- a restart that the board
+survives with the count still zero did not exercise this path.

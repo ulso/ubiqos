@@ -1163,6 +1163,10 @@ uint32_t ubiqos_usbhost_info(uint32_t what) {
         if (what == UBIQOS_USB_MOUNTS)    return ubiqos_usb_mounts;
         if (what == UBIQOS_USB_UNMOUNTS)  return ubiqos_usb_unmounts;
         if (what == UBIQOS_USB_LASTEVENT) return ubiqos_usb_last_event_ms;
+#if !UBIQOS_USB_NATIVE_HOST             // the device driver is not in a host build
+        extern uint32_t ubiqos_usb_halt_takebacks;   // lib/tinyusb-patched dcd_rp2040.c
+        if (what == UBIQOS_USB_HALT_TAKEBACKS) return ubiqos_usb_halt_takebacks;
+#endif
     }
 
 #if !UBIQOS_USB_NATIVE_HOST             // see the note above the endpoint pool

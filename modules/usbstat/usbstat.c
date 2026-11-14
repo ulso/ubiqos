@@ -52,6 +52,7 @@ void module_main(void) {
     kv("host mounts:    ", ubiqos_usbinfo(UBIQOS_USB_MOUNTS));
     kv("host unmounts:  ", ubiqos_usbinfo(UBIQOS_USB_UNMOUNTS));
     kv("last one at ms: ", ubiqos_usbinfo(UBIQOS_USB_LASTEVENT));
+    kv("halt takebacks: ", ubiqos_usbinfo(UBIQOS_USB_HALT_TAKEBACKS));
     if (ubiqos_usbinfo(UBIQOS_USB_CDCGIVEUP))
         ubiqos_write_str(UBIQOS_STDOUT, "cdc:            given up, not asking again\n");
 
