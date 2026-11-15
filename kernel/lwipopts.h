@@ -140,8 +140,30 @@
 // survive a reboot and could be read. The panic's own string named it exactly
 // -- "pool MEMP_NUM_SYS_TIMEOUT is empty" -- which is what that record is for.
 //
-// Each slot is a dozen bytes. Being generous costs nothing worth counting.
-#define MEMP_NUM_SYS_TIMEOUT        24
+// Each slot is sixteen bytes. Being generous costs nothing worth counting.
+//
+// Twenty-four ran out too, on the Fruit Jam on 15 Nov 2026, the same panic,
+// forty seconds after the Mac it was plugged into woke fully. Read over the
+// probe with the board stopped in _exit: all twenty-four in use and none of
+// them leaked -- ten of lwIP's own cyclic timers and fourteen of the mDNS
+// responder's, when the Mac asked on the cable and the WiFi, over IPv4 and
+// IPv6, at once. Twenty-four was counted before IPv6 (11 Oct), which doubles
+// what the responder can hold.
+//
+// So it is counted from the settings now, not guessed. lwIP's own
+// LWIP_NUM_SYS_TIMEOUT_INTERNAL covers its cyclic timers and leaves apps out.
+// The responder's are each guarded by a busy flag, so one of each at most, per
+// interface and per IP version: the delayed unicast and multicast replies and
+// the three multicast-rate resets -- five -- and per interface one more for
+// probing and announcing. On top, one per truncated question it is still
+// waiting to hear the rest of, which has no fixed bound; four of those.
+// The macro is expanded where the pool is declared, after opt.h has defined
+// everything it names.
+#define UBIQOS_MDNS_NETIFS          2
+#define UBIQOS_MDNS_TC_TIMEOUTS     4
+#define MEMP_NUM_SYS_TIMEOUT        (LWIP_NUM_SYS_TIMEOUT_INTERNAL + \
+                                     UBIQOS_MDNS_NETIFS * (1 + 5 * (1 + LWIP_IPV6)) + \
+                                     UBIQOS_MDNS_TC_TIMEOUTS)
 #define PBUF_POOL_SIZE              6
 #define PBUF_POOL_BUFSIZE           1536
 
