@@ -440,7 +440,18 @@ endif()
 # PICO_SD_CARD_EXTRA_CLOCK_DIVIDER, HSTX through its own divider, flash by
 # a QMI divider scaled to match. The ws43b's RGB panel is a whole PIO
 # program timed against 120 and is not ready for 240.
-set(UBIQOS_SYS_MHZ "120" CACHE STRING "processor clock: 120, or 240 (overclocked)")
+#
+# The Fruit Jam on Arm defaults to 240: measured there, the display's share
+# of the processor halves and PSRAM doubles, with USB, SD, audio and WiFi
+# all checked. RISC-V on the same board has not been run at 240 and stays
+# at 120 until it has. A build directory keeps whatever it was configured
+# with; -DUBIQOS_SYS_MHZ= says it outright.
+if(UBIQOS_BOARD STREQUAL "fruit-jam" AND UBIQOS_ARCH STREQUAL "arm")
+    set(ubiqosSysMhzDefault 240)
+else()
+    set(ubiqosSysMhzDefault 120)
+endif()
+set(UBIQOS_SYS_MHZ "${ubiqosSysMhzDefault}" CACHE STRING "processor clock: 120, or 240 (overclocked)")
 if(NOT UBIQOS_SYS_MHZ STREQUAL "120" AND NOT UBIQOS_SYS_MHZ STREQUAL "240")
     message(FATAL_ERROR "UBIQOS_SYS_MHZ is 120 or 240, not ${UBIQOS_SYS_MHZ}")
 endif()
