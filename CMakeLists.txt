@@ -1867,6 +1867,7 @@ ubiqos_add_module(kill modules/kill/kill.c)
 ubiqos_add_module(cu modules/cu/cu.c)
 ubiqos_add_module(keys modules/keys/keys.c RT)
 ubiqos_add_module(memtest modules/memtest/memtest.c)
+ubiqos_add_module(psrambench modules/psrambench/psrambench.c)
 ubiqos_add_module(pimpl modules/pimpl/pimpl.cpp modules/pimpl/bump.cpp)
 ubiqos_add_module(bootsel modules/bootsel/bootsel.c)
 ubiqos_add_data_module(termdesc modules/term_desc/term_desc.c)
@@ -1936,6 +1937,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/hibouair.mod
             ${CMAKE_CURRENT_BINARY_DIR}/keys.mod
             ${CMAKE_CURRENT_BINARY_DIR}/memtest.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/psrambench.mod
             ${CMAKE_CURRENT_BINARY_DIR}/pimpl.mod
             ${CMAKE_CURRENT_BINARY_DIR}/bootsel.mod
             ${CMAKE_CURRENT_BINARY_DIR}/termdesc.mod
