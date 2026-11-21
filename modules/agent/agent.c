@@ -6,8 +6,9 @@
 // agent -- talk to Claude, which can look around this board and change it.
 //
 //   agent                 a conversation; /help inside it says the rest
-//   agent -m haiku        the same with another model: opus (the default),
-//                         sonnet, haiku, or a whole model id
+//   agent -m opus         the same with another model: haiku (the default),
+//                         sonnet, opus, or a whole model id; /model inside
+//                         changes it in the middle of a conversation
 //
 // The board asks api.anthropic.com itself, over TLS with the certificate
 // checked: there is no tunnel and no other machine in it. The API key is the
@@ -35,7 +36,7 @@ UBIQOS_MEM_SIZE(32768);                 // Mbed TLS's big numbers are on the sta
 uint32_t ubiqos_heap_bytes = 1024u * 1024u;
 
 #define API_HOST     "api.anthropic.com"
-#define MODEL        "claude-opus-5-5"   // without -m
+#define MODEL        "claude-haiku-5-5"  // without -m: the cheap one
 #define MAX_TOKENS   "16000"
 #define KEY_NAME     "api.anthropic"
 #define IDLE_MS      120000u    // nothing from the server for this long ends a turn
@@ -51,14 +52,15 @@ uint32_t ubiqos_heap_bytes = 1024u * 1024u;
 #define SAVE_BAD     SAVE_DIR "/conversation.bad.json"
 
 // The short names -m takes. One key serves every model; what a turn costs
-// is what differs, and haiku is the cheap one for looking around.
+// is what differs. Haiku is the default, being the cheap one, and does well
+// at looking around and running things; opus is for writing and changing.
 static const struct { const char *name, *id; } models[] = {
     { "opus",   "claude-opus-5-5" },
     { "sonnet", "claude-sonnet-5-5" },
     { "haiku",  "claude-haiku-5-5" },
 };
 
-static const char *model = MODEL;
+static char model[64] = MODEL;
 
 // A short name, or a whole id ("claude-...") passed through as it is, so a
 // model newer than this program can still be asked for. NULL: neither.
@@ -72,6 +74,17 @@ static const char *model_id(const char *a) {
         return a;
     }
     return NULL;
+}
+
+// Changing it in the middle is allowed: the same messages go to the new
+// model, which the API takes as they are. The cache is per model, so the
+// first answer after a change pays for the whole conversation once.
+static bool set_model(const char *a) {
+    const char *id = model_id(a);
+    if (!id) return false;
+    strncpy(model, id, sizeof model - 1);
+    model[sizeof model - 1] = 0;
+    return true;
 }
 
 // --- output -----------------------------------------------------------------
@@ -1005,23 +1018,22 @@ int main(int argc, char **argv) {
             "them, and run the board's programs -- asking you before each write, edit\n"
             "or run. The API key is the key store's api.anthropic: 'key set\n"
             "api.anthropic' once, with the store unlocked.\n\n"
-            "-m picks the model: opus (the default), sonnet or haiku, or a whole\n"
-            "model id such as claude-haiku-5-5. Haiku costs least.\n\n"
+            "-m picks the model: haiku (the default, and the cheapest), sonnet or\n"
+            "opus, or a whole model id such as claude-opus-5-5.\n\n"
             "The conversation is saved in /sd/agent/conversation.json after every\n"
             "answer, and the next 'agent' goes on with it.\n\n"
             "Inside: /new starts a new conversation (the last one is kept as\n"
-            "conversation.old.json), /ask turns the asking back on, /quit or\n"
-            "Ctrl-D leaves.\n"))
+            "conversation.old.json), /model NAME changes the model, /ask turns\n"
+            "the asking back on, /quit or Ctrl-D leaves.\n"))
         return 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-m") && i + 1 < argc) {
-            model = model_id(argv[++i]);
-            if (!model) {
+            if (!set_model(argv[++i])) {
                 say("agent: -m takes opus, sonnet, haiku or a model id (claude-...)\r\n");
                 return 1;
             }
         } else {
-            say("usage: agent [-m opus|sonnet|haiku]\r\n");
+            say("usage: agent [-m haiku|sonnet|opus]\r\n");
             return 1;
         }
     }
@@ -1045,10 +1057,19 @@ int main(int argc, char **argv) {
             say("a new conversation; the last one is in " SAVE_OLD "\r\n");
             continue;
         }
+        if (!strcmp(line, "/model") || !strncmp(line, "/model ", 7)) {
+            const char *a = line + 6;
+            while (*a == ' ') a++;
+            if (!*a) { say("the model is "); say(model); say("; /model haiku, sonnet or opus changes it\r\n"); }
+            else if (set_model(a)) { say("now "); say(model); say("\r\n"); }
+            else say("/model takes haiku, sonnet, opus or a model id (claude-...)\r\n");
+            continue;
+        }
         if (!strcmp(line, "/ask")) { ask_all = false; say("asking again before writes and runs\r\n"); continue; }
         if (!strcmp(line, "/help")) {
             say("/new starts a new conversation (the last one is kept as\r\n"
-                SAVE_OLD "), /ask asks again before writes and runs,\r\n"
+                SAVE_OLD "), /model NAME changes the model (haiku, sonnet,\r\n"
+                "opus), /ask asks again before writes and runs,\r\n"
                 "/quit leaves. The conversation is saved after every answer and the\r\n"
                 "next 'agent' goes on with it. Anything else goes to Claude.\r\n");
             continue;
