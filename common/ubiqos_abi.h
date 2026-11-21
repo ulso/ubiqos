@@ -319,7 +319,8 @@ typedef struct {
 
     // What clk_sys is actually running at. A PIO divider is worked out from it,
     // and a driver that assumed 125 MHz would be wrong here -- this machine
-    // runs 120, chosen so PIO-USB's 48 and 96 MHz divide exactly.
+    // runs 120 or 240 (UBIQOS_SYS_MHZ), the two that PIO-USB's 48 and 96 MHz
+    // divide exactly.
     uint32_t (*clock_hz)(void);
 
     // --- version 6 ---------------------------------------------------------

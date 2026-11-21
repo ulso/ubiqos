@@ -432,6 +432,33 @@ if(ubiqosBoardDefs)
     target_compile_definitions(os_kernel PRIVATE ${ubiqosBoardDefs})
 endif()
 
+# The processor clock. PIO-USB divides it down to 48 and 96 MHz with a
+# divider that has eight fractional bits, and only 120 and 240 do that
+# exactly, so those are the two. 240 is above RP2350's rated 150 and raises
+# the core voltage to get there (kernel/main.c); it also doubles PSRAM's
+# clock. What runs from clk_sys keeps its own rate: SDIO through
+# PICO_SD_CARD_EXTRA_CLOCK_DIVIDER, HSTX through its own divider, flash by
+# a QMI divider scaled to match. The ws43b's RGB panel is a whole PIO
+# program timed against 120 and is not ready for 240.
+set(UBIQOS_SYS_MHZ "120" CACHE STRING "processor clock: 120, or 240 (overclocked)")
+if(NOT UBIQOS_SYS_MHZ STREQUAL "120" AND NOT UBIQOS_SYS_MHZ STREQUAL "240")
+    message(FATAL_ERROR "UBIQOS_SYS_MHZ is 120 or 240, not ${UBIQOS_SYS_MHZ}")
+endif()
+if(UBIQOS_SYS_MHZ STREQUAL "240" AND UBIQOS_BOARD STREQUAL "ws43b")
+    message(FATAL_ERROR "UBIQOS_SYS_MHZ=240: the ws43b panel's timing is built on 120")
+endif()
+math(EXPR ubiqosClockScale "${UBIQOS_SYS_MHZ} / 120")
+target_compile_definitions(os_kernel PRIVATE
+    UBIQOS_SYS_KHZ=${UBIQOS_SYS_MHZ}000
+    PICO_SD_CARD_EXTRA_CLOCK_DIVIDER=${ubiqosClockScale})
+# PSRAM's clock follows clk_sys through the QMI divider. Capping it is how
+# 240 was shown not to be at fault when WiFi failed there (it was ehspi);
+# kept because a PSRAM picture will want to know what speed it needs.
+set(UBIQOS_PSRAM_MAX_MHZ "" CACHE STRING "cap PSRAM's clock in MHz (empty: the SDK's 133)")
+if(UBIQOS_PSRAM_MAX_MHZ)
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_PSRAM_MAX_HZ=${UBIQOS_PSRAM_MAX_MHZ}000000u)
+endif()
+
 set(UBIQOS_BASEPRI "0x80" CACHE STRING "priority value to mask down to; empty for PRIMASK")
 if(UBIQOS_BASEPRI)
     target_compile_definitions(os_kernel PRIVATE UBIQOS_CRITICAL_BASEPRI=${UBIQOS_BASEPRI})

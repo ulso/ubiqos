@@ -24,6 +24,9 @@
 #include "pico/unique_id.h"
 #include "hardware/watchdog.h"
 #include "hardware/psram.h"
+#include "hardware/vreg.h"
+#include "hardware/clocks.h"
+#include "hardware/structs/qmi.h"
 #include "hardware/xip_cache.h"
 #include "hardware/structs/xip_ctrl.h"
 #endif
@@ -1004,6 +1007,74 @@ void ubiqos_reboot_machine(void) {
     for (;;) { }                // it does not come back; this is for the compiler
 }
 
+#ifndef UBIQOS_SYS_KHZ
+#define UBIQOS_SYS_KHZ 120000
+#endif
+
+#if !UBIQOS_CHIP_STM32
+// Flash and PSRAM are clocked from clk_sys through the QMI's own dividers,
+// which the SDK set at boot for the clock of the moment, 150 MHz. At 120 the
+// result has been what this machine has always run with: flash at 40 MHz
+// (divide by 3), PSRAM at 60 (divide by 2). At 240 neither would be safe as
+// it stands, so both are set again here, before anything has used PSRAM:
+//
+//   flash -- the same absolute timing as at 120, every field that counts
+//   in system clocks scaled by the same factor. Nothing about the flash is
+//   learnt by pushing it; it is kept where it is known to work.
+//
+//   PSRAM -- by the SDK's own rule for the APS6404 (psram_configure_params):
+//   the smallest divider that keeps it at or under 133 MHz, and one more
+//   half-cycle of read delay above 100 MHz. At 240 that is 120 MHz, twice
+//   today's, which is the point: it is what a picture streamed from PSRAM
+//   would need.
+//
+// In SRAM, and with nothing between the clock change and this that reads
+// PSRAM: until it has run, a PSRAM read at 240 is sampled too early.
+static void __no_inline_not_in_flash_func(retime_qmi)(uint32_t scale) {
+    uint32_t t = qmi_hw->m[0].timing;
+    const uint32_t div  = (t & QMI_M0_TIMING_CLKDIV_BITS) >> QMI_M0_TIMING_CLKDIV_LSB;
+    const uint32_t rxd  = (t & QMI_M0_TIMING_RXDELAY_BITS) >> QMI_M0_TIMING_RXDELAY_LSB;
+    const uint32_t mind = (t & QMI_M0_TIMING_MIN_DESELECT_BITS) >> QMI_M0_TIMING_MIN_DESELECT_LSB;
+    t &= ~(QMI_M0_TIMING_CLKDIV_BITS | QMI_M0_TIMING_RXDELAY_BITS | QMI_M0_TIMING_MIN_DESELECT_BITS);
+    t |= (div * scale) << QMI_M0_TIMING_CLKDIV_LSB |
+         (rxd * scale) << QMI_M0_TIMING_RXDELAY_LSB |
+         (mind * scale) << QMI_M0_TIMING_MIN_DESELECT_LSB;
+    qmi_hw->m[0].timing = t;
+
+    if (!psram_is_available()) return;
+    const uint32_t hz = clock_get_hz(clk_sys);
+#ifndef UBIQOS_PSRAM_MAX_HZ
+#define UBIQOS_PSRAM_MAX_HZ PICO_DEFAULT_PSRAM_MAX_FREQ
+#endif
+    uint32_t pdiv = (hz + UBIQOS_PSRAM_MAX_HZ - 1u) / UBIQOS_PSRAM_MAX_HZ;
+    if (pdiv == 1u && hz > 100000000u) pdiv = 2u;
+    const uint32_t prxd = pdiv + (hz / pdiv > 100000000u ? 1u : 0u);
+    const uint64_t period_fs = 1000000000000000ull / hz;
+    const uint32_t max_select = (uint32_t)(((uint64_t)PICO_DEFAULT_PSRAM_MAX_SELECT * 1000000ull) /
+                                           (64ull * period_fs));
+    const uint32_t min_deselect = (uint32_t)(((uint64_t)PICO_DEFAULT_PSRAM_MIN_DESELECT * 1000000ull +
+                                              period_fs - 1u) / period_fs) - (pdiv + 1u) / 2u;
+    qmi_hw->m[1].timing = 1u << QMI_M1_TIMING_COOLDOWN_LSB |
+        QMI_M1_TIMING_PAGEBREAK_VALUE_1024 << QMI_M1_TIMING_PAGEBREAK_LSB |
+        max_select << QMI_M1_TIMING_MAX_SELECT_LSB |
+        min_deselect << QMI_M1_TIMING_MIN_DESELECT_LSB |
+        prxd << QMI_M1_TIMING_RXDELAY_LSB |
+        pdiv << QMI_M1_TIMING_CLKDIV_LSB;
+}
+
+// Above RP2350's rated 150 MHz the core wants more than its default 1.10 V.
+// 1.20 is a margin rather than a minimum -- 240 is commonly run at 1.15 --
+// and well inside what the regulator gives without being unlocked (1.30).
+static void set_clock(void) {
+    if (UBIQOS_SYS_KHZ > 150000) {
+        vreg_set_voltage(VREG_VOLTAGE_1_20);
+        busy_wait_us(1000);                 // the SDK's own settling time
+    }
+    set_sys_clock_khz(UBIQOS_SYS_KHZ, true);
+    retime_qmi(UBIQOS_SYS_KHZ / 120000);
+}
+#endif
+
 // The Pico SDK's crt0 calls main once clocks and runtime are set up.
 int main(void) {
     // Before anything that depends on a clock rate, the UART included. HSTX
@@ -1026,7 +1097,7 @@ int main(void) {
     // C that could care -- and the microsecond clock is all that is missing.
     stm32_time_init();
 #else
-    set_sys_clock_khz(120000, true);
+    set_clock();
 #endif
 
     ubiqos_uart_init();

@@ -454,8 +454,12 @@ void ubiqos_video_init(void) {
     // clock is clk_hstx/5, so the display was being driven at 30 MHz instead of
     // 25 and no monitor recognised what came out. Point it at clk_sys and say
     // so, rather than trusting a default that was never chosen.
+    //
+    // 120 MHz whatever clk_sys is: at 240 the clock divides by two on the way
+    // in (clk_hstx has an integer divider), and the picture is the same
+    // 640x480 at 57 Hz either way. A faster mode is a separate decision.
     clock_configure(clk_hstx, 0, CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS,
-                    clock_get_hz(clk_sys), clock_get_hz(clk_sys));
+                    clock_get_hz(clk_sys), 120000000u);
 
     // RGB332 out of one byte: two bits of blue, three of green, three of red,
     // each rotated into place for its lane.
