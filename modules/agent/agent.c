@@ -24,7 +24,10 @@
 // can do with the programs that are here.
 //
 // The conversation lives in memory, as the JSON the API is sent each turn,
-// and goes when the program does. Each answer streams in as it is written.
+// and is written to the card after every answer: /sd/agent/conversation.json,
+// the messages array as the API has it, so it can be read on any computer too.
+// The next `agent` goes on from there. /new starts afresh and keeps the one
+// before as conversation.old.json. Each answer streams in as it is written.
 
 UBIQOS_MEM_SIZE(32768);                 // Mbed TLS's big numbers are on the stack
 // TLS (about 80 kB) and the conversation, which grows a turn at a time: a
@@ -41,6 +44,11 @@ uint32_t ubiqos_heap_bytes = 1024u * 1024u;
 #define READ_MAX     32768u     // of a file, per read
 #define LINE_MAX     2048u
 #define CONVO_MAX    (768u * 1024u)
+#define SAVE_DIR     "/sd/agent"
+#define SAVE_FILE    SAVE_DIR "/conversation.json"
+#define SAVE_NEW     SAVE_DIR "/conversation.new"
+#define SAVE_OLD     SAVE_DIR "/conversation.old.json"
+#define SAVE_BAD     SAVE_DIR "/conversation.bad.json"
 
 // The short names -m takes. One key serves every model; what a turn costs
 // is what differs, and haiku is the cheap one for looking around.
@@ -536,6 +544,94 @@ static void add_message(const char *role, const char *content_json, uint32_t n) 
     put(&convo, "}");
 }
 
+// --- the conversation on the card -------------------------------------------
+
+static bool save_failed;                // said once, then quiet
+
+// The whole conversation, written beside the old one and then put in its
+// place: a board that loses power while writing still has the one before.
+// FAT will not rename over a file, so the old one is removed first; if the
+// power goes between the two, the load finds the .new file instead.
+static void save_convo(void) {
+    if (!convo.n) return;
+    (void)ubiqos_mkdir(SAVE_DIR);
+    buf_t all = { 0 };
+    put(&all, "[\n"); put_n(&all, convo.p, convo.n); put(&all, "\n]\n");
+    bool ok = !all.failed && write_whole(SAVE_NEW, all.p, all.n);
+    buf_free(&all);
+    if (ok) {
+        (void)ubiqos_fs_remove(SAVE_FILE);
+        ok = ubiqos_fs_rename(SAVE_NEW, SAVE_FILE) == 0;
+    }
+    if (!ok && !save_failed)
+        say("\x1b[1magent:\x1b[0m could not save the conversation to " SAVE_DIR
+            " -- is there a card?\r\n");
+    save_failed = !ok;
+}
+
+// The messages of a saved file: a JSON array of objects with a role each.
+// Anything else is left alone and the conversation starts empty. Returns
+// how many questions were asked in it (user messages that are not tool results).
+static uint32_t load_from(const char *path) {
+    buf_t f = { 0 };
+    // A turn may take it a little past CONVO_MAX before that is noticed.
+    if (!read_whole(path, &f, 0, CONVO_MAX + 128u * 1024u, NULL) || !f.n) { buf_free(&f); return 0; }
+    const char *e = f.p + f.n;
+    const char *p = ws(f.p, e);
+    if (p >= e || *p != '[' || skip(p, e) == NULL) { buf_free(&f); return 0; }
+    const char *end = skip(p, e) - 1;   // the closing ]
+    uint32_t asked = 0, messages = 0;
+    for (const char *m = ws(p + 1, end); m < end && *m == '{'; ) {
+        const char *me = skip(m, end);
+        if (!me || !field(m, me, "role")) { buf_free(&f); return 0; }
+        const char *c = field(m, me, "content");
+        if (str_is(field(m, me, "role"), me, "user") && c &&
+            !(*c == '[' && str_is(field(ws(c + 1, me), me, "type"), me, "tool_result")))
+            asked++;
+        messages++;
+        m = ws(me, end);
+        if (m < end && *m == ',') m = ws(m + 1, end);
+    }
+    if (!messages) { buf_free(&f); return 0; }
+    const char *first = ws(p + 1, end);
+    const char *last = end;
+    while (last > first && (last[-1] == ' ' || last[-1] == '\n' || last[-1] == '\r' || last[-1] == '\t')) last--;
+    buf_free(&convo);
+    put_n(&convo, first, (uint32_t)(last - first));
+    buf_free(&f);
+    if (convo.failed) { buf_free(&convo); return 0; }
+    return asked ? asked : 1;
+}
+
+static void load_convo(void) {
+    uint32_t asked = load_from(SAVE_FILE);
+    if (!asked && (asked = load_from(SAVE_NEW)) != 0) {
+        (void)ubiqos_fs_rename(SAVE_NEW, SAVE_FILE);
+    }
+    if (!asked) {
+        // One that is there but cannot be read is put aside, not written over.
+        buf_t f = { 0 };
+        const bool there = read_whole(SAVE_FILE, &f, 0, 1, NULL) && f.n;
+        buf_free(&f);
+        if (there) {
+            (void)ubiqos_fs_remove(SAVE_BAD);
+            (void)ubiqos_fs_rename(SAVE_FILE, SAVE_BAD);
+            say("the saved conversation could not be read; it is now " SAVE_BAD "\r\n");
+        }
+        return;
+    }
+    say("going on with the saved conversation (");
+    say_u32(asked); say(asked == 1 ? " question, " : " questions, ");
+    say_u32((convo.n + 1023) / 1024); say(" kB); /new starts a new one\r\n");
+}
+
+// The saved conversation becomes the old one; the one before that goes.
+static void new_convo(void) {
+    buf_free(&convo);
+    (void)ubiqos_fs_remove(SAVE_OLD);
+    (void)ubiqos_fs_rename(SAVE_FILE, SAVE_OLD);
+}
+
 // What Claude is told about where it is. The program names are this board's
 // own, read from the module directory, so it does not have to guess them.
 static void make_system_prompt(void) {
@@ -911,8 +1007,11 @@ int main(int argc, char **argv) {
             "api.anthropic' once, with the store unlocked.\n\n"
             "-m picks the model: opus (the default), sonnet or haiku, or a whole\n"
             "model id such as claude-haiku-5-5. Haiku costs least.\n\n"
-            "Inside: /new forgets the conversation, /ask turns the asking back on,\n"
-            "/quit or Ctrl-D leaves.\n"))
+            "The conversation is saved in /sd/agent/conversation.json after every\n"
+            "answer, and the next 'agent' goes on with it.\n\n"
+            "Inside: /new starts a new conversation (the last one is kept as\n"
+            "conversation.old.json), /ask turns the asking back on, /quit or\n"
+            "Ctrl-D leaves.\n"))
         return 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-m") && i + 1 < argc) {
@@ -933,6 +1032,7 @@ int main(int argc, char **argv) {
     }
     make_system_prompt();
     say("Claude ("); say(model); say(") on this board. /help for the commands, /quit to leave.\r\n");
+    load_convo();
 
     static char line[LINE_MAX];
     for (;;) {
@@ -940,11 +1040,17 @@ int main(int argc, char **argv) {
         if (!read_line(line, sizeof line)) break;
         if (!line[0]) continue;
         if (!strcmp(line, "/quit") || !strcmp(line, "/exit")) break;
-        if (!strcmp(line, "/new")) { buf_free(&convo); say("a new conversation\r\n"); continue; }
+        if (!strcmp(line, "/new")) {
+            new_convo();
+            say("a new conversation; the last one is in " SAVE_OLD "\r\n");
+            continue;
+        }
         if (!strcmp(line, "/ask")) { ask_all = false; say("asking again before writes and runs\r\n"); continue; }
         if (!strcmp(line, "/help")) {
-            say("/new forgets the conversation, /ask asks again before writes and runs,\r\n"
-                "/quit leaves. Anything else goes to Claude.\r\n");
+            say("/new starts a new conversation (the last one is kept as\r\n"
+                SAVE_OLD "), /ask asks again before writes and runs,\r\n"
+                "/quit leaves. The conversation is saved after every answer and the\r\n"
+                "next 'agent' goes on with it. Anything else goes to Claude.\r\n");
             continue;
         }
         buf_t msg = { 0 };
@@ -959,6 +1065,7 @@ int main(int argc, char **argv) {
         // No answer at all: the question goes, so the conversation still
         // alternates and the same question can be asked again.
         if (convo.n == before && convo.p) { convo.n = mark; convo.p[mark] = 0; }
+        else save_convo();
     }
     memset(api_key, 0, sizeof api_key);
     buf_free(&convo);
