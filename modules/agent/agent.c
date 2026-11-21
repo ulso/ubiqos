@@ -6,6 +6,8 @@
 // agent -- talk to Claude, which can look around this board and change it.
 //
 //   agent                 a conversation; /help inside it says the rest
+//   agent -m haiku        the same with another model: opus (the default),
+//                         sonnet, haiku, or a whole model id
 //
 // The board asks api.anthropic.com itself, over TLS with the certificate
 // checked: there is no tunnel and no other machine in it. The API key is the
@@ -30,7 +32,7 @@ UBIQOS_MEM_SIZE(32768);                 // Mbed TLS's big numbers are on the sta
 uint32_t ubiqos_heap_bytes = 1024u * 1024u;
 
 #define API_HOST     "api.anthropic.com"
-#define MODEL        "claude-opus-5-5"
+#define MODEL        "claude-opus-5-5"   // without -m
 #define MAX_TOKENS   "16000"
 #define KEY_NAME     "api.anthropic"
 #define IDLE_MS      120000u    // nothing from the server for this long ends a turn
@@ -39,6 +41,30 @@ uint32_t ubiqos_heap_bytes = 1024u * 1024u;
 #define READ_MAX     32768u     // of a file, per read
 #define LINE_MAX     2048u
 #define CONVO_MAX    (768u * 1024u)
+
+// The short names -m takes. One key serves every model; what a turn costs
+// is what differs, and haiku is the cheap one for looking around.
+static const struct { const char *name, *id; } models[] = {
+    { "opus",   "claude-opus-5-5" },
+    { "sonnet", "claude-sonnet-5-5" },
+    { "haiku",  "claude-haiku-5-5" },
+};
+
+static const char *model = MODEL;
+
+// A short name, or a whole id ("claude-...") passed through as it is, so a
+// model newer than this program can still be asked for. NULL: neither.
+static const char *model_id(const char *a) {
+    for (uint32_t i = 0; i < sizeof models / sizeof models[0]; i++)
+        if (!strcmp(a, models[i].name)) return models[i].id;
+    if (!strncmp(a, "claude-", 7) && strlen(a) < 64) {
+        for (const char *c = a; *c; c++)
+            if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '-' || *c == '.'))
+                return NULL;
+        return a;
+    }
+    return NULL;
+}
 
 // --- output -----------------------------------------------------------------
 
@@ -705,7 +731,8 @@ static void body_bytes(turn_t *t, body_t *b, const char *p, uint32_t n) {
 // Returns the HTTP status, or 0 when the connection itself failed.
 static uint32_t ask_claude(turn_t *t) {
     buf_t body = { 0 };
-    put(&body, "{\"model\":\"" MODEL "\",\"max_tokens\":" MAX_TOKENS ",\"stream\":true,"
+    put(&body, "{\"model\":\""); put(&body, model);
+    put(&body, "\",\"max_tokens\":" MAX_TOKENS ",\"stream\":true,"
                "\"cache_control\":{\"type\":\"ephemeral\"},\"system\":");
     put_n(&body, system_prompt.p, system_prompt.n);
     put(&body, ",\"tools\":"); put(&body, tools_json);
@@ -877,21 +904,35 @@ static bool take_key(void) {
 
 int main(int argc, char **argv) {
     if (ubiqos_help(argc, argv,
-            "usage: agent\n\n"
+            "usage: agent [-m MODEL]\n\n"
             "A conversation with Claude, which can list and read files, write and edit\n"
             "them, and run the board's programs -- asking you before each write, edit\n"
             "or run. The API key is the key store's api.anthropic: 'key set\n"
             "api.anthropic' once, with the store unlocked.\n\n"
+            "-m picks the model: opus (the default), sonnet or haiku, or a whole\n"
+            "model id such as claude-haiku-5-5. Haiku costs least.\n\n"
             "Inside: /new forgets the conversation, /ask turns the asking back on,\n"
             "/quit or Ctrl-D leaves.\n"))
         return 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "-m") && i + 1 < argc) {
+            model = model_id(argv[++i]);
+            if (!model) {
+                say("agent: -m takes opus, sonnet, haiku or a model id (claude-...)\r\n");
+                return 1;
+            }
+        } else {
+            say("usage: agent [-m opus|sonnet|haiku]\r\n");
+            return 1;
+        }
+    }
 
     if (!take_key()) {
         say("agent: no key -- unlock the store ('key unlock') and 'key set " KEY_NAME "'\r\n");
         return 1;
     }
     make_system_prompt();
-    say("Claude (" MODEL ") on this board. /help for the commands, /quit to leave.\r\n");
+    say("Claude ("); say(model); say(") on this board. /help for the commands, /quit to leave.\r\n");
 
     static char line[LINE_MAX];
     for (;;) {
