@@ -197,6 +197,7 @@ static void unlock(void) {
         return;
     }
     if (rc == -6)      say("key: that is not the passphrase, or the store has been changed\r\n");
+    else if (rc == -8) say("key: the store holds more keys than this version has room for; an older kernel still opens it\r\n");
     else if (rc == -3) say("key: the other core would not stand still; try again\r\n");
     else if (rc == -7) say("key: not enough free memory to open the store; stop a program and try again\r\n");
     else               say("key: could not open the store\r\n");

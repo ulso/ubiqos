@@ -3118,6 +3118,13 @@ static inline int32_t ubiqos_path_set(const char *path)
 // program may have is the names, the lengths, and a fingerprint to compare
 // with the one whoever owns the key has written down.
 //
+// With one exception, UBIQOS_KEY_OP_TAKE: a key named "api.something" is
+// handed to the program that asks for it, because a bearer token for a web
+// API has to go into a request the program itself encrypts -- the kernel
+// cannot use it on the program's behalf the way it uses a WiFi password. That
+// is policy, not protection: with no memory protection any program could read
+// it out of the one that took it. No other name is ever handed out.
+//
 // The store is sealed with a passphrase: ChaCha20-Poly1305 over the lot, with
 // the key from PBKDF2 over the passphrase and the chip's own id. `key unlock`
 // asks for the passphrase once after each power-up and keeps the derived key
@@ -3128,7 +3135,9 @@ static inline int32_t ubiqos_path_set(const char *path)
 // Long enough for "wifi." and a 32-character network name, which is the
 // longest an SSID may be.
 #define UBIQOS_KEY_NAME_MAX   40
-#define UBIQOS_KEY_VALUE_MAX  96
+// 128 since Nov 2026, for an Anthropic API key (108 characters); it was 96.
+// Every module that uses ubiqos_keyreq_t is built with the kernel.
+#define UBIQOS_KEY_VALUE_MAX  128
 
 #define UBIQOS_KEY_OP_COUNT   0u
 #define UBIQOS_KEY_OP_NTH     1u
@@ -3165,6 +3174,12 @@ static inline int32_t ubiqos_path_set(const char *path)
 // board and nothing else. See docs/keys.md for what it gives up.
 #define UBIQOS_KEY_OP_UNATTENDED 10u
 #define UBIQOS_KEY_FILE "/sd/unlock.key"
+
+// The value itself, into value and len -- for a name beginning
+// UBIQOS_KEY_TAKE_PREFIX and no other; see the top of this section. -1 for any
+// other name, a missing key, or a locked store.
+#define UBIQOS_KEY_OP_TAKE    11u
+#define UBIQOS_KEY_TAKE_PREFIX "api."
 
 // The store is sealed. Until it is unlocked there is nothing to list and
 // nothing to use: the names are inside the ciphertext with the values.

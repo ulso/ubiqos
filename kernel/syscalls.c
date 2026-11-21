@@ -506,6 +506,22 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                     frame->a0 = (uint32_t)-1;
                 }
                 break;
+            case UBIQOS_KEY_OP_TAKE: {
+                // The one read there is: a key named api.* goes to the program
+                // that asks, for a request only it can encrypt. Every other
+                // name stays the kernel's -- the WiFi passwords above all.
+                static const char prefix[] = UBIQOS_KEY_TAKE_PREFIX;
+                bool ok = true;
+                for (uint32_t i = 0; i + 1 < sizeof prefix; i++)
+                    if (r->name[i] != prefix[i]) { ok = false; break; }
+                uint32_t len = 0;
+                const uint8_t *v = ok ? ubiqos_keys_value(r->name, &len) : 0;
+                if (!v || len > sizeof r->value) { frame->a0 = (uint32_t)-1; break; }
+                for (uint32_t i = 0; i < len; i++) r->value[i] = v[i];
+                r->len = len;
+                frame->a0 = 0;
+                break;
+            }
             case UBIQOS_KEY_OP_LOCK:
                 ubiqos_keys_lock();
                 frame->a0 = 0;

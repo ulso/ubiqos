@@ -21,8 +21,8 @@
 // SRAM and go when the power does.
 
 // The name and value limits are the ABI's; the number of slots is what fits
-// in a sector once sealed.
-#define UBIQOS_KEY_SLOTS      28
+// in a sector once sealed: 23 of 128 bytes (format 4), where it was 28 of 96.
+#define UBIQOS_KEY_SLOTS      23
 
 void     ubiqos_keys_init(void);           // read what is in flash, once
 uint32_t ubiqos_keys_state(void);          // UBIQOS_KEYS_EMPTY/LOCKED/OPEN
