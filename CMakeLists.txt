@@ -1768,6 +1768,10 @@ set(UBIQOS_MLKEM768_SOURCES
 ubiqos_add_module(sshd modules/sshd/sshd.c ${UBIQOS_MLKEM768_SOURCES} NEWLIB SINGLE)
 ubiqos_module_use_tls(sshd)
 ubiqos_module_use_tls(fetch)
+# agent: Claude on the board, with tools to read, write and run -- see
+# modules/agent/agent.c. NEWLIB for the TLS client; SINGLE, one conversation.
+ubiqos_add_module(agent modules/agent/agent.c NEWLIB SINGLE)
+ubiqos_module_use_tls(agent)
 # The roots every TLS client trusts, as a data module of their own: one copy in
 # flash for all of them, and brought up to date by putting a higher revision on
 # the card. Raise REV whenever tools/make_roots.py changes the list.
@@ -1850,6 +1854,7 @@ add_custom_target(modules ALL
             ${CMAKE_CURRENT_BINARY_DIR}/uptime.mod
             ${CMAKE_CURRENT_BINARY_DIR}/uname.mod
             ${CMAKE_CURRENT_BINARY_DIR}/fetch.mod
+            ${CMAKE_CURRENT_BINARY_DIR}/agent.mod
             ${CMAKE_CURRENT_BINARY_DIR}/gt911.mod
             ${CMAKE_CURRENT_BINARY_DIR}/touchdesc.mod
             ${CMAKE_CURRENT_BINARY_DIR}/touch.mod
@@ -1965,6 +1970,7 @@ set(UBIQOS_RESIDENT
     uname
     config
     fetch
+    agent
     tlsroots
     mount
     wifi
