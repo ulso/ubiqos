@@ -975,9 +975,12 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
                 break;
             }
 #endif
+#if UBIQOS_VIDEO_RING
 #if UBIQOS_VIDEO_CHARGEN
             if (frame->a1 == 2)      ubiqos_chargen_peek_row(frame->a2, out, 80);
-            else if (frame->a1 == 1) ubiqos_video_peek_line(frame->a2, out, 64);
+            else
+#endif
+            if (frame->a1 == 1) ubiqos_video_peek_line(frame->a2, out, 64);
             else                     ubiqos_video_stats_fill((uint32_t *)out);
             frame->a0 = 0;
 #else

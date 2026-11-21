@@ -643,10 +643,15 @@ static void set_grid(const console_font_t *f)
     // new. Start the ring over rather than leave a row straddling the join.
     ubiqos_video_set_origin(0);
 
-    uint8_t b = eff_bg();
+    // A word at a time. A byte at a time was 307200 stores, and with the
+    // picture in PSRAM every one of them is a transaction of its own on the
+    // bus the display is being copied over: the boot's clear cost about
+    // thirty thousand late scanlines.
+    const uint32_t w = bg_word();
+    uint32_t *fb = (uint32_t *)ubiqos_framebuf;
 
-    for (uint32_t i = 0; i < UBIQOS_H_ACTIVE * UBIQOS_V_ACTIVE; i++)
-        ubiqos_framebuf[i] = b;
+    for (uint32_t i = 0; i < UBIQOS_H_ACTIVE * UBIQOS_V_ACTIVE / 4u; i++)
+        fb[i] = w;
 #endif
 
     for (uint32_t r = 0; r < rows; r++)

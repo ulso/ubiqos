@@ -11,6 +11,14 @@
 #ifndef UBIQOS_VIDEO_CHARGEN
 #define UBIQOS_VIDEO_CHARGEN 0
 #endif
+// 1 means a framebuffer in PSRAM: the console draws pixels as it does into
+// the SRAM framebuffer, and the display copies lines from it into the same
+// ring of scanline buffers the character generator fills.
+#ifndef UBIQOS_VIDEO_PSRAM
+#define UBIQOS_VIDEO_PSRAM 0
+#endif
+// Whether the display plays a ring of scanline buffers kept ahead of the beam.
+#define UBIQOS_VIDEO_RING (UBIQOS_VIDEO_CHARGEN || UBIQOS_VIDEO_PSRAM)
 
 // The picture, and the part of it that holds text. 800x600 is chargen only
 // (a framebuffer would be 480 kB) and needs clk_sys at 240, since the pixel
@@ -30,7 +38,7 @@
 
 void ubiqos_video_init(void);
 
-#if UBIQOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_RING
 
 // How far ahead of the beam the generator has to stay, and how it is doing.
 // underruns is the number that decides whether this design holds: it counts
@@ -40,7 +48,8 @@ uint32_t ubiqos_video_buffers(void);
 void ubiqos_video_stats_fill(uint32_t *sixteen);
 void ubiqos_video_peek_line(uint32_t line, uint8_t *out, uint32_t n);
 
-#else
+#endif
+#if !UBIQOS_VIDEO_CHARGEN
 
 void ubiqos_video_testcard(void);
 

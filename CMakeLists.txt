@@ -491,13 +491,26 @@ endif()
 # and is there a text console on it. `rgb` is a display with no console yet --
 # the panel scanning out while the character generator that will feed it is
 # still to come -- and `none` is neither.
-set(UBIQOS_VIDEO "${ubiqosBoardVideo}" CACHE STRING "framebuffer, chargen, rgb, or none")
-set_property(CACHE UBIQOS_VIDEO PROPERTY STRINGS framebuffer chargen rgb none)
+set(UBIQOS_VIDEO "${ubiqosBoardVideo}" CACHE STRING "framebuffer, chargen, psram, rgb, or none")
+set_property(CACHE UBIQOS_VIDEO PROPERTY STRINGS framebuffer chargen psram rgb none)
+
+# What the mode leaves of SRAM, which is what the pool, the log and lwIP are
+# sized by below: "psram" keeps its picture in PSRAM and only the scanline
+# ring in SRAM, so it has the character generator's room, not a framebuffer's.
+if(UBIQOS_VIDEO STREQUAL "psram")
+    set(ubiqosVideoMem "chargen")
+else()
+    set(ubiqosVideoMem "${UBIQOS_VIDEO}")
+endif()
 
 set(ubiqosHasVideo 1)
 set(ubiqosHasConsole 1)
 if(UBIQOS_VIDEO STREQUAL "chargen")
     target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_CHARGEN=1)
+elseif(UBIQOS_VIDEO STREQUAL "psram")
+    # A 640x480 framebuffer in PSRAM, copied into the scanline ring by DMA;
+    # the console draws pixels into it. See kernel/video.c.
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_PSRAM=1)
 elseif(UBIQOS_VIDEO STREQUAL "rgb")
     # A parallel RGB panel with the character generator on it. UBIQOS_VIDEO_RGB
     # picks the geometry -- see chargen.h -- and UBIQOS_VIDEO_CHARGEN is what
@@ -508,7 +521,7 @@ elseif(UBIQOS_VIDEO STREQUAL "none")
     set(ubiqosHasVideo 0)
     set(ubiqosHasConsole 0)
 elseif(NOT UBIQOS_VIDEO STREQUAL "framebuffer")
-    message(FATAL_ERROR "UBIQOS_VIDEO is '${UBIQOS_VIDEO}'; it must be framebuffer, chargen, rgb or none")
+    message(FATAL_ERROR "UBIQOS_VIDEO is '${UBIQOS_VIDEO}'; it must be framebuffer, chargen, psram, rgb or none")
 endif()
 
 # The HDMI picture's size. 800x600 is the character generator only -- a
@@ -570,7 +583,7 @@ endif()
 # changes. Give it a number in kB to override.
 set(UBIQOS_HEAP_KB "auto" CACHE STRING "module pool in kB, or auto to follow UBIQOS_VIDEO")
 if(UBIQOS_HEAP_KB STREQUAL "auto")
-    if(NOT UBIQOS_VIDEO STREQUAL "chargen")
+    if(NOT ubiqosVideoMem STREQUAL "chargen")
         # 36 rather than 40 since 12 Sep 2026, and the four kilobytes bought
         # ninety-eight bytes. The riscv framebuffer build sat that far below a
         # 4 kB alignment boundary: the kernel grew by k_i2c_instance and one
@@ -671,7 +684,7 @@ message(STATUS "Module pool: ${ubiqosHeapKB} kB (UBIQOS_VIDEO=${UBIQOS_VIDEO})")
 # it. Whole boot plus room for what happens afterwards.
 set(UBIQOS_DMESG_KB "auto" CACHE STRING "kernel log ring in kB, or auto to follow UBIQOS_VIDEO")
 if(UBIQOS_DMESG_KB STREQUAL "auto")
-    if(UBIQOS_VIDEO STREQUAL "chargen")
+    if(ubiqosVideoMem STREQUAL "chargen")
         set(ubiqosDmesgKB 16)
     elseif(UBIQOS_VIDEO STREQUAL "rgb")
         # The Waveshare panel, whose C heap is over 140 kB. Two kilobytes held
@@ -706,7 +719,7 @@ set(UBIQOS_LWIP "auto" CACHE STRING "on, off, or auto to follow UBIQOS_VIDEO")
 if(UBIQOS_LWIP STREQUAL "auto")
     # And a board with no display at all has no framebuffer to make room for:
     # the Challenger+, whose network is the reason it is there.
-    if(UBIQOS_VIDEO STREQUAL "chargen" OR UBIQOS_VIDEO STREQUAL "none")
+    if(ubiqosVideoMem STREQUAL "chargen" OR UBIQOS_VIDEO STREQUAL "none")
         set(ubiqosLwip ON)
     else()
         set(ubiqosLwip OFF)
@@ -749,7 +762,7 @@ endif()
 # boards have not been run with it yet.
 set(UBIQOS_IPV6 "auto" CACHE STRING "IPv6 in lwIP: ON, OFF, or auto")
 if(UBIQOS_IPV6 STREQUAL "auto")
-    if(UBIQOS_BOARD STREQUAL "fruit-jam" AND UBIQOS_VIDEO STREQUAL "chargen")
+    if(UBIQOS_BOARD STREQUAL "fruit-jam" AND ubiqosVideoMem STREQUAL "chargen")
         set(ubiqosIpv6 ON)
     else()
         set(ubiqosIpv6 OFF)

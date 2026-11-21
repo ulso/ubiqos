@@ -12,6 +12,8 @@
 #include "hardware/clocks.h"
 #include "hardware/timer.h"
 #include "chargen.h"
+#include "hardware/regs/xip.h"
+#include "hardware/xip_cache.h"
 
 void ubiqos_print(const char *s);
 void ubiqos_print_u32(uint32_t v);
@@ -152,7 +154,7 @@ static uint8_t border_line[H_ACTIVE] __attribute__((aligned(4)));
 //
 // So the 300 kB stays here. PSRAM is for bulk that is not streamed 57 times a
 // second: module data, file buffers, whatever the shell wants.
-#if UBIQOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_RING
 
 // Character cells instead, and a handful of scanlines in flight.
 //
@@ -171,6 +173,29 @@ static uint8_t framebuf_store[UBIQOS_H_ACTIVE * UBIQOS_V_ACTIVE]
     __attribute__((aligned(4)));
 uint8_t *ubiqos_framebuf = framebuf_store;
 
+#endif
+
+#if UBIQOS_VIDEO_PSRAM
+// The picture lives in PSRAM and is copied a run of lines at a time into the
+// scanline ring, by DMA out of the XIP streaming FIFO: the stream reads the
+// chip sequentially and fast (about 45 MB/s measured, where 640x480 needs 19)
+// and the ring between it and HSTX absorbs whatever the QMI is busy with.
+// That ring is the difference from the one time a framebuffer lived in PSRAM
+// before: HSTX read it directly then, and every stall was a lost line.
+//
+// The stream reads the chip, not the cache, so everything that draws must
+// write past the cache too: ubiqos_framebuf is the no-cache alias of the
+// block. A write through the cached address would sit in the cache where the
+// display cannot see it.
+uint8_t *ubiqos_framebuf;
+static uint32_t fb_stream;      // the block's cached address, what the stream takes
+static int ch_copy = -1;
+static uint32_t copy_from;      // first line of the copy in flight
+static uint32_t copies, copy_waits;
+#define FB_NOCACHE_OFFSET (XIP_NOCACHE_NOALLOC_BASE - XIP_BASE)
+#define XIP_STREAM_ADDR_REG (*(volatile uint32_t *)(XIP_CTRL_BASE + XIP_STREAM_ADDR_OFFSET))
+#define XIP_STREAM_CTR_REG  (*(volatile uint32_t *)(XIP_CTRL_BASE + XIP_STREAM_CTR_OFFSET))
+#define XIP_AUX_STREAM_REG  ((volatile uint32_t *)XIP_AUX_BASE)
 #endif
 
 // --- HOW THE FRAME IS PLAYED ----------------------------------------------
@@ -242,7 +267,14 @@ static const void  *frame_addrs[FRAME_ENTRIES]
 
 static int ch_data = -1, ch_count = -1, ch_addr = -1;
 
-#if !UBIQOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_PSRAM
+uint32_t ubiqos_video_origin;
+
+// The pump reads it for every copy, so moving it is all scrolling takes.
+void ubiqos_video_set_origin(uint32_t line) {
+    ubiqos_video_origin = line % V_ACTIVE;
+}
+#elif !UBIQOS_VIDEO_CHARGEN
 uint32_t ubiqos_video_origin;
 
 // Point every active display row at a framebuffer line, offset by the origin.
@@ -320,7 +352,7 @@ static void build_frame_list(void) {
             frame_counts[n] = count_of(vactive_line);
             frame_addrs[n++] = vactive_line;
             frame_counts[n] = H_ACTIVE / sizeof(uint32_t);
-#if UBIQOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_RING
             const uint a = line - BLANK_LINES;
 #if V_BORDER
             if (a < V_BORDER || a >= V_BORDER + V_TEXT) {
@@ -336,7 +368,7 @@ static void build_frame_list(void) {
     }
 }
 
-#if UBIQOS_VIDEO_CHARGEN
+#if UBIQOS_VIDEO_RING
 
 // --- KEEPING AHEAD OF THE BEAM --------------------------------------------
 //
@@ -393,7 +425,16 @@ static void build_frame_list(void) {
 // lines a pump against a ring of 46 -- 280 us of slack, and it underran about
 // 200 lines a second. 400 is a glyph row and a bit per pump, which keeps the
 // band path and leaves the ring about 580 us of slack.
-#if UBIQOS_VIDEO_800X600
+//
+// A picture in PSRAM is copied, not drawn, and a copy has to be one run in
+// both the ring and the picture: it stops at the end of the 48 buffers, and
+// at line 480 of a picture the console has scrolled. The rest waits for the
+// next pump. At 700 us that halved the slack every time it happened and the
+// beam caught up about 28 lines a second, on the screen row where the
+// picture wraps. A pump here costs four microseconds, so it runs every 250.
+#if UBIQOS_VIDEO_PSRAM
+#define PUMP_US 250
+#elif UBIQOS_VIDEO_800X600
 #define PUMP_US 400
 #else
 #define PUMP_US 700
@@ -407,7 +448,9 @@ static uint32_t first_underrun_pump;
 // interrupt is taking, and max is the one number that says whether a single
 // call can sit on top of something that cannot wait.
 uint32_t ubiqos_video_us_total, ubiqos_video_us_max;
+#if !UBIQOS_VIDEO_PSRAM
 static uint32_t bands_done, singles_done;
+#endif
 
 static int      pump_alarm = -1;
 static uint32_t beam_epoch;     // active lines completed in whole frames
@@ -471,15 +514,22 @@ void ubiqos_video_stats_fill(uint32_t *sixteen)
     sixteen[3] = LINE_BUFS;
     sixteen[4] = beam_line();
     sixteen[5] = rendered_to;
+#if UBIQOS_VIDEO_CHARGEN
     sixteen[6] = ubiqos_chargen_view_back();
     sixteen[7] = ubiqos_chargen_history();
     sixteen[8] = ubiqos_chargen_deep();
+#endif
     sixteen[9]  = first_underrun_pump;
     sixteen[10] = ubiqos_video_us_total;
     sixteen[11] = ubiqos_video_us_max;
     sixteen[12] = 0;
+#if UBIQOS_VIDEO_PSRAM
+    sixteen[13] = copies;           // vidstat calls them glyph rows
+    sixteen[14] = copy_waits;       // and these single lines
+#else
     sixteen[13] = bands_done;
     sixteen[14] = singles_done;
+#endif
     sixteen[15] = PUMP_US;   // reported, not assumed: it has been changed once
 }
 
@@ -518,6 +568,37 @@ static void video_pump(void)
     // above everything the kernel can mask -- where a pump that stops short
     // costs, at worst, a frame of wrong lines.
     uint32_t target = now + LINE_BUFS - 2;
+#if UBIQOS_VIDEO_PSRAM
+    // One copy at a time: the stream is a single engine. If the last one is
+    // still going, say so -- and if the beam has reached the lines it is
+    // still bringing, that is the underrun this design can have.
+    if (ch_copy >= 0 && ubiqos_framebuf) {
+        if (dma_channel_is_busy((uint)ch_copy)) {
+            copy_waits++;
+            if (now > copy_from)
+                ubiqos_video_underruns += now - copy_from;
+        } else if (rendered_to < target) {
+            const uint32_t y = rendered_to % V_TEXT;
+            const uint32_t b = rendered_to % LINE_BUFS;
+            const uint32_t src = (ubiqos_video_origin + y) % V_ACTIVE;
+            uint32_t n = target - rendered_to;
+            if (n > LINE_BUFS - b) n = LINE_BUFS - b;   // the ring wraps
+            if (n > V_ACTIVE - src) n = V_ACTIVE - src;  // the picture wraps
+            const uint32_t words = n * H_ACTIVE / 4u;
+
+            // The FIFO is empty: the last stream was read to its end.
+            XIP_STREAM_CTR_REG = 0;
+            XIP_STREAM_ADDR_REG = fb_stream + src * H_ACTIVE;
+            XIP_STREAM_CTR_REG = words;
+            dma_channel_set_write_addr((uint)ch_copy, linebuf[b], false);
+            dma_channel_set_trans_count((uint)ch_copy, words, true);
+            copy_from = rendered_to;
+            rendered_to += n;
+            ubiqos_video_lines += n;
+            copies++;
+        }
+    }
+#else
     for (uint32_t built = 0; rendered_to < target && built < LINE_BUFS; ) {
         uint32_t y = rendered_to % V_TEXT;
         uint8_t *buf = linebuf[rendered_to % LINE_BUFS];
@@ -549,6 +630,7 @@ static void video_pump(void)
         ubiqos_video_lines++;
         built++;
     }
+#endif
     ubiqos_video_pumps++;
 
     uint32_t dt = timer_hw->timerawl - t0;
@@ -568,8 +650,14 @@ static void pump_start(void)
     // Fill every buffer once so the first frame is not a screenful of whatever
     // SRAM held at reset. The cells are blank at this point, so which line
     // index each buffer was built for does not matter.
+#if UBIQOS_VIDEO_PSRAM
+    for (uint32_t i = 0; i < LINE_BUFS; i++)
+        for (uint32_t x = 0; x < H_ACTIVE; x++)
+            linebuf[i][x] = 0;
+#else
     for (uint32_t i = 0; i < LINE_BUFS; i++)
         ubiqos_chargen_line(i, linebuf[i]);
+#endif
 
     // THEN start the bookkeeping from where the beam actually is. The DMA chain
     // has been running since dma_channel_start, so claiming that forty-eight
@@ -702,6 +790,42 @@ void ubiqos_video_init(void) {
 #if UBIQOS_VIDEO_CHARGEN
     ubiqos_chargen_init(0xf0);      // white on black, before anything prints
     pump_start();
+#endif
+#if UBIQOS_VIDEO_PSRAM
+    {
+        // Straight from the pool, as chargen takes its history: this is kernel
+        // memory for the life of the machine, and ubiqos_mem_alloc_bulk
+        // refuses in kernel context.
+        extern tlsf_pool_t ubiqos_bulk_pool;
+        const uint32_t size = H_ACTIVE * V_ACTIVE;
+        void *p = ubiqos_bulk_pool ? ubiqos_tlsf_malloc(ubiqos_bulk_pool, size) : 0;
+        if (p && ubiqos_tlsf_owns(ubiqos_bulk_pool, p) && ((uintptr_t)p & 7u) == 0) {
+            fb_stream = (uint32_t)(uintptr_t)p;
+            // Nothing may stay in the cache for it: a dirty line written back
+            // later would land on top of what the console drew past the cache.
+            xip_cache_invalidate_range(fb_stream - XIP_BASE, (size + 7u) & ~7u);
+            ubiqos_framebuf = (uint8_t *)(uintptr_t)(fb_stream + FB_NOCACHE_OFFSET);
+            for (uint32_t i = 0; i < size / 4u; i++)
+                ((volatile uint32_t *)ubiqos_framebuf)[i] = 0;
+
+            ch_copy = dma_claim_unused_channel(true);
+            dma_channel_config cc = dma_channel_get_default_config((uint)ch_copy);
+            channel_config_set_transfer_data_size(&cc, DMA_SIZE_32);
+            channel_config_set_read_increment(&cc, false);
+            channel_config_set_write_increment(&cc, true);
+            channel_config_set_dreq(&cc, DREQ_XIP_STREAM);
+            dma_channel_configure((uint)ch_copy, &cc, linebuf[0],
+                                  (const void *)XIP_AUX_STREAM_REG, 0, false);
+            ubiqos_print("Video: picture in PSRAM at 0x");
+            ubiqos_print_hex(fb_stream);
+            ubiqos_print(", copied by DMA ");
+            ubiqos_print_u32((uint32_t)ch_copy);
+            ubiqos_print("\n");
+        } else {
+            ubiqos_print("Video: no PSRAM for the picture; the screen stays black\n");
+        }
+        pump_start();
+    }
 #endif
 
     ubiqos_print("Video: clk_sys ");
