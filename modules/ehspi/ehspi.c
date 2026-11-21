@@ -373,6 +373,14 @@ static volatile uint32_t lost_reason;   // the chip's wifi_err_reason_t, 0 for n
 static volatile int32_t  lost_rssi;     // the signal when it went, 0 for none told
 static volatile bool cp_restarted;
 static uint32_t hellos;
+
+// Whether the announcement has been answered since this driver started. Until
+// it has, a control frame waits: sent earlier, the chip takes it and never
+// answers (see THE HANDSHAKE). A restarted host meets a chip that tears its
+// radio down and announces itself again, and the first RPC is queued within
+// a quarter of a second of boot -- at 120 MHz the announcement used to win
+// that race by luck, at 240 it lost it every time.
+static bool hello_answered;
 static uint32_t get_varint(const uint8_t *p, uint32_t len, uint32_t *at);
 
 static void watch_event(const uint8_t *f, uint32_t len)
@@ -630,7 +638,7 @@ static void eh_thread(void)
             if (!transact_finish()) continue;
             switch (sent_kind) {
             case SENT_HELLO:
-                stats.sent++; want_hello = false; build_dummy();
+                stats.sent++; want_hello = false; hello_answered = true; build_dummy();
                 break;
             case SENT_CONTROL:
                 stats.sent++; tx_pending = false; build_dummy();
@@ -734,7 +742,7 @@ static void eh_thread(void)
         if (want_hello) {
             build_hello();
             sent_kind = SENT_HELLO;
-        } else if (tx_pending) {
+        } else if (tx_pending && hello_answered) {
             for (uint32_t i = 0; i < stage_len; i++) txbuf[i] = stage[i];
             sent_kind = SENT_CONTROL;
         } else if (net_waiting) {
