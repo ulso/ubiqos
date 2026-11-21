@@ -510,6 +510,25 @@ elseif(UBIQOS_VIDEO STREQUAL "none")
 elseif(NOT UBIQOS_VIDEO STREQUAL "framebuffer")
     message(FATAL_ERROR "UBIQOS_VIDEO is '${UBIQOS_VIDEO}'; it must be framebuffer, chargen, rgb or none")
 endif()
+
+# The HDMI picture's size. 800x600 is the character generator only -- a
+# framebuffer that size would be 480 kB -- and needs the processor at 240,
+# because the pixel clock is clk_hstx/5 and clk_hstx comes from clk_sys.
+# The text is then 100 x 36. It costs about 20 kB more SRAM than 640x480:
+# wider scanlines, more cells, and a frame table twice the size.
+set(UBIQOS_VIDEO_MODE "640x480" CACHE STRING "HDMI picture: 640x480, or 800x600 (chargen at 240 MHz)")
+set_property(CACHE UBIQOS_VIDEO_MODE PROPERTY STRINGS 640x480 800x600)
+if(UBIQOS_VIDEO_MODE STREQUAL "800x600")
+    if(NOT UBIQOS_VIDEO STREQUAL "chargen")
+        message(FATAL_ERROR "UBIQOS_VIDEO_MODE=800x600 is for UBIQOS_VIDEO=chargen")
+    endif()
+    if(NOT UBIQOS_SYS_MHZ STREQUAL "240")
+        message(FATAL_ERROR "UBIQOS_VIDEO_MODE=800x600 needs UBIQOS_SYS_MHZ=240")
+    endif()
+    target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_800X600=1)
+elseif(NOT UBIQOS_VIDEO_MODE STREQUAL "640x480")
+    message(FATAL_ERROR "UBIQOS_VIDEO_MODE is 640x480 or 800x600, not ${UBIQOS_VIDEO_MODE}")
+endif()
 target_compile_definitions(os_kernel PRIVATE
     UBIQOS_HAS_VIDEO=${ubiqosHasVideo} UBIQOS_HAS_CONSOLE=${ubiqosHasConsole})
 message(STATUS "Video: ${UBIQOS_VIDEO}")

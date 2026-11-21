@@ -26,6 +26,7 @@
 #include "hardware/psram.h"
 #include "hardware/vreg.h"
 #include "hardware/clocks.h"
+#include "hardware/pll.h"
 #include "hardware/structs/qmi.h"
 #include "hardware/xip_cache.h"
 #include "hardware/structs/xip_ctrl.h"
@@ -1072,6 +1073,25 @@ static void set_clock(void) {
     }
     set_sys_clock_khz(UBIQOS_SYS_KHZ, true);
     retime_qmi(UBIQOS_SYS_KHZ / 120000);
+#if UBIQOS_VIDEO_800X600
+    // 800x600 wants a 40 MHz pixel clock, so 200 MHz into HSTX, and nothing
+    // that 240 divides by an integer gives it. The USB PLL can -- once what
+    // it feeds is fed from elsewhere. USB, the ADC and the peripherals all
+    // run at 48 MHz, and 240 / 5 is exactly that from the same crystal, so
+    // they move to the system PLL and the USB PLL becomes HSTX's alone.
+    // Before USB starts, so nothing notices the move.
+    //
+    // Not clk_peri: its divider is two bits wide, so "240 / 5" was written as
+    // 1 and the peripherals ran at 240 MHz -- SPI to the C6 among them, which
+    // garbled its first frame. It takes the USB PLL halved instead, 100 MHz,
+    // and the SDK works each peripheral's divider out from that.
+    const uint32_t sys = clock_get_hz(clk_sys);
+    clock_configure(clk_usb, 0, CLOCKS_CLK_USB_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS, sys, 48000000u);
+    clock_configure(clk_adc, 0, CLOCKS_CLK_ADC_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS, sys, 48000000u);
+    pll_init(pll_usb, 1, 1200000000u, 6, 1);      // 200 MHz
+    clock_configure(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
+                    200000000u, 100000000u);
+#endif
 }
 #endif
 

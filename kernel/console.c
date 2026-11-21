@@ -41,7 +41,7 @@ static const console_font_t fonts[] = {
 // The most rows the smallest cell gives. Both cell heights divide 480 exactly,
 // which matters: the framebuffer is a ring and a height that did not divide
 // would leave a partial row straddling the join.
-#define ROWS_MAX (UBIQOS_V_ACTIVE / 12)   // 40
+#define ROWS_MAX (UBIQOS_V_TEXT / 12)     // 40, or 48 at 800x600
 
 // The framebuffer is RGB332 -- red in bits 7-5, green in 4-2, blue in 1-0 --
 // which is not guesswork: video.c's test card draws its bars from these very
@@ -112,7 +112,7 @@ static inline uint8_t eff_attr(void)
 
 static const console_font_t *font = &fonts[DEFAULT_FONT];
 static uint32_t cell_w = 8, cell_h = 16;
-static uint32_t cols = UBIQOS_H_ACTIVE / 8, rows = UBIQOS_V_ACTIVE / 16;
+static uint32_t cols = UBIQOS_H_ACTIVE / 8, rows = UBIQOS_V_TEXT / 16;
 // 106 columns of six pixels come to 636, four short of the line. Split them, so
 // what is left over sits as two pixels at each edge rather than four at one.
 // Eight divides 640 exactly and leaves none.
@@ -630,7 +630,7 @@ static void set_grid(const console_font_t *f)
     cell_h = f->h;
 
     cols = UBIQOS_H_ACTIVE / cell_w;
-    rows = UBIQOS_V_ACTIVE / cell_h;
+    rows = UBIQOS_V_TEXT / cell_h;
     if (rows > ROWS_MAX)
         rows = ROWS_MAX;   // row_wrapped is sized for this
 
@@ -688,7 +688,7 @@ int32_t ubiqos_console_select_font(int32_t index, ubiqos_confont_t *out, bool lo
         out->count = (uint8_t)NFONTS;
 #endif
         out->cols = (uint16_t)(UBIQOS_H_ACTIVE / fonts[i].w);
-        out->rows = (uint16_t)(UBIQOS_V_ACTIVE / fonts[i].h);
+        out->rows = (uint16_t)(UBIQOS_V_TEXT / fonts[i].h);
     }
 
     return 0;

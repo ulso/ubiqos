@@ -19,7 +19,10 @@
 #define UBIQOS_CELL_W    8
 #define UBIQOS_CELL_H    16
 #define UBIQOS_CELL_COLS (UBIQOS_H_ACTIVE / UBIQOS_CELL_W)   // 80
-#define UBIQOS_CELL_ROWS (UBIQOS_V_ACTIVE / UBIQOS_CELL_H)   // 30
+#ifndef UBIQOS_V_TEXT
+#define UBIQOS_V_TEXT UBIQOS_V_ACTIVE                         // the RGB panel's
+#endif
+#define UBIQOS_CELL_ROWS (UBIQOS_V_TEXT / UBIQOS_CELL_H)     // 30, or 36 at 800x600
 
 // Rows kept, of which UBIQOS_CELL_ROWS are on the screen and the rest are
 // history. The cells were always a ring; this makes the ring longer than the

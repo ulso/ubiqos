@@ -28,14 +28,39 @@ void ubiqos_print_hex(uint32_t v);
 // The Fruit Jam is the other way round, and its clock is on the first pair
 // rather than the second.
 
+#if UBIQOS_VIDEO_800X600
+// VESA's 800x600 at 60 Hz, exactly: 1056 x 628 at 40 MHz, both syncs
+// positive. 40 MHz comes from the USB PLL, which kernel/main.c sets to 200
+// MHz for HSTX alone once USB, the ADC and the peripherals have been moved
+// to the system PLL -- see the note there.
+//
+// It was 48 MHz (240 / 5) first, with the blanking stretched to land on a
+// standard line and frame rate. A standard clock is what any monitor's
+// table expects, so it is what is used -- though see the note in
+// docs/video-800x600.md: the only receiver tried so far, an MS2130 capture dongle,
+// showed 800x600 once in many attempts at either clock.
+#define H_FRONT_PORCH   40
+#define H_SYNC_WIDTH    128
+#define H_BACK_PORCH    88
+#define V_FRONT_PORCH   1
+#define V_SYNC_WIDTH    4
+#define V_BACK_PORCH    23
+#define SYNC_POSITIVE   1
+#define PIXEL_HZ        40000000u
+#else
 #define H_FRONT_PORCH   16
 #define H_SYNC_WIDTH    96
 #define H_BACK_PORCH    48
-#define H_ACTIVE        UBIQOS_H_ACTIVE
 #define V_FRONT_PORCH   10
 #define V_SYNC_WIDTH    2
 #define V_BACK_PORCH    52      // 33 by the standard; see the note on the table
+#define SYNC_POSITIVE   0
+#define PIXEL_HZ        24000000u
+#endif
+#define H_ACTIVE        UBIQOS_H_ACTIVE
 #define V_ACTIVE        UBIQOS_V_ACTIVE
+#define V_TEXT          UBIQOS_V_TEXT
+#define V_BORDER        ((V_ACTIVE - V_TEXT) / 2)   // blank lines above the text
 #define H_TOTAL (H_FRONT_PORCH + H_SYNC_WIDTH + H_BACK_PORCH + H_ACTIVE)
 #define V_TOTAL (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH + V_ACTIVE)
 
@@ -58,24 +83,57 @@ void ubiqos_print_hex(uint32_t v);
 #define SYNC_V1_H0 (TMDS_CTRL_10 | (TMDS_CTRL_00 << 10) | (TMDS_CTRL_00 << 20))
 #define SYNC_V1_H1 (TMDS_CTRL_11 | (TMDS_CTRL_00 << 10) | (TMDS_CTRL_00 << 20))
 
+// Which level is "in sync". 640x480 has both syncs negative, so they idle
+// high and pulse low; 800x600 is the other way round.
+#if SYNC_POSITIVE
+#define IDLE        SYNC_V0_H0
+#define HSYNC       SYNC_V0_H1
+#define VSYNC       SYNC_V1_H0
+#define HSYNC_VSYNC SYNC_V1_H1
+#else
+#define IDLE        SYNC_V1_H1
+#define HSYNC       SYNC_V1_H0
+#define VSYNC       SYNC_V0_H1
+#define HSYNC_VSYNC SYNC_V0_H0
+#endif
+
+#if !UBIQOS_VIDEO_800X600
 static uint32_t vblank_vsync_off[] = {
-    HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, SYNC_V1_H1,
-    HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  SYNC_V1_H0,
-    HSTX_CMD_RAW_REPEAT | (H_BACK_PORCH + H_ACTIVE), SYNC_V1_H1,
+    HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, IDLE,
+    HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  HSYNC,
+    HSTX_CMD_RAW_REPEAT | (H_BACK_PORCH + H_ACTIVE), IDLE,
     HSTX_CMD_NOP
 };
 static uint32_t vblank_vsync_on[] = {
-    HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, SYNC_V0_H1,
-    HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  SYNC_V0_H0,
-    HSTX_CMD_RAW_REPEAT | (H_BACK_PORCH + H_ACTIVE), SYNC_V0_H1,
+    HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, VSYNC,
+    HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  HSYNC_VSYNC,
+    HSTX_CMD_RAW_REPEAT | (H_BACK_PORCH + H_ACTIVE), VSYNC,
     HSTX_CMD_NOP
 };
+#endif
 static uint32_t vactive_line[] = {
-    HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, SYNC_V1_H1,
-    HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  SYNC_V1_H0,
-    HSTX_CMD_RAW_REPEAT | H_BACK_PORCH,  SYNC_V1_H1,
+    HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, IDLE,
+    HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  HSYNC,
+    HSTX_CMD_RAW_REPEAT | H_BACK_PORCH,  IDLE,
     HSTX_CMD_TMDS       | H_ACTIVE
 };
+
+// The pieces a blank line is cut into when the frame table needs padding --
+// see the note on the table. The head is the front porch and the sync; the
+// rest of the line is chunks of BLANK_CHUNK pixels and one tail.
+#if UBIQOS_VIDEO_800X600
+static uint32_t blank_head[2][4] = {
+    { HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, IDLE,  HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH, HSYNC },
+    { HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, VSYNC, HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH, HSYNC_VSYNC },
+};
+static uint32_t blank_chunk[2][2];
+static uint32_t blank_tail[2][2][2];     // [vsync][one chunk more or not][words]
+#endif
+
+#if V_BORDER
+// The lines above and below the text, all of them this one.
+static uint8_t border_line[H_ACTIVE] __attribute__((aligned(4)));
+#endif
 
 // The framebuffer. Static rather than allocated: it is one permanent thing the
 // kernel owns, and it should not be able to fail at an awkward moment. In SRAM
@@ -98,9 +156,9 @@ static uint32_t vactive_line[] = {
 
 // Character cells instead, and a handful of scanlines in flight.
 //
-// LINE_BUFS divides V_ACTIVE, which is what makes `line % LINE_BUFS` mean the
+// LINE_BUFS divides V_TEXT, which is what makes `line % LINE_BUFS` mean the
 // same thing in the frame table as it does in the renderer: 480 is ten bands of
-// forty-eight. It buys 48 * 32 us = 1.5 ms of slack between the generator and
+// forty-eight, and 576 (800x600's text) is twelve. It buys 48 * 32 us = 1.5 ms of slack between the generator and
 // the beam, against a pump that runs every 500 us from a handler the kernel
 // cannot mask. The first version of this display took an interrupt per scanline
 // and died when pre-emption arrived; the slack is the answer to that.
@@ -137,9 +195,18 @@ uint8_t *ubiqos_framebuf = framebuf_store;
 // 33. A ring must be a power of two, and a frame is two transfers per active
 // line plus one per blank line: 480*2 + 64 = 1024 exactly. It costs refresh
 // rate -- 57 Hz rather than 60 -- and buys freedom from the kernel entirely.
-
-#define BLANK_LINES   (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH)
-#define FRAME_ENTRIES (V_ACTIVE * 2 + BLANK_LINES)
+//
+// 800x600 could not do the same: 600*2 + 25 is 1225, and stretching the
+// blanking to 2048 would halve the refresh. So the table is padded instead,
+// by cutting each blank line's long stretch of idle into some thirty pieces
+// of about 33 pixels, each its own transfer.
+//
+// NOT with NOPs, which was the first version and gave no picture at all. A
+// NOP takes no time on the wire, so the expander eats them as fast as they
+// come, and with a FIFO eight words deep the DMA has to deliver every one of
+// 823 of them while the output waits: microseconds of nothing once a frame,
+// and a monitor that never locks. A piece of idle that LASTS 0.7 us gives the
+// DMA far more time than it needs to fetch the next.
 
 // The DMA has one ring, not two: RING_SEL chooses whether it applies to the
 // read side or the write side. Trying to have both -- a read ring to wrap the
@@ -153,7 +220,20 @@ uint8_t *ubiqos_framebuf = framebuf_store;
 // and still not one interrupt.
 
 #define BLANK_LINES   (V_FRONT_PORCH + V_SYNC_WIDTH + V_BACK_PORCH)
-#define FRAME_ENTRIES (V_ACTIVE * 2 + BLANK_LINES)
+#define FRAME_USED    (V_ACTIVE * 2 + BLANK_LINES)
+#if FRAME_USED <= 1024
+#define FRAME_ENTRIES 1024
+#define FRAME_RING    12            // log2 of the table's size in bytes
+#else
+#define FRAME_ENTRIES 2048
+#define FRAME_RING    13
+#endif
+#define FILLERS       (FRAME_ENTRIES - FRAME_USED)
+#define FIRST_ACTIVE  (FILLERS + BLANK_LINES)   // the table entry of line 0
+_Static_assert(FRAME_USED <= FRAME_ENTRIES, "the frame does not fit its table");
+#if (FILLERS != 0) != (UBIQOS_VIDEO_800X600 + 0 != 0)
+#error "only 800x600 pads its frame table; its pieces are defined for it alone"
+#endif
 
 static uint32_t     frame_counts[FRAME_ENTRIES]
     __attribute__((aligned(FRAME_ENTRIES * 4)));
@@ -174,13 +254,57 @@ void ubiqos_video_set_origin(uint32_t line) {
     ubiqos_video_origin = line % V_ACTIVE;
     for (uint r = 0; r < V_ACTIVE; r++) {
         uint fb = (ubiqos_video_origin + r) % V_ACTIVE;
-        frame_addrs[BLANK_LINES + r * 2 + 1] = &ubiqos_framebuf[fb * H_ACTIVE];
+        frame_addrs[FIRST_ACTIVE + r * 2 + 1] = &ubiqos_framebuf[fb * H_ACTIVE];
     }
+}
+#endif
+
+#if FILLERS
+// Pieces per blank line: FILLERS more entries spread over BLANK_LINES lines,
+// the first FILLERS % BLANK_LINES of them taking one more.
+#define CHUNKS_LO     (FILLERS / BLANK_LINES)
+#define CHUNKS_EXTRA  (FILLERS % BLANK_LINES)
+#define BLANK_REST    (H_BACK_PORCH + H_ACTIVE)
+#define BLANK_CHUNK   (BLANK_REST / (CHUNKS_LO + 1))
+_Static_assert(CHUNKS_LO >= 2, "a blank line is cut into at least two pieces");
+
+static uint add_blank_line(uint n, uint line, bool vsync) {
+    const uint v = vsync ? 1u : 0u;
+    const uint more = line < CHUNKS_EXTRA ? 1u : 0u;
+    const uint chunks = CHUNKS_LO + more;
+    frame_counts[n] = 4;
+    frame_addrs[n++] = blank_head[v];
+    for (uint i = 0; i + 1 < chunks; i++) {
+        frame_counts[n] = 2;
+        frame_addrs[n++] = blank_chunk[v];
+    }
+    frame_counts[n] = 2;
+    frame_addrs[n++] = blank_tail[v][more];
+    return n;
 }
 #endif
 
 static void build_frame_list(void) {
     uint n = 0;
+#if FILLERS
+    for (uint v = 0; v < 2; v++) {
+        const uint32_t level = v ? VSYNC : IDLE;
+        blank_chunk[v][0] = HSTX_CMD_RAW_REPEAT | BLANK_CHUNK;
+        blank_chunk[v][1] = level;
+        for (uint more = 0; more < 2; more++) {
+            const uint chunks = CHUNKS_LO + more;
+            blank_tail[v][more][0] = HSTX_CMD_RAW_REPEAT | (BLANK_REST - BLANK_CHUNK * (chunks - 1));
+            blank_tail[v][more][1] = level;
+        }
+    }
+    for (uint line = 0; line < V_TOTAL; line++) {
+        if (line < BLANK_LINES) {
+            const bool vs = line >= V_FRONT_PORCH && line < V_FRONT_PORCH + V_SYNC_WIDTH;
+            n = add_blank_line(n, line, vs);
+            continue;
+        }
+        {
+#else
     for (uint line = 0; line < V_TOTAL; line++) {
         if (line < V_FRONT_PORCH || line >= V_FRONT_PORCH + V_SYNC_WIDTH) {
             if (line < BLANK_LINES) {
@@ -192,11 +316,19 @@ static void build_frame_list(void) {
             frame_addrs[n++] = vblank_vsync_on;
         }
         if (line >= BLANK_LINES) {
+#endif
             frame_counts[n] = count_of(vactive_line);
             frame_addrs[n++] = vactive_line;
             frame_counts[n] = H_ACTIVE / sizeof(uint32_t);
 #if UBIQOS_VIDEO_CHARGEN
-            frame_addrs[n++] = linebuf[(line - BLANK_LINES) % LINE_BUFS];
+            const uint a = line - BLANK_LINES;
+#if V_BORDER
+            if (a < V_BORDER || a >= V_BORDER + V_TEXT) {
+                frame_addrs[n++] = border_line;
+                continue;
+            }
+#endif
+            frame_addrs[n++] = linebuf[(a - V_BORDER) % LINE_BUFS];
 #else
             frame_addrs[n++] = &ubiqos_framebuf[(line - BLANK_LINES) * H_ACTIVE];
 #endif
@@ -256,7 +388,16 @@ static void build_frame_list(void) {
 //
 // The ring is 48 buffers, 1.5 milliseconds, so this still leaves about 0.8 of
 // slack. The underrun counter is what says whether that was enough.
+//
+// 800x600 draws 46875 lines a second against 480's 28600, so 700 there is 33
+// lines a pump against a ring of 46 -- 280 us of slack, and it underran about
+// 200 lines a second. 400 is a glyph row and a bit per pump, which keeps the
+// band path and leaves the ring about 580 us of slack.
+#if UBIQOS_VIDEO_800X600
+#define PUMP_US 400
+#else
 #define PUMP_US 700
+#endif
 
 uint32_t ubiqos_video_underruns, ubiqos_video_pumps, ubiqos_video_lines;
 static uint32_t first_underrun_pump;
@@ -282,14 +423,14 @@ static uint32_t rendered_to;    // the next line to build, on the same scale
 // billion lines to build. On 7 Oct 2026 a Fruit Jam 45 hours up was found
 // with beam_epoch at FFFFFF00, one pump that had never ended, the tick
 // starved and the screen half-drawn. Taking both back together leaves their
-// difference alone, and a multiple of V_ACTIVE is a multiple of LINE_BUFS and
+// difference alone, and a multiple of V_TEXT is a multiple of LINE_BUFS and
 // of the glyph height too, so every line keeps its buffer and its glyph row.
 // UBIQOS_VIDEO_REBASE_FRAMES is there to be made small in a test build, so
 // that the rebase happens many times a second rather than once in five hours.
 #ifndef UBIQOS_VIDEO_REBASE_FRAMES
 #define UBIQOS_VIDEO_REBASE_FRAMES 1048576u
 #endif
-#define REBASE_LINES (V_ACTIVE * UBIQOS_VIDEO_REBASE_FRAMES)
+#define REBASE_LINES (V_TEXT * UBIQOS_VIDEO_REBASE_FRAMES)
 _Static_assert(REBASE_LINES % LINE_BUFS == 0, "a rebase must keep each line's buffer");
 _Static_assert(REBASE_LINES % UBIQOS_CELL_H == 0, "a rebase must keep the bands aligned");
 
@@ -303,10 +444,14 @@ static inline uint32_t beam_line(void)
 {
     uint32_t idx = (uint32_t)(((uintptr_t)dma_hw->ch[ch_addr].read_addr
                                - (uintptr_t)frame_addrs) / sizeof(frame_addrs[0]));
-    if (idx >= FRAME_ENTRIES || idx < BLANK_LINES)
+    if (idx >= FRAME_ENTRIES || idx < FIRST_ACTIVE)
         return 0;                       // still in the vertical blanking
-    idx = (idx - BLANK_LINES) / 2;
-    return idx < V_ACTIVE ? idx : V_ACTIVE - 1;
+    idx = (idx - FIRST_ACTIVE) / 2;
+    // The border above the text counts as its first line, the one below as
+    // its last: what the beam is showing there was never built.
+    if (idx < V_BORDER) return 0;
+    idx -= V_BORDER;
+    return idx < V_TEXT ? idx : V_TEXT - 1;
 }
 
 // What the display is actually playing for one line. The buffer is live: this
@@ -343,7 +488,7 @@ static void video_pump(void)
     uint32_t t0 = timer_hw->timerawl;
     uint32_t cur = beam_line();
     if (cur < beam_last)
-        beam_epoch += V_ACTIVE;         // a frame went by
+        beam_epoch += V_TEXT;           // a frame went by
     beam_last = cur;
 
     uint32_t now = beam_epoch + cur;
@@ -374,7 +519,7 @@ static void video_pump(void)
     // costs, at worst, a frame of wrong lines.
     uint32_t target = now + LINE_BUFS - 2;
     for (uint32_t built = 0; rendered_to < target && built < LINE_BUFS; ) {
-        uint32_t y = rendered_to % V_ACTIVE;
+        uint32_t y = rendered_to % V_TEXT;
         uint8_t *buf = linebuf[rendered_to % LINE_BUFS];
 
         // Whole glyph rows, and STOPPING at the boundary rather than filling
@@ -458,8 +603,13 @@ void ubiqos_video_init(void) {
     // 120 MHz whatever clk_sys is: at 240 the clock divides by two on the way
     // in (clk_hstx has an integer divider), and the picture is the same
     // 640x480 at 57 Hz either way. A faster mode is a separate decision.
+#if UBIQOS_VIDEO_800X600
+    clock_configure(clk_hstx, 0, CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
+                    PIXEL_HZ * 5u, PIXEL_HZ * 5u);   // the USB PLL, set to this in main.c
+#else
     clock_configure(clk_hstx, 0, CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLK_SYS,
-                    clock_get_hz(clk_sys), 120000000u);
+                    clock_get_hz(clk_sys), PIXEL_HZ * 5u);
+#endif
 
     // RGB332 out of one byte: two bits of blue, three of green, three of red,
     // each rotated into place for its lane.
@@ -500,8 +650,16 @@ void ubiqos_video_init(void) {
         hstx_ctrl_hw->bit[bit]     = sel | HSTX_CTRL_BIT0_INV_BITS;   // N
         hstx_ctrl_hw->bit[bit + 1] = sel;                             // P
     }
-    for (int i = UBIQOS_VIDEO_PIN_FIRST; i <= UBIQOS_VIDEO_PIN_LAST; ++i)
+    for (int i = UBIQOS_VIDEO_PIN_FIRST; i <= UBIQOS_VIDEO_PIN_LAST; ++i) {
         gpio_set_function(i, 0);
+#if UBIQOS_VIDEO_800X600
+        // 400 Mbit/s a pair rather than 240. Fast edges and 12 mA were set
+        // while bringing this up; whether the defaults (4 mA, slow) would do
+        // is not known -- the one receiver tried could not tell either way.
+        gpio_set_slew_rate(i, GPIO_SLEW_RATE_FAST);
+        gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_12MA);
+#endif
+    }
 
     build_frame_list();
 
@@ -522,7 +680,7 @@ void ubiqos_video_init(void) {
     // not one channel writing a pair.
     dma_channel_config c = dma_channel_get_default_config(ch_count);
     channel_config_set_write_increment(&c, false);
-    channel_config_set_ring(&c, false, 12);          // read wraps every 4096 bytes
+    channel_config_set_ring(&c, false, FRAME_RING);  // read wraps once a frame
     channel_config_set_chain_to(&c, ch_addr);
     dma_channel_configure(ch_count, &c,
                           &dma_hw->ch[ch_data].al3_transfer_count,
@@ -530,7 +688,7 @@ void ubiqos_video_init(void) {
 
     dma_channel_config a = dma_channel_get_default_config(ch_addr);
     channel_config_set_write_increment(&a, false);
-    channel_config_set_ring(&a, false, 12);
+    channel_config_set_ring(&a, false, FRAME_RING);
     channel_config_set_chain_to(&a, ch_addr);        // chain to self means none
     dma_channel_configure(ch_addr, &a,
                           &dma_hw->ch[ch_data].al3_read_addr_trig,
@@ -555,7 +713,7 @@ void ubiqos_video_init(void) {
     ubiqos_print_hex(hstx_ctrl_hw->csr);
     ubiqos_print(" (want 0x50050203), fifo stat 0x");
     ubiqos_print_hex(hstx_fifo_hw->stat);
-    ubiqos_print(", 640x480, DMA ");
+    ubiqos_print(UBIQOS_H_ACTIVE == 800 ? ", 800x600, DMA " : ", 640x480, DMA ");
     ubiqos_print_u32((uint32_t)ch_data);
     ubiqos_print(", ");
     ubiqos_print_u32((uint32_t)ch_count);

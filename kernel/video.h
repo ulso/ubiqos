@@ -12,8 +12,21 @@
 #define UBIQOS_VIDEO_CHARGEN 0
 #endif
 
+// The picture, and the part of it that holds text. 800x600 is chargen only
+// (a framebuffer would be 480 kB) and needs clk_sys at 240, since the pixel
+// clock is clk_hstx/5 and 48 MHz is what it takes. Its text is 576 lines --
+// 36 glyph rows -- because 600 is not a multiple of 16 and the ring of 48
+// scanline buffers wants a height it divides; the 12 lines above and below
+// show a blank line of their own.
+#if UBIQOS_VIDEO_800X600
+#define UBIQOS_H_ACTIVE 800
+#define UBIQOS_V_ACTIVE 600
+#define UBIQOS_V_TEXT   576
+#else
 #define UBIQOS_H_ACTIVE 640
 #define UBIQOS_V_ACTIVE 480
+#define UBIQOS_V_TEXT   480
+#endif
 
 void ubiqos_video_init(void);
 
