@@ -49,6 +49,21 @@ void ubiqos_print_hex(uint32_t v);
 #define V_BACK_PORCH    23
 #define SYNC_POSITIVE   1
 #define PIXEL_HZ        40000000u
+#define MODE_NAME       "800x600"
+#elif UBIQOS_VIDEO_960X540
+// 960x540 at 59.95 Hz: 1200 x 556 at the same 40 MHz as 800x600. Not a VESA
+// or CEA mode, so there is no table to copy; the blanking is 240 pixels and
+// 16 lines, both syncs positive as 1080p has them. It is here to see whether
+// a 1080p monitor takes it and scales it by exactly two.
+#define H_FRONT_PORCH   32
+#define H_SYNC_WIDTH    96
+#define H_BACK_PORCH    112
+#define V_FRONT_PORCH   3
+#define V_SYNC_WIDTH    5
+#define V_BACK_PORCH    8
+#define SYNC_POSITIVE   1
+#define PIXEL_HZ        40000000u
+#define MODE_NAME       "960x540"
 #else
 #define H_FRONT_PORCH   16
 #define H_SYNC_WIDTH    96
@@ -58,6 +73,7 @@ void ubiqos_print_hex(uint32_t v);
 #define V_BACK_PORCH    52      // 33 by the standard; see the note on the table
 #define SYNC_POSITIVE   0
 #define PIXEL_HZ        24000000u
+#define MODE_NAME       "640x480"
 #endif
 #define H_ACTIVE        UBIQOS_H_ACTIVE
 #define V_ACTIVE        UBIQOS_V_ACTIVE
@@ -99,7 +115,7 @@ void ubiqos_print_hex(uint32_t v);
 #define HSYNC_VSYNC SYNC_V0_H0
 #endif
 
-#if !UBIQOS_VIDEO_800X600
+#if !UBIQOS_VIDEO_HIRES
 static uint32_t vblank_vsync_off[] = {
     HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, IDLE,
     HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH,  HSYNC,
@@ -123,7 +139,7 @@ static uint32_t vactive_line[] = {
 // The pieces a blank line is cut into when the frame table needs padding --
 // see the note on the table. The head is the front porch and the sync; the
 // rest of the line is chunks of BLANK_CHUNK pixels and one tail.
-#if UBIQOS_VIDEO_800X600
+#if UBIQOS_VIDEO_HIRES
 static uint32_t blank_head[2][4] = {
     { HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, IDLE,  HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH, HSYNC },
     { HSTX_CMD_RAW_REPEAT | H_FRONT_PORCH, VSYNC, HSTX_CMD_RAW_REPEAT | H_SYNC_WIDTH, HSYNC_VSYNC },
@@ -256,8 +272,8 @@ static uint32_t copies, copy_waits;
 #define FILLERS       (FRAME_ENTRIES - FRAME_USED)
 #define FIRST_ACTIVE  (FILLERS + BLANK_LINES)   // the table entry of line 0
 _Static_assert(FRAME_USED <= FRAME_ENTRIES, "the frame does not fit its table");
-#if (FILLERS != 0) != (UBIQOS_VIDEO_800X600 + 0 != 0)
-#error "only 800x600 pads its frame table; its pieces are defined for it alone"
+#if (FILLERS != 0) != (UBIQOS_VIDEO_HIRES + 0 != 0)
+#error "only 800x600 and 960x540 pad their frame tables; the pieces are defined for them alone"
 #endif
 
 static uint32_t     frame_counts[FRAME_ENTRIES]
@@ -436,6 +452,8 @@ static void build_frame_list(void) {
 #define PUMP_US 250
 #elif UBIQOS_VIDEO_800X600
 #define PUMP_US 400
+#elif UBIQOS_VIDEO_960X540
+#define PUMP_US 500     // 30 us lines: 16.7 a pump, a glyph row, 940 us of slack
 #else
 #define PUMP_US 700
 #endif
@@ -691,7 +709,7 @@ void ubiqos_video_init(void) {
     // 120 MHz whatever clk_sys is: at 240 the clock divides by two on the way
     // in (clk_hstx has an integer divider), and the picture is the same
     // 640x480 at 57 Hz either way. A faster mode is a separate decision.
-#if UBIQOS_VIDEO_800X600
+#if UBIQOS_VIDEO_HIRES
     clock_configure(clk_hstx, 0, CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
                     PIXEL_HZ * 5u, PIXEL_HZ * 5u);   // the USB PLL, set to this in main.c
 #else
@@ -740,7 +758,7 @@ void ubiqos_video_init(void) {
     }
     for (int i = UBIQOS_VIDEO_PIN_FIRST; i <= UBIQOS_VIDEO_PIN_LAST; ++i) {
         gpio_set_function(i, 0);
-#if UBIQOS_VIDEO_800X600
+#if UBIQOS_VIDEO_HIRES
         // 400 Mbit/s a pair rather than 240. Fast edges and 12 mA were set
         // while bringing this up; whether the defaults (4 mA, slow) would do
         // is not known -- the one receiver tried could not tell either way.
@@ -837,7 +855,7 @@ void ubiqos_video_init(void) {
     ubiqos_print_hex(hstx_ctrl_hw->csr);
     ubiqos_print(" (want 0x50050203), fifo stat 0x");
     ubiqos_print_hex(hstx_fifo_hw->stat);
-    ubiqos_print(UBIQOS_H_ACTIVE == 800 ? ", 800x600, DMA " : ", 640x480, DMA ");
+    ubiqos_print(", " MODE_NAME ", DMA ");
     ubiqos_print_u32((uint32_t)ch_data);
     ubiqos_print(", ");
     ubiqos_print_u32((uint32_t)ch_count);

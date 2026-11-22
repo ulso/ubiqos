@@ -1073,8 +1073,8 @@ static void set_clock(void) {
     }
     set_sys_clock_khz(UBIQOS_SYS_KHZ, true);
     retime_qmi(UBIQOS_SYS_KHZ / 120000);
-#if UBIQOS_VIDEO_800X600
-    // 800x600 wants a 40 MHz pixel clock, so 200 MHz into HSTX, and nothing
+#if UBIQOS_VIDEO_HIRES
+    // 800x600 (and 960x540) wants a 40 MHz pixel clock, so 200 MHz into HSTX, and nothing
     // that 240 divides by an integer gives it. The USB PLL can -- once what
     // it feeds is fed from elsewhere. USB, the ADC and the peripherals all
     // run at 48 MHz, and 240 / 5 is exactly that from the same crystal, so

@@ -529,18 +529,24 @@ endif()
 # because the pixel clock is clk_hstx/5 and clk_hstx comes from clk_sys.
 # The text is then 100 x 36. It costs about 20 kB more SRAM than 640x480:
 # wider scanlines, more cells, and a frame table twice the size.
-set(UBIQOS_VIDEO_MODE "640x480" CACHE STRING "HDMI picture: 640x480, or 800x600 (chargen at 240 MHz)")
-set_property(CACHE UBIQOS_VIDEO_MODE PROPERTY STRINGS 640x480 800x600)
-if(UBIQOS_VIDEO_MODE STREQUAL "800x600")
+# 960x540 is the same at the same clock: half of 1080p each way, for a 1080p
+# panel to double exactly. Text 120 x 33.
+set(UBIQOS_VIDEO_MODE "640x480" CACHE STRING "HDMI picture: 640x480, or 800x600 / 960x540 (chargen at 240 MHz)")
+set_property(CACHE UBIQOS_VIDEO_MODE PROPERTY STRINGS 640x480 800x600 960x540)
+if(UBIQOS_VIDEO_MODE STREQUAL "800x600" OR UBIQOS_VIDEO_MODE STREQUAL "960x540")
     if(NOT UBIQOS_VIDEO STREQUAL "chargen")
-        message(FATAL_ERROR "UBIQOS_VIDEO_MODE=800x600 is for UBIQOS_VIDEO=chargen")
+        message(FATAL_ERROR "UBIQOS_VIDEO_MODE=${UBIQOS_VIDEO_MODE} is for UBIQOS_VIDEO=chargen")
     endif()
     if(NOT UBIQOS_SYS_MHZ STREQUAL "240")
-        message(FATAL_ERROR "UBIQOS_VIDEO_MODE=800x600 needs UBIQOS_SYS_MHZ=240")
+        message(FATAL_ERROR "UBIQOS_VIDEO_MODE=${UBIQOS_VIDEO_MODE} needs UBIQOS_SYS_MHZ=240")
     endif()
-    target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_800X600=1)
+    if(UBIQOS_VIDEO_MODE STREQUAL "800x600")
+        target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_800X600=1)
+    else()
+        target_compile_definitions(os_kernel PRIVATE UBIQOS_VIDEO_960X540=1)
+    endif()
 elseif(NOT UBIQOS_VIDEO_MODE STREQUAL "640x480")
-    message(FATAL_ERROR "UBIQOS_VIDEO_MODE is 640x480 or 800x600, not ${UBIQOS_VIDEO_MODE}")
+    message(FATAL_ERROR "UBIQOS_VIDEO_MODE is 640x480, 800x600 or 960x540, not ${UBIQOS_VIDEO_MODE}")
 endif()
 target_compile_definitions(os_kernel PRIVATE
     UBIQOS_HAS_VIDEO=${ubiqosHasVideo} UBIQOS_HAS_CONSOLE=${ubiqosHasConsole})
@@ -669,6 +675,12 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # link changes (LWIP_NETIF_EXT_STATUS_CALLBACK): the riscv chargen C heap
         # was 1464 bytes.
         set(ubiqosHeapKB 96)
+        # 80 at 960x540 (22 Nov 2026): its scanlines, cells and border line
+        # are 8.5 kB more than 800x600's, and at 96 the C heap ran into the
+        # stack and the link failed by 2 kB. At 80 it is 16 kB.
+        if(UBIQOS_VIDEO_MODE STREQUAL "960x540")
+            set(ubiqosHeapKB 80)
+        endif()
     endif()
 else()
     set(ubiqosHeapKB ${UBIQOS_HEAP_KB})

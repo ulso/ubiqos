@@ -26,10 +26,23 @@
 // 36 glyph rows -- because 600 is not a multiple of 16 and the ring of 48
 // scanline buffers wants a height it divides; the 12 lines above and below
 // show a blank line of their own.
+//
+// 960x540 is the same idea at the same 40 MHz pixel clock: half of 1920x1080
+// each way, so a 1080p panel can show every pixel as exactly 2x2 of its own.
+// Its text is 528 lines, 33 glyph rows, with 6 blank lines above and below.
+//
+// UBIQOS_VIDEO_HIRES is either of them: the USB PLL for HSTX, a padded frame
+// table, fast pads.
 #if UBIQOS_VIDEO_800X600
 #define UBIQOS_H_ACTIVE 800
 #define UBIQOS_V_ACTIVE 600
 #define UBIQOS_V_TEXT   576
+#define UBIQOS_VIDEO_HIRES 1
+#elif UBIQOS_VIDEO_960X540
+#define UBIQOS_H_ACTIVE 960
+#define UBIQOS_V_ACTIVE 540
+#define UBIQOS_V_TEXT   528
+#define UBIQOS_VIDEO_HIRES 1
 #else
 #define UBIQOS_H_ACTIVE 640
 #define UBIQOS_V_ACTIVE 480
