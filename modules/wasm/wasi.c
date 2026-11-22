@@ -616,14 +616,31 @@ m3ApiRawFunction(wasi_clock_time_get)
 //                         flags u16 @40   (bit 0 set = the timeout is absolute)
 //   event          userdata u64 @0, error u16 @8, type u8 @10
 //
-// A subscription on a file descriptor is answered as ready without looking.
-// That is not a fudge: a read here blocks until there is something, so a
-// program that polls and then reads gets exactly what it would have got, and
-// one that polls several descriptors at once would need machinery this host
-// does not have. Nothing has asked for it yet.
+// A subscription on a file descriptor: the terminal's three -- stdin, stdout,
+// stderr -- are asked whether they are ready, and the poll waits for the first
+// of them or the clock, whichever comes first. Anything else (a file) is ready
+// at once, as a file always is. It answered ready without looking until 22 Nov
+// 2026, which made "wait a little for a reply that may never come" impossible
+// to write: the read that followed blocked for ever, and the curses shim could
+// not ask the terminal its size. Now it can.
+//
+//   subscription   fd_read / fd_write: fd u32 @16
+//   event          fd_readwrite: nbytes u64 @16, flags u16 @24
 #define WASI_SUB_SIZE   48u
 #define WASI_EVENT_SIZE 32u
-#define WASI_EVENTTYPE_CLOCK 0u
+#define WASI_EVENTTYPE_CLOCK    0u
+#define WASI_EVENTTYPE_FD_READ  1u
+#define WASI_EVENTTYPE_FD_WRITE 2u
+
+// How much there is to read or room to write on fd, or -1 for "ready, no
+// number": a file, or a descriptor that cannot say.
+static int32_t wasi_fd_ready(uint8_t type, uint32_t fd)
+{
+    if (fd > 2) return -1;
+    const int32_t n = (type == WASI_EVENTTYPE_FD_READ) ? ubiqos_readable((int32_t)fd)
+                                                       : ubiqos_writable((int32_t)fd);
+    return n;           // 0 is "not yet", below zero is "cannot say": ready
+}
 
 m3ApiRawFunction(wasi_poll_oneoff)
 {
@@ -638,17 +655,16 @@ m3ApiRawFunction(wasi_poll_oneoff)
     m3ApiCheckMem(out, nsubs * WASI_EVENT_SIZE);
     m3ApiCheckMem(nevents, sizeof(uint32_t));
 
-    // The longest clock timeout among the subscriptions is not what to wait
-    // for -- the SHORTEST is, because poll returns when the first of them is
-    // ready. A single sleep has one and the distinction does not arise, but
-    // getting it backwards would turn a 200 ms pause into whatever else was
-    // being waited on.
+    // The SHORTEST clock timeout is what to wait for, because poll returns when
+    // the first subscription is ready. A single sleep has one and the
+    // distinction does not arise, but getting it backwards would turn a 200 ms
+    // pause into whatever else was being waited on.
     uint64_t wait_ns = 0;
-    bool have_clock = false, ready_now = false;
+    bool have_clock = false, have_fd = false;
 
     for (uint32_t i = 0; i < nsubs; i++) {
         const uint8_t *sub = in + i * WASI_SUB_SIZE;
-        if (sub[8] != 0) { ready_now = true; continue; }      // a descriptor: ready
+        if (sub[8] != WASI_EVENTTYPE_CLOCK) { have_fd = true; continue; }
 
         uint64_t timeout = wasi_get64(sub + 24);
         uint16_t flags   = m3ApiReadMem16(sub + 40);
@@ -660,26 +676,53 @@ m3ApiRawFunction(wasi_poll_oneoff)
         have_clock = true;
     }
 
-    // A descriptor that is ready already means there is nothing to wait for.
-    if (have_clock && !ready_now && wait_ns) {
-        uint32_t ms = (uint32_t)(wait_ns / 1000000ull);
-        // Anything under a millisecond still yields: a program asking for a
-        // pause wants the processor to go elsewhere, however short the pause.
-        ubiqos_sleep(ms ? ms : 1);
+    uint32_t ms = (uint32_t)(wait_ns / 1000000ull);
+    if (have_clock && !ms && wait_ns) ms = 1;   // under a millisecond still yields
+
+    // Clocks alone: sleep. Descriptors: look every two milliseconds until one is
+    // ready or the clock runs out; with no clock, until one is ready.
+    const uint32_t t0 = ubiqos_ticks_now();
+    bool fd_ready = false;
+    if (!have_fd) {
+        if (ms) ubiqos_sleep(ms);
+    } else {
+        for (;;) {
+            for (uint32_t i = 0; i < nsubs && !fd_ready; i++) {
+                const uint8_t *sub = in + i * WASI_SUB_SIZE;
+                if (sub[8] == WASI_EVENTTYPE_CLOCK) continue;
+                if (wasi_fd_ready(sub[8], m3ApiReadMem32(sub + 16)) != 0) fd_ready = true;
+            }
+            if (fd_ready) break;
+            if (have_clock && ubiqos_ticks_now() - t0 >= ms) break;
+            ubiqos_sleep(2);
+        }
     }
 
-    // One event per subscription, all of them reporting success. Zero the whole
-    // structure first: the fields this host does not fill are read by the guest
-    // regardless, and whatever was in its memory would be read as an error.
+    // An event for each subscription that is ready: the descriptors that are,
+    // or the clocks if none was. Zero each event first: the fields this host
+    // does not fill are read by the guest regardless, and whatever was in its
+    // memory would be read as an error.
+    uint32_t n = 0;
     for (uint32_t i = 0; i < nsubs; i++) {
-        const uint8_t *sub = in  + i * WASI_SUB_SIZE;
-        uint8_t       *ev  = out + i * WASI_EVENT_SIZE;
+        const uint8_t *sub = in + i * WASI_SUB_SIZE;
+        const uint8_t type = sub[8];
+        int32_t avail = 0;
+        if (type == WASI_EVENTTYPE_CLOCK) {
+            if (fd_ready) continue;
+        } else {
+            avail = wasi_fd_ready(type, m3ApiReadMem32(sub + 16));
+            if (avail == 0) continue;
+        }
+        uint8_t *ev = out + n * WASI_EVENT_SIZE;
         for (uint32_t b = 0; b < WASI_EVENT_SIZE; b++) ev[b] = 0;
         wasi_put64(ev, wasi_get64(sub));                      // userdata, echoed back
         m3ApiWriteMem16(ev + 8, 0);                           // error: none
-        ev[10] = sub[8];                                      // the type asked for
+        ev[10] = type;
+        if (type != WASI_EVENTTYPE_CLOCK)
+            wasi_put64(ev + 16, avail > 0 ? (uint64_t)avail : 1u);
+        n++;
     }
-    m3ApiWriteMem32(nevents, nsubs);
+    m3ApiWriteMem32(nevents, n);
     m3ApiReturn(WASI_OK);
 }
 

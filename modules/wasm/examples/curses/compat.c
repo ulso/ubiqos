@@ -16,6 +16,8 @@
 #include <string.h>
 #include <dirent.h>
 #include <stdlib.h>
+#include <poll.h>
+#include <time.h>
 
 // The directory the program was started in, so that getcwd tells the truth.
 //
@@ -28,18 +30,55 @@
 // initscr calls it. As a constructor it did not take effect, and something a
 // program depends on is worth an explicit call rather than a guess about when
 // the runtime gets round to it.
-// Nobody to ask here. A guest reaches its terminal through WASI, which has no
-// way to wait a little for an answer that may never come -- and a blocking read
-// of a cursor report that nothing will send hangs the editor. The environment
-// is what this build goes by; see the native compat.c for the other half.
+// How big is the terminal? Ask it, as the native compat.c does: ESC [ 18 t,
+// answered ESC [ 8 ; rows ; cols t by the board's console and by any real
+// terminal at the far end of SSH. poll() is what waits a little for a reply
+// that may never come; it reaches the host as poll_oneoff, which watches stdin
+// since 22 Nov 2026 -- before that it answered "ready" without looking, the
+// read after it blocked for ever, and this function had to give up and leave
+// LINES and COLUMNS to the environment.
 // A guest has no way to reach the foreground; it gets what the wasm host
 // decides. Left as it was.
 void curses_take_interrupt(void) { }
 
 int curses_term_size(int *rows, int *cols)
 {
-    (void)rows; (void)cols;
-    return 0;
+    static const char q[] = "\x1b[18t";
+    if (write(1, q, sizeof q - 1) != (ssize_t)(sizeof q - 1)) return 0;
+
+    // 400 ms in all, as natively: the answer may cross SSH and a pipe pair. A
+    // late one is not lost -- getch recognises it and eats it.
+    struct timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    int state = 0;                       // 0 outside, 1 after ESC, 2 parameters
+    unsigned p[3] = { 0, 0, 0 };
+    int np = 0;
+    for (;;) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long left = 400 - ((now.tv_sec - t0.tv_sec) * 1000 + (now.tv_nsec - t0.tv_nsec) / 1000000);
+        if (left <= 0) return 0;
+        struct pollfd pfd = { .fd = 0, .events = POLLIN };
+        if (poll(&pfd, 1, (int)left) <= 0) return 0;
+        unsigned char ch;
+        if (read(0, &ch, 1) != 1) return 0;
+
+        // The whole reply is consumed, terminator and all, or the rest turns up
+        // as text on the next prompt.
+        if (state == 0) {
+            if (ch == 0x1b) { state = 1; np = 0; p[0] = p[1] = p[2] = 0; }
+            continue;
+        }
+        if (state == 1) { state = (ch == '[') ? 2 : 0; continue; }
+        if (ch >= '0' && ch <= '9') { if (np < 3) p[np] = p[np] * 10 + (unsigned)(ch - '0'); continue; }
+        if (ch == ';') { if (np < 2) np++; continue; }
+        if (ch == 't' && p[0] == 8 && np >= 2) {
+            *rows = (int)p[1];
+            *cols = (int)p[2];
+            return 1;
+        }
+        state = 0;                       // some other sequence; keep waiting
+    }
 }
 
 void curses_adopt_pwd(void)
