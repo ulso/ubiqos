@@ -29,7 +29,7 @@ bool http_send_all(int32_t sock, const uint8_t *p, uint32_t n);
 void dav_log(const char *s, uint32_t n);
 
 #define KEY_DAV  "dav.password"
-#define IO_MAX   1024
+#define IO_MAX   4096
 #define PATH_MAX_DAV 192
 
 // --- SMALL THINGS ------------------------------------------------------------
@@ -368,9 +368,16 @@ static bool remove_tree(const char *path, uint32_t depth) {
 
 // --- DATES -------------------------------------------------------------------
 //
-// "Sun, 22 Nov 2026 16:44:09 GMT" from the wall clock, /var/time. It is local
-// time and says GMT, which an hour does not matter to: nothing here keeps a
-// real time per file, and every file says it changed now.
+// "Sun, 22 Nov 2026 16:44:09 GMT". The card's file system call gives no times
+// out (and the FAT library stamps none in), so every resource says the same
+// one: when the board started, from /var/time less /var/uptime. It said "now"
+// at first, which was honest and slow -- a client that is told a file changed
+// a moment ago trusts no copy of it, and Finder fetched the card's 1.9 MB
+// sound files again for every preview while everything else waited. A fixed
+// time lets it keep what it has fetched. The price is that a file changed on
+// the board itself, keeping its size, is not noticed until the next boot.
+// It is local time and says GMT; for a time that only has to stay put, an
+// hour does not matter.
 
 static uint32_t num2(const char *p, uint32_t n) {
     uint32_t v = 0;
@@ -378,16 +385,51 @@ static uint32_t num2(const char *p, uint32_t n) {
     return v;
 }
 
+// Howard Hinnant's, as uptime has them.
+static int32_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
+    y -= m <= 2;
+    const int32_t era = (y >= 0 ? y : y - 399) / 400;
+    const uint32_t yoe = (uint32_t)(y - era * 400);
+    const uint32_t doy = (153u * (m > 2 ? m - 3 : m + 9) + 2u) / 5u + d - 1u;
+    const uint32_t doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return era * 146097 + (int32_t)doe - 719468;
+}
+
+static void civil_from_days(int32_t z, uint32_t *y, uint32_t *m, uint32_t *d) {
+    z += 719468;
+    const int32_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const uint32_t doe = (uint32_t)(z - era * 146097);
+    const uint32_t yoe = (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
+    const uint32_t doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
+    const uint32_t mp = (5u * doy + 2u) / 153u;
+    *d = doy - (153u * mp + 2u) / 5u + 1u;
+    *m = mp < 10 ? mp + 3 : mp - 9;
+    *y = (uint32_t)((int32_t)yoe + era * 400) + (*m <= 2);
+}
+
+static uint32_t read_small(const char *path, char *out, uint32_t cap) {
+    const int32_t fd = ubiqos_open_flags(path, UBIQOS_O_RDONLY);
+    if (fd < 0) return 0;
+    const int32_t r = ubiqos_read(fd, (uint8_t *)out, cap - 1);
+    ubiqos_close(fd);
+    const uint32_t got = r > 0 ? (uint32_t)r : 0;
+    out[got] = 0;
+    return got;
+}
+
 static void http_date(char *out) {
-    char t[32];
-    uint32_t got = 0;
-    const int32_t fd = ubiqos_open_flags("/var/time", UBIQOS_O_RDONLY);
-    if (fd >= 0) { const int32_t r = ubiqos_read(fd, (uint8_t *)t, sizeof t - 1); got = r > 0 ? (uint32_t)r : 0; ubiqos_close(fd); }
-    t[got] = 0;
+    char t[32], up[16];
     uint32_t y = 2026, mo = 1, d = 1, h = 0, mi = 0, s = 0;
-    if (got >= 19 && t[4] == '-' && t[0] >= '0' && t[0] <= '9') {
-        y = num2(t, 4); mo = num2(t + 5, 2); d = num2(t + 8, 2);
-        h = num2(t + 11, 2); mi = num2(t + 14, 2); s = num2(t + 17, 2);
+    if (read_small("/var/time", t, sizeof t) >= 19 && t[4] == '-' && t[0] >= '0' && t[0] <= '9') {
+        uint32_t secs = 0;
+        read_small("/var/uptime", up, sizeof up);
+        for (const char *p = up; *p >= '0' && *p <= '9'; p++) secs = secs * 10u + (uint32_t)(*p - '0');
+        const int32_t days = days_from_civil((int32_t)num2(t, 4), num2(t + 5, 2), num2(t + 8, 2));
+        uint32_t when = (uint32_t)days * 86400u + num2(t + 11, 2) * 3600u + num2(t + 14, 2) * 60u
+                      + num2(t + 17, 2) - secs;
+        civil_from_days((int32_t)(when / 86400u), &y, &mo, &d);
+        when %= 86400u;
+        h = when / 3600u; mi = when / 60u % 60u; s = when % 60u;
     }
     // Sakamoto's day of the week.
     static const uint8_t k[12] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};

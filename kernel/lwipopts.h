@@ -109,7 +109,7 @@
 // anywhere: httpd sent its headers, promised 4003 bytes in Content-Length, and
 // then sent nothing at all while the connection stayed open. A stack that
 // cannot allocate a segment simply stops, and the client waits.
-#define MEM_SIZE                    8000
+#define MEM_SIZE                    16000  // and doubled again for TCP_SND_BUF
 #define MEMP_NUM_PBUF               8
 // A responder on each interface, the cable's DHCP server, the DHCP and DNS
 // clients and the clock -- and four for programs' datagram sockets.
@@ -132,7 +132,7 @@
 // could not even accept the newcomer to make room for it. 800 bytes.
 #define MEMP_NUM_TCP_PCB            12
 #define MEMP_NUM_TCP_PCB_LISTEN     4
-#define MEMP_NUM_TCP_SEG            8
+#define MEMP_NUM_TCP_SEG            16     // TCP_SND_QUEUELEN's worth
 // Twenty-four, and it was twelve.
 //
 // Twelve was chosen when there was one interface. Counting what actually wants
@@ -174,9 +174,14 @@
 #define PBUF_POOL_BUFSIZE           1536
 
 #define TCP_MSS                     1460
-#define TCP_SND_BUF                 (2 * TCP_MSS)
+// Four segments in flight, not two (22 Nov 2026). Two capped every download
+// at what one round trip carries -- 130 kB/s over the cable, a WebDAV volume
+// that felt like a floppy. The data is copied into MEM_SIZE's heap, so that
+// grew with it. The receive window stays at two: the pbuf pool behind it is
+// six, see the note on PBUF_POOL_SIZE's history in the memory notes.
+#define TCP_SND_BUF                 (4 * TCP_MSS)
 #define TCP_WND                     (2 * TCP_MSS)
-#define TCP_SND_QUEUELEN            8
+#define TCP_SND_QUEUELEN            16
 
 #define LWIP_NETIF_STATUS_CALLBACK  1
 #define LWIP_NETIF_LINK_CALLBACK    1

@@ -38,7 +38,7 @@
 UBIQOS_MEM_SIZE(32768);
 
 #define REQ_MAX  1024
-#define BUF_MAX  512
+#define BUF_MAX  4096   // one card read a piece; 512 made a file 130 kB/s
 // The largest page built in memory rather than streamed. Content-Length has to
 // go out before the body, so a generated page is written whole and then sent;
 // a file is not, because its length comes from a stat and the card holds files
@@ -301,7 +301,11 @@ static bool send_all(int32_t sock, const uint8_t *p, uint32_t n) {
         int32_t sent = ubiqos_sock_send(sock, p + done, n - done);
         if (sent < 0) return false;            // the client has gone
         if (sent == 0) {
-            if (++stalled > 1000) return false;   // a second of nothing taken
+            // Ten seconds of nothing taken, not one. Over the WiFi a lost
+            // segment waits for TCP's retransmission timer, which starts at a
+            // second and doubles, and a 1.9 MB download was cut off at 1.27 MB
+            // by this giving up first.
+            if (++stalled > 10000) return false;
             ubiqos_sleep(1);                   // let the acknowledgements in
             continue;
         }
@@ -954,7 +958,11 @@ void module_main(int argc, char **argv) {
         // not two hundred.
         if (!worked) {
             uint32_t idle = ubiqos_ticks_now() - last_request_ms;
-            ubiqos_sleep(idle < 1000u ? 5 : 200);
+            // Five, or ten when nothing has been asked for a second. It was
+            // two hundred, and every first request after a pause waited for it:
+            // a small file took a quarter of a second, and Finder, which asks
+            // dozens of small questions to show one folder, crawled.
+            ubiqos_sleep(idle < 1000u ? 5 : 10);
         }
     }
 }

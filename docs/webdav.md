@@ -22,8 +22,22 @@ read-only unless it says it does class 2, and with one user that is honest.
 A PUT writes `NAME.dav~` and renames it over `NAME` at the end, so an upload
 that breaks off leaves the old file whole.
 
-Every resource says it was modified now: the file system call does not give
-FAT's times out. A client therefore never trusts a cached copy.
+Every resource says it was modified when the board started (/var/time less
+/var/uptime): the file system call gives no times out and the FAT library
+stamps none. "Now" was tried first and was slow -- a client trusts no copy of
+a file that changed a moment ago. The price of a fixed time: a file changed
+on the board itself, keeping its size, is noticed at the next boot.
+
+## Speed, 22 Nov 2026 (Fruit Jam, 240 MHz)
+
+- Over the cable (http://192.168.7.1/dav/): 243 kB/s, a small file in
+  about 10 ms on a kept connection. Over the WiFi: 125-155 kB/s.
+- Finder reads whole files to draw thumbnails, and the card's root holds
+  14 MB of sound files. An empty `.ql_disablethumbnails` (and
+  `.ql_disablecache`) at the top of the card stops it for this volume.
+- Files whose names begin with `._` that a Mac wrote while the card was
+  mounted over USB are marked hidden on FAT: a listing leaves them out, a
+  lookup by name still finds them.
 
 macOS writes `.DS_Store` and `._NAME` files onto the card, as it does on any
 network volume. `defaults write com.apple.desktopservices
