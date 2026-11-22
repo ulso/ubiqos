@@ -53,8 +53,8 @@ int32_t ubiqos_msg_reply(int32_t status);
 int32_t ubiqos_net_register(uint32_t stack, int32_t pid);
 int32_t ubiqos_current_pid(void);
 
-#define NSOCK    8
-#define NPENDING 4
+#define NSOCK    16      // see MEMP_NUM_TCP_PCB in lwipopts.h
+#define NPENDING 8       // a burst of eight was four served and four reset
 
 typedef struct {
     struct tcp_pcb *pcb;

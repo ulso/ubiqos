@@ -124,7 +124,13 @@
 //
 // A listening pcb is about forty bytes and a connected one about a hundred and
 // sixty, and the socket table above them holds eight either way.
-#define MEMP_NUM_TCP_PCB            6
+//
+// Twelve since 22 Nov 2026, and the socket table sixteen (kernel/lwipsock.c):
+// a mounted WebDAV volume keeps four or five connections of its own, and with
+// six in all and mcpd and sshd holding theirs, the next connection was refused
+// at the door -- one in six of a burst of requests failed outright, and httpd
+// could not even accept the newcomer to make room for it. 800 bytes.
+#define MEMP_NUM_TCP_PCB            12
 #define MEMP_NUM_TCP_PCB_LISTEN     4
 #define MEMP_NUM_TCP_SEG            8
 // Twenty-four, and it was twelve.
