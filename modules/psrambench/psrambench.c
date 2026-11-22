@@ -97,7 +97,11 @@ static bool is(const char *a, const char *b) {
 static void invalidate(uint32_t cached, uint32_t bytes) {
     for (uint32_t off = cached - 0x10000000u; off < cached - 0x10000000u + bytes; off += 8u)
         *(volatile uint8_t *)(uintptr_t)(0x18000000u + off + 2u) = 0;   // invalidate by address
+#ifdef __riscv
+    __asm volatile ("fence rw, rw; fence.i" ::: "memory");
+#else
     __asm volatile ("dsb; isb" ::: "memory");
+#endif
 }
 
 // What a picture pump would do: a 640x480 frame in PSRAM, copied a band of
