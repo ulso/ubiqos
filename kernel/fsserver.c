@@ -316,6 +316,16 @@ static int32_t handle(int32_t from, const ubiqos_msg_t *m) {
         if ((o->flags & UBIQOS_O_TRUNC) && exists && ops->remove) {
             ops->remove(rest);
             size = 0;
+            exists = false;
+        }
+
+        // O_CREAT creates, now, as POSIX says: a write of nothing makes the
+        // entry. It used to leave that to the first write, so an empty file
+        // could not be made at all, and a create into a directory that is not
+        // there was only found out at that first write. A volume with no
+        // write_at is left as it was.
+        if (creating && !exists && ops->write_at) {
+            if (ops->write_at(rest, 0, (const uint8_t *)"", 0) < 0) return -1;
         }
 
         int32_t fd = ubiqos_io_open_file(abs, from);

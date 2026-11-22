@@ -1083,7 +1083,7 @@ bool ubiqos_fat_rename(const char *from, const char *to) {
 int32_t ubiqos_fat_write_at(const char *path, uint32_t offset,
                             const uint8_t *buf, uint32_t len) {
     ubiqos_fat_forget_read_cache();
-    if (!mounted || !len) return -1;
+    if (!mounted) return -1;
 
     uint32_t dir = 0; char name_83[12], leaf[FAT_LFN_MAX + 1];
     if (!resolve_parent(path, &dir, name_83, leaf)) return -1;
@@ -1099,6 +1099,13 @@ int32_t ubiqos_fat_write_at(const char *path, uint32_t offset,
         size = 0;
         if (!K->sd_write_block(lba, sector)) return -1;
     }
+
+    // Writing nothing is how an empty file is made: the entry above, no
+    // cluster, size zero -- which is what FAT means by an empty file. It was
+    // refused until 22 Nov 2026, so an open with O_CREAT made nothing until the
+    // first byte, an empty file could not exist at all, and Finder, which
+    // makes every new file empty first and fills it after, could not make any.
+    if (!len) return 0;
 
     const uint32_t bytes_per_cluster = sectors_per_cluster * 512;
 
