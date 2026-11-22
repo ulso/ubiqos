@@ -24,10 +24,10 @@ void curses_take_interrupt(void) { ubiqos_foreground(UBIQOS_STDIN, 0); }
 // How big is the terminal? ASK IT.
 //
 // ESC [ 18 t means "how big is the text area", and a terminal answers
-// ESC [ 8 ; rows ; cols t. The board's own console does not implement it and
-// drops what it does not know, so there the answer is silence and the caller
-// keeps its defaults -- which are that console's size anyway. Over SSH or a
-// serial line there is a real terminal at the far end, and it answers.
+// ESC [ 8 ; rows ; cols t. The board's own console answers it too, since
+// 22 Nov 2026 -- before that it dropped the question, and every program drew
+// 80 x 30 on a screen that had become 120 x 33. Over SSH or a serial line the
+// terminal at the far end answers. Silence still leaves the caller's defaults.
 //
 // The whole reply is consumed, terminator and all: stopping at the number
 // wanted leaves the rest in the stream, and it turns up as `130t` on the next

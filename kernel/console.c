@@ -409,30 +409,47 @@ static void set_graphics(void)
 // keyboard, because that is what the console reads.
 void ubiqos_usbhost_push_str(const char *s);
 
-static void report_position(void)
+// ESC [ prefix n1 ; n2 ... final, as typed input. Both reports are made of it.
+static void report(const char *prefix, const uint32_t *v, uint32_t n, char final)
 {
-    char buf[16], *p = buf;
-    uint32_t v[2] = {cur_row + 1, cur_col + 1};
+    char buf[24], *p = buf;
 
     *p++ = 0x1b;
     *p++ = '[';
+    while (*prefix)
+        *p++ = *prefix++;
 
-    for (uint32_t i = 0; i < 2; i++) {
+    for (uint32_t i = 0; i < n; i++) {
         char tmp[6];
-        uint32_t n = 0, x = v[i];
+        uint32_t k = 0, x = v[i];
 
         do {
-            tmp[n++] = (char)('0' + x % 10);
+            tmp[k++] = (char)('0' + x % 10);
             x /= 10;
         } while (x);
 
-        while (n)
-            *p++ = tmp[--n];
-        *p++ = i ? 'R' : ';';
+        while (k)
+            *p++ = tmp[--k];
+        *p++ = (i + 1 < n) ? ';' : final;
     }
 
     *p = 0;
     ubiqos_usbhost_push_str(buf);
+}
+
+static void report_position(void)
+{
+    const uint32_t v[2] = {cur_row + 1, cur_col + 1};
+    report("", v, 2, 'R');
+}
+
+// ESC [ 8 ; rows ; cols t, xterm's answer to ESC [ 18 t. This console once
+// dropped the question and left every program to assume 80 x 30, which was
+// its size then; at 960x540 it is 120 x 33, and with the small font more.
+static void report_size(void)
+{
+    const uint32_t v[2] = {rows, cols};
+    report("8;", v, 2, 't');
 }
 
 static void do_csi(uint8_t final)
@@ -509,6 +526,12 @@ static void do_csi(uint8_t final)
         // terminal is without being told.
         if (param(0, 0) == 6)
             report_position();
+        break;
+
+    case 't':
+        // Window operations; only "how big is the text area" is answered.
+        if (param(0, 0) == 18)
+            report_size();
         break;
 
     case 's':
