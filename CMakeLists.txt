@@ -1563,7 +1563,7 @@ ubiqos_add_module(newlibtest modules/newlibtest/newlibtest.c NEWLIB)
 
 # The first library module: code the kernel calls rather than runs. It was
 # kernel/wifi.c until 6 Sep 2026 -- see modules/wifilib/wifilib.c.
-ubiqos_add_module(httpd modules/httpd/httpd.c)
+ubiqos_add_module(httpd modules/httpd/httpd.c modules/httpd/dav.c)
 ubiqos_add_module(mv modules/mv/mv.c)
 ubiqos_add_module(leds modules/leds/leds.c)
 ubiqos_add_module(sockstat modules/sockstat/sockstat.c)

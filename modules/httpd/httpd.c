@@ -31,9 +31,13 @@
 // Nothing caught it. That is worth knowing about this system: a module's stack
 // has no guard page and no canary, so it corrupts a neighbour rather than
 // faulting -- and the neighbour here was the allocator's own bookkeeping.
-UBIQOS_MEM_SIZE(16384);
+// Thirty-two since WebDAV (dav.c): four request buffers of a kilobyte, since a
+// WebDAV client's headers are longer than a browser's GET and the ones that
+// matter -- Destination, Authorization -- come late, and the PROPFIND and PUT
+// paths each have a kilobyte or two of their own.
+UBIQOS_MEM_SIZE(32768);
 
-#define REQ_MAX  256
+#define REQ_MAX  1024
 #define BUF_MAX  512
 // The largest page built in memory rather than streamed. Content-Length has to
 // go out before the body, so a generated page is written whole and then sent;
@@ -307,6 +311,33 @@ static bool send_all(int32_t sock, const uint8_t *p, uint32_t n) {
     return true;
 }
 
+// A record of what the WebDAV half was asked and answered, in /tmp/dav.log
+// (memory, not the card), kept under 32 kB. It is how a client's idea of the
+// protocol is found out: Finder says nothing about why it mounts read-only.
+void dav_log(const char *s, uint32_t n) {
+    uint32_t size = 0;
+    if (ubiqos_fs_stat("/tmp/dav.log", &size) >= 0 && size > 32768u) ubiqos_fs_remove("/tmp/dav.log");
+    const int32_t fd = ubiqos_open_flags("/tmp/dav.log", UBIQOS_O_WRONLY | UBIQOS_O_CREAT | UBIQOS_O_APPEND);
+    if (fd < 0) return;
+    ubiqos_write(fd, s, n);
+    ubiqos_close(fd);
+}
+
+// The same, for dav.c -- and the status line of every answer it sends goes to
+// the log on its way.
+bool http_send_all(int32_t sock, const uint8_t *p, uint32_t n) {
+    if (n > 9 && starts((const char *)p, "HTTP/1.1 ")) {
+        uint32_t k = 0;
+        while (k < n && p[k] != '\r') k++;
+        dav_log("< ", 2);
+        dav_log((const char *)p + 9, k - 9);
+        dav_log("\n", 1);
+    }
+    return send_all(sock, p, n);
+}
+
+void dav_serve(int32_t sock, const char *req, const uint8_t *pre, uint32_t pre_n, uint32_t *used);
+
 static void send_str(int32_t sock, const char *s) {
     uint32_t n = 0;
     while (s[n]) n++;
@@ -568,15 +599,30 @@ static bool send_file(int32_t sock, const char *path, const char *as_type) {
     return true;
 }
 
-static void serve(int32_t sock, const char *req) {
-    // GET and nothing else: nothing here wants a PUT. Not quite read-only any
-    // more, though -- /api/i2c can write to a device on the bus, because that
-    // is what it is for: a phone's app driving a sensor over the network.
+// What came after the headers in the same receive is handed on, and the
+// return says how much of it was this request's body: the WebDAV methods have
+// bodies, and the bytes of one must not be read as the start of the next.
+static uint32_t serve(int32_t sock, const char *req, const uint8_t *pre, uint32_t pre_n) {
+    // /dav is WebDAV, every method of it -- see dav.c.
+    {
+        const char *u = req;
+        while (*u && *u != ' ') u++;
+        if (*u == ' ' && starts(u + 1, "/dav") && (u[5] == '/' || u[5] == ' ' || u[5] == '?')) {
+            uint32_t used = 0;
+            dav_serve(sock, req, pre, pre_n, &used);
+            return used;
+        }
+    }
+    (void)pre; (void)pre_n;
+
+    // GET and nothing else outside /dav. Not quite read-only even so --
+    // /api/i2c can write to a device on the bus, because that is what it is
+    // for: a phone's app driving a sensor over the network.
     if (!starts(req, "GET ")) {
         const char *msg = "method not allowed";
         send_head(sock, "405 Method Not Allowed", "text/plain", 18);
         send_str(sock, msg);
-        return;
+        return 0;
     }
 
     char path[128];
@@ -589,7 +635,7 @@ static void serve(int32_t sock, const char *req) {
 
     if (starts(path, "/api/i2c") && (path[8] == 0 || path[8] == '?')) {
         api_i2c(sock, path[8] == '?' ? path + 9 : "", page);
-        return;
+        return 0;
     }
 
     // --- /api ---------------------------------------------------------------
@@ -602,7 +648,7 @@ static void serve(int32_t sock, const char *req) {
         uint32_t len = status_json(page, sizeof page);
         send_head(sock, "200 OK", "application/json", len);
         send_str(sock, page);
-        return;
+        return 0;
     }
     if (starts(path, "/api/sensors")) {
         // One read, and the length is what that read returned. Served like any
@@ -619,17 +665,17 @@ static void serve(int32_t sock, const char *req) {
             if (got > 0 && got < (int32_t)sizeof page) {
                 send_head(sock, "200 OK", "application/json", (uint32_t)got);
                 send_all(sock, (const uint8_t *)page, (uint32_t)got);
-                return;
+                return 0;
             }
         }
-        if (send_file(sock, SENSORS_PATH, "application/json")) return;
+        if (send_file(sock, SENSORS_PATH, "application/json")) return 0;
         // Nothing is scanning, which is not an error and should not read as
         // one: the page says so rather than showing an empty table as though
         // the room had no air in it.
         static const char none[] = "{\"sensors\":[],\"count\":0,\"scanning\":false}";
         send_head(sock, "200 OK", "application/json", sizeof none - 1);
         send_str(sock, none);
-        return;
+        return 0;
     }
 
     // Asked every time rather than remembered: a variable to remember it in
@@ -638,23 +684,24 @@ static void serve(int32_t sock, const char *req) {
     if ((path[1] == 0 && !has_module("hibouair")) || starts(path, "/board")) {
         send_head(sock, "200 OK", "text/html; charset=utf-8", sizeof BOARD_PAGE - 1);
         send_str(sock, BOARD_PAGE);
-        return;
+        return 0;
     }
     if (path[1] == 0 || starts(path, "/sensors")) {      // "/" is the sensor page
         send_head(sock, "200 OK", "text/html; charset=utf-8", sizeof SENSOR_PAGE - 1);
         send_str(sock, SENSOR_PAGE);
-        return;
+        return 0;
     }
     if (starts(path, "/files")) {
         uint32_t len = index_page(page, sizeof page);
         send_head(sock, "200 OK", "text/html; charset=utf-8", len);
         send_str(sock, page);
-        return;
+        return 0;
     }
-    if (send_file(sock, path, 0)) return;
+    if (send_file(sock, path, 0)) return 0;
 
     send_head(sock, "404 Not Found", "text/plain", 9);
     send_str(sock, "not found");
+    return 0;
 }
 
 void module_main(int argc, char **argv) {
@@ -663,6 +710,9 @@ void module_main(int argc, char **argv) {
             "Serves the sensors at /, the card at /files and the files under it,\n"
             "and the machine's own numbers at /api/status -- on port 80 unless\n"
             "told otherwise.\n\n"
+            "/dav/ is the card over WebDAV, for mounting on a computer (Finder:\n"
+            "Cmd-K, http://NAME.local/dav/). Its password is the key\n"
+            "dav.password; /tmp/dav.log says what clients asked.\n\n"
             "The stack is 1, lwIP, by default: the USB cable and the WiFi both.\n"
             "0 is the WiFi coprocessor's own stack, which only NINA firmware has.\n"
             "Asking for one that is not there is refused rather than served\n"
@@ -779,15 +829,34 @@ void module_main(int argc, char **argv) {
         // One new client a pass. Asking is an SPI transaction and there is no
         // hurry: if two arrive together the second is taken on the next pass,
         // five milliseconds later.
-        for (uint32_t i = 0; i < MAX_CONNS; i++) {
-            if (conn[i].sock >= 0) continue;
-            int32_t c = ubiqos_sock_accept(server);
-            if (c >= 0) {
-                conn[i].sock = c; conn[i].n = 0; conn[i].served = false;
-                conn[i].asked = false; conn[i].quiet_since = now; conn[i].match = 0;
-                worked = true;
+        //
+        // When every slot is taken the newcomer is still accepted, and the
+        // connection that has been quiet longest gives way to it. A WebDAV
+        // client keeps several connections open and quiet for as long as it
+        // is mounted; with four slots and no giving way, Finder's fifth
+        // connection waited 67 seconds to be heard, and Finder said the
+        // server was not responding. A client whose kept-alive connection is
+        // closed under it simply opens another, which is what HTTP expects.
+        {
+            uint32_t slot = MAX_CONNS;
+            for (uint32_t i = 0; i < MAX_CONNS && slot == MAX_CONNS; i++)
+                if (conn[i].sock < 0) slot = i;
+            if (slot == MAX_CONNS) {
+                uint32_t longest = 0;
+                for (uint32_t i = 0; i < MAX_CONNS; i++) {
+                    const uint32_t q = now - conn[i].quiet_since;
+                    if (conn[i].n == 0 && q > 200u && q >= longest) { longest = q; slot = i; }
+                }
             }
-            break;
+            if (slot < MAX_CONNS) {
+                int32_t c = ubiqos_sock_accept(server);
+                if (c >= 0) {
+                    if (conn[slot].sock >= 0) ubiqos_sock_close(conn[slot].sock);
+                    conn[slot].sock = c; conn[slot].n = 0; conn[slot].served = false;
+                    conn[slot].asked = false; conn[slot].quiet_since = now; conn[slot].match = 0;
+                    worked = true;
+                }
+            }
         }
 
         for (uint32_t i = 0; i < MAX_CONNS; i++) {
@@ -837,7 +906,11 @@ void module_main(int argc, char **argv) {
                         continue;
                     }
                 }
-                if (quiet > 2000u) {
+                // Thirty seconds, not two: a mounted WebDAV volume reuses its
+                // connections after pauses of several seconds, and every one
+                // closed under it is a "server not responding" in Finder.
+                // Slots are freed by the newcomer rule above, not by this.
+                if (quiet > 30000u) {
                     ubiqos_sock_close(conn[i].sock);
                     conn[i].sock = -1;
                 }
@@ -867,7 +940,7 @@ void module_main(int argc, char **argv) {
 
                 conn[i].req[conn[i].n] = 0;
                 last_request_ms = now;
-                serve(conn[i].sock, conn[i].req);
+                k += (int32_t)serve(conn[i].sock, conn[i].req, chunk + k + 1, (uint32_t)(got - k - 1));
                 conn[i].n = 0;
                 conn[i].match = 0;
                 conn[i].served = true;
