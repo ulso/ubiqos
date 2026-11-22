@@ -37,13 +37,13 @@ framebuffer of `UBIQOS_VIDEO=framebuffer`. The default is still `chargen`.
   priority on the SPI channels did not help -- a read already waiting is not
   rescheduled. So the stream it is.
 
-## Not yet seen on a monitor
+## On a monitor, 22 Nov 2026
 
-The one receiver to hand, an MS2130 capture dongle, showed this mode once
-(with flicker, before the pump went to 250 us) and black on every later
-boot, also with colour bars written into the framebuffer over the probe --
-while the character generator, on the same build settings, always shows.
-HSTX registers, clk_hstx, the HDMI pins' pads and functions, every GPIO,
-the decoded frame table and the frame rate (55.144 Hz) are identical
-between the two. The same dongle also failed to show 800x600 (see
-video-800x600.md). A real monitor has to settle it.
+A Raspberry Pi Monitor shows it sharp and stable. An https fetch (about
+15000 late scanlines each, as above) shows as a short disturbance, under a
+second, and the picture comes back by itself.
+
+The MS2130 capture dongle tried first showed this mode once and black on
+every later boot, while the character generator always showed; HSTX
+registers, clocks, pads, the frame table and the frame rate were identical
+between the two. That was the dongle, not the signal.
