@@ -33,7 +33,20 @@
 // It comes out of .bss, so it is spent against the C heap between end and the
 // stack rather than against the module pool. The framebuffer this replaced was
 // 307200 bytes, so eight screens of history still costs an eighth of it.
+//
+// 64 in the two large modes (22 Nov 2026): at 960x540 the 256 rows were 60 kB
+// of the SRAM, the largest single thing in it, and the C heap had 16 kB left.
+// Rows that leave the ring are kept in PSRAM anyway (DEEP_ROWS, chargen.c),
+// and the view reads them from there, so a short ring costs no history -- only
+// that looking back more than half a screen copies the window out of PSRAM,
+// which happens in the thread that moved the view, not in the generator.
+// 64 still holds the screen (36 rows at most) and a spare row below it.
+#if UBIQOS_VIDEO_HIRES
+#define UBIQOS_CELL_RING 64
+#else
 #define UBIQOS_CELL_RING 256
+#endif
+_Static_assert(UBIQOS_CELL_RING > UBIQOS_CELL_ROWS, "the ring must hold the screen and a row");
 
 // ch is the glyph's index into the font, not the character: the generator runs
 // under a deadline and should not be deciding what to do about control codes.

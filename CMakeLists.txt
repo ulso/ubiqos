@@ -675,11 +675,14 @@ if(UBIQOS_HEAP_KB STREQUAL "auto")
         # link changes (LWIP_NETIF_EXT_STATUS_CALLBACK): the riscv chargen C heap
         # was 1464 bytes.
         set(ubiqosHeapKB 96)
-        # 80 at 960x540 (22 Nov 2026): its scanlines, cells and border line
-        # are 8.5 kB more than 800x600's, and at 96 the C heap ran into the
-        # stack and the link failed by 2 kB. At 80 it is 16 kB.
-        if(UBIQOS_VIDEO_MODE STREQUAL "960x540")
-            set(ubiqosHeapKB 80)
+        # 120 at 800x600 and 960x540 (22 Nov 2026). The large modes keep 64
+        # rows of character cells in SRAM rather than 256 (kernel/chargen.h),
+        # which gave back 38 and 46 kB, and the pool is what programs run in;
+        # the C heap is the SDK's and nearly idle. Before that 960x540 had to
+        # come DOWN to 80 to link at all. C heap now: 33 kB at 800x600, 22 kB
+        # at 960x540.
+        if(UBIQOS_VIDEO_MODE STREQUAL "960x540" OR UBIQOS_VIDEO_MODE STREQUAL "800x600")
+            set(ubiqosHeapKB 120)
         endif()
     endif()
 else()
