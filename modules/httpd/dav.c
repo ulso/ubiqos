@@ -537,28 +537,70 @@ static void do_propfind(int32_t sock, const char *req, const char *fs) {
 
 // --- THE REST ----------------------------------------------------------------
 
-static void do_get(int32_t sock, const char *fs, bool head) {
+// "bytes=FIRST-LAST", "bytes=FIRST-" or "bytes=-SUFFIX"; one range only. False
+// when there is none or it is not one of those, and the whole file goes.
+//
+// Finder asks for the first few kilobytes of a file to tell what it is, and
+// with this ignored it was handed the whole thing -- 1.9 MB of sound file for
+// a peek, file after file, with everything else queued behind it.
+static bool range_of(const char *req, uint32_t size, uint32_t *first, uint32_t *last) {
+    uint32_t len;
+    const char *r = header(req, "Range", &len);
+    if (!r || len < 7 || !same_ci(r, "bytes=", 6) || size == 0) return false;
+    const char *p = r + 6, *end = r + len;
+    for (const char *q = p; q < end; q++) if (*q == ',') return false;   // several: the whole file
+    uint32_t a = 0, b = 0;
+    bool have_a = false, have_b = false;
+    while (p < end && *p >= '0' && *p <= '9') { a = a * 10u + (uint32_t)(*p++ - '0'); have_a = true; }
+    if (p >= end || *p != '-') return false;
+    p++;
+    while (p < end && *p >= '0' && *p <= '9') { b = b * 10u + (uint32_t)(*p++ - '0'); have_b = true; }
+    if (!have_a && !have_b) return false;
+    if (!have_a) { if (b == 0) return false; a = b >= size ? 0 : size - b; b = size - 1; }
+    else if (!have_b || b >= size) b = size - 1;
+    if (a > b || a >= size) return false;
+    *first = a; *last = b;
+    return true;
+}
+
+static void do_get(int32_t sock, const char *req, const char *fs, bool head) {
     uint32_t size;
     const int32_t a = attr_of(fs, &size);
     if (a < 0) { reply(sock, "404 Not Found", 0, "not found"); return; }
     if (is_dir(a)) { reply(sock, "200 OK", 0, head ? 0 : "a directory: mount it, do not browse it\n"); return; }
-    char date[40], hdr[200];
+    uint32_t first = 0, last = size ? size - 1 : 0;
+    const bool part = range_of(req, size, &first, &last);
+    const uint32_t count = size ? last - first + 1 : 0;
+    char date[40], hdr[300];
     http_date(date);
     uint32_t o = 0;
-    o = put(hdr, o, sizeof hdr, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nLast-Modified: ");
+    o = put(hdr, o, sizeof hdr, part ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n");
+    o = put(hdr, o, sizeof hdr, "Content-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\nLast-Modified: ");
     o = put(hdr, o, sizeof hdr, date);
+    if (part) {
+        o = put(hdr, o, sizeof hdr, "\r\nContent-Range: bytes ");
+        o += dec(first, hdr + o); hdr[o++] = '-';
+        o += dec(last, hdr + o); hdr[o++] = '/';
+        o += dec(size, hdr + o);
+    }
     o = put(hdr, o, sizeof hdr, "\r\nContent-Length: ");
-    o += dec(size, hdr + o);
+    o += dec(count, hdr + o);
     o = put(hdr, o, sizeof hdr, "\r\nConnection: keep-alive\r\n\r\n");
     http_send_all(sock, (const uint8_t *)hdr, o);
-    if (head) return;
+    if (head || !count) return;
+    // One open and a seek, not a read by name per piece: every by-name call
+    // looks the path up on the card again.
     const int32_t fd = ubiqos_open_flags(fs, UBIQOS_O_RDONLY);
     if (fd < 0) return;
+    if (first && ubiqos_seek(fd, (int32_t)first, UBIQOS_SEEK_SET) < 0) { ubiqos_close(fd); return; }
     uint8_t buf[IO_MAX];
-    for (;;) {
-        const int32_t got = ubiqos_read(fd, buf, sizeof buf);
+    for (uint32_t done = 0; done < count; ) {
+        uint32_t want = count - done;
+        if (want > sizeof buf) want = sizeof buf;
+        const int32_t got = ubiqos_read(fd, buf, want);
         if (got <= 0) break;
         if (!http_send_all(sock, buf, (uint32_t)got)) break;
+        done += (uint32_t)got;
     }
     ubiqos_close(fd);
 }
@@ -697,7 +739,7 @@ void dav_serve(int32_t sock, const char *req, const uint8_t *pre, uint32_t pre_n
         dav_log("> ", 2);
         dav_log(req, m + 1 + ulen);
         static const char *const keep[] = { "Depth", "Content-Length", "Transfer-Encoding", "Expect",
-                                            "Destination", "Overwrite", "If", "Lock-Token", "Timeout" };
+                                            "Destination", "Overwrite", "If", "Lock-Token", "Timeout", "Range" };
         for (uint32_t i = 0; i < sizeof keep / sizeof keep[0]; i++) {
             uint32_t hl;
             const char *hv = header(req, keep[i], &hl);
@@ -753,8 +795,8 @@ void dav_serve(int32_t sock, const char *req, const uint8_t *pre, uint32_t pre_n
     }
 
     if      (same_ci(method, "PROPFIND", 9))  { body_skip(&b); do_propfind(sock, req, fs); }
-    else if (same_ci(method, "GET", 4))       { body_skip(&b); do_get(sock, fs, false); }
-    else if (same_ci(method, "HEAD", 5))      { body_skip(&b); do_get(sock, fs, true); }
+    else if (same_ci(method, "GET", 4))       { body_skip(&b); do_get(sock, req, fs, false); }
+    else if (same_ci(method, "HEAD", 5))      { body_skip(&b); do_get(sock, req, fs, true); }
     else if (same_ci(method, "PUT", 4))       { do_put(sock, &b, fs); }
     else if (same_ci(method, "DELETE", 7)) {
         body_skip(&b);

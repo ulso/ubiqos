@@ -35,6 +35,11 @@ on the board itself, keeping its size, is noticed at the next boot.
 - Finder reads whole files to draw thumbnails, and the card's root holds
   14 MB of sound files. An empty `.ql_disablethumbnails` (and
   `.ql_disablecache`) at the top of the card stops it for this volume.
+- GET honours a single `Range`. Finder peeks at the start of a file to tell
+  what it is, and was handed whole sound files for it.
+- macOS's WebDAV client still downloads a whole file into its cache when
+  anything opens it. Mount the folder you work in rather than the card,
+  e.g. `http://192.168.7.1/dav/basic/`, and the rest is never touched.
 - Files whose names begin with `._` that a Mac wrote while the card was
   mounted over USB are marked hidden on FAT: a listing leaves them out, a
   lookup by name still finds them.
