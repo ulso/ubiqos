@@ -1765,7 +1765,13 @@ target_compile_definitions(wasm_app PRIVATE d_m3PreferStaticAlloc=1
 # M3Runtime, because both hold arrays of that many entries. 1024 brings them to
 # under six, and it is the deepest operand stack a single wasm function may use
 # -- generous for anything a person writes by hand.
-    d_m3MaxFunctionStackHeight=1024)
+    d_m3MaxFunctionStackHeight=1024
+# The C stack a guest's calls may use before wasm3 traps "stack overflow"
+# instead of running on. Each wasm call nests native frames, and wasm3's
+# default budget is eight megabytes less 128 kB -- on a module stack of 64 kB
+# with no guard below it, so a deeply recursive guest would have written over
+# the PSRAM pool in silence. 40 kB, counted from where the guest is entered.
+    "d_m3MaxNativeStack=(40*1024)")
 
 # The TCP/IP stack, NOT built yet -- see docs/lwip/README.md.
 #

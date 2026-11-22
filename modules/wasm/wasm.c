@@ -270,8 +270,8 @@ void module_main(int argc, char **argv)
     // pool, which for a module that is not real-time means PSRAM, where there are
     // nearly eight megabytes. A megabyte because the arithmetic said 192 kB was
     // tight and an unchecked malloc failure looks exactly like the crash we
-    // have: m3_NewRuntime asks for 8192 stack slots, which is 64 kB on its own,
-    // M3Runtime is another 41, and the compiler allocates code pages on top.
+    // have: m3_NewRuntime asks for the guest's 256 kB value stack, M3Runtime
+    // is another 41, and the compiler allocates code pages on top.
     extern int wasm_heap_init(uint32_t bytes);
     if (wasm_heap_init(4096u * 1024u) != 0) {
         ubiqos_write_str(UBIQOS_STDOUT, "wasm: no room for a heap\n");
@@ -340,7 +340,12 @@ void module_main(int argc, char **argv)
 
     MARK("environment");
     if (stop_here("env")) goto free_env;
-    IM3Runtime runtime = m3_NewRuntime(env, 8192, NULL);
+    // The guest's value stack, in BYTES -- m3_NewRuntime's argument is
+    // i_stackSizeInBytes. It was 8192 here, believed to be 8192 slots (64 kB),
+    // and was 8 kB: enough for atto, and RGC BASIC's interpreter trapped with
+    // "stack overflow" at its first INPUT. 256 kB from a heap of four
+    // megabytes in PSRAM.
+    IM3Runtime runtime = m3_NewRuntime(env, 256u * 1024u, NULL);
     if (!runtime) { ubiqos_write_str(UBIQOS_STDOUT, "wasm: no runtime\n"); goto free_env; }
 
     MARK("runtime");
