@@ -47,3 +47,21 @@ The MS2130 capture dongle tried first showed this mode once and black on
 every later boot, while the character generator always showed; HSTX
 registers, clocks, pads, the frame table and the frame rate were identical
 between the two. That was the dongle, not the signal.
+
+## Drawing on it from a program
+
+`ubiqos_video_take_framebuffer(&fb)` (common/ubiqos_abi.h) gives a process
+the picture: `fb.pixels`, `width`, `height`, `stride`, RGB332, a byte a
+pixel, (0, 0) top left. While a process holds it the console draws nothing
+on the monitor and drops what it is sent there; the USB console is not
+affected. `ubiqos_video_give_framebuffer()` hands it back, and so does the
+process ending, however it ends -- the console then starts on a clear
+screen. On the character generator there are no pixels and the call says
+no. `modules/fbdemo` is the worked example: a test card with a one-pixel
+frame round the edge, and a bouncing square.
+
+Measured 22 Nov 2026 on the Raspberry Pi Monitor: all of the card shows,
+frame included. Drawing the whole card -- 300 kB of stores past the cache
+-- takes 23 ms and costs about 4300 late scanlines, a short disturbance as
+it appears; the square at 60 frames a second costs none. Large redraws are
+where a program pays: they compete with the copy for the same QMI.

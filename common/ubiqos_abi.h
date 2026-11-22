@@ -2163,6 +2163,41 @@ static inline int32_t ubiqos_console_peek_row(uint32_t row, uint8_t *buf80)
     return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)buf80, 2, row);
 }
 
+// The HDMI picture as pixels, for a program to draw on. Only a build whose
+// picture IS pixels has one to give -- UBIQOS_VIDEO=psram or framebuffer --
+// and only one process holds it at a time.
+//
+// While a process holds it the console draws nothing on the monitor (what is
+// written to it there is lost; the USB console is not affected), and pixel
+// (0, 0) is the top left corner. It goes back when the holder gives it back
+// or ends, however it ends, and the console then starts on a clear screen.
+//
+// RGB332, a byte a pixel: red in bits 7-5, green in 4-2, blue in 1-0.
+// In the PSRAM build the pixels are written past the cache, so a word store
+// costs what a byte store does: write words where you can.
+//
+// Sixteen words, not five: a kernel from before this call answers an unknown
+// kind with sixteen words of video statistics, and returns 0 -- which is why
+// success is 1 and anything else is no.
+#define UBIQOS_FB_RGB332 1u
+typedef struct {
+    uint8_t *pixels;        // row y starts at pixels + y * stride
+    uint32_t width, height, stride;
+    uint32_t format;        // UBIQOS_FB_RGB332
+    uint32_t reserved[11];
+} ubiqos_framebuffer_t;
+
+static inline bool ubiqos_video_take_framebuffer(ubiqos_framebuffer_t *fb)
+{
+    return ubiqos_syscall(SYS_VIDSTAT, (uint32_t)(uintptr_t)fb, 7, 1) == 1
+        && fb->format == UBIQOS_FB_RGB332;
+}
+
+static inline void ubiqos_video_give_framebuffer(void)
+{
+    ubiqos_syscall(SYS_VIDSTAT, 0, 7, 0);
+}
+
 static inline int32_t ubiqos_wifi_reset(void)
 {
     return ubiqos_syscall(SYS_WIFIRESET, 0, 0, 0);

@@ -51,6 +51,14 @@
 
 void ubiqos_video_init(void);
 
+#if UBIQOS_HAS_VIDEO && !UBIQOS_VIDEO_CHARGEN
+// The picture's pixels for a process (console.c): take or give back, 1 on
+// success, -1 if another process holds them. A process that ends gives them
+// back through ubiqos_console_forget_pid.
+int32_t ubiqos_console_framebuffer(bool take, ubiqos_framebuffer_t *out, int32_t pid);
+void ubiqos_console_forget_pid(int32_t pid);
+#endif
+
 #if UBIQOS_VIDEO_RING
 
 // How far ahead of the beam the generator has to stay, and how it is doing.

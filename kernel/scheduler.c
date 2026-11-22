@@ -1570,6 +1570,10 @@ static void reap(uint32_t pid) {
 #if UBIQOS_LWIP
     { extern void ubiqos_lwip_forget_pid(int32_t pid); ubiqos_lwip_forget_pid((int32_t)pid); }
 #endif
+#if UBIQOS_HAS_VIDEO && !UBIQOS_VIDEO_CHARGEN
+    // The picture, if it held it: the console has the screen back.
+    { extern void ubiqos_console_forget_pid(int32_t pid); ubiqos_console_forget_pid((int32_t)pid); }
+#endif
     if (process_table[pid].module) {            // a kernel thread has none
         ubiqos_moddir_unlink(process_table[pid].module);
     }

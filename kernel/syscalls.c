@@ -948,6 +948,17 @@ uint32_t ubiqos_trap_handler(ubiqos_frame_t *frame) {
             // question is answered here, before the kinds below: on any other
             // display an unknown kind falls through to the statistics, which
             // would write sixteen words into a buffer meant for a line.
+            // Kind 7: the picture's pixels, taken (a2 = 1) or given back.
+            if (frame->a1 == 7) {
+#if UBIQOS_HAS_VIDEO && !UBIQOS_VIDEO_CHARGEN
+                frame->a0 = (uint32_t)ubiqos_console_framebuffer(
+                    frame->a2 != 0, (ubiqos_framebuffer_t *)(uintptr_t)frame->a0,
+                    ubiqos_current_pid());
+#else
+                frame->a0 = (uint32_t)-1;   // character cells, or no display
+#endif
+                break;
+            }
             if (frame->a1 == 6) {
 #if UBIQOS_VIDEO_RGB
                 uint32_t ubiqos_video_capture_line(uint32_t, uint16_t *);

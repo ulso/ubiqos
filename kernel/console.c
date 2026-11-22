@@ -727,6 +727,45 @@ static uint8_t ring[RING_SIZE];
 static volatile uint32_t ring_head, ring_tail;
 static volatile bool server_up;
 
+#if !UBIQOS_VIDEO_CHARGEN
+// Who holds the picture's pixels, or -1: the console then draws nothing, and
+// what it is sent is dropped rather than queued, since a writer that finds
+// the ring full waits for it and the kernel's own printing is one of them.
+// released asks the console thread to start again on a clear screen -- it is
+// the thread that draws, so it is the thread that clears.
+static volatile int32_t fb_owner = -1;
+static volatile bool fb_released;
+
+int32_t ubiqos_console_framebuffer(bool take, ubiqos_framebuffer_t *out, int32_t pid)
+{
+    if (!take) {
+        if (fb_owner != pid) return -1;
+        fb_owner = -1;
+        fb_released = true;
+        return 1;
+    }
+    if (!out || (fb_owner >= 0 && fb_owner != pid)) return -1;
+    fb_owner = pid;
+    ubiqos_video_set_origin(0);
+    out->pixels = ubiqos_framebuf;
+    out->width = UBIQOS_H_ACTIVE;
+    out->height = UBIQOS_V_ACTIVE;
+    out->stride = UBIQOS_H_ACTIVE;
+    out->format = UBIQOS_FB_RGB332;
+    for (uint32_t i = 0; i < sizeof out->reserved / sizeof out->reserved[0]; i++)
+        out->reserved[i] = 0;
+    return 1;
+}
+
+void ubiqos_console_forget_pid(int32_t pid)
+{
+    if (fb_owner == pid) {
+        fb_owner = -1;
+        fb_released = true;
+    }
+}
+#endif
+
 static uint32_t ring_used(void)
 {
     return (ring_head - ring_tail) & RING_MASK;
@@ -850,10 +889,27 @@ static void console_thread(void)
     server_up = true;
 
     for (;;) {
+#if !UBIQOS_VIDEO_CHARGEN
+        if (fb_owner >= 0) {            // a program is drawing; see above
+            ring_tail = ring_head;
+            ubiqos_sleep(1);
+            continue;
+        }
+        if (fb_released) {
+            fb_released = false;
+            set_grid(font);             // a clear screen, the cursor home
+        }
+#endif
         while (ring_tail != ring_head) {
+#if !UBIQOS_VIDEO_CHARGEN
+            if (fb_owner >= 0) break;   // taken while drawing: stop at once
+#endif
             console_feed(ring[ring_tail]);
             ring_tail = (ring_tail + 1) & RING_MASK;
         }
+#if !UBIQOS_VIDEO_CHARGEN
+        if (fb_owner >= 0) continue;
+#endif
 
         cursor(true);
 
