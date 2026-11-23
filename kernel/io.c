@@ -650,11 +650,26 @@ static ubiqos_path_t *path_of(int32_t path, int32_t owner_pid) {
 // A child inherits its parent's paths under the SAME numbers. That is how a
 // utility can write to path 1 without knowing which device the shell chose --
 // and why a utility's output lands on USB when the shell is there.
+//
+// Only paths 0, 1 and 2, though, as if every other one were close-on-exec.
+// A program that starts another saves its own three in higher paths and points
+// 0-2 at a pipe for the child; the child copied those saved paths and the pipe's
+// far end along with everything else, and passed them all on again. Three
+// levels down -- sshd, sh, agent -- the child arrived with all twelve paths
+// taken and could not open a single file: `date` blamed the clock. No program
+// here hands a child anything above 2, so nothing is lost.
+#define INHERITED_PATHS 3
+
 void ubiqos_io_inherit(int32_t parent_pid, int32_t child_pid) {
     if (parent_pid < 0 || parent_pid >= UBIQOS_MAX_PROCS) return;
     if (child_pid < 0 || child_pid >= UBIQOS_MAX_PROCS) return;
     uint32_t st = ubiqos_critical_enter();
     for (int i = 0; i < UBIQOS_MAX_PATHS; i++) {
+        if (i >= INHERITED_PATHS) {
+            paths[child_pid][i] = (ubiqos_path_t){ .device = 0, .file = -1, .pipe = -1,
+                                                   .pipe_back = -1, .pipe_write = 0 };
+            continue;
+        }
         paths[child_pid][i] = paths[parent_pid][i];
         // The child shares the open file, position and all, exactly as a fork's
         // descriptors do. Two processes appending to the same file interleave
