@@ -16,7 +16,9 @@ __thread int errno;
 void module_main(void) {
     const int fd = open("/var/time", O_RDONLY);
     if (fd < 0) {
-        ubiqos_write_str(UBIQOS_STDERR, "date: the kernel is not keeping a clock\n");
+        // Not "no clock": /var/time always exists, and an unset clock reads as
+        // dashes. Failing to open it means this process has no descriptor free.
+        ubiqos_write_str(UBIQOS_STDERR, "date: /var/time could not be opened\n");
         return;
     }
 

@@ -53,18 +53,23 @@ struct ubiqos_tls {
 
 static uint32_t utc_at_open, ticks_at_open;
 
-static bool read_utc(uint32_t *out)
+// Zero when the clock is set, otherwise why not. A file that cannot be opened
+// is not a clock that is unset: a process with no free descriptor ends up here,
+// and was once told to wait for NTP that had answered hours before.
+enum { UTC_OK, UTC_UNSET, UTC_UNREADABLE };
+
+static int read_utc(uint32_t *out)
 {
     const int32_t fd = ubiqos_open_flags("/var/utc", UBIQOS_O_RDONLY);
-    if (fd < 0) return false;
+    if (fd < 0) return UTC_UNREADABLE;
     char b[16];
     const int32_t n = ubiqos_read(fd, (uint8_t *)b, sizeof b - 1);
     ubiqos_close(fd);
-    if (n <= 0) return false;                 // empty: not set yet
+    if (n <= 0) return UTC_UNSET;             // empty: not set yet
     uint32_t v = 0;
     for (int32_t i = 0; i < n && b[i] >= '0' && b[i] <= '9'; i++) v = v * 10 + (uint32_t)(b[i] - '0');
     *out = v;
-    return v != 0;
+    return v ? UTC_OK : UTC_UNSET;
 }
 
 static mbedtls_time_t tls_time(mbedtls_time_t *timer)
@@ -191,9 +196,16 @@ static void say_mbedtls(char *err, size_t cap, const char *what, int ret)
 
 ubiqos_tls_t *ubiqos_tls_open(const char *host, uint16_t port, char *err, size_t errcap)
 {
-    if (!read_utc(&utc_at_open)) {
+    switch (read_utc(&utc_at_open)) {
+    case UTC_OK:
+        break;
+    case UTC_UNSET:
         snprintf(err, errcap, "the clock is not set yet, so a certificate's dates "
                               "cannot be checked -- wait for NTP (cat /var/time)");
+        return NULL;
+    default:
+        snprintf(err, errcap, "/var/utc could not be opened, so a certificate's dates "
+                              "cannot be checked -- is every descriptor in use?");
         return NULL;
     }
     ticks_at_open = ubiqos_ticks_now();
