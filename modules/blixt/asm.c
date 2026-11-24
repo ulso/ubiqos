@@ -6,11 +6,20 @@
 // shorter one is taken, as GNU as does, unless the mnemonic says .w.
 //
 // What a pass does: walk the lines, give each label the address it has now,
-// and encode each instruction with what is known. A reference forward is to a
-// label that has the value it had in the last pass, or none in the first; an
-// instruction that cannot reach is made longer, and an instruction never gets
-// shorter again. When a pass changes nothing, one more writes the code and
-// reports the errors.
+// and encode each instruction with what is known. The rules are GNU as's own
+// (relaxed_symbol_addr and arm_relax_frag in tc-arm.c), because the tests hold
+// Blixt to its output:
+//
+//   - A label ahead has the value the last pass gave it, moved on by as much as
+//     this line has moved since -- less what an alignment in between would
+//     swallow: the move is rounded down to each one's multiple.
+//   - Each instruction takes the shortest form that fits what it sees, and may
+//     shrink again, unless it is long while nothing before it has grown in
+//     this pass. Then it is long for good, which is what makes the passes end.
+//
+// When a whole pass changes nothing, every choice in it was made on true
+// values, and one more pass writes the code and the errors. STICKY_AFTER is a
+// last resort that stops all shrinking.
 #include "asm.h"
 
 #include <ctype.h>
@@ -18,7 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_PASSES 24
+#define MAX_PASSES 32
+#define STICKY_AFTER 12
 #define LINE_MAX_LEN 256
 
 // --- values ----------------------------------------------------------------
@@ -32,6 +42,7 @@ typedef struct {
     int     rel;
     bool    undef;
     bool    func;
+    bool    est;        // a label ahead, estimated from the last pass
 } val_t;
 
 typedef struct {
@@ -42,6 +53,7 @@ typedef struct {
     bool     equ;
     int      defpass;        // pass it was last defined in, -1 never
     int      line;
+    int      pos;            // where in the order of lines it is defined
     int      next;           // hash chain
 } sym_t;
 
@@ -90,6 +102,45 @@ typedef struct {
 
     bool     next_func;
     bool     minwide;      // this line was 32 bits in an earlier pass
+    bool     sticky;       // and is therefore kept at 32 (only after STICKY_AFTER)
+
+    // Where a line is, for telling two definitions of a label apart: the
+    // line number in the source, or for an included line its instance and
+    // line together.
+    int      line_id;
+
+    // Where this line was in the last pass. A label further on still has the
+    // value the last pass gave it, but everything before it has grown by at
+    // least as much as this line has moved since -- so that much is added to
+    // the old value. Without it a short branch or load to a label just ahead
+    // looked out of reach after something earlier grew, and was made long for
+    // good.
+    uint32_t prev_addr;
+    uint32_t line_start;   // where this line began in this pass
+
+    // Positions in the order of lines, the same in every pass: line q has its
+    // labels at 4q, its body at 4q+1 and a literal pool after its alignment at
+    // 4q+2. The alignments of the last pass, in that order, are what a move is
+    // rounded by on its way to a label ahead.
+    int      seq;
+    int      cur_pos;
+    struct align { int pos; int pow; } *al, *al_prev;
+    int      nal, nal_prev, alcap, alcap_prev;
+    int     *pool_pos;
+    bool     was_inst;     // the line just done was an instruction
+    bool    *frozen;       // per source line: long for good
+
+    // .include: the files, read once each, and every place one is included,
+    // each with its own line sizes -- an instruction in an included file
+    // must not shrink between passes any more than one in the source may.
+    const asm_include_t *inc;
+    struct incfile { char path[192]; char *text; char **lines; int *lens; int nlines; } *files;
+    int      nfiles;
+    struct incinst { int file; uint32_t *sizes; uint32_t *addrs; bool *frozen; } *insts;
+    int      ninsts, inst_no;
+    int      depth;
+    char     inc_path[8][192];
+    int      inc_line[8];
 
     // Local labels 0: to 999:, counted per pass. The k-th definition of n is
     // the symbol "n:k", which no ordinary name can collide with.
@@ -110,9 +161,18 @@ static void error(as_t *a, const char *fmt, ...)
     if (r->nerrors < ASM_MAX_ERRORS) {
         asm_error_t *e = &r->errors[r->nerrors];
         e->line = a->line;
+        int n = 0;
+        // In an included file: say which, and where; the line is the
+        // .include in the source.
+        if (a->depth) {
+            const char *p = a->inc_path[a->depth];
+            const char *b = strrchr(p, '/');
+            n = snprintf(e->msg, sizeof e->msg, "%s line %d: ", b ? b + 1 : p, a->inc_line[a->depth] + 1);
+            if (n < 0 || n >= (int)sizeof e->msg) n = 0;
+        }
         va_list ap;
         va_start(ap, fmt);
-        vsnprintf(e->msg, sizeof e->msg, fmt, ap);
+        vsnprintf(e->msg + n, sizeof e->msg - (size_t)n, fmt, ap);
         va_end(ap);
     }
     r->nerrors++;
@@ -209,7 +269,7 @@ static void define(as_t *a, const char *s, int n, int32_t v, int rel, bool equ)
 {
     sym_t *y = sym_find(a, s, n, true);
     if (!y) { error(a, "out of memory"); return; }
-    if (y->defpass == a->pass && y->line != a->line && !y->equ) {
+    if (y->defpass == a->pass && y->line != a->line_id && !y->equ) {
         error(a, "%s is defined twice", y->name);
         return;
     }
@@ -219,7 +279,8 @@ static void define(as_t *a, const char *s, int n, int32_t v, int rel, bool equ)
     y->rel = rel;
     y->equ = equ;
     y->defpass = a->pass;
-    y->line = a->line;
+    y->line = a->line_id;
+    y->pos = equ ? a->cur_pos : a->cur_pos - 1;
     if (!equ) {
         y->func = a->next_func;
         a->next_func = false;
@@ -278,6 +339,37 @@ static int reg_only(const char *s)
     return (r >= 0 && *e == 0) ? r : -1;
 }
 
+// --- moving forward --------------------------------------------------------
+
+// How far a label at target_pos should be taken to have moved since the last
+// pass: as far as this line has, rounded down at every alignment in between.
+static int32_t stretch_to(as_t *a, int target_pos)
+{
+    int32_t st = (int32_t)(a->line_start - a->prev_addr);
+    for (int i = 0; i < a->nal_prev && st; i++) {
+        const struct align *g = &a->al_prev[i];
+        if (g->pos <= a->cur_pos) continue;
+        if (g->pos >= target_pos) break;
+        int32_t m = (int32_t)((1u << g->pow) - 1);
+        st = st < 0 ? -((-st) & ~m) : (st & ~m);
+    }
+    return st;
+}
+
+static void note_align(as_t *a, int pos, int pow)
+{
+    if (a->nal == a->alcap) {
+        int c = a->alcap ? a->alcap * 2 : 32;
+        struct align *p = realloc(a->al, (size_t)c * sizeof *p);
+        if (!p) return;
+        a->al = p;
+        a->alcap = c;
+    }
+    a->al[a->nal].pos = pos;
+    a->al[a->nal].pow = pow;
+    a->nal++;
+}
+
 // --- expressions -----------------------------------------------------------
 
 typedef struct {
@@ -288,7 +380,7 @@ typedef struct {
 
 static val_t ex_or(ex_t *x);
 
-static val_t num(int32_t v) { val_t r = { v, 0, false, false }; return r; }
+static val_t num(int32_t v) { val_t r = { v, 0, false, false, false }; return r; }
 
 static int char_escape(const char **pp)
 {
@@ -369,10 +461,14 @@ static val_t ex_atom(ex_t *x)
             sym_t *y = sym_find(x->a, nm, len, false);
             if (!y || y->defpass < 0) {
                 if (x->a->final) error(x->a, "there is no %d: after this", nlab);
-                val_t v = { (int32_t)x->a->addr, 1, true, false };
+                val_t v = { (int32_t)x->a->addr, 1, true, false, false };
                 return v;
             }
-            val_t v = { y->value, y->rel, false, y->func };
+            val_t v = { y->value, y->rel, false, y->func, false };
+            if (y->defpass != x->a->pass) {
+                v.v += stretch_to(x->a, y->pos);
+                v.est = false;
+            }
             return v;
         }
         uint32_t v = 0;
@@ -397,7 +493,7 @@ static val_t ex_atom(ex_t *x)
     }
     if (*p == '.' && !is_id(p[1])) {
         x->p = p + 1;
-        val_t v = { (int32_t)x->a->addr, 1, false, false };
+        val_t v = { (int32_t)x->a->addr, 1, false, false, false };
         return v;
     }
     if (is_id0((unsigned char)*p)) {
@@ -408,12 +504,17 @@ static val_t ex_atom(ex_t *x)
         sym_t *y = sym_find(x->a, p, n, false);
         if (!y || y->defpass < 0) {
             if (x->a->final) error(x->a, "%.*s is not defined", n, p);
-            val_t v = { (int32_t)x->a->addr, 1, true, false };
+            val_t v = { (int32_t)x->a->addr, 1, true, false, false };
             return v;
         }
-        val_t v = { y->value, y->rel, false, y->func };
+        val_t v = { y->value, y->rel, false, y->func, false };
         // Defined only in an earlier pass is fine: that is a reference forward,
-        // and its value is the one the last pass found.
+        // and its value is the one the last pass found, moved on as far as
+        // this line has moved.
+        if (y->rel && y->defpass != x->a->pass) {
+            v.v += stretch_to(x->a, y->pos);
+            v.est = false;
+        }
         return v;
     }
     x->bad = true;
@@ -422,7 +523,7 @@ static val_t ex_atom(ex_t *x)
 
 static val_t combine(ex_t *x, val_t a, val_t b, int op)
 {
-    val_t r = { 0, 0, a.undef || b.undef, false };
+    val_t r = { 0, 0, a.undef || b.undef, false, a.est || b.est };
     if (op == '+') {
         r.v = a.v + b.v;
         r.rel = a.rel + b.rel;
@@ -516,6 +617,9 @@ static bool imm(as_t *a, const char *s, int32_t *out)
     if (*s == '#') s++;
     val_t v;
     if (!expr(a, s, &v)) return false;
+    // A name not defined yet is taken as 0 until a later pass knows it; the
+    // last pass says if it never was.
+    if (v.undef && !a->final) { *out = 0; return true; }
     if (v.rel) { error(a, "an address where a number was wanted"); return false; }
     *out = v.v;
     return true;
@@ -905,6 +1009,9 @@ static void enc_branch(as_t *a, inst_t *in, char **ops, int n)
     int32_t off = t - (int32_t)(a->addr + 4);
     if (off & 1) { error(a, "the target is not on a halfword"); return; }
     bool bl = in->op == OP_BL;
+    // The first pass lays out every branch short, as GNU as starts; the passes
+    // after it decide.
+    if (a->pass == 0 && !bl) off = 0;
     if (!bl) {
         if (in->cond != COND_AL && !in->in_it) {
             if (NARROW_OK(in) && off >= -256 && off <= 254) {
@@ -1468,17 +1575,23 @@ static uint32_t ls_t4(int op)
     return 0;
 }
 
-static void enc_literal_load(as_t *a, inst_t *in, int rt, int32_t t, bool known)
+// est: the target is only an estimate from the last pass, so only its
+// distance is believed -- not its alignment, not that it is ahead. The last
+// pass, where nothing is estimated, settles those.
+static void enc_literal_load(as_t *a, inst_t *in, int rt, int32_t t, bool known, bool est)
 {
     uint32_t pc = (a->addr + 4) & ~3u;
     int32_t off = t - (int32_t)pc;
+    if (a->pass == 0) known = false;           // short in the first layout
     if (in->op == OP_LDR && NARROW_OK(in) && lo(rt)
-        && (!known || ((t & 3) == 0 && off >= 0 && off <= 1020))) {
-        put16(a, 0x4800u | ((uint32_t)rt << 8) | (known ? ((uint32_t)off >> 2) & 0xff : 0));
+        && (!known || (est ? off <= 1020 : ((t & 3) == 0 && off >= 0 && off <= 1020)))) {
+        put16(a, 0x4800u | ((uint32_t)rt << 8) | (known && off >= 0 ? ((uint32_t)off >> 2) & 0xff : 0));
         return;
     }
     if (need_narrow_fail(a, in)) return;
-    if (known && (off < -4095 || off > 4095)) { error(a, "the literal is out of reach"); return; }
+    if (known && (off < -4095 || off > 4095)) {
+        if (est) off = 0; else { error(a, "the literal is out of reach"); return; }
+    }
     uint32_t u = off < 0 ? (uint32_t)-off : (uint32_t)off;
     put32w(a, ls_t4(in->op) | 0xFu | (off >= 0 ? 0x80u : 0), ((uint32_t)rt << 12) | (known ? u : 0));
 }
@@ -1525,8 +1638,12 @@ static void enc_ldr_const(as_t *a, inst_t *in, int rt, const char *s)
     }
     int idx = k - a->pool_first;
     bool known = a->pool_no < a->npool_cap && a->pool_known[a->pool_no];
-    int32_t t = known ? (int32_t)a->pool_addr[a->pool_no] + 4 * idx : (int32_t)a->addr;
-    enc_literal_load(a, in, rt, t, known);
+    int32_t t = known ? (int32_t)a->pool_addr[a->pool_no] + 4 * idx
+                        + stretch_to(a, a->pool_pos[a->pool_no] + 1)
+                      : (int32_t)a->addr;
+    // Exact only in the last pass and only when this line has not moved: a
+    // line that moved makes the pass change something, so another follows.
+    enc_literal_load(a, in, rt, t, known, false);
 }
 
 static void enc_ldst(as_t *a, inst_t *in, char **ops, int n)
@@ -1547,7 +1664,7 @@ static void enc_ldst(as_t *a, inst_t *in, char **ops, int n)
         val_t v;
         if (!expr(a, s, &v)) return;
         if (v.rel != 1) { error(a, "the target must be a label"); return; }
-        enc_literal_load(a, in, rt, v.v, !v.undef);
+        enc_literal_load(a, in, rt, v.v, !v.undef, v.est);
         return;
     }
     addr_t m;
@@ -1912,12 +2029,16 @@ static void instruction(as_t *a, const char *m, int len, char *rest)
         if (v.rel != 1) { error(a, "adr takes a label"); break; }
         uint32_t pc = (a->addr + 4) & ~3u;
         int32_t off = v.v - (int32_t)pc;
-        if (NARROW_OK(&in) && lo(rd) && (v.undef || (off >= 0 && off <= 1020 && (off & 3) == 0))) {
-            put16(a, 0xA000u | ((uint32_t)rd << 8) | (v.undef ? 0 : (uint32_t)off >> 2));
+        if (a->pass == 0) v.undef = true;     // short in the first layout
+        if (NARROW_OK(&in) && lo(rd)
+            && (v.undef || (v.est ? off <= 1020 : (off >= 0 && off <= 1020 && (off & 3) == 0)))) {
+            put16(a, 0xA000u | ((uint32_t)rd << 8) | (v.undef || off < 0 ? 0 : ((uint32_t)off >> 2) & 0xff));
             break;
         }
         if (need_narrow_fail(a, &in)) break;
-        if (off < -4095 || off > 4095) { error(a, "the label is out of adr's reach"); break; }
+        if (off < -4095 || off > 4095) {
+            if (v.est) off = 0; else { error(a, "the label is out of adr's reach"); break; }
+        }
         if (off >= 0) put_imm12(a, 0xF20Fu, (uint32_t)rd << 8, (uint32_t)off);
         else          put_imm12(a, 0xF2AFu, (uint32_t)rd << 8, (uint32_t)-off);
         break;
@@ -1931,23 +2052,27 @@ static void instruction(as_t *a, const char *m, int len, char *rest)
 static void emit_pool(as_t *a)
 {
     if (a->nlit == a->pool_first) { a->pool_no++; return; }
+    note_align(a, a->cur_pos + 1, 2);
     while (a->addr & 3) put8(a, 0);
     if (a->pool_no >= a->npool_cap) {
         int c = a->npool_cap ? a->npool_cap * 2 : 8;
         while (c <= a->pool_no) c *= 2;
         uint32_t *pa = realloc(a->pool_addr, (size_t)c * sizeof *pa);
         bool *pk = realloc(a->pool_known, (size_t)c * sizeof *pk);
+        int *pp = realloc(a->pool_pos, (size_t)c * sizeof *pp);
         if (pa) a->pool_addr = pa;
         if (pk) a->pool_known = pk;
-        if (!pa || !pk) { error(a, "out of memory"); return; }
-        for (int i = a->npool_cap; i < c; i++) { a->pool_addr[i] = 0; a->pool_known[i] = false; }
+        if (pp) a->pool_pos = pp;
+        if (!pa || !pk || !pp) { error(a, "out of memory"); return; }
+        for (int i = a->npool_cap; i < c; i++) { a->pool_addr[i] = 0; a->pool_known[i] = false; a->pool_pos[i] = 0; }
         a->npool_cap = c;
     }
     if (!a->pool_known[a->pool_no] || a->pool_addr[a->pool_no] != a->addr) a->changed = true;
     a->pool_addr[a->pool_no] = a->addr;
     a->pool_known[a->pool_no] = true;
+    a->pool_pos[a->pool_no] = a->cur_pos + 1;
     for (int k = a->pool_first; k < a->nlit; k++) {
-        val_t v = { a->lit[k].v, a->lit[k].rel, false, a->lit[k].func };
+        val_t v = { a->lit[k].v, a->lit[k].rel, false, a->lit[k].func, false };
         put_word(a, v);
     }
     a->pool_first = a->nlit;
@@ -1977,9 +2102,149 @@ static void align_to(as_t *a, uint32_t n, bool have_fill, int32_t fill)
         return;
     }
     // Code is padded with no-ops, as GNU as does, so that falling through the
-    // gap is harmless.
+    // gap is harmless: a zero byte to reach a halfword, one short nop to reach
+    // a word, and nop.w after that.
     if ((a->addr & 1) && (a->addr & (n - 1))) put8(a, 0);
-    while (a->addr & (n - 1)) put16(a, 0xBF00u);
+    if ((a->addr & 2) && (a->addr & (n - 1))) put16(a, 0xBF00u);
+    while (a->addr & (n - 1)) put32w(a, 0xF3AFu, 0x8000u);
+}
+
+static void one_line(as_t *a, const char *src, int len);
+
+static struct incfile *load_file(as_t *a, const char *path)
+{
+    for (int i = 0; i < a->nfiles; i++)
+        if (!strcmp(a->files[i].path, path)) return &a->files[i];
+    long size;
+    char *t = a->inc->load(a->inc->ctx, path, &size);
+    if (!t) return 0;
+    struct incfile *nf = realloc(a->files, (size_t)(a->nfiles + 1) * sizeof *nf);
+    if (!nf) { free(t); return 0; }
+    a->files = nf;
+    struct incfile *f = &a->files[a->nfiles++];
+    memset(f, 0, sizeof *f);
+    snprintf(f->path, sizeof f->path, "%s", path);
+    f->text = t;
+    int cap = 0;
+    char *p = t;
+    while (*p) {
+        char *e = strchr(p, '\n');
+        if (f->nlines == cap) {
+            cap = cap ? cap * 2 : 64;
+            f->lines = realloc(f->lines, (size_t)cap * sizeof *f->lines);
+            f->lens = realloc(f->lens, (size_t)cap * sizeof *f->lens);
+            if (!f->lines || !f->lens) { f->nlines = 0; return f; }
+        }
+        f->lines[f->nlines] = p;
+        f->lens[f->nlines] = e ? (int)(e - p) : (int)strlen(p);
+        f->nlines++;
+        if (!e) break;
+        p = e + 1;
+    }
+    return f;
+}
+
+// .include "name": the lines of another file, assembled here as though they
+// were written in place.
+static void include_file(as_t *a, const char *arg)
+{
+    const char *s = skip_ws(arg);
+    if (*s != '"') { error(a, ".include wants a name in double quotes"); return; }
+    char name[160];
+    int n = 0;
+    s++;
+    while (*s && *s != '"' && n < (int)sizeof name - 1) name[n++] = *s++;
+    name[n] = 0;
+    if (*s != '"' || !n) { error(a, ".include wants a name in double quotes"); return; }
+    if (!a->inc || !a->inc->load) { error(a, "files cannot be included here"); return; }
+    if (a->depth >= 7) { error(a, "includes nested more than seven deep"); return; }
+
+    // Beside the file that includes it, then beside the source (where GNU as
+    // would look), then as written.
+    char path[192];
+    struct incfile *f = 0;
+    for (int where = 0; where < 2 && !f && name[0] != '/'; where++) {
+        const char *dir;
+        int dl;
+        if (where == 0 && a->depth) {
+            dir = a->inc_path[a->depth];
+            const char *sl = strrchr(dir, '/');
+            dl = sl ? (int)(sl - dir) : 0;
+        } else if (where == 1 || !a->depth) {
+            dir = a->inc->dir ? a->inc->dir : "";
+            dl = (int)strlen(dir);
+            if (where == 0) where = 1;
+        } else continue;
+        if (dl) {
+            snprintf(path, sizeof path, dir[dl - 1] == '/' ? "%.*s%s" : "%.*s/%s", dl, dir, name);
+            f = load_file(a, path);
+        }
+    }
+    if (!f) {
+        snprintf(path, sizeof path, "%s", name);
+        f = load_file(a, path);
+    }
+    if (!f) { error(a, "cannot open %s", name); return; }
+    for (int d = 1; d <= a->depth; d++)
+        if (!strcmp(a->inc_path[d], f->path)) { error(a, "%s includes itself", name); return; }
+
+    int k = a->inst_no++;
+    if (k >= a->ninsts) {
+        struct incinst *ni = realloc(a->insts, (size_t)(k + 1) * sizeof *ni);
+        if (!ni) { error(a, "out of memory"); return; }
+        a->insts = ni;
+        for (int i = a->ninsts; i <= k; i++) {
+            a->insts[i].file = -1;
+            a->insts[i].sizes = 0;
+            a->insts[i].addrs = 0;
+            a->insts[i].frozen = 0;
+        }
+        a->ninsts = k + 1;
+    }
+    int fi = (int)(f - a->files);
+    if (a->insts[k].file != fi) {
+        free(a->insts[k].sizes);
+        free(a->insts[k].addrs);
+        free(a->insts[k].frozen);
+        a->insts[k].file = fi;
+        size_t nl = (size_t)(f->nlines ? f->nlines : 1);
+        a->insts[k].sizes = calloc(nl, sizeof(uint32_t));
+        a->insts[k].addrs = calloc(nl, sizeof(uint32_t));
+        a->insts[k].frozen = calloc(nl, sizeof(bool));
+        a->changed = true;
+    }
+    uint32_t *sizes = a->insts[k].sizes, *addrs = a->insts[k].addrs;
+    bool *frozen = a->insts[k].frozen;
+    if (!sizes || !addrs || !frozen) { error(a, "out of memory"); return; }
+
+    int saved_id = a->line_id, saved_pos = a->cur_pos;
+    uint32_t saved_prev = a->prev_addr, saved_start = a->line_start;
+    a->depth++;
+    snprintf(a->inc_path[a->depth], sizeof a->inc_path[0], "%s", f->path);
+    for (int j = 0; j < f->nlines; j++) {
+        a->inc_line[a->depth] = j;
+        a->line_id = ((k + 1) << 16) | j;
+        a->line_failed = false;
+        a->minwide = frozen[j] || (a->sticky && sizes[j] >= 4);
+        a->prev_addr = addrs[j];
+        a->line_start = a->addr;
+        a->cur_pos = 4 * a->seq++ + 1;
+        a->was_inst = false;
+        uint32_t start = a->addr;
+        one_line(a, f->lines[j], f->lens[j]);
+        uint32_t size = a->addr - start;
+        if (a->was_inst && size == 4 && (int32_t)(start - addrs[j]) <= 0 && a->pass > 0) frozen[j] = true;
+        addrs[j] = start;
+        if (size != sizes[j]) a->changed = true;
+        sizes[j] = size;
+    }
+    a->depth--;
+    a->line_id = saved_id;
+    a->cur_pos = saved_pos;
+    a->prev_addr = saved_prev;
+    a->line_start = saved_start;
+    a->line_failed = false;
+    a->was_inst = false;
 }
 
 static bool directive(as_t *a, const char *d, int len, char *rest)
@@ -2034,9 +2299,14 @@ static bool directive(as_t *a, const char *d, int len, char *rest)
         int32_t v = 2, fill = 0;
         if (n >= 1 && !imm(a, ops[0], &v)) return true;
         if (n >= 2 && !imm(a, ops[1], &fill)) return true;
-        if (IS(".balign")) align_to(a, (uint32_t)v, n >= 2, fill);
-        else {
+        if (IS(".balign")) {
+            int pow = 0;
+            while (pow < 16 && (1 << pow) < v) pow++;
+            note_align(a, a->cur_pos, pow);
+            align_to(a, (uint32_t)v, n >= 2, fill);
+        } else {
             if (v < 0 || v > 16) { error(a, "the alignment is out of range"); return true; }
+            note_align(a, a->cur_pos, (int)v);
             align_to(a, 1u << v, n >= 2, fill);
         }
         return true;
@@ -2051,6 +2321,10 @@ static bool directive(as_t *a, const char *d, int len, char *rest)
         val_t v;
         if (!expr(a, ops[1], &v)) return true;
         define(a, nm, k, v.v, v.rel, true);
+        return true;
+    }
+    if (IS(".include")) {
+        include_file(a, rest);
         return true;
     }
     if (IS(".stack")) {
@@ -2135,6 +2409,7 @@ static void one_line(as_t *a, const char *src, int len)
     // address odd.
     if (a->addr & 1) { error(a, "an instruction on an odd address; add .align 1"); return; }
     instruction(a, p, k, rest);
+    a->was_inst = true;
 }
 
 static void run_pass(as_t *a)
@@ -2148,26 +2423,39 @@ static void run_pass(as_t *a)
     a->it_left = 0;
     a->next_func = false;
     memset(a->local_count, 0, sizeof a->local_count);
+    a->inst_no = 0;
+    a->depth = 0;
+    a->seq = 0;
+    // This pass's alignments are collected afresh; the last pass's are what
+    // moves are rounded by.
+    struct align *t = a->al_prev; a->al_prev = a->al; a->al = t;
+    int tc = a->alcap_prev; a->alcap_prev = a->alcap; a->alcap = tc;
+    a->nal_prev = a->nal;
+    a->nal = 0;
     asm_result_t *r = a->r;
     r->stack = 0;
     for (int i = 0; i < a->nlines; i++) {
         int len;
         const char *s = a->get(a->ctx, i, &len);
         a->line = i;
+        a->line_id = i;
         a->line_failed = false;
-        a->minwide = r->line_size[i] >= 4;
+        a->minwide = a->frozen[i] || (a->sticky && r->line_size[i] >= 4);
+        a->prev_addr = r->line_addr[i];
+        a->line_start = a->addr;
+        a->cur_pos = 4 * a->seq++ + 1;
+        a->was_inst = false;
         uint32_t start = a->addr;
         int it_before = a->it_left;
         one_line(a, s, len);
         uint32_t size = a->addr - start;
+        // Long while nothing before it grew in this pass: long for good.
+        if (a->was_inst && size == 4 && (int32_t)(start - r->line_addr[i]) <= 0 && a->pass > 0)
+            a->frozen[i] = true;
         if (r->line_addr[i] != start) a->changed = true;
         r->line_addr[i] = start;
-        // Instructions grow and never shrink. Data is whatever it is: an
-        // alignment depends on where it falls.
-        bool is_inst = size == 2 || size == 4;
         (void)it_before;
-        if (is_inst && size > r->line_size[i]) a->changed = true;
-        else if (!is_inst && size != r->line_size[i]) a->changed = true;
+        if (size != r->line_size[i]) a->changed = true;
         r->line_size[i] = size;
     }
     if (a->it_left) {
@@ -2176,10 +2464,12 @@ static void run_pass(as_t *a)
         error(a, "the IT block is not finished");
     }
     a->line_failed = false;
+    a->cur_pos = 4 * a->seq + 1;
     emit_pool(a);
 }
 
-bool asm_assemble(asm_line_fn get, void *ctx, int nlines, asm_result_t *r)
+bool asm_assemble(asm_line_fn get, void *ctx, int nlines, const asm_include_t *inc,
+                  asm_result_t *r)
 {
     memset(r, 0, sizeof *r);
     as_t a;
@@ -2188,26 +2478,36 @@ bool asm_assemble(asm_line_fn get, void *ctx, int nlines, asm_result_t *r)
     a.ctx = ctx;
     a.nlines = nlines;
     a.r = r;
+    a.inc = inc;
     for (int i = 0; i < 256; i++) a.bucket[i] = -1;
     r->nlines = nlines;
     r->line_addr = calloc((size_t)(nlines ? nlines : 1), sizeof *r->line_addr);
     r->line_size = calloc((size_t)(nlines ? nlines : 1), sizeof *r->line_size);
-    if (!r->line_addr || !r->line_size) {
+    a.frozen = calloc((size_t)(nlines ? nlines : 1), sizeof *a.frozen);
+    if (!r->line_addr || !r->line_size || !a.frozen) {
+        free(a.frozen);
         r->nerrors = 1;
         strcpy(r->errors[0].msg, "out of memory");
         return false;
     }
 
-    int pass;
-    for (pass = 0; pass < MAX_PASSES; pass++) {
-        a.pass = pass;
+    // Passes until nothing moves, then one in which nothing is estimated and
+    // the errors count. If that one still changes something -- a load whose
+    // literal turned out not to be aligned -- the passes go on.
+    int pass = 0;
+    for (;;) {
+        a.sticky = pass >= STICKY_AFTER;
+        a.pass = pass++;
+        a.final = false;
         run_pass(&a);
-        if (!a.changed && pass > 0) break;
+        if ((a.changed || pass == 1) && pass < MAX_PASSES) continue;
+        a.pass = pass++;
+        a.final = true;
+        r->nerrors = 0;
+        run_pass(&a);
+        if (!a.changed || pass >= MAX_PASSES) break;
     }
-    a.pass = pass + 1;
-    a.final = true;
-    run_pass(&a);
-    r->passes = pass + 2;
+    r->passes = pass;
 
     r->code = a.buf;
     r->size = a.addr;
@@ -2217,6 +2517,14 @@ bool asm_assemble(asm_line_fn get, void *ctx, int nlines, asm_result_t *r)
     sym_t *m = sym_find(&a, "main", 4, false);
     if (!m || m->defpass < 0 || m->rel != 1) m = sym_find(&a, "_start", 6, false);
     if (m && m->defpass >= 0 && m->rel == 1) r->entry = (uint32_t)m->value;
+    for (int i = 0; i < a.nfiles; i++) { free(a.files[i].text); free(a.files[i].lines); free(a.files[i].lens); }
+    free(a.files);
+    for (int i = 0; i < a.ninsts; i++) { free(a.insts[i].sizes); free(a.insts[i].addrs); free(a.insts[i].frozen); }
+    free(a.frozen);
+    free(a.al);
+    free(a.al_prev);
+    free(a.pool_pos);
+    free(a.insts);
     free(a.syms);
     free(a.lit);
     free(a.pool_addr);

@@ -23,6 +23,14 @@ static const char *get_line(void *ctx, int i, int *len)
     return s->lines[i];
 }
 
+static char *slurp(const char *path, long *size);
+
+static char *load_inc(void *ctx, const char *path, long *size)
+{
+    (void)ctx;
+    return slurp(path, size);
+}
+
 static char *slurp(const char *path, long *size)
 {
     FILE *f = fopen(path, "rb");
@@ -62,7 +70,12 @@ int main(int argc, char **argv)
     }
 
     asm_result_t r;
-    bool ok = asm_assemble(get_line, &s, s.n, &r);
+    char dir[512];
+    snprintf(dir, sizeof dir, "%s", argv[1]);
+    char *sl = strrchr(dir, '/');
+    if (sl) *sl = 0; else strcpy(dir, ".");
+    asm_include_t inc = { load_inc, 0, dir };
+    bool ok = asm_assemble(get_line, &s, s.n, &inc, &r);
     for (int i = 0; i < r.nerrors && i < ASM_MAX_ERRORS; i++)
         printf("%s:%d: %s\n", argv[1], r.errors[i].line + 1, r.errors[i].msg);
     if (!ok) return 1;
@@ -94,10 +107,13 @@ int main(int argc, char **argv)
         for (uint32_t k = 0; k < n && k < 8 && a + k < (uint32_t)rsize; k++) printf("%02x", ref[a + k]);
         printf("   %.*s\n", s.lens[i], s.lines[i]);
     }
-    // GNU as pads the end of the section to a word with a nop; that is not
-    // part of the program.
-    if ((uint32_t)rsize == r.size + 2 && (rsize & 3) == 0 && ref[rsize - 2] == 0x00 && ref[rsize - 1] == 0xbf)
-        rsize -= 2;
+    // GNU as pads the end of the section to a word, with zeros and a nop;
+    // that is not part of the program.
+    if ((uint32_t)rsize > r.size && (uint32_t)rsize == ((r.size + 3) & ~3u)) {
+        bool pad = true;
+        for (long k = r.size; k < rsize; k++) if (ref[k] != 0x00 && ref[k] != 0xbf) pad = false;
+        if (pad) rsize = r.size;
+    }
     if (r.size != (uint32_t)rsize) {
         printf("size: blixt %u, gas %ld\n", r.size, rsize);
         if (!bad) {
