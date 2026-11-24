@@ -25,6 +25,26 @@ import sys
 
 FIRST, LAST = 32, 255
 
+# Latin-1's 128..159 are control codes and are never drawn, so those 32 slots
+# hold what a text-mode program draws its windows with: single and double
+# frames, shades, blocks and arrows -- the set Turbo-style screens are built
+# from. The console maps these code points to the slots; see kernel/console.c,
+# whose table must list the same code points in the same order.
+BOX = [
+    0x2500, 0x2502, 0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524,  # single
+    0x252C, 0x2534, 0x253C,
+    0x2550, 0x2551, 0x2554, 0x2557, 0x255A, 0x255D, 0x255F, 0x2562,  # double
+    0x2564, 0x2567,
+    0x2591, 0x2592, 0x2593, 0x2588, 0x2580, 0x2584, 0x25A0,          # shades
+    0x25B2, 0x25BC, 0x25BA, 0x25C4,                                  # arrows
+]
+assert len(BOX) == 32
+
+
+def source_of(slot):
+    """The code point drawn in a slot of the table."""
+    return BOX[slot - 128] if 128 <= slot < 160 else slot
+
 FONTS = [
     # name    bdf                                     w   h
     ("8x16", "third_party/terminus/ter-u16n.bdf", 8, 16),
@@ -129,11 +149,23 @@ def main():
                                          for i in range(cell_w)))
             return
         out = "kernel/font%s.c" % name
+        # The header of an existing table is kept: it carries notes about where
+        # the table lives that were written after this template, and only the
+        # rows are this script's to write.
+        try:
+            old = open(out).read()
+            head = old[:old.index("] = {\n") + len("] = {\n")]
+        except (OSError, ValueError):
+            head = HEADER % {"name": name, "h": cell_h}
+        missing = [hex(source_of(s)) for s in range(128, 160) if source_of(s) not in glyphs]
+        if missing:
+            sys.exit("%s has no glyph for %s" % (bdf, ", ".join(missing)))
         with open(out, "w") as f:
-            f.write(HEADER % {"name": name, "h": cell_h})
+            f.write(head)
             for cp in range(FIRST, LAST + 1):
-                rows = to_cell(fbb, glyphs, cp, cell_w, cell_h)
-                f.write("    {%s},  // %d\n" % (",".join("0x%02x" % b for b in rows), cp))
+                rows = to_cell(fbb, glyphs, source_of(cp), cell_w, cell_h)
+                note = " U+%04X" % source_of(cp) if source_of(cp) != cp else ""
+                f.write("    {%s},  // %d%s\n" % (",".join("0x%02x" % b for b in rows), cp, note))
             f.write("};\n")
         print("wrote %s, %d glyphs from %s" % (out, LAST - FIRST + 1, bdf))
 

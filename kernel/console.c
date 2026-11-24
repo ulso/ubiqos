@@ -556,13 +556,36 @@ static void do_csi(uint8_t final)
 
 // UTF-8 in, one glyph out.
 //
-// The font has a glyph for every code point up to U+00FF and none above it, so
-// a longer sequence is swallowed whole and drawn as a single question mark
-// rather than as a row of them. A byte that cannot begin a sequence is drawn as
+// The font has a glyph for every code point up to U+00FF, and in the slots of
+// the control codes 128..159, which are never drawn, the 32 frames, shades and
+// arrows below -- what a full-screen program draws its windows with. Any other
+// sequence is swallowed whole and drawn as a single question mark rather than
+// as a row of them. A byte that cannot begin a sequence is drawn as
 // itself: a file written before this machine spoke UTF-8 still shows something,
 // and a stray high byte is better seen than silently dropped.
 static uint32_t utf8_cp;
 static uint32_t utf8_need;
+
+// The same code points in the same order as BOX in tools/make_font.py, which
+// put their glyphs in slots 128 onwards.
+static const uint16_t box_glyphs[32] = {
+    0x2500, 0x2502, 0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524,
+    0x252C, 0x2534, 0x253C,
+    0x2550, 0x2551, 0x2554, 0x2557, 0x255A, 0x255D, 0x255F, 0x2562,
+    0x2564, 0x2567,
+    0x2591, 0x2592, 0x2593, 0x2588, 0x2580, 0x2584, 0x25A0,
+    0x25B2, 0x25BC, 0x25BA, 0x25C4,
+};
+
+static char glyph_for(uint32_t cp)
+{
+    if (cp < 256) return (char)cp;
+    if (cp >= 0x2500 && cp <= 0x25C4) {
+        for (uint32_t i = 0; i < 32; i++)
+            if (box_glyphs[i] == cp) return (char)(128 + i);
+    }
+    return '?';
+}
 
 static void feed_text(uint8_t c)
 {
@@ -570,7 +593,7 @@ static void feed_text(uint8_t c)
         if ((c & 0xc0) == 0x80) {
             utf8_cp = (utf8_cp << 6) | (c & 0x3f);
             if (--utf8_need) return;
-            draw_char(utf8_cp < 256 ? (char)utf8_cp : '?');
+            draw_char(glyph_for(utf8_cp));
             return;
         }
         // Truncated. Draw what is missing and go on to consider this byte,
