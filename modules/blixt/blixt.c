@@ -36,7 +36,7 @@
 #define A_DIRECT   ATTR(C_LCYAN, C_BLUE)
 #define A_FRAME    ATTR(C_WHITE, C_BLUE)
 #define A_TITLE    ATTR(C_WHITE, C_BLUE)
-#define A_SCROLL   ATTR(C_CYAN, C_BLUE)
+#define A_SCROLL   ATTR(C_BLUE, C_CYAN)
 #define A_GUTTER   ATTR(C_LCYAN, C_BLUE)
 #define A_GUTTER_ERR ATTR(C_WHITE, C_RED)
 #define A_ERRBAR   ATTR(C_WHITE, C_RED)
@@ -224,8 +224,8 @@ enum {
 };
 
 static const item_t m_file[] = {
-    { "~N~ew", "", CMD_NEW }, { "~O~pen...", "F3", CMD_OPEN }, { "~S~ave", "F2", CMD_SAVE },
-    { "Save ~a~s...", "", CMD_SAVEAS }, { 0, 0, 0 }, { "E~x~it", "Alt-X", CMD_EXIT }, { 0, 0, -1 },
+    { "~N~ew", "", CMD_NEW }, { "~O~pen...", "F3 ^O", CMD_OPEN }, { "~S~ave", "F2 ^S", CMD_SAVE },
+    { "Save ~a~s...", "", CMD_SAVEAS }, { 0, 0, 0 }, { "E~x~it", "Alt-X ^Q", CMD_EXIT }, { 0, 0, -1 },
 };
 static const item_t m_edit[] = {
     { "~D~elete line", "Ctrl-Y", CMD_DELLINE }, { "D~u~plicate line", "Ctrl-D", CMD_DUPLINE },
@@ -237,14 +237,14 @@ static const item_t m_search[] = {
     { "~G~o to line...", "Ctrl-G", CMD_GOTO }, { 0, 0, -1 },
 };
 static const item_t m_run[] = {
-    { "~R~un", "F9", CMD_RUN }, { "~A~rguments...", "", CMD_ARGS }, { 0, 0, -1 },
+    { "~R~un", "F9 ^R", CMD_RUN }, { "~A~rguments...", "", CMD_ARGS }, { 0, 0, -1 },
 };
 static const item_t m_compile[] = {
-    { "~C~ompile", "Alt-F9", CMD_COMPILE }, { "~L~isting", "F4", CMD_LISTING },
+    { "~C~ompile", "Alt-F9 ^K", CMD_COMPILE }, { "~L~isting", "F4 ^T", CMD_LISTING },
     { "~I~nformation...", "", CMD_INFO }, { 0, 0, -1 },
 };
 static const item_t m_help[] = {
-    { "~K~eys", "F1", CMD_HELP }, { "~I~nstructions", "", CMD_REFERENCE },
+    { "~K~eys", "F1 ^H", CMD_HELP }, { "~I~nstructions", "", CMD_REFERENCE },
     { "~S~ystem calls", "", CMD_SYSCALLS }, { 0, 0, 0 }, { "~A~bout...", "", CMD_ABOUT },
     { 0, 0, -1 },
 };
@@ -289,7 +289,7 @@ static void draw_menubar(int open)
 static void draw_status(const char *s)
 {
     tui_fill(0, scr_h - 1, scr_w, 1, ' ', A_STATUS);
-    if (!s) s = " ~F1~ Help  ~F2~ Save  ~F3~ Open  ~F4~ Listing  ~F9~ Run  ~Alt-F9~ Compile  ~F10~ Menu  ~Alt-X~ Exit";
+    if (!s) s = " ~F1~ Help  ~F2~ Save  ~F3~ Open  ~F4~ Listing  ~F9~ Run  ~Alt-F9~ Compile  ~F10~ Menu  ~Alt-X~ Exit  ~Ctrl-H~ Keys";
     // Drop whole entries from the right when the line is too narrow.
     char buf[200];
     snprintf(buf, sizeof buf, "%s", s);
@@ -436,10 +436,12 @@ static void draw_editor(void)
 
     // The scroll bar on the right-hand frame.
     int sx = scr_w - 1, sy = y0, sh = h;
+    // Solid cells rather than a shade character: a terminal with any line
+    // spacing draws shade glyphs with gaps between them.
     if (sh >= 3) {
         tui_put(sx, sy, G_UP, A_SCROLL);
         tui_put(sx, sy + sh - 1, G_DOWN, A_SCROLL);
-        for (int k = 1; k < sh - 1; k++) tui_put(sx, sy + k, G_MED, A_SCROLL);
+        for (int k = 1; k < sh - 1; k++) tui_put(sx, sy + k, ' ', A_SCROLL);
         int span = sh - 2;
         int pos = nl > 1 ? (cy * (span - 1)) / (nl - 1) : 0;
         tui_put(sx, sy + 1 + pos, G_SQ, A_SCROLL);
@@ -659,20 +661,22 @@ static void show_text(const char *title, const char *const *text, int n)
 static const char *const help_keys[] = {
     "~Blixt~ -- a Thumb-2 assembler for UbiqOS, in the Borland manner.",
     "",
-    "~F1~        This help            ~F2~       Save",
-    "~F3~        Open a file          ~F4~       Listing beside the source",
-    "~F9~        Assemble and run     ~Alt-F9~   Assemble only",
-    "~F10~       The menu bar         ~Alt-X~    Leave Blixt",
-    "~Alt-F~ ~E~ ~S~ ~R~ ~C~ ~H~   Open that menu",
+    "                Or, without function keys",
+    "~F1~       ~Ctrl-H~    This help",
+    "~F2~       ~Ctrl-S~    Save",
+    "~F3~       ~Ctrl-O~    Open a file",
+    "~F4~       ~Ctrl-T~    The listing beside the source",
+    "~F9~       ~Ctrl-R~    Assemble and run",
+    "~Alt-F9~   ~Ctrl-K~    Assemble only",
+    "~F10~      ~Esc~       The menu bar; then a letter opens a menu",
+    "~Alt-X~    ~Ctrl-Q~    Leave Blixt",
+    "~Alt-F~ ~E~ ~S~ ~R~ ~C~ ~H~       Open that menu (Esc and the letter also)",
     "",
     "~Arrows~, ~Home~, ~End~, ~PgUp~, ~PgDn~   Move",
     "~Ctrl-Y~    Delete the line      ~Ctrl-D~   Duplicate the line",
     "~Ctrl-F~    Find                 ~Ctrl-L~   Find again",
     "~Ctrl-G~    Go to a line number  ~Tab~      A tab, shown every 8 columns",
     "~Enter~     A new line, indented like the one before",
-    "",
-    "Without F-keys or Alt: ~Ctrl-B~ assembles and runs, ~Ctrl-O~ opens,",
-    "~Ctrl-S~ saves, ~Ctrl-Q~ leaves. ~Esc~ opens the menu bar.",
     "",
     "F9 writes the program as a module to ~/tmp~ and runs it with the",
     "terminal its own. When it ends, a key brings you back here.",
@@ -1183,12 +1187,14 @@ static void key(int k)
     bool vertical = false;
     int page = ed_h() - 1;
     switch (k) {
-    case K_F1: command(CMD_HELP); break;
+    // Every function key has a control key as well, for a terminal or a
+    // keyboard bridge that keeps the function keys for itself.
+    case K_F1: case 8: command(CMD_HELP); break;               // Ctrl-H
     case K_F2: case 19: command(CMD_SAVE); break;              // Ctrl-S
     case K_F3: case 15: command(CMD_OPEN); break;              // Ctrl-O
-    case K_F4: command(CMD_LISTING); break;
-    case K_F9: case 2: command(CMD_RUN); break;                // Ctrl-B
-    case K_ALTF | K_F9: command(CMD_COMPILE); break;
+    case K_F4: case 20: command(CMD_LISTING); break;           // Ctrl-T
+    case K_F9: case 18: case 2: command(CMD_RUN); break;       // Ctrl-R, Ctrl-B
+    case K_ALTF | K_F9: case 11: command(CMD_COMPILE); break;  // Ctrl-K
     case K_F10: case K_ESC: command(menu_bar()); break;
     case K_ALT | 'x': case 17: command(CMD_EXIT); break;       // Ctrl-Q
     case 25: command(CMD_DELLINE); break;                      // Ctrl-Y
@@ -1217,7 +1223,7 @@ static void key(int k)
     }
     case K_END: cx = L[cy].len; break;
     case '\r': case '\n': newline(); break;
-    case 8: case 127: backspace(); break;
+    case 127: backspace(); break;
     case K_DEL: delete_char(); break;
     case '\t': insert_char('\t'); break;
     case K_RESIZE: tui_flush(true); break;

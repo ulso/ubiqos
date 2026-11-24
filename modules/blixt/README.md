@@ -8,14 +8,17 @@ is on the screen.
 
 | Key | |
 |---|---|
-| F1 | help (also the instruction and system-call pages under Help) |
-| F2 / F3 | save / open |
-| F4 | the listing beside the source, address and code per line, kept current as you type |
-| F9 | assemble, write the program to `/tmp` as a module, and run it |
-| Alt-F9 | assemble only, and say how it went |
+| F1 or Ctrl-H | help (also the instruction and system-call pages under Help) |
+| F2 or Ctrl-S / F3 or Ctrl-O | save / open |
+| F4 or Ctrl-T | the listing beside the source, address and code per line, kept current as you type |
+| F9 or Ctrl-R | assemble, write the program to `/tmp` as a module, and run it |
+| Alt-F9 or Ctrl-K | assemble only, and say how it went |
 | F10, Esc, Alt-letter | the menus |
-| Alt-X | leave |
-| Ctrl-B, Ctrl-S, Ctrl-O, Ctrl-Q | F9, F2, F3 and Alt-X for a terminal without them |
+| Alt-X or Ctrl-Q | leave |
+
+Every function key has a control key, because a Mac keeps its function keys
+for itself, over SSH and through Keybridge alike. Ctrl-H is free for help
+because the board's keyboard sends DEL (127) for Backspace, as terminals do.
 
 The screen is plain ANSI: cursor positioning, sixteen colours and UTF-8. It is
 kept in memory and only the cells that changed are sent, in one write, so it
