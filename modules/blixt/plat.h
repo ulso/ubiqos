@@ -29,6 +29,9 @@ bool     plat_save(const char *path, const char *data, long size);
 bool     plat_run(const char *name, const char *args, const asm_result_t *r,
                   char *msg, int msglen);
 
+// The current directory, for a file opened without one.
+void     plat_cwd(char *buf, int size);
+
 // What this machine calls itself, for the About box.
 const char *plat_name(void);
 

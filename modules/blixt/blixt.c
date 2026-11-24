@@ -875,14 +875,22 @@ static void module_name(char *out, int size)
     out[n] = 0;
 }
 
-// Where Destination Disk puts the module: beside the source, NAME.mod.
+// Where Destination Disk puts the module: beside the source, NAME.mod. A
+// source opened without a directory is in the current one, which is asked
+// for: a relative name is not something every filesystem here resolves.
 static void module_path(char *out, int size)
 {
     char name[16];
     module_name(name, sizeof name);
-    const char *slash = filename[0] ? strrchr(filename, '/') : 0;
-    if (slash) snprintf(out, (size_t)size, "%.*s/%s.mod", (int)(slash - filename), filename, name);
-    else snprintf(out, (size_t)size, "%s.mod", name);
+    const char *slash = strrchr(filename, '/');
+    if (slash) {
+        snprintf(out, (size_t)size, "%.*s/%s.mod", (int)(slash - filename), filename, name);
+        return;
+    }
+    char cwd[128];
+    plat_cwd(cwd, (int)sizeof cwd);
+    size_t n = strlen(cwd);
+    snprintf(out, (size_t)size, "%s%s%s.mod", cwd, (n && cwd[n - 1] == '/') ? "" : "/", name);
 }
 
 // Write the module to disk when the destination says so. Returns false only
@@ -891,6 +899,10 @@ static bool write_module(char *said, int size)
 {
     said[0] = 0;
     if (!dest_disk) return true;
+    if (!filename[0]) {
+        snprintf(said, (size_t)size, "Save the source first (F2): the module goes beside it.");
+        return false;
+    }
     char name[16], path[160];
     module_name(name, sizeof name);
     module_path(path, sizeof path);
@@ -1114,6 +1126,10 @@ static void command(int cmd)
     case CMD_DEST:
         dest_disk = !dest_disk;
         snprintf(dest_label, sizeof dest_label, "~D~estination    %s", dest_disk ? "Disk" : "Memory");
+        // Choosing the line switches it, so say what it now is.
+        snprintf(notice, sizeof notice, dest_disk
+                 ? "Destination Disk: F9 and Alt-F9 also write the module beside the source."
+                 : "Destination Memory: F9 runs the program and keeps nothing.");
         break;
     case CMD_INFO: info(); break;
     case CMD_HELP: show_text("Help", help_keys, (int)(sizeof help_keys / sizeof help_keys[0])); break;

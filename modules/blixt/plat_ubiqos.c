@@ -174,6 +174,13 @@ bool plat_run(const char *name, const char *args, const asm_result_t *r, char *m
     return reason == UBIQOS_END_EXITED;
 }
 
+void plat_cwd(char *buf, int size)
+{
+    int32_t n = ubiqos_getcwd(buf, (uint32_t)size);
+    if (n <= 0 || n >= size) snprintf(buf, (size_t)size, "/");
+    else buf[n] = 0;
+}
+
 const char *plat_name(void)
 {
     static char b[64];

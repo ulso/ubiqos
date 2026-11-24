@@ -104,6 +104,11 @@ bool plat_run(const char *name, const char *args, const asm_result_t *r, char *m
     return ok;
 }
 
+void plat_cwd(char *buf, int size)
+{
+    if (!getcwd(buf, (size_t)size)) snprintf(buf, (size_t)size, ".");
+}
+
 const char *plat_name(void) { return "a POSIX terminal"; }
 
 int blixt_main(int argc, char **argv);
