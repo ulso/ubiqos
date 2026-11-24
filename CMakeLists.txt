@@ -1726,6 +1726,19 @@ ubiqos_add_module(atto modules/atto/compat.c
 target_include_directories(atto_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/wasm/examples/curses)
 target_compile_options(atto_app PRIVATE -std=gnu17 -funsigned-char)
+
+# Blixt, a Thumb-2 assembler in a Borland-style editor. Arm only: what it
+# assembles is Thumb-2, and F9 runs it on this machine. See modules/blixt.
+if(UBIQOS_ARCH STREQUAL "arm")
+    ubiqos_add_module(blixt modules/blixt/plat_ubiqos.c
+                      ${CMAKE_CURRENT_SOURCE_DIR}/modules/blixt/blixt.c
+                      ${CMAKE_CURRENT_SOURCE_DIR}/modules/blixt/tui.c
+                      ${CMAKE_CURRENT_SOURCE_DIR}/modules/blixt/asm.c
+                      ${CMAKE_CURRENT_SOURCE_DIR}/modules/blixt/modwrite.c
+                      NEWLIB)
+    target_compile_definitions(blixt_app PRIVATE UBIQOS_MODULE)
+    target_compile_options(blixt_app PRIVATE -std=gnu17)
+endif()
 ubiqos_add_module(rm modules/rm/rm.c)
 ubiqos_add_module(cp modules/cp/cp.c)
 ubiqos_add_module(write modules/write/write.c)
@@ -2066,6 +2079,7 @@ set(UBIQOS_RESIDENT
     config
     fetch
     agent
+    blixt
     tlsroots
     mount
     wifi
