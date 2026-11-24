@@ -916,6 +916,20 @@ static const char *nav_sequence(uint8_t k) {
     case 0x50: return "\x1b[D";
     case 0x51: return "\x1b[B";
     case 0x52: return "\x1b[A";
+    // The function keys as xterm sends them, so that a program reads one set
+    // whether its keyboard is this one or a terminal at the end of SSH.
+    case 0x3a: return "\x1bOP";
+    case 0x3b: return "\x1bOQ";
+    case 0x3c: return "\x1bOR";
+    case 0x3d: return "\x1bOS";
+    case 0x3e: return "\x1b[15~";
+    case 0x3f: return "\x1b[17~";
+    case 0x40: return "\x1b[18~";
+    case 0x41: return "\x1b[19~";
+    case 0x42: return "\x1b[20~";
+    case 0x43: return "\x1b[21~";
+    case 0x44: return "\x1b[23~";
+    case 0x45: return "\x1b[24~";
     default:   return 0;
     }
 }
@@ -1105,7 +1119,16 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
                 ubiqos_usbhost_push_str(sq);
             } else {
                 uint8_t c = translate(k, report[0]);
-                if (c) { scroll_to_live(); emit(c); }
+                // Left Alt with a letter is ESC and the letter, as a terminal's
+                // meta key sends it: Alt-F opens a menu over SSH and here alike.
+                // Only letters, and only the left key: right Alt is AltGr, and
+                // on a Mac keyboard Option with a digit types @ or a bracket.
+                if (c && (report[0] & 0x04) && !(report[0] & 0x40)
+                    && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+                    const char meta[3] = { 0x1b, (char)c, 0 };
+                    scroll_to_live();
+                    ubiqos_usbhost_push_str(meta);
+                } else if (c) { scroll_to_live(); emit(c); }
             }
 
             // The newest key down is the one that repeats, as it is everywhere:
