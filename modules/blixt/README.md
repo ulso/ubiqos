@@ -15,6 +15,7 @@ is on the screen.
 | Alt-F9 or Ctrl-K | assemble only, and say how it went |
 | F10, Esc, Alt-letter | the menus |
 | Alt-X or Ctrl-Q | leave |
+| Compile > Destination | Memory (run and keep nothing) or Disk (also write NAME.mod beside the source) |
 
 Every function key has a control key, because a Mac keeps its function keys
 for itself, over SSH and through Keybridge alike. Ctrl-H is free for help

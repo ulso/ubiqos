@@ -66,6 +66,11 @@ static bool modified;
 static char filename[128];
 static char run_args[96];
 static bool listing;
+// Compile > Destination, as Turbo Pascal had it: Memory runs the program and
+// keeps nothing; Disk also writes NAME.mod beside the source, where the shell
+// can run it by name if the directory is on its path.
+static bool dest_disk;
+static char dest_label[32] = "~D~estination    Memory";
 static bool quit;
 
 static asm_result_t res;
@@ -73,7 +78,7 @@ static bool have_res;
 static bool res_stale = true;
 
 static char errbar[160];
-static char notice[120];
+static char notice[300];
 
 static void line_reserve(line_t *l, int n)
 {
@@ -220,7 +225,7 @@ typedef struct {
 enum {
     CMD_NONE, CMD_NEW, CMD_OPEN, CMD_SAVE, CMD_SAVEAS, CMD_EXIT, CMD_DELLINE,
     CMD_DUPLINE, CMD_GOTO, CMD_TOP, CMD_BOTTOM, CMD_FIND, CMD_FINDNEXT, CMD_RUN, CMD_ARGS,
-    CMD_COMPILE, CMD_LISTING, CMD_INFO, CMD_HELP, CMD_REFERENCE, CMD_SYSCALLS, CMD_ABOUT,
+    CMD_COMPILE, CMD_LISTING, CMD_DEST, CMD_INFO, CMD_HELP, CMD_REFERENCE, CMD_SYSCALLS, CMD_ABOUT,
 };
 
 static const item_t m_file[] = {
@@ -241,7 +246,7 @@ static const item_t m_run[] = {
 };
 static const item_t m_compile[] = {
     { "~C~ompile", "Alt-F9 ^K", CMD_COMPILE }, { "~L~isting", "F4 ^T", CMD_LISTING },
-    { "~I~nformation...", "", CMD_INFO }, { 0, 0, -1 },
+    { dest_label, "", CMD_DEST }, { "~I~nformation...", "", CMD_INFO }, { 0, 0, -1 },
 };
 static const item_t m_help[] = {
     { "~K~eys", "F1 ^H", CMD_HELP }, { "~I~nstructions", "", CMD_REFERENCE },
@@ -870,34 +875,66 @@ static void module_name(char *out, int size)
     out[n] = 0;
 }
 
+// Where Destination Disk puts the module: beside the source, NAME.mod.
+static void module_path(char *out, int size)
+{
+    char name[16];
+    module_name(name, sizeof name);
+    const char *slash = filename[0] ? strrchr(filename, '/') : 0;
+    if (slash) snprintf(out, (size_t)size, "%.*s/%s.mod", (int)(slash - filename), filename, name);
+    else snprintf(out, (size_t)size, "%s.mod", name);
+}
+
+// Write the module to disk when the destination says so. Returns false only
+// when that was asked for and failed; *said gets what to tell.
+static bool write_module(char *said, int size)
+{
+    said[0] = 0;
+    if (!dest_disk) return true;
+    char name[16], path[160];
+    module_name(name, sizeof name);
+    module_path(path, sizeof path);
+    uint32_t n;
+    uint8_t *m = mod_build(name, &res, &n);
+    bool ok = m && plat_save(path, (const char *)m, (long)n);
+    free(m);
+    if (ok) snprintf(said, (size_t)size, "Wrote %s, %u bytes.", path, n);
+    else snprintf(said, (size_t)size, "Could not write %s.", path);
+    return ok;
+}
+
 static void info(void)
 {
     if (!compile()) return;
     char m[300], name[16];
     module_name(name, sizeof name);
     snprintf(m, sizeof m,
-             "Lines: %d\nCode: %u bytes\nAddresses to fix: %u\nEntry: %04X\nStack: %u bytes\nPasses: %d\nModule: %s",
-             nl, res.size, res.nrelocs, res.entry, res.stack ? res.stack : 4096u, res.passes, name);
+             "Lines: %d\nCode: %u bytes\nAddresses to fix: %u\nEntry: %04X\nStack: %u bytes\nPasses: %d\nModule: %s\nDestination: %s",
+             nl, res.size, res.nrelocs, res.entry, res.stack ? res.stack : 4096u, res.passes, name,
+             dest_disk ? "Disk" : "Memory");
     say("Information", m);
 }
 
 static void compile_cmd(void)
 {
     if (!compile()) return;
-    char m[200];
-    snprintf(m, sizeof m, "Assembled %d lines.\n%u bytes of code, %d passes.\n\nSuccess: press any key.",
-             nl, res.size, res.passes);
+    char m[400], wrote[200];
+    bool ok = write_module(wrote, (int)sizeof wrote);
+    snprintf(m, sizeof m, "Assembled %d lines.\n%u bytes of code, %d passes.\n%s%s\n%s",
+             nl, res.size, res.passes, wrote, wrote[0] ? "\n" : "",
+             ok ? "Success: press any key." : "The module was not saved.");
     say("Compiling", m);
 }
 
 static void run(void)
 {
     if (!compile()) return;
-    char name[16], msg[160];
+    char name[16], msg[160], wrote[200];
     module_name(name, sizeof name);
+    write_module(wrote, (int)sizeof wrote);
     tui_done();
     plat_run(name, run_args, &res, msg, (int)sizeof msg);
-    snprintf(notice, sizeof notice, "%s", msg);
+    snprintf(notice, sizeof notice, "%s%s%s", msg, wrote[0] ? "  " : "", wrote);
     tui_flush(true);
 }
 
@@ -1074,6 +1111,10 @@ static void command(int cmd)
     case CMD_ARGS: ask("Program Arguments", "~P~arameters for the program", run_args, (int)sizeof run_args); break;
     case CMD_COMPILE: compile_cmd(); break;
     case CMD_LISTING: listing = !listing; res_stale = true; break;
+    case CMD_DEST:
+        dest_disk = !dest_disk;
+        snprintf(dest_label, sizeof dest_label, "~D~estination    %s", dest_disk ? "Disk" : "Memory");
+        break;
     case CMD_INFO: info(); break;
     case CMD_HELP: show_text("Help", help_keys, (int)(sizeof help_keys / sizeof help_keys[0])); break;
     case CMD_REFERENCE: show_text("Instructions", help_ref, (int)(sizeof help_ref / sizeof help_ref[0])); break;
