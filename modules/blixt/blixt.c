@@ -354,6 +354,21 @@ static bool line_has_error(int line, const char **msg)
     return false;
 }
 
+// Data is shown a byte at a time and an instruction a halfword at a time, so
+// which one a line holds is read off the line: a directive after any label.
+static bool is_directive(const line_t *l)
+{
+    int i = 0;
+    while (i < l->len && (l->s[i] == ' ' || l->s[i] == '\t')) i++;
+    int j = i;
+    while (j < l->len && (isalnum((unsigned char)l->s[j]) || l->s[j] == '_' || l->s[j] == '.' || l->s[j] == '$')) j++;
+    if (j < l->len && l->s[j] == ':') {
+        i = j + 1;
+        while (i < l->len && (l->s[i] == ' ' || l->s[i] == '\t')) i++;
+    }
+    return i < l->len && l->s[i] == '.';
+}
+
 static void draw_gutter(int y, int line)
 {
     tui_fill(ed_x0(), y, GUTTER, 1, ' ', A_GUTTER);
@@ -364,6 +379,15 @@ static void draw_gutter(int y, int line)
     }
     uint32_t a = res.line_addr[line], n = res.line_size[line];
     char b[40];
+    bool inc = false;
+    for (int k = 0; k + 8 <= L[line].len && !inc; k++)
+        inc = !memcmp(L[line].s + k, ".include", 8);
+    if (inc) {
+        // A whole file's worth: where it starts and how much it made.
+        snprintf(b, sizeof b, "%04X %u bytes", a, n);
+        tui_text(ed_x0(), y, b, A_GUTTER, GUTTER - 1);
+        return;
+    }
     if (!n) {
         // A label shows where it is; an empty line shows nothing.
         const line_t *l = &L[line];
@@ -373,9 +397,9 @@ static void draw_gutter(int y, int line)
         while (j < l->len && (isalnum((unsigned char)l->s[j]) || l->s[j] == '_' || l->s[j] == '.' || l->s[j] == '$')) j++;
         if (j == i || j >= l->len || l->s[j] != ':') return;
         snprintf(b, sizeof b, "%04X", a);
-    } else if (n == 2 && a + 2 <= res.size) {
+    } else if (!is_directive(&L[line]) && n == 2 && a + 2 <= res.size) {
         snprintf(b, sizeof b, "%04X %02X%02X", a, res.code[a + 1], res.code[a]);
-    } else if (n == 4 && a + 4 <= res.size && !(L[line].len && strstr(L[line].s, ".word"))) {
+    } else if (!is_directive(&L[line]) && n == 4 && a + 4 <= res.size) {
         snprintf(b, sizeof b, "%04X %02X%02X %02X%02X", a, res.code[a + 1], res.code[a],
                  res.code[a + 3], res.code[a + 2]);
     } else {
@@ -477,11 +501,25 @@ static void scroll_to_cursor(void)
     if (col >= left + tw) left = col - tw + 1;
 }
 
+static char *load_include(void *ctx, const char *path, long *size)
+{
+    (void)ctx;
+    return plat_load(path, size);
+}
+
 static void reassemble(void)
 {
     if (!res_stale) return;
     if (have_res) asm_free(&res);
-    asm_assemble(text_line, 0, nl, &res);
+    // .include looks beside the source first: its directory, or the current
+    // one for a source named without one.
+    char dir[160];
+    const char *slash = strrchr(filename, '/');
+    if (slash) snprintf(dir, sizeof dir, "%.*s", (int)(slash - filename), filename);
+    else plat_cwd(dir, (int)sizeof dir);
+    if (slash == filename) snprintf(dir, sizeof dir, "/");
+    asm_include_t inc = { load_include, 0, dir };
+    asm_assemble(text_line, 0, nl, &inc, &res);
     have_res = true;
     res_stale = false;
 }
@@ -711,6 +749,7 @@ static const char *const help_ref[] = {
     "",
     "~Directives~ .word .hword .byte .ascii .asciz .space .align .balign",
     "             .equ NAME, value   NAME = value   .ltorg   .thumb_func",
+    "             .include \"file.s\"  (beside this file, then as written)",
     "             .stack BYTES  (the program's stack; 4096 if not given)",
     "~Labels~     name:   and local 1: 2: ... used as 1b (back) and 1f (forward)",
     "~Numbers~    10  0x1f  0b101  'A'  and + - * / % << >> & | ^ ~ ( )",

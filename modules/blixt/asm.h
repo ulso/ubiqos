@@ -47,9 +47,20 @@ typedef struct {
 // Line i of the source, not terminated; *len says how long.
 typedef const char *(*asm_line_fn)(void *ctx, int i, int *len);
 
+// For .include: a whole file, NUL-terminated and malloc'd, or 0. dir is the
+// directory of the source being assembled; a relative name is looked for
+// there first. Without a loader .include is an error.
+typedef char *(*asm_load_fn)(void *ctx, const char *path, long *size);
+typedef struct {
+    asm_load_fn load;
+    void       *ctx;
+    const char *dir;
+} asm_include_t;
+
 // Returns true when there were no errors. The result owns its arrays; free
-// them with asm_free.
-bool asm_assemble(asm_line_fn get, void *ctx, int nlines, asm_result_t *r);
+// them with asm_free. inc may be 0.
+bool asm_assemble(asm_line_fn get, void *ctx, int nlines, const asm_include_t *inc,
+                  asm_result_t *r);
 void asm_free(asm_result_t *r);
 
 #endif

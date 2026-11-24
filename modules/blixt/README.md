@@ -34,6 +34,14 @@ mnemonic says `.w`. A reference forward is first assumed short and grows when
 a later pass finds it out of reach; when a pass changes nothing, one more
 writes the code and the errors.
 
+One difference is on purpose: a constant used before its `.equ` makes GNU as
+take the 32-bit form, because it cannot go back; Blixt goes back and takes the
+16-bit one when it fits. The tests define their constants first.
+
+`.include "file.s"` assembles another file in place. It is looked for beside
+the file that includes it, then beside the source, then as written; an error
+in it is reported as "file.s line N" on the `.include` line.
+
 `test/run.sh` assembles every `test/*.s` with Blixt and with
 `arm-none-eabi-as` and compares the bytes line by line:
 
