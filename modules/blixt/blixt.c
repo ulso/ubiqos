@@ -1234,7 +1234,7 @@ static void key(int k)
     case K_F2: case 19: command(CMD_SAVE); break;              // Ctrl-S
     case K_F3: case 15: command(CMD_OPEN); break;              // Ctrl-O
     case K_F4: case 20: command(CMD_LISTING); break;           // Ctrl-T
-    case K_F9: case 18: case 2: command(CMD_RUN); break;       // Ctrl-R, Ctrl-B
+    case K_F9: case 18: command(CMD_RUN); break;               // Ctrl-R
     case K_ALTF | K_F9: case 11: command(CMD_COMPILE); break;  // Ctrl-K
     case K_F10: case K_ESC: command(menu_bar()); break;
     case K_ALT | 'x': case 17: command(CMD_EXIT); break;       // Ctrl-Q
