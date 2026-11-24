@@ -134,6 +134,11 @@ static uint32_t cur_col, cur_row;
 // a copy of the text; inverting is the fix that needs no copy, and four
 // kilobytes of screen buffer went back to the processes.
 static bool cursor_shown;
+// ESC [ ? 25 l hides it and ESC [ ? 25 h shows it again, as on every terminal:
+// a full-screen program hides it while it redraws and in its menus.
+static bool cursor_hidden;
+// The sequence being read had a private marker (? < = >): only ?25 is ours.
+static bool csi_private;
 
 // A line of exactly eighty characters used to break twice: once when the
 // eightieth was written and again when the newline arrived, leaving a blank
@@ -214,6 +219,7 @@ static void clear_row(uint32_t row)
 // cell wrong side out with nothing to say so.
 static void cursor(bool on)
 {
+    if (cursor_hidden) on = false;
     if (on == cursor_shown)
         return;
 
@@ -633,6 +639,7 @@ static void console_feed(uint8_t c)
             esc_state = ST_CSI;
             nparams = 0;
             params[0] = 0;
+            csi_private = false;
         } else {
             esc_state = ST_NORMAL;   // not ours; both bytes go
         }
@@ -649,10 +656,19 @@ static void console_feed(uint8_t c)
             else
                 params[MAX_PARAMS - 1] = 0;
         } else if (c >= '@' && c <= '~') {
-            do_csi(c);
+            // A private sequence is not the public one with the same final
+            // byte, so it never reaches do_csi.
+            if (!csi_private)
+                do_csi(c);
+            else if ((c == 'h' || c == 'l') && nparams == 1 && params[0] == 25)
+                cursor_hidden = c == 'l';
             esc_state = ST_NORMAL;
+        } else if (c >= '<' && c <= '?') {
+            // A private marker. It used to end the sequence, and the rest of
+            // it was then drawn as text: Blixt's ESC [ ? 25 h came out as 25h.
+            csi_private = true;
         } else if (c < '0') {
-            /* an intermediate byte, or a private marker like '?'; keep reading */
+            /* an intermediate byte; keep reading */
         } else {
             esc_state = ST_NORMAL;
         }
