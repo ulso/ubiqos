@@ -13,6 +13,12 @@ int scr_w, scr_h;
 static cell_t *back, *front;         // what is drawn, what the terminal shows
 static int cur_x, cur_y;
 static bool cur_show;
+// The terminal's alternate screen, as a full-screen program uses it: what the
+// shell had on the screen comes back untouched when Blixt leaves, and nothing
+// the terminal drew in the margin for those lines (macOS Terminal's marks)
+// shows through. The board's console reads past the sequence and has one
+// screen, which is why leaving also clears it.
+static bool alt_screen;
 
 static char *out;
 static int   out_len, out_cap;
@@ -80,7 +86,8 @@ void tui_init(void)
 void tui_done(void)
 {
     out_len = 0;
-    emits("\x1b[0m\x1b[2J\x1b[H\x1b[?25h");
+    emits("\x1b[0m\x1b[2J\x1b[H\x1b[?25h\x1b[?1049l");
+    alt_screen = false;
     plat_write(out, out_len);
     out_len = 0;
 }
@@ -188,6 +195,11 @@ static void move(int x, int y)
 void tui_flush(bool full)
 {
     out_len = 0;
+    if (!alt_screen) {
+        emits("\x1b[?1049h");
+        alt_screen = true;
+        full = true;
+    }
     emits("\x1b[?25l");
     int last_attr = -1;
     if (full) emits("\x1b[0m");
