@@ -1944,8 +1944,19 @@ static inline int32_t ubiqos_exec(const char *module_name, const char *args)
 
     if (ubiqos_syscall(SYS_LOADMOD, (uint32_t)(uintptr_t)module_name, 0, 0) != 0)
         return -1;
-    return ubiqos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
-                          (uint32_t)(uintptr_t)args, 0);
+    // Loaded by path, "/tmp/hello", it is known by the last part of it.
+    const char *name = module_name;
+    for (const char *c = module_name; *c; c++) if (*c == '/') name = c + 1;
+    if (name == module_name)
+        return ubiqos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)module_name,
+                              (uint32_t)(uintptr_t)args, 0);
+    char base[UBIQOS_NAME_LEN];
+    uint32_t n = 0;
+    while (name[n] && n < UBIQOS_NAME_LEN - 1) { base[n] = name[n]; n++; }
+    if (n > 4 && base[n - 4] == '.' && base[n - 3] == 'm' && base[n - 2] == 'o' && base[n - 1] == 'd')
+        n -= 4;
+    base[n] = 0;
+    return ubiqos_syscall(SYS_EXEC, (uint32_t)(uintptr_t)base, (uint32_t)(uintptr_t)args, 0);
 }
 
 // A module starts like main: argc in a0, argv in a1, and argv[0] is the

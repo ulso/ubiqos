@@ -616,6 +616,48 @@ static bool load_module_from_card(const char *name) {
     // what made "hibouair&" -- a mistyped command line, with the ampersand
     // meant for the shell -- load hibouair.mod and start the scanner, with the
     // log reading "Loaded hibouair& from /sd" as though it had worked.
+    // A whole path -- "/tmp/hello" -- names one file, and the module takes the
+    // last part of it for its name, without a .mod. That is how a program just
+    // built somewhere off the search path is run: Blixt writes its output to
+    // /tmp and starts it from there.
+    char dir[UBIQOS_PATH_MAX];
+    char file[UBIQOS_PATH_MAX + UBIQOS_NAME_LEN + 8];
+    char base[UBIQOS_NAME_LEN];
+    const ubiqos_fsops_t *ops = 0;
+    bool found = false;
+    if (name[0] == '/') {
+        uint32_t len = 0, slash = 0;
+        while (name[len]) {
+            if (name[len] == '/') slash = len;
+            if (++len >= UBIQOS_PATH_MAX) return false;
+        }
+        uint32_t b = 0;
+        for (uint32_t i = slash + 1; i < len; i++) {
+            if (b >= UBIQOS_NAME_LEN - 1) return false;
+            base[b++] = name[i];
+        }
+        if (b > 4 && base[b - 4] == '.' && base[b - 3] == 'm' && base[b - 2] == 'o' && base[b - 1] == 'd')
+            b -= 4;
+        base[b] = 0;
+        if (!b) return false;
+        for (uint32_t i = 0; i < slash; i++) dir[i] = name[i];
+        dir[slash ? slash : 1] = 0;
+        if (!slash) dir[0] = '/';
+        const char *rest = "/";
+        ops = ubiqos_vfs_split(name, &rest);
+        if (!ops || !ops->stat || !ops->read_at) return false;
+        uint32_t f = 0;
+        for (const char *r = rest; *r && f < sizeof file - 5; r++) file[f++] = *r;
+        file[f] = 0;
+        if (is_module_file(ops, file)) found = true;
+        else {
+            file[f] = '.'; file[f+1] = 'm'; file[f+2] = 'o'; file[f+3] = 'd'; file[f+4] = 0;
+            found = is_module_file(ops, file);
+        }
+        if (!found) return false;
+        name = base;
+    }
+
     uint32_t n = 0;
     while (name[n]) {
         if (n >= UBIQOS_NAME_LEN - 1 || name[n] == '/') return false;
@@ -625,11 +667,7 @@ static bool load_module_from_card(const char *name) {
 
     // Then each directory on the path in turn. An entry is copied out so that
     // it can be split: "/sd/bin" is volume sd, and "/bin" within it.
-    char dir[UBIQOS_PATH_MAX];
-    char file[UBIQOS_PATH_MAX + UBIQOS_NAME_LEN + 8];
-    const ubiqos_fsops_t *ops = 0;
-    const char *p = search_path;
-    bool found = false;
+    const char *p = found ? "" : search_path;
     while (*p && !found) {
         uint32_t d = 0;
         while (*p && *p != ':') dir[d++] = *p++;
