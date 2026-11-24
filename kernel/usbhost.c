@@ -989,6 +989,12 @@ static uint8_t translate(uint8_t k, uint8_t mods) {
     bool alt  = (mods & 0x40) != 0;             // right alt, which is AltGr
     bool ctrl = (mods & 0x11) != 0;             // either control
 
+    // Backspace is DEL, 127, as xterm, the Linux console and a Mac terminal
+    // send it -- which leaves 8 to be Ctrl-H and nothing else, so a program
+    // can tell the two apart. Everything here that reads a line takes either.
+    // Ctrl-Backspace gives the old 8.
+    if (k == 0x2a) return ctrl ? 0x08 : 0x7f;
+
     if (keymap) {
         if (k >= UBIQOS_KEYMAP_KEYS) return 0;
         uint8_t c = alt ? keymap->altgr[k] : (sh ? keymap->shift[k] : keymap->plain[k]);
