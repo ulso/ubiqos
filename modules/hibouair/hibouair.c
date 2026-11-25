@@ -819,7 +819,15 @@ void module_main(int argc, char **argv)
             break;
         }
 
-        if (from == 0) {
+        // A pulse says there WAS something to read when it was sent, not that
+        // there still is. dongle_setup empties the dongle's answers itself,
+        // and the pulse they raised is still queued when it returns: read on
+        // it, and the read waits for the dongle's next line -- for ever in a
+        // room with no sensor, with no wake, no publish and no clean stop on
+        // ctrl-C in the meantime. Each such read also lets the arm raise the
+        // next pulse, so one stale pulse is never used up. Ask first. airview
+        // on the 4.3B froze its screen this way (a customer, 25 Nov 2026).
+        if (from == 0 && ubiqos_readable(dev) > 0) {
             int32_t n = ubiqos_read(dev, buf, sizeof(buf));
             if (n < 0) {
                 printf("hibouair: the dongle is gone\n");
