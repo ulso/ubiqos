@@ -1066,11 +1066,18 @@ static void __no_inline_not_in_flash_func(retime_qmi)(uint32_t scale) {
 // Above RP2350's rated 150 MHz the core wants more than its default 1.10 V.
 // 1.20 is a margin rather than a minimum -- 240 is commonly run at 1.15 --
 // and well inside what the regulator gives without being unlocked (1.30).
+//
+// And at 150 or below it is set back to 1.10, every boot, rather than left as
+// found. The regulator lives in POWMAN, which a reset does not touch -- not a
+// watchdog, not a debugger, not a reboot out of BOOTSEL -- only taking the
+// power away does. So a board that ran a 240 MHz build and was then given a
+// 120 MHz one kept 1.20 V, and at 1.20 V and 120 MHz the SD card's replies to
+// commands failed their CRC at full SDIO speed: "SD: driver panic: bad crc",
+// under a second into the boot, on RISC-V and on an Arm built for 120 alike
+// (Fruit Jam, 25 Nov 2026; back to 1.10 over the probe, the same file booted).
 static void set_clock(void) {
-    if (UBIQOS_SYS_KHZ > 150000) {
-        vreg_set_voltage(VREG_VOLTAGE_1_20);
-        busy_wait_us(1000);                 // the SDK's own settling time
-    }
+    vreg_set_voltage(UBIQOS_SYS_KHZ > 150000 ? VREG_VOLTAGE_1_20 : VREG_VOLTAGE_DEFAULT);
+    busy_wait_us(1000);                     // the SDK's own settling time
     set_sys_clock_khz(UBIQOS_SYS_KHZ, true);
     retime_qmi(UBIQOS_SYS_KHZ / 120000);
 #if UBIQOS_VIDEO_HIRES
