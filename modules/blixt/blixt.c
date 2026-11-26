@@ -2,7 +2,7 @@
 // IDEs: a menu bar on top, the source in a blue window, the keys on the bottom
 // line, and F9 to assemble and run what is on the screen.
 //
-//     blixt [FILE]
+//     blixt [FILE...]
 //
 // F9 assembles, writes the program as a module to /tmp and runs it with the
 // terminal its own; when it ends, a key brings the editor back. F4 shows the
@@ -147,22 +147,24 @@ static void set_text(const char *t, long n)
     res_stale = true;
 }
 
-static char *get_text(long *size)
+static char *text_of(const line_t *lines, int n_lines, long *size)
 {
     long n = 0;
-    for (int i = 0; i < nl; i++) n += L[i].len + 1;
+    for (int i = 0; i < n_lines; i++) n += lines[i].len + 1;
     char *t = malloc((size_t)n + 1);
     if (!t) return 0;
     long k = 0;
-    for (int i = 0; i < nl; i++) {
-        memcpy(t + k, L[i].s, (size_t)L[i].len);
-        k += L[i].len;
+    for (int i = 0; i < n_lines; i++) {
+        memcpy(t + k, lines[i].s, (size_t)lines[i].len);
+        k += lines[i].len;
         t[k++] = '\n';
     }
     t[k] = 0;
     *size = k;
     return t;
 }
+
+static char *get_text(long *size) { return text_of(L, nl, size); }
 
 static const char *text_line(void *ctx, int i, int *len)
 {
@@ -176,6 +178,89 @@ static void changed(void)
     modified = true;
     res_stale = true;
 }
+
+// --- windows ------------------------------------------------------------------
+
+// Up to nine texts, as the IDE had, each a window with its number in the
+// corner of its frame. The one on the screen lives in the variables above,
+// so the editor needs no idea of windows; the others wait here, and going to
+// one swaps it in. Options -- the listing, the destination, the program's
+// arguments, the search -- belong to Blixt, not to a window.
+#define NWIN 9
+
+typedef struct {
+    bool    open;
+    line_t *L;
+    int     nl, lcap, cy, cx, top, left;
+    bool    modified;
+    char    filename[128];
+} win_t;
+
+static win_t W[NWIN];
+static int cur;                  // the window on the screen
+
+// The window on the screen, written back to its slot.
+static void win_stash(void)
+{
+    win_t *w = &W[cur];
+    w->open = true;
+    w->L = L; w->nl = nl; w->lcap = lcap;
+    w->cy = cy; w->cx = cx; w->top = top; w->left = left;
+    w->modified = modified;
+    memcpy(w->filename, filename, sizeof filename);
+}
+
+// Put window i on the screen. What was there must be stashed or dropped.
+static void win_take(int i)
+{
+    const win_t *w = &W[i];
+    cur = i;
+    L = w->L; nl = w->nl; lcap = w->lcap;
+    cy = w->cy; cx = w->cx; top = w->top; left = w->left;
+    modified = w->modified;
+    memcpy(filename, w->filename, sizeof filename);
+    want_col = -1;
+    res_stale = true;
+    errbar[0] = 0;
+}
+
+// An empty window in the lowest free slot, on the screen; -1 when all nine
+// are open, and then nothing has changed.
+static int win_new(void)
+{
+    int j = -1;
+    for (int i = 0; i < NWIN && j < 0; i++)
+        if (i != cur && !W[i].open) j = i;
+    if (j < 0) return -1;
+    win_stash();
+    memset(&W[j], 0, sizeof W[j]);
+    W[j].open = true;
+    win_take(j);
+    lines_reserve(64);
+    insert_line(0, "", 0);
+    return j;
+}
+
+// Throw the window on the screen away, unasked, and show another: the next
+// one up, or an empty window 1 when it was the last.
+static void win_drop(void)
+{
+    clear_text();
+    free(L);
+    memset(&W[cur], 0, sizeof W[cur]);
+    for (int k = 1; k < NWIN; k++) {
+        int i = (cur + k) % NWIN;
+        if (W[i].open) { win_take(i); return; }
+    }
+    win_take(0);
+    W[0].open = true;
+    lines_reserve(64);
+    insert_line(0, "", 0);
+}
+
+// A window that holds nothing of anyone's: no name and no changes. Open and
+// New use it rather than leave it lying about.
+static bool win_untouched(void) { return !filename[0] && !modified; }
 
 // --- columns: tabs every eight, UTF-8 one column a character -----------------
 
@@ -226,6 +311,7 @@ enum {
     CMD_NONE, CMD_NEW, CMD_OPEN, CMD_SAVE, CMD_SAVEAS, CMD_EXIT, CMD_DELLINE,
     CMD_DUPLINE, CMD_GOTO, CMD_TOP, CMD_BOTTOM, CMD_FIND, CMD_FINDNEXT, CMD_RUN, CMD_ARGS,
     CMD_COMPILE, CMD_LISTING, CMD_DEST, CMD_INFO, CMD_HELP, CMD_REFERENCE, CMD_SYSCALLS, CMD_ABOUT,
+    CMD_WNEXT, CMD_WCLOSE, CMD_WLIST,
 };
 
 static const item_t m_file[] = {
@@ -248,6 +334,10 @@ static const item_t m_compile[] = {
     { "~C~ompile", "Alt-F9 ^K", CMD_COMPILE }, { "~L~isting", "F4 ^T", CMD_LISTING },
     { dest_label, "", CMD_DEST }, { "~I~nformation...", "", CMD_INFO }, { 0, 0, -1 },
 };
+static const item_t m_window[] = {
+    { "~N~ext", "F6", CMD_WNEXT }, { "~C~lose", "Alt-F3", CMD_WCLOSE }, { 0, 0, 0 },
+    { "~L~ist...", "Alt-0", CMD_WLIST }, { 0, 0, -1 },
+};
 static const item_t m_help[] = {
     { "~K~eys", "F1 ^H", CMD_HELP }, { "~I~nstructions", "", CMD_REFERENCE },
     { "~S~ystem calls", "", CMD_SYSCALLS }, { 0, 0, 0 }, { "~A~bout...", "", CMD_ABOUT },
@@ -261,7 +351,7 @@ typedef struct {
 
 static const menu_t menus[] = {
     { "~F~ile", m_file }, { "~E~dit", m_edit }, { "~S~earch", m_search },
-    { "~R~un", m_run }, { "~C~ompile", m_compile }, { "~H~elp", m_help },
+    { "~R~un", m_run }, { "~C~ompile", m_compile }, { "~W~indow", m_window }, { "~H~elp", m_help },
 };
 #define NMENUS ((int)(sizeof menus / sizeof menus[0]))
 
@@ -428,7 +518,8 @@ static void draw_editor(void)
     tui_text(2, 1, "[", A_FRAME, 1);
     tui_put(3, 1, G_SQ, ATTR(C_LGREEN, C_BLUE));
     tui_text(4, 1, "]", A_FRAME, 1);
-    tui_text(scr_w - 5, 1, "1", A_FRAME, 1);
+    char num[2] = { (char)('1' + cur), 0 };
+    tui_text(scr_w - 5, 1, num, A_FRAME, 1);
 
     int tx = text_x0(), tw = text_w();
     uint8_t attr[1024];
@@ -501,9 +592,53 @@ static void scroll_to_cursor(void)
     if (col >= left + tw) left = col - tw + 1;
 }
 
+// A name as one spelling of it: absolute, without "." steps or doubled
+// slashes, so that "sub/a.s" and "/sd/sub/./a.s" are found to be one file.
+static void full_path(const char *name, char *out, int size)
+{
+    char raw[320];
+    if (name[0] == '/') snprintf(raw, sizeof raw, "%s", name);
+    else {
+        char cwd[160];
+        plat_cwd(cwd, (int)sizeof cwd);
+        snprintf(raw, sizeof raw, "%s/%s", cwd, name);
+    }
+    int n = 0;
+    for (const char *p = raw; *p && n < size - 1;) {
+        if (*p == '/') {
+            while (*p == '/') p++;
+            if (p[0] == '.' && (p[1] == '/' || !p[1])) { p++; continue; }
+            out[n++] = '/';
+            continue;
+        }
+        out[n++] = *p++;
+    }
+    if (n > 1 && out[n - 1] == '/') n--;
+    if (!n) out[n++] = '/';
+    out[n] = 0;
+}
+
+// The open window that holds this file, or -1.
+static int win_holding(const char *path)
+{
+    char want[256], have[256];
+    full_path(path, want, (int)sizeof want);
+    win_stash();
+    for (int i = 0; i < NWIN; i++) {
+        if (!W[i].open || !W[i].filename[0]) continue;
+        full_path(W[i].filename, have, (int)sizeof have);
+        if (!strcmp(want, have)) return i;
+    }
+    return -1;
+}
+
+// A file that is open in a window is included as the window has it, saved
+// or not: what is assembled is what is on the screens.
 static char *load_include(void *ctx, const char *path, long *size)
 {
     (void)ctx;
+    int i = win_holding(path);
+    if (i >= 0) return text_of(W[i].L, W[i].nl, size);
     return plat_load(path, size);
 }
 
@@ -713,7 +848,10 @@ static const char *const help_keys[] = {
     "~Alt-F9~   ~Ctrl-K~    Assemble only",
     "~F10~      ~Esc~       The menu bar; then a letter opens a menu",
     "~Alt-X~    ~Ctrl-Q~    Leave Blixt",
-    "~Alt-F~ ~E~ ~S~ ~R~ ~C~ ~H~       Open that menu (Esc and the letter also)",
+    "~Alt-n~    ~Ctrl-W n~  Window n, 1 to 9; ~0~ lists the open ones",
+    "~F6~       ~Ctrl-W N~  The next window",
+    "~Alt-F3~   ~Ctrl-W C~  Close the window",
+    "~Alt-F~ ~E~ ~S~ ~R~ ~C~ ~W~ ~H~     Open that menu (Esc and the letter also)",
     "",
     "~Arrows~, ~Home~, ~End~, ~PgUp~, ~PgDn~   Move",
     "~Ctrl-Y~    Delete the line      ~Ctrl-D~   Duplicate the line",
@@ -863,20 +1001,107 @@ static bool load(const char *path, bool quiet)
     return true;
 }
 
+static void all_open(void)
+{
+    say("Window", "All nine windows are open.\nClose one first: Alt-F3, or Ctrl-W then C.");
+}
+
+static void win_go(int i)
+{
+    if (i == cur) return;
+    if (i < 0 || i >= NWIN || !W[i].open) {
+        snprintf(notice, sizeof notice, "There is no window %d.", i + 1);
+        return;
+    }
+    win_stash();
+    win_take(i);
+}
+
+static void win_next(void)
+{
+    for (int k = 1; k < NWIN; k++) {
+        int i = (cur + k) % NWIN;
+        if (W[i].open) { win_go(i); return; }
+    }
+    snprintf(notice, sizeof notice, "There is only one window.");
+}
+
+// A file opens in a window of its own, or goes to the window that already
+// has it. Only a window holding nothing is reused.
 static void open_file(void)
 {
-    if (!may_discard()) return;
     char b[128];
     snprintf(b, sizeof b, "%s", filename);
     if (!ask("Open a File", "~N~ame", b, (int)sizeof b) || !b[0]) return;
-    load(b, false);
+    int have = win_holding(b);
+    if (have >= 0) { win_go(have); return; }
+    if (win_untouched()) { load(b, false); return; }
+    int prev = cur;
+    if (win_new() < 0) { all_open(); return; }
+    if (!load(b, false)) { win_drop(); win_go(prev); }
 }
 
 static void new_file(void)
 {
-    if (!may_discard()) return;
+    if (!win_untouched() && win_new() < 0) { all_open(); return; }
     set_text(template_text, (long)strlen(template_text));
     filename[0] = 0;
+}
+
+static void close_window(void)
+{
+    if (!may_discard()) return;
+    win_drop();
+}
+
+// Leave, asking about every window with unsaved changes, each shown first.
+static void exit_all(void)
+{
+    win_stash();
+    for (int i = 0; i < NWIN; i++) {
+        if (!W[i].open || !W[i].modified) continue;
+        win_go(i);
+        if (!may_discard()) return;
+        win_stash();
+    }
+    quit = true;
+}
+
+// Alt-0: the open windows, to choose one from.
+static void window_list(void)
+{
+    win_stash();
+    int ids[NWIN], n = 0, sel = 0;
+    for (int i = 0; i < NWIN; i++)
+        if (W[i].open) { if (i == cur) sel = n; ids[n++] = i; }
+    int w = 60;
+    if (w > scr_w - 4) w = scr_w - 4;
+    int h = n + 4, x = (scr_w - w) / 2, y = (scr_h - h) / 2;
+    for (;;) {
+        redraw_all(-1, " ~Enter~ Go to  ~1~-~9~ That window  ~Up~/~Down~ Choose  ~Esc~ Close");
+        dialog_frame(x, y, w, h, "Windows", A_DIALOG, A_DFRAME);
+        for (int r = 0; r < n; r++) {
+            const win_t *wi = &W[ids[r]];
+            bool s = r == sel;
+            uint8_t a = s ? A_MENU_SEL : A_DIALOG;
+            char row[200];
+            snprintf(row, sizeof row, "%d  %s%s", ids[r] + 1,
+                     wi->filename[0] ? wi->filename : "NONAME.S", wi->modified ? "  *" : "");
+            tui_fill(x + 2, y + 2 + r, w - 4, 1, ' ', a);
+            // The chosen line has an arrow as well as its colour.
+            if (s) tui_put(x + 2, y + 2 + r, G_RIGHT, a);
+            tui_text(x + 4, y + 2 + r, row, a, w - 7);
+        }
+        tui_cursor(0, 0, false);
+        tui_flush(false);
+        int k = tui_key();
+        if (k == K_RESIZE) { tui_flush(true); x = (scr_w - w) / 2; y = (scr_h - h) / 2; continue; }
+        if (k == K_ESC) return;
+        if (k == K_UP) sel = (sel + n - 1) % n;
+        else if (k == K_DOWN) sel = (sel + 1) % n;
+        else if (k == '\r' || k == '\n') { win_go(ids[sel]); return; }
+        else if (k >= '1' && k <= '9') { win_go(k - '1'); return; }
+    }
 }
 
 // --- assembling and running ---------------------------------------------------
@@ -1139,7 +1364,10 @@ static void command(int cmd)
     case CMD_OPEN: open_file(); break;
     case CMD_SAVE: save(); break;
     case CMD_SAVEAS: save_as(); break;
-    case CMD_EXIT: if (may_discard()) quit = true; break;
+    case CMD_EXIT: exit_all(); break;
+    case CMD_WNEXT: win_next(); break;
+    case CMD_WCLOSE: close_window(); break;
+    case CMD_WLIST: window_list(); break;
     case CMD_DELLINE:
         if (nl > 1) { delete_line(cy); if (cy >= nl) cy = nl - 1; }
         else { L[0].len = 0; }
@@ -1278,6 +1506,22 @@ static void move_vert(int d)
     cx = byte_at_col(&L[cy], want_col);
 }
 
+// Ctrl-W and then a key: the window keys for a keyboard whose Alt and digit
+// type something else (the board's keyboard and Keybridge send only Alt with
+// a letter).
+static void window_key(void)
+{
+    redraw_all(-1, " Window:  ~1~-~9~ Go to  ~0~ List  ~N~ Next  ~C~ Close  ~Esc~ Nothing");
+    place_cursor();
+    tui_flush(false);
+    int k = tui_key();
+    if (k >= '1' && k <= '9') win_go(k - '1');
+    else if (k == '0') command(CMD_WLIST);
+    else if (k == 'n' || k == 'N' || k == 23 || k == '\t') command(CMD_WNEXT);
+    else if (k == 'c' || k == 'C') command(CMD_WCLOSE);
+    else if (k == K_RESIZE) tui_flush(true);
+}
+
 static void key(int k)
 {
     bool vertical = false;
@@ -1298,6 +1542,9 @@ static void key(int k)
     case 6: command(CMD_FIND); break;                          // Ctrl-F
     case 12: command(CMD_FINDNEXT); break;                     // Ctrl-L
     case 7: command(CMD_GOTO); break;                          // Ctrl-G
+    case K_F6: command(CMD_WNEXT); break;
+    case K_ALTF | K_F3: command(CMD_WCLOSE); break;
+    case 23: window_key(); break;                              // Ctrl-W
     case K_UP: move_vert(-1); vertical = true; break;
     case K_DOWN: move_vert(1); vertical = true; break;
     case K_PGUP: move_vert(-page); top -= page; if (top < 0) top = 0; vertical = true; break;
@@ -1326,6 +1573,9 @@ static void key(int k)
     default:
         if (k & K_ALT) {
             int c = k & 0x7f;
+            // Alt and a digit: that window, as in the IDE; Alt-0 the list.
+            if (c >= '1' && c <= '9') { win_go(c - '1'); break; }
+            if (c == '0') { command(CMD_WLIST); break; }
             for (int i = 0; i < NMENUS; i++) {
                 const char *t = strchr(menus[i].title, '~');
                 if (t && tolower((unsigned char)t[1]) == c) { command(run_menu(i)); break; }
@@ -1345,13 +1595,18 @@ int blixt_main(int argc, char **argv)
     if (!tui_ask_size(&rows, &cols)) plat_default_size(&rows, &cols);
     tui_resize(rows, cols);
     lines_reserve(64);
+    W[0].open = true;
     if (argc >= 2) {
-        snprintf(filename, sizeof filename, "%s", argv[1]);
-        // A name that is not there yet is a new file of that name.
-        if (!load(argv[1], true)) {
-            set_text(template_text, (long)strlen(template_text));
-            snprintf(filename, sizeof filename, "%s", argv[1]);
+        // Each name in a window of its own, up to nine; the first is shown.
+        for (int a = 1; a < argc && a <= NWIN; a++) {
+            if (a > 1 && win_new() < 0) break;
+            // A name that is not there yet is a new file of that name.
+            if (!load(argv[a], true)) {
+                set_text(template_text, (long)strlen(template_text));
+                snprintf(filename, sizeof filename, "%s", argv[a]);
+            }
         }
+        win_go(0);
     } else {
         set_text(template_text, (long)strlen(template_text));
     }

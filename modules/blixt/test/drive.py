@@ -18,11 +18,14 @@ KEYS = {
     "<UP>": b"\x1b[A", "<DOWN>": b"\x1b[B", "<RIGHT>": b"\x1b[C", "<LEFT>": b"\x1b[D",
     "<HOME>": b"\x1b[H", "<END>": b"\x1b[F", "<PGUP>": b"\x1b[5~", "<PGDN>": b"\x1b[6~",
     "<DEL>": b"\x1b[3~", "<F1>": b"\x1bOP", "<F2>": b"\x1bOQ", "<F3>": b"\x1bOR",
-    "<F4>": b"\x1bOS", "<F9>": b"\x1b[20~", "<F10>": b"\x1b[21~", "<ALTF9>": b"\x1b[20;3~",
+    "<F4>": b"\x1bOS", "<F6>": b"\x1b[17~", "<F9>": b"\x1b[20~", "<F10>": b"\x1b[21~",
+    "<ALTF3>": b"\x1b[13;3~", "<ALTF9>": b"\x1b[20;3~",
 }
 for c in "abcdefghijklmnopqrstuvwxyz":
     KEYS["<ALT%s>" % c.upper()] = b"\x1b" + c.encode()
     KEYS["<C%s>" % c.upper()] = bytes([ord(c) - 96])
+for c in "0123456789":
+    KEYS["<ALT%s>" % c] = b"\x1b" + c.encode()
 
 NAMES = ["black", "red", "green", "brown", "blue", "magenta", "cyan", "lgrey",
          "dgrey", "lred", "lgreen", "yellow", "lblue", "lmagenta", "lcyan", "white"]

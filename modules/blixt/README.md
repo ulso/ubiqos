@@ -4,7 +4,7 @@ A Thumb-2 assembler in a Borland-style editor: a menu bar on top, the source
 in a blue window, the keys on the bottom line, and F9 to assemble and run what
 is on the screen.
 
-    blixt [FILE]
+    blixt [FILE...]
 
 | Key | |
 |---|---|
@@ -16,6 +16,20 @@ is on the screen.
 | F10, Esc, Alt-letter | the menus |
 | Alt-X or Ctrl-Q | leave |
 | Compile > Destination | Memory (run and keep nothing) or Disk (also write NAME.mod beside the source) |
+| Alt-1 to Alt-9 or Ctrl-W 1 to 9 | that window |
+| F6 or Ctrl-W N | the next window |
+| Alt-F3 or Ctrl-W C | close the window |
+| Alt-0 or Ctrl-W 0 | the list of windows |
+
+Up to nine files are open at once, each in a window with its number in the
+top right-hand corner of the frame, as in the Borland IDEs. One window fills
+the screen at a time. Open (F3) puts a file in a window of its own, or goes to
+the window that has it already; a window holding nothing (no name, no changes)
+is used instead of a new one. Each name on the command line gets a window.
+F9 assembles the window on the screen, and an `.include` of a file that is
+open in a window takes the text from the window, saved or not. Alt-X asks
+about every window with unsaved changes. The board's keyboard sends Alt only
+with a letter, so Ctrl-W and a digit is the way to a window there.
 
 Every function key has a control key, because a Mac keeps its function keys
 for itself, over SSH and through Keybridge alike. Ctrl-H is free for help
