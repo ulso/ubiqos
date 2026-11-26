@@ -285,8 +285,19 @@ if(UBIQOS_NATIVE_USB STREQUAL "device")
     # as a submodule so the version is written down: the copy that was lying
     # around was eleven months old and missing an out-of-bounds memcpy fix and
     # the RP2350-E9 errata conditional.
+    #
+    # pio_usb.c is compiled from lib/pio-usb-patched, with one line added: see
+    # the README there. The hash is the submodule's own copy that ours was made
+    # from, so moving the submodule stops the configure until ours is redone.
+    file(SHA256 ${CMAKE_CURRENT_SOURCE_DIR}/lib/Pico-PIO-USB/src/pio_usb.c ubiqosPioUsbHash)
+    if(NOT ubiqosPioUsbHash STREQUAL "f764cc228c07d851a319ad27ab6fe1071a2b3bacf6c1048da44763acd898aeee")
+        message(FATAL_ERROR
+            "lib/Pico-PIO-USB/src/pio_usb.c is not the one lib/pio-usb-patched/pio_usb.c "
+            "was copied from. Redo the copy as lib/pio-usb-patched/README.md says, "
+            "then put the new hash here.")
+    endif()
     set(ubiqosUsbPioSources
-        lib/Pico-PIO-USB/src/pio_usb.c
+        lib/pio-usb-patched/pio_usb.c
         lib/Pico-PIO-USB/src/pio_usb_host.c
         lib/Pico-PIO-USB/src/pio_usb_device.c
         lib/Pico-PIO-USB/src/usb_crc.c)
