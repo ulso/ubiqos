@@ -934,6 +934,26 @@ static const char *nav_sequence(uint8_t k) {
     }
 }
 
+// Left Alt with a function key, as xterm and rxvt send it: ESC [ n ; 3 ~, the
+// 3 meaning Alt. F1 to F4 take the ~ form too (11 to 14) rather than xterm's
+// ESC [ 1 ; 3 R, which a program cannot tell from a cursor report.
+static const char *alt_fkey(uint8_t k) {
+    static const char *const f[12] = {
+        "\x1b[11;3~", "\x1b[12;3~", "\x1b[13;3~", "\x1b[14;3~", "\x1b[15;3~", "\x1b[17;3~",
+        "\x1b[18;3~", "\x1b[19;3~", "\x1b[20;3~", "\x1b[21;3~", "\x1b[23;3~", "\x1b[24;3~",
+    };
+    return k >= 0x3a && k <= 0x45 ? f[k - 0x3a] : 0;
+}
+
+// Left Alt and not AltGr: the meta key of a terminal.
+static bool left_alt(uint8_t mods) { return (mods & 0x04) && !(mods & 0x40); }
+
+// What a key that is not a character sends, with the modifiers held.
+static const char *key_sequence(uint8_t k, uint8_t mods) {
+    const char *a = left_alt(mods) ? alt_fkey(k) : 0;
+    return a ? a : nav_sequence(k);
+}
+
 // A whole sequence or none of it. Half an escape sequence in the queue is worse
 // than a dropped keystroke: the reader would take the tail for text.
 //
@@ -952,7 +972,7 @@ void ubiqos_usbhost_repeat(void) {
     uint32_t now = tusb_time_millis_api();
     if ((int32_t)(now - repeat_began) > REPEAT_LIMIT_MS) { forget_held_keys(); return; }
     if ((int32_t)(now - repeat_due) < 0) return;
-    const char *sq = nav_sequence(repeat_key);
+    const char *sq = key_sequence(repeat_key, repeat_mods);
     if (sq) {
         ubiqos_usbhost_push_str(sq);
     } else {
@@ -1119,18 +1139,19 @@ void tuh_hid_report_received_cb(uint8_t addr, uint8_t instance,
                 continue;
             }
 
-            const char *sq = nav_sequence(k);
+            const char *sq = key_sequence(k, report[0]);
             if (sq) {
                 scroll_to_live();
                 ubiqos_usbhost_push_str(sq);
             } else {
                 uint8_t c = translate(k, report[0]);
-                // Left Alt with a letter is ESC and the letter, as a terminal's
-                // meta key sends it: Alt-F opens a menu over SSH and here alike.
-                // Only letters, and only the left key: right Alt is AltGr, and
-                // on a Mac keyboard Option with a digit types @ or a bracket.
-                if (c && (report[0] & 0x04) && !(report[0] & 0x40)
-                    && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+                // Left Alt with a letter or a digit is ESC and the key, as a
+                // terminal's meta key sends it: Alt-F opens a menu and Alt-2
+                // goes to window 2, over SSH and here alike. Only the left
+                // key: right Alt is AltGr, where @ and the brackets are.
+                if (c && left_alt(report[0])
+                    && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                        || (c >= '0' && c <= '9'))) {
                     const char meta[3] = { 0x1b, (char)c, 0 };
                     scroll_to_live();
                     ubiqos_usbhost_push_str(meta);
