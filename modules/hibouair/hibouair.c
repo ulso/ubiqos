@@ -228,6 +228,10 @@ static void forget_sensors(void)
 // such set-up asks the kernel to reset the USB bus, which brings it back. A
 // machine that cannot -- PIO-USB with a hub, like the Fruit Jam, where the
 // reset would take the keyboard along -- says once what is needed instead.
+// Replugging the dongle is not always enough there: when another device is
+// pulled out of the Fruit Jam, its CH334F hub can stop passing anything at
+// all, and only taking the board's power away brings the hub back (seen
+// 26 Nov 2026, Keybridge pulled, BleuIO silent, replugging it changed nothing).
 static void dongle_wake(int32_t dev)
 {
     if (!dongle_quiet) {
@@ -244,7 +248,8 @@ static void dongle_wake(int32_t dev)
         }
         if (!said_no_reset) {
             printf("hibouair: the dongle answers nothing, and this machine cannot reset\n"
-                   "          it -- unplug it and put it back\n");
+                   "          it -- unplug it and put it back; if it still says nothing,\n"
+                   "          take the power from the board for a moment\n");
             said_no_reset = true;
         }
     }
